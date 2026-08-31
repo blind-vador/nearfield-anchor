@@ -22,3 +22,8 @@ RADIO_LOG_DIR = f"{NAS_BASE}/radio_log"              # radio_log.py (journal aud
 # /media/nas/nd2/server/radiono, un chemin qui n'existe pas (verifie :
 # /media/nas/nd2/server/ est introuvable). Le contenu reel vit sous nd1.
 RADIONO_DIR = f"{NAS_BASE}/radiono"
+
+# Captures du mode diagnostic spectral generique (tools/spectral_diagnostic.py,
+# 2026-08-31) -- identification des chevauchements de porteuses sur
+# n'importe quelle bande, activable a la demande.
+DIAGNOSTIC_DIR = f"{NAS_BASE}/radio_log/diagnostic"

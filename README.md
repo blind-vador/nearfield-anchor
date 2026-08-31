@@ -18,6 +18,7 @@ l'installation complète en cas de panne de carte SD.
 | `lib/` | Bibliothèques partagées (synthèse vocale, verrou audio, filtres...) |
 | `nas/` | Gestion du NAS (montage/remontage automatique des disques) |
 | `radiono/` | Alarme sonore aléatoire anti-effet-tunnel |
+| `tools/` | `spectral_diagnostic.py` — mode diagnostic spectral générique, activable à la demande (voir ci-dessous) |
 | `config/` | `sound_paths.py` — chemins des banques sonores, un seul endroit à modifier |
 | `systemd/` | Unités systemd de tous les services |
 | `install.sh` | Installeur complet (apt + compilation + déploiement) |
@@ -56,6 +57,28 @@ montage par UUID, et respecte la même contrainte de sécurité (ne jamais
 bloquer le démarrage/SSH en cas d'échec de montage — le montage se fait
 entièrement après coup, une fois le réseau up, avec un timeout dur sur
 chaque vérification).
+
+### Mode diagnostic spectral (`tools/spectral_diagnostic.py`)
+
+Outil générique, **activable à la demande** (pas un service systemd),
+pour identifier des chevauchements de porteuses (deux émetteurs proches
+en fréquence causant un battement/sifflement) sur n'importe quelle bande
+définie dans `radio_watch.BANDS`. Réutilise le même mécanisme de
+détection que la production puis affine immédiatement dessus, dans le
+même processus — élimine le délai qui fait rater les transmissions
+courtes/sporadiques avec une approche en deux scripts séparés.
+
+```bash
+sudo systemctl stop radio-watch      # libère le dongle
+python3 tools/spectral_diagnostic.py aviation
+python3 tools/spectral_diagnostic.py vhf_business --attempts 30 --fine-step-hz 250
+sudo systemctl start radio-watch     # rend le dongle à la production
+```
+
+Résultats (CSV brut + résumé texte par capture, horodatage lisible NVDA)
+accumulés dans `radio_log/diagnostic/` sur le NAS — signale
+automatiquement les captures où plusieurs porteuses distinctes sont
+détectées dans la fenêtre affinée.
 
 ## Installation
 
