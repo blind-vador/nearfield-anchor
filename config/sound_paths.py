@@ -27,3 +27,9 @@ RADIONO_DIR = f"{NAS_BASE}/radiono"
 # 2026-08-31) -- identification des chevauchements de porteuses sur
 # n'importe quelle bande, activable a la demande.
 DIAGNOSTIC_DIR = f"{NAS_BASE}/radio_log/diagnostic"
+
+# Cache des annonces repetitives (speak.py, parametre repetitive=True de
+# speak_with_lead_sound) -- un sous-dossier par phrase fixe (bandes radio,
+# messages systeme...), un echantillon par voix edge-tts une fois complet.
+# Evite l'appel reseau a chaque occurrence pour ce genre de texte statique.
+TTS_CACHE_DIR = f"{NAS_BASE}/tts_cache"

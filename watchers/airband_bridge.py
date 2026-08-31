@@ -274,7 +274,9 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC):
         # l'utilisateur) : le nom d'usage seul, sans la frequence exacte en
         # MHz -- peu intelligible a l'oral, name_spoken porte deja le nom
         # clair ("446 civil", "ATIS Lyon Saint-Exupéry"...).
-        speak_with_lead_sound(INCOMING_SOUND, name_spoken, label="airband_bridge")
+        # name_spoken : petit ensemble fixe (voir AIRBAND_WINDOWS) --
+        # candidat naturel au cache repetitif (2026-08-31).
+        speak_with_lead_sound(INCOMING_SOUND, name_spoken, label="airband_bridge", repetitive=True)
         play_sound_effect(FREQ_OPEN_SOUND, label="airband_bridge")
 
         aplay = subprocess.Popen(

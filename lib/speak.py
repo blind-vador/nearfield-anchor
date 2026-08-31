@@ -1,6 +1,8 @@
 import asyncio
+import hashlib
 import os
 import random
+import shutil
 import subprocess
 import tempfile
 import threading
@@ -8,6 +10,7 @@ import threading
 import edge_tts
 
 from sound_player import play_sound_effect
+from sound_paths import TTS_CACHE_DIR
 
 # --- Voix cloud (edge-tts) + repli local (espeak) ---
 # Ajoute en session (2026-08-30) suite a un constat direct de l'utilisateur
@@ -73,19 +76,19 @@ async def _do_synthesize(text, voice, path):
     await asyncio.wait_for(communicate.save(path), timeout=EDGE_TTS_TIMEOUT_SEC)
 
 
-def _synthesize_edge_tts(text, result_holder):
+def _synthesize_edge_tts(text, result_holder, candidate_voices=None):
     """Tourne dans un thread separe -- genere l'audio via le service cloud
-    de Microsoft Edge (voix tiree au hasard parmi EDGE_TTS_VOICES a chaque
-    appel) et stocke le chemin du fichier resultat dans result_holder[0]
-    (reste None en cas d'echec/timeout)."""
+    de Microsoft Edge (voix tiree au hasard parmi candidate_voices, ou
+    EDGE_TTS_VOICES en entier par defaut) et stocke (chemin, voix) dans
+    result_holder[0] (reste None en cas d'echec/timeout)."""
     path = None
     try:
-        voice = random.choice(EDGE_TTS_VOICES)
+        voice = random.choice(candidate_voices or EDGE_TTS_VOICES)
         fd, path = tempfile.mkstemp(suffix=".mp3", prefix="edge_tts_")
         os.close(fd)
         asyncio.run(_do_synthesize(text, voice, path))
         if os.path.getsize(path) > 0:
-            result_holder[0] = path
+            result_holder[0] = (path, voice)
         else:
             os.remove(path)
     except Exception as exc:
@@ -97,7 +100,75 @@ def _synthesize_edge_tts(text, result_holder):
                 pass
 
 
-def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak"):
+# --- Cache des annonces repetitives (2026-08-31, demande explicite) ---
+# But : les textes fixes annonces tres souvent (nom de bande radio,
+# messages systeme type "dongle indisponible") n'ont pas besoin d'un
+# aller-retour reseau a CHAQUE occurrence -- une fois qu'on possede un
+# echantillon pre-synthetise pour chacune des voix edge-tts, on peut
+# piocher dedans au hasard (variete vocale preservee) sans jamais
+# rappeler l'API. Les textes qui changent a chaque fois (annonces SNCF,
+# survols ADS-B, messages ACARS traduits, alertes meteo/crue avec leurs
+# valeurs) restent en repetitive=False (defaut) -- l'API est rappelee a
+# chaque fois pour eux, la qualite prime sur l'economie reseau.
+
+def _phrase_folder_name(text):
+    """Nom de dossier lisible (utile en cas d'inspection manuelle via
+    NVDA/Samba) mais borne en longueur, complete d'un court hash pour
+    garantir l'unicite meme entre phrases tronquees identiques."""
+    slug = "".join(c if c.isalnum() else "_" for c in text).strip("_")[:60].strip("_")
+    digest = hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
+    return f"{slug}_{digest}" if slug else digest
+
+
+def _repetitive_cache_dir(text):
+    return os.path.join(TTS_CACHE_DIR, _phrase_folder_name(text))
+
+
+def _cached_repetitive_sample(text):
+    """Si le cache de cette phrase est COMPLET (un echantillon par voix
+    disponible), retourne le chemin d'un echantillon tire au hasard parmi
+    eux. Sinon (dossier absent ou incomplet) retourne None -- il faut
+    passer par l'API."""
+    cache_dir = _repetitive_cache_dir(text)
+    try:
+        samples = [f for f in os.listdir(cache_dir) if f.endswith(".mp3")]
+    except FileNotFoundError:
+        return None
+    if len(samples) < len(EDGE_TTS_VOICES):
+        return None
+    return os.path.join(cache_dir, random.choice(samples))
+
+
+def _missing_voices_for(text):
+    """Voix pas encore echantillonnees pour cette phrase -- utilise pour
+    orienter le tirage au hasard vers les voix manquantes plutot que de
+    compter sur la pure chance pour completer le cache (probleme du
+    collectionneur de coupons : ~40 tirages purement aleatoires en
+    moyenne pour les 13 voix, contre 13 au pire ainsi). Retourne None si
+    aucun cache n'existe encore (tirage normal parmi toutes les voix)."""
+    cache_dir = _repetitive_cache_dir(text)
+    try:
+        existing = {os.path.splitext(f)[0] for f in os.listdir(cache_dir) if f.endswith(".mp3")}
+    except FileNotFoundError:
+        return None
+    missing = [v for v in EDGE_TTS_VOICES if v not in existing]
+    return missing or None
+
+
+def _save_repetitive_sample(text, voice, src_path):
+    """Ajoute l'echantillon au cache de cette phrase, nomme par la voix --
+    n'ecrase jamais un echantillon deja present pour cette voix."""
+    cache_dir = _repetitive_cache_dir(text)
+    try:
+        os.makedirs(cache_dir, exist_ok=True)
+        dest = os.path.join(cache_dir, f"{voice}.mp3")
+        if not os.path.exists(dest):
+            shutil.copyfile(src_path, dest)
+    except OSError as exc:
+        print(f"[speak] echec sauvegarde cache repetitif : {exc}")
+
+
+def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=False):
     """Diffuse sound_path puis annonce text -- lance la synthese cloud
     (edge-tts) EN PARALLELE du son d'accompagnement plutot qu'apres coup :
     au moment ou l'appelant declenche le son, il sait deja ce qu'il va dire
@@ -109,18 +180,43 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak")
     cloud bloque...), bascule automatiquement sur speak() (espeak local) --
     jamais de silence total meme si le cloud est hors service.
 
+    repetitive=True (2026-08-31, demande explicite) : a reserver aux
+    textes FIXES annonces souvent (nom de bande radio, "dongle
+    indisponible"...) -- PAS aux textes qui changent a chaque fois
+    (annonces SNCF, survols, meteo/crue avec leurs valeurs, ACARS
+    traduits). Si un echantillon existe deja pour chacune des voix
+    edge-tts pour ce texte exact, ne fait AUCUN appel reseau : pioche au
+    hasard dans le cache (variete vocale preservee). Sinon, appelle
+    l'API comme d'habitude (en priorisant les voix pas encore
+    echantillonnees pour ce texte) et persiste le resultat dans le cache
+    au lieu de le jeter.
+
     A utiliser a la place de l'enchainement habituel
     play_sound_effect(son); speak(texte) partout ou ce couple existe deja."""
+    if repetitive:
+        cached_path = _cached_repetitive_sample(text)
+        if cached_path:
+            print(text)
+            play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label)
+            play_sound_effect(cached_path, timeout_sec=15, label=label)
+            return
+        candidate_voices = _missing_voices_for(text)
+    else:
+        candidate_voices = None
+
     result_holder = [None]
-    thread = threading.Thread(target=_synthesize_edge_tts, args=(text, result_holder), daemon=True)
+    thread = threading.Thread(target=_synthesize_edge_tts, args=(text, result_holder, candidate_voices), daemon=True)
     thread.start()
 
     play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label)
 
     thread.join(EDGE_TTS_EXTRA_WAIT_SEC)
-    audio_path = result_holder[0]
+    result = result_holder[0]
     print(text)
-    if audio_path:
+    if result:
+        audio_path, voice = result
+        if repetitive:
+            _save_repetitive_sample(text, voice, audio_path)
         try:
             play_sound_effect(audio_path, timeout_sec=15, label=label)
         finally:

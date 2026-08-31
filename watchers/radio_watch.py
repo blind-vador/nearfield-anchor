@@ -926,7 +926,9 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
     # seule, sans la frequence exacte en MHz -- peu intelligible a l'oral et
     # sans interet pour l'usage courant, band_label porte deja le nom
     # d'usage clair ("canal 446 civil", "bande aviation militaire UHF"...).
-    speak_with_lead_sound(INCOMING_SOUND, band_label, label="radio_watch")
+    # band_label : petit ensemble fixe de noms de bande (voir BANDS) --
+    # candidat naturel au cache repetitif (2026-08-31).
+    speak_with_lead_sound(INCOMING_SOUND, band_label, label="radio_watch", repetitive=True)
     play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
 
     # Peripherique explicite (AUDIO_DEVICE) : le "default" ALSA de cette
@@ -1426,7 +1428,7 @@ def main():
         if _rtl_power_failure_count == DEVICE_DOWN_WARNING_THRESHOLD and not device_down_announced:
             lock = audio_lock.acquire()
             try:
-                speak_with_lead_sound(SCANER_ERROR_SOUND, "Attention, le dongle radio semble indisponible. Vérifie la connexion USB.", label="radio_watch")
+                speak_with_lead_sound(SCANER_ERROR_SOUND, "Attention, le dongle radio semble indisponible. Vérifie la connexion USB.", label="radio_watch", repetitive=True)
             finally:
                 audio_lock.release(lock)
             device_down_announced = True
@@ -1440,7 +1442,7 @@ def main():
         elif device_down_announced and _rtl_power_failure_count % DEVICE_DOWN_REMINDER_EVERY == 0:
             lock = audio_lock.acquire()
             try:
-                speak_with_lead_sound(SCANER_ERROR_SOUND, "Le dongle radio est toujours indisponible.", label="radio_watch")
+                speak_with_lead_sound(SCANER_ERROR_SOUND, "Le dongle radio est toujours indisponible.", label="radio_watch", repetitive=True)
             finally:
                 audio_lock.release(lock)
 
