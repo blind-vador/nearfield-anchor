@@ -60,25 +60,45 @@ chaque vérification).
 
 ### Mode diagnostic spectral (`tools/spectral_diagnostic.py`)
 
-Outil générique, **activable à la demande** (pas un service systemd),
-pour identifier des chevauchements de porteuses (deux émetteurs proches
-en fréquence causant un battement/sifflement) sur n'importe quelle bande
-définie dans `radio_watch.BANDS`. Réutilise le même mécanisme de
-détection que la production puis affine immédiatement dessus, dans le
-même processus — élimine le délai qui fait rater les transmissions
-courtes/sporadiques avec une approche en deux scripts séparés.
+Outil générique, **activable à la demande**, pour identifier des
+chevauchements de porteuses (deux émetteurs proches en fréquence causant
+un battement/sifflement) sur n'importe quelle bande définie dans
+`radio_watch.BANDS`. Réutilise le même mécanisme de détection que la
+production puis affine immédiatement dessus — élimine le délai qui fait
+rater les transmissions courtes/sporadiques avec une approche en deux
+scripts séparés.
+
+Deux façons de l'utiliser :
+
+**1. Intégré à `radio-watch` en arrière-plan** (recommandé — pas besoin
+d'arrêter le service, profite du trafic naturel accumulé dans le temps
+plutôt que d'une rafale ponctuelle) :
 
 ```bash
-sudo systemctl stop radio-watch      # libère le dongle
-python3 tools/spectral_diagnostic.py aviation
-python3 tools/spectral_diagnostic.py vhf_business --attempts 30 --fine-step-hz 250
-sudo systemctl start radio-watch     # rend le dongle à la production
+python3 tools/spectral_diagnostic.py arm aviation     # arme sur une bande
+python3 tools/spectral_diagnostic.py status            # etat + captures accumulees
+python3 tools/spectral_diagnostic.py disarm             # desarme
+```
+
+`radio_watch.py` appelle ce hook juste après chaque candidat trouvé par
+sa détection normale — coût quasi nul quand rien n'est armé ; quand armé
+sur la bande courante, retarde le démarrage de la vraie capture de ~1-2s
+(même dongle, un seul balayage à la fois) tant que le mode reste actif.
+
+**2. Rafale autonome** (le dongle doit être libre) :
+
+```bash
+sudo systemctl stop radio-watch
+python3 tools/spectral_diagnostic.py scan aviation
+python3 tools/spectral_diagnostic.py scan vhf_business --attempts 30 --fine-step-hz 250
+sudo systemctl start radio-watch
 ```
 
 Résultats (CSV brut + résumé texte par capture, horodatage lisible NVDA)
-accumulés dans `radio_log/diagnostic/` sur le NAS — signale
-automatiquement les captures où plusieurs porteuses distinctes sont
-détectées dans la fenêtre affinée.
+accumulés dans `radio_log/diagnostic/` sur le NAS, pour les deux modes —
+signale automatiquement les captures où plusieurs porteuses distinctes
+sont détectées dans la fenêtre affinée (marge calibrée par bande, pas un
+seuil fixe — voir le module pour le détail).
 
 ## Installation
 
