@@ -229,3 +229,45 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
             subprocess.run(["espeak", "-v", "fr", "-b", "1", text], check=False, timeout=30)
         except Exception as exc:
             print(f"[espeak indisponible: {exc}]")
+
+
+def speak_cloud(text, repetitive=False):
+    """Comme speak_with_lead_sound(), sans son d'accompagnement -- pour les
+    watchers sans chime dedie (nas_watch.py, 2026-08-31). Sans son a jouer
+    en parallele pour masquer la latence reseau, un cache-miss expose donc
+    le delai complet de la synthese cloud (jusqu'a EDGE_TTS_TIMEOUT_SEC)
+    avant que quoi que ce soit ne se fasse entendre. Acceptable pour ce
+    genre d'annonce de fond (etat des disques...) car transitoire : une
+    fois le cache repetitif rempli pour une phrase donnee, plus aucun
+    appel reseau -- NE PAS utiliser pour une alerte ou chaque milliseconde
+    compte des le premier appel."""
+    if repetitive:
+        cached_path = _cached_repetitive_sample(text)
+        if cached_path:
+            print(text)
+            play_sound_effect(cached_path, timeout_sec=15, label="speak")
+            return
+        candidate_voices = _missing_voices_for(text)
+    else:
+        candidate_voices = None
+
+    result_holder = [None]
+    _synthesize_edge_tts(text, result_holder, candidate_voices)
+    result = result_holder[0]
+    print(text)
+    if result:
+        audio_path, voice = result
+        if repetitive:
+            _save_repetitive_sample(text, voice, audio_path)
+        try:
+            play_sound_effect(audio_path, timeout_sec=15, label="speak")
+        finally:
+            try:
+                os.remove(audio_path)
+            except OSError:
+                pass
+    else:
+        try:
+            subprocess.run(["espeak", "-v", "fr", "-b", "1", text], check=False, timeout=30)
+        except Exception as exc:
+            print(f"[espeak indisponible: {exc}]")

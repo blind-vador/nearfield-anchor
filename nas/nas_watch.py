@@ -5,6 +5,7 @@ import time
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import audio_lock
+from speak import speak_cloud
 
 # Surveille en continu les deux disques du NAS (nd1/nd2) pendant que le
 # systeme tourne -- complementaire a nas_manager/nas.py, qui ne monte les
@@ -32,13 +33,15 @@ DISKS = [
      "label": "disque principal de stockage"},
 ]
 
-SPEAKING_CMD = ["espeak", "-v", "fr", "-b", "1"]
-
-
-def _speak(text):
+def _speak(text, repetitive=True):
+    """Voix cloud (edge-tts) avec repli espeak automatique -- comme le
+    reste du projet, plutot que l'espeak brut d'origine (2026-08-31,
+    demande explicite). repetitive=True par defaut : toutes les phrases de
+    ce watcher viennent d'un petit ensemble fini (2 disques x quelques
+    etats possibles), jamais de texte vraiment libre."""
     lock = audio_lock.acquire()
     try:
-        subprocess.run(SPEAKING_CMD + [text], check=False, timeout=30)
+        speak_cloud(text, repetitive=repetitive)
     finally:
         audio_lock.release(lock)
 
