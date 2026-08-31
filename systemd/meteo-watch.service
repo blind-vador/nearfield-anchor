@@ -1,0 +1,16 @@
+[Unit]
+Description=Veille vigilance meteo (alertes, departement 42)
+After=multi-user.target network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 -u /home/vador/autopilot/pi_console/meteo_watch.py
+User=vador
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

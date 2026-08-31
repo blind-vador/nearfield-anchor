@@ -1,0 +1,1444 @@
+import collections
+import math
+import re
+import signal
+import subprocess
+import sys
+import tempfile
+import os
+import time
+import audioop
+import threading
+import queue
+import socket
+
+import numpy as np
+import requests
+
+from speak import speak, speak_with_lead_sound
+import audio_lock
+import airband_bridge
+import radio_log
+import sound_player
+import audio_filters
+import acars_watch
+from rnnoise_lib import (
+    create as _rnnoise_create,
+    destroy as _rnnoise_destroy,
+    process_mono_frame as _rnnoise_process_frame,
+    FRAME_SIZE as RNNOISE_FRAME_SIZE,
+    SAMPLE_RATE as RNNOISE_SAMPLE_RATE,
+)
+
+# SIGTERM (envoye par "systemctl stop/restart") tue le process par defaut
+# SANS executer les blocs "finally" -- ce qui laissait regulierement des
+# sous-processus orphelins (rtl_fm, aplay, multimon-ng, dsd-fme) tourner
+# indefiniment apres l'arret du service, bloquant le redemarrage suivant
+# ("deactivating"/"final-sigterm" observe plusieurs fois en session, chaque
+# fois necessitant un pkill manuel). sys.exit() leve SystemExit, qui LUI
+# deroule normalement la pile et execute les "finally" -- fix standard.
+def _handle_sigterm(signum, frame):
+    sys.exit(0)
+
+
+signal.signal(signal.SIGTERM, _handle_sigterm)
+
+# Compteur d'echecs consecutifs de rtl_power (dongle indisponible/deconnecte),
+# incremente dans check_channels_relative/sweep_band_peak_relative, remis a zero
+# des qu'un appel reussit. Utilise par le "chien de garde" dans main() pour
+# avertir vocalement plutot que de rester silencieux indefiniment sans explication.
+_rtl_power_failure_count = 0
+DEVICE_DOWN_WARNING_THRESHOLD = 15  # environ 15 echecs consecutifs avant d'avertir
+DEVICE_DOWN_REMINDER_EVERY = 200  # rappel periodique si ca reste indisponible longtemps
+
+# Cycle marche/pause -- demande explicite (2026-08-30) : l'utilisateur a
+# ressenti une legere decharge en touchant la jonction cable antenne/prise,
+# absente auparavant, et s'inquiete de la chauffe du dongle/Pi en scan
+# vraiment continu (24h/24 depuis l'activation au demarrage). Ceci ne
+# diagnostique ni ne corrige un probleme electrique -- seul un controle
+# physique par une personne voyante peut le faire -- mais reduit le temps
+# total ou le dongle/l'antenne sont actifs, et donne un vrai repos
+# thermique regulier plutot qu'un fonctionnement ininterrompu.
+SCAN_ON_DURATION_SEC = 900   # 15 min de scan actif
+SCAN_OFF_DURATION_SEC = 300  # 5 min de pause, dongle au repos
+
+# Securite thermique independante du cycle regulier : verifie la
+# temperature du Pi (vcgencmd, integre) et force une pause si elle depasse
+# le seuil, meme en pleine phase "active". Mesure en session : 74.5C au
+# repos relatif (charge CPU ~20%) sans throttling signale -- seuils choisis
+# avec de la marge sous ce niveau deja constate.
+TEMP_CHECK_INTERVAL_SEC = 60
+TEMP_PAUSE_C_BASE = 72.0
+# Plafond dur, JAMAIS depasse quelle que soit la marge adaptative ou l'etat
+# de charge CPU -- Raspberry Pi OS declenche lui-meme un throttling au
+# niveau du SoC BCM2711 aux alentours de 80-85C (confirme par recherche
+# web en session, article framboise314 sur le decodage APRS). Aucune
+# logique d'adaptation ci-dessous ne peut faire depasser ce seuil.
+TEMP_CRITICAL_C = 80.0
+# Baisse de 65.0 a 60.0 (2026-08-30, demande explicite de l'utilisateur) :
+# une pause de plus de 70 minutes suivie d'une re-pause au bout de
+# seulement 2.5 minutes a ete observee en usage reel -- plus de marge de
+# refroidissement demandee entre deux pauses.
+TEMP_RESUME_C = 60.0  # hysteresis : attend d'etre redescendu sous ce seuil
+
+# Marge adaptative additionnelle (2026-08-30, demande explicite) : si les
+# pauses thermiques se rapprochent dans le temps (intervalle actif entre
+# deux pauses qui raccourcit -- signe d'une degradation progressive :
+# chaleur ambiante qui monte, ventilation insuffisante...), etire
+# automatiquement TEMP_RESUME_C encore plus bas pour forcer un repos plus
+# long, plutot que de s'en tenir a un seuil fixe qui ne s'adapte jamais.
+# Se relache tout seul si l'intervalle actif redevient normal.
+TEMP_RESUME_ADAPTIVE_STEP_C = 2.0
+TEMP_RESUME_ADAPTIVE_MAX_C = 10.0  # plancher absolu : TEMP_RESUME_C - ce max = 50.0C
+PAUSE_HISTORY_LEN = 4  # "trace temporaire" demandee -- en memoire seulement, remise a zero a chaque redemarrage du service
+
+# Seuil de coupure adaptatif (2026-08-31, demande explicite de
+# l'utilisateur) : les pauses etaient jugees trop frequentes. Si le
+# refroidissement d'une pause a ete rapide (bonne marge thermique/air
+# ambiant frais -- comparee a l'historique des pauses precedentes), le
+# seuil de coupure de la PROCHAINE periode active est releve un peu, sans
+# jamais s'approcher du plafond critique a moins de
+# TEMP_PAUSE_ADAPTIVE_MAX_C. Se relache si le refroidissement redevient
+# lent. Meme mecanisme (deque glissant, comparaison a la moyenne) que
+# l'adaptation du seuil de reprise ci-dessus.
+TEMP_PAUSE_ADAPTIVE_STEP_C = 1.0
+TEMP_PAUSE_ADAPTIVE_MAX_C = 6.0  # seuil effectif plafonne a TEMP_PAUSE_C_BASE + ce max = 78.0C, 2C sous TEMP_CRITICAL_C
+
+# Zone de surveillance (2026-08-31, demande explicite) : si le seuil de
+# coupure (adaptatif) est atteint mais que le CPU n'est pas charge par
+# autre chose (load moyenne 1 min basse -- pas de gros calcul en cours,
+# type dsd-fme/decode numerique), la chauffe est probablement due a
+# l'environnement plutot qu'a une charge de calcul intense qui va
+# s'aggraver -- au lieu d'une coupure franche, on reste actif mais on
+# verifie beaucoup plus souvent, avec le plafond critique (TEMP_CRITICAL_C)
+# comme seule limite absolue qui declenche quand meme une coupure.
+CPU_LOAD_WATCH_THRESHOLD = 0.5
+WATCH_ZONE_CHECK_INTERVAL_SEC = 15
+
+# Contexte environnemental (2026-08-31, demande explicite) : le seuil de
+# coupure fixe (72.0C) ignore que la marge de dissipation reelle du Pi
+# depend fortement de l'heure et de la temperature exterieure -- de nuit la
+# temperature ne peut que descendre (jamais de pic de chaleur avant le
+# lever du jour), et une journee fraiche donne beaucoup plus de marge
+# qu'une journee chaude. Reutilise l'API Open-Meteo (meme source deja
+# validee dans meteo_watch.py, gratuite, sans cle) pour la temperature
+# exterieure actuelle a la position du Pi (balcon, memes coordonnees que
+# la veille meteo hyper-locale).
+OUTDOOR_WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
+OUTDOOR_REF_LAT = 45.4397
+OUTDOOR_REF_LON = 4.3872
+# La temperature exterieure ne varie pas en quelques secondes -- inutile de
+# la sonder a chaque verification thermique (60s) comme demande
+# explicitement ("on ne devrait pas checker toute les 30 secondes").
+OUTDOOR_TEMP_POLL_INTERVAL_SEC = 1800  # 30 min
+
+# Nuit definie largement (22h-7h) : creneau ou la temperature exterieure ne
+# peut que descendre, jamais remonter, avant le lever du jour.
+NIGHT_START_HOUR = 22
+NIGHT_END_HOUR = 7
+NIGHT_BONUS_C = 2.0
+
+# Bonus/malus sur le seuil de coupure selon la temperature exterieure --
+# paliers recalibres (2026-08-31, retour utilisateur immediat) : 19.8C une
+# nuit fraiche de fin aout tombait dans une zone "neutre" 18-25C qui ne
+# donnait aucun bonus, alors que le seuil de base (72C) declenche des
+# pauses meme par ~20C -- preuve que ce seuil de base a ete atteint dans
+# des conditions plus chaudes que ca. Le palier "frais" est donc remonte a
+# 20C pour couvrir ce cas (avec le bonus nuit +2C, ca sature au plafond
+# ENV_BONUS_MAX_C=5.0 -- effective_pause_c = 77.0C, conforme au retour).
+# Au-dela de 28C, on retire de la marge plutot que d'en ajouter (journee
+# chaude = moins de dissipation reelle malgre un ciel degage).
+OUTDOOR_TEMP_BONUS_TIERS = [
+    # (seuil_max_exclu_C, bonus_C)
+    (20.0, 3.0),
+    (24.0, 1.5),
+    (28.0, 0.0),
+    (33.0, -2.0),
+    (float("inf"), -4.0),
+]
+# Plafond du bonus environnemental combine (nuit + exterieur) -- meme
+# esprit que TEMP_PAUSE_ADAPTIVE_MAX_C, additionne a celui-ci sous le meme
+# garde-fou TEMP_CRITICAL_C - 2.0 (jamais contourne).
+ENV_BONUS_MAX_C = 5.0
+
+# Modes numeriques "donnees/texte" decodes en direct pendant l'ecoute FM.
+# La voix numerique (DMR, P25, D-STAR...) est geree separement par dsd-fme
+# (voir try_digital_voice_decode plus bas et ROADMAP.md).
+# Liste complete disponible dans multimon-ng ("multimon-ng" sans argument) :
+# POCSAG512/1200/2400 FLEX EAS UFSK1200 CLIPFSK FMSFSK AFSK1200/2400/2400_2/
+# 2400_3 HAPN4800 FSK9600 DTMF ZVEI1/2/3 DZVEI PZVEI EEA EIA CCIR MORSE_CW X10.
+# Retenus ici (meme outil deja valide, cout marginal nul) :
+# - AFSK1200 : APRS (balises position/messages)
+# - POCSAG512/1200/2400 : pageurs (protocole le plus courant)
+# - FLEX : autre protocole de pageur, complementaire au POCSAG
+# - FSK9600 : paquet radio 9600 bauds (AX.25/packet sur bande amateur 2m)
+# - MORSE_CW : decodeur Morse direct
+# - DTMF : tonalites multifrequences (controle repeteur, codes d'acces)
+# - EEA/EIA/CCIR/ZVEI1/ZVEI2/ZVEI3/DZVEI/PZVEI : signalisation selective a
+#   tons (normes francaise/europeennes, dispatch prive/securite -- pas les
+#   services d'urgence officiels, deja exclus car chiffres/ANTARES).
+# Ecartes : EAS (specifique USA), UFSK1200/CLIPFSK/FMSFSK/HAPN4800/AFSK2400_*
+# (rares/obscurs dans ce contexte), X10 (domotique/alarme -- rabbit hole
+# potentiellement invasif, pas ajoute sans demande explicite).
+MULTIMON_ARGS = [
+    "-a", "AFSK1200",
+    "-a", "POCSAG512", "-a", "POCSAG1200", "-a", "POCSAG2400",
+    "-a", "FLEX",
+    "-a", "FSK9600",
+    "-a", "MORSE_CW",
+    "-a", "DTMF",
+    "-a", "EEA", "-a", "EIA", "-a", "CCIR",
+    "-a", "ZVEI1", "-a", "ZVEI2", "-a", "ZVEI3", "-a", "DZVEI", "-a", "PZVEI",
+    "-t", "raw", "-",
+]
+
+from sound_player import AUDIO_DEVICE, play_sound_effect
+from sound_paths import RADIO_SCANER_DIR
+
+# Effets sonores courts (habillage du scanner), fournis par l'utilisateur sur
+# le NAS (deja monte localement sur le Pi, pas besoin de copie locale).
+# Chemin de base centralise dans sound_paths.py (2026-08-31).
+SOUND_EFFECTS_DIR = RADIO_SCANER_DIR
+FREQ_OPEN_SOUND = os.path.join(SOUND_EFFECTS_DIR, "freq_open.mp3")
+FREQ_OVER_SOUND = os.path.join(SOUND_EFFECTS_DIR, "freq_over.mp3")
+SCANER_ERROR_SOUND = os.path.join(SOUND_EFFECTS_DIR, "scaner_error.mp3")
+# Sons fournis par l'utilisateur en session (2026-08-30) : "incoming" joue
+# avant l'annonce d'une reception capturee (tampon pendant la synthese
+# cloud de l'annonce, voir speak_with_lead_sound) ; "decoding_numeric"/
+# "decoding_morse" jouent pendant les deux chemins de decodage numerique
+# (voix DMR/P25 via dsd-fme, et messages texte pageur/APRS via multimon-ng)
+# pour combler le delai entre la detection et la vocalisation.
+INCOMING_SOUND = os.path.join(SOUND_EFFECTS_DIR, "incoming.mp3")
+DECODING_NUMERIC_SOUND = os.path.join(SOUND_EFFECTS_DIR, "decoding_numeric.mp3")
+DECODING_MORSE_SOUND = os.path.join(SOUND_EFFECTS_DIR, "decoding_morse.mp3")
+
+# --- Bandes surveillees ---
+# type "fm_channels" : liste de frequences fixes en FM etroite (PMR446, marine...)
+# type "sweep"        : balayage large, verrouillage sur le pic le plus fort trouve
+
+# PMR446 et toutes les frequences aeronautiques locales (ATIS, tour, sol,
+# approche Lyon, Saint-Etienne) sont gerees depuis le 2026-08-30 par
+# RTLSDR-Airband (voir airband_bridge.py, AIRBAND_WINDOWS) -- squelch reel
+# base sur le SNR par canal au lieu du couple rtl_power (pic brut) +
+# discrimination RNNoise utilise ici. La bande "aviation_locale" (type
+# fm_channels) est donc entierement retiree de BANDS -- plus aucune bande
+# fm_channels active pour l'instant (l'infrastructure check_channels_relative/
+# scan_fm_band reste en place, generique, pour une eventuelle bande a canaux
+# fixes future). Migration hybride assumee : seules les bandes a canaux fixes
+# connus a l'avance basculent, les bandes "sweep" (dont le but est justement
+# de trouver une frequence inconnue) restent ici -- voir ROADMAP.md.
+
+# Seuils margin_db calibres par bande (2026-08-31, demande explicite de
+# l'utilisateur -- "nivelage" bande par bande plutot qu'un defaut unique
+# 9.0 pour toutes). Methode : releve statistique reel sur le Pi (rtl_power,
+# memes parametres bas/haut/step que chaque bande, 3 sondages, pics DC de
+# rtl_power exclus comme le fait deja _read_csv_bins), plancher = 20e
+# percentile (meme convention que le code), marge = ecart 99e-20e
+# percentile (caracterise la variabilite normale du bruit de fond en
+# excluant un eventuel pic isole reel, plutot que le max absolu qui aurait
+# pu inclure une vraie transmission captee pendant la mesure) + 2 dB de
+# securite, ecrete a [5.0, 12.0] pour rester dans une plage raisonnable
+# autour du defaut (9.0). fm_diffusion NON touchee : deja calibree contre
+# un signal reel connu (97.1 MHz), plus fiable qu'une mesure statistique
+# de bruit -- une bande FM commerciale emet en continu 24h/24, ce qui aurait
+# fausse la mesure de "plancher" pour cette bande specifique.
+BANDS = [
+    {"name": "cb_am", "name_spoken": "CB 27 megahertz", "type": "sweep",
+     # La variante NFM ("cb") a ete retiree (2026-08-31, preuve directe en
+     # session) : une capture reelle sur "cb" (NFM) analysee spectralement
+     # -- signal fort et stable (-14 a -18dB, quasi sans variation, donc
+     # PAS un probleme de reception faible), mais spectre tres tonal
+     # (aplatissement 0.0009) concentre 500-1500Hz (formants voix), typique
+     # d'un signal AM demodule en FM par erreur (le demodulateur FM
+     # interprete les variations d'amplitude de l'AM comme du bruit de
+     # frequence -- voix reconnaissable mais grésillante/deformee). La CB
+     # en France est traditionnellement en AM (canal d'appel 27/27.275 MHz
+     # notamment) -- avec la preuve que le trafic local reel est en AM,
+     # la variante NFM ne faisait que capturer des copies degradees du
+     # meme trafic au hasard de la rotation round-robin entre les deux.
+     # Retiree plutot que rendue redondante : libere un passage de
+     # rotation pour les autres bandes.
+     "low_hz": 26_960_000, "high_hz": 27_410_000, "step_hz": 10_000, "mode": "am",
+     "margin_db": 11.0},
+    {"name": "lpd433", "name_spoken": "LPD 433", "type": "sweep",
+     # Equivalent europeen non-licencie du PMR446, meme categorie d'usage
+     # (talkies-walkies bon marche, jouets radio, etc.). Chevauche la plage
+     # radioamateur 70cm (430-440 MHz) deja balayee plus bas -- entree
+     # separee volontaire pour augmenter la frequence d'echantillonnage de
+     # cette portion precise, plus susceptible d'activite que le reste de la
+     # bande amateur (usage libre sans licence = beaucoup plus d'appareils).
+     "low_hz": 433_075_000, "high_hz": 434_775_000, "step_hz": 25_000, "mode": "nfm",
+     "margin_db": 5.7},
+    {"name": "marine_vhf", "name_spoken": "VHF marine", "type": "sweep",
+     "low_hz": 156_000_000, "high_hz": 162_025_000, "step_hz": 25_000, "mode": "nfm",
+     "margin_db": 5.0},
+    {"name": "aviation", "name_spoken": "aviation civile VHF", "type": "sweep",
+     "low_hz": 118_000_000, "high_hz": 137_000_000, "step_hz": 25_000, "mode": "am",
+     "margin_db": 10.8},
+    {"name": "milair", "name_spoken": "aviation militaire UHF", "type": "sweep",
+     # Bande aeronautique militaire UHF, standard international (OTAN),
+     # meme convention que l'aviation civile (AM, pas de 25 kHz). Ecoute
+     # passive uniquement -- comme partout ailleurs dans ce scanner, aucune
+     # tentative de dechiffrement (le pipeline ne le permettrait de toute
+     # facon pas) ; tout trafic chiffre est simplement ignore, meme
+     # traitement que ANTARES/TETRA/GSM-R deja exclus plus haut. Precedent
+     # confirme en session : pan etabli et normalise du hobby scanner
+     # internationalement (RadioReference Wiki/Forums dedies), consensus
+     # de la communaute = ecoute du non-chiffre legale, decodage du chiffre
+     # non.
+     "low_hz": 225_000_000, "high_hz": 400_000_000, "step_hz": 25_000, "mode": "am",
+     "margin_db": 12.0},
+    {"name": "radioamateur_10m", "name_spoken": "radioamateur 10 mètres", "type": "sweep",
+     # Bande manquante par rapport aux autres (6m/2m/70cm/23cm deja
+     # couvertes). Mode AM choisi car c'est historiquement et encore
+     # aujourd'hui le mode dominant pour les echanges vocaux sur 10m chez
+     # les radioamateurs (contrairement au 6m/2m/70cm largement FM/numerique
+     # en pratique) -- SSB/CW aussi autorises mais non demodulables
+     # correctement par rtl_fm.
+     "low_hz": 28_000_000, "high_hz": 29_700_000, "step_hz": 25_000, "mode": "am",
+     "margin_db": 8.3},
+    {"name": "radioamateur_6m", "name_spoken": "radioamateur 6 mètres", "type": "sweep",
+     "low_hz": 50_000_000, "high_hz": 51_000_000, "step_hz": 12_500, "mode": "nfm",
+     "margin_db": 11.7},
+    {"name": "radioamateur_2m", "name_spoken": "radioamateur 2 mètres", "type": "sweep",
+     "low_hz": 144_000_000, "high_hz": 146_000_000, "step_hz": 12_500, "mode": "nfm",
+     "margin_db": 5.6},
+    {"name": "radioamateur_70cm", "name_spoken": "radioamateur 70 centimètres", "type": "sweep",
+     "low_hz": 430_000_000, "high_hz": 440_000_000, "step_hz": 12_500, "mode": "nfm",
+     "margin_db": 12.0},
+    {"name": "radioamateur_23cm", "name_spoken": "radioamateur 23 centimètres", "type": "sweep",
+     "low_hz": 1_240_000_000, "high_hz": 1_300_000_000, "step_hz": 25_000, "mode": "nfm",
+     "margin_db": 8.4},
+    {"name": "uhf_business", "name_spoken": "radio professionnelle UHF", "type": "sweep",
+     "low_hz": 440_000_000, "high_hz": 470_000_000, "step_hz": 12_500, "mode": "nfm",
+     "margin_db": 12.0},
+    {"name": "vhf_business", "name_spoken": "radio professionnelle VHF", "type": "sweep",
+     # Equivalent VHF de la bande "radio professionnelle UHF" ci-dessus --
+     # plage classique en Europe pour le dispatch prive (taxis, securite
+     # evenementielle, chantiers, maintenance). Chevauche volontairement la
+     # VHF marine deja couverte (meme logique que LPD433/70cm plus haut).
+     "low_hz": 148_000_000, "high_hz": 174_000_000, "step_hz": 12_500, "mode": "nfm",
+     "margin_db": 7.6},
+    {"name": "pmse", "name_spoken": "micros HF sans fil", "type": "sweep",
+     # Bande PMSE officielle en France (Programme Making and Special
+     # Events -- micros HF, in-ear, liaisons audio de spectacle/evenementiel/
+     # theatre/eglise), autorisee au moins jusqu'en 2030 (confirme par
+     # recherche web en session). Juste au-dessus de la bande UHF pro
+     # ci-dessus, pas de chevauchement. Trafic reel local et imprevisible en
+     # temps reel (spectacle en cours a proximite), pas de la diffusion.
+     "low_hz": 470_000_000, "high_hz": 694_000_000, "step_hz": 25_000, "mode": "nfm",
+     "margin_db": 12.0},
+    {"name": "vhf_low", "name_spoken": "VHF basse", "type": "sweep",
+     # Trou entre la CB (jusqu'a 27.41 MHz) et le radioamateur 6m (50 MHz).
+     # Historiquement dispatch taxi/forestier, en declin mais possibles
+     # survivances locales.
+     "low_hz": 30_000_000, "high_hz": 50_000_000, "step_hz": 12_500, "mode": "nfm",
+     "margin_db": 11.4},
+    {"name": "fm_diffusion", "name_spoken": "radio FM", "type": "sweep",
+     # Plage legerement elargie (85-110 au lieu de 87.5-108 legal) pour
+     # capter les debordements de radio pirate FM aux marges de la bande.
+     "low_hz": 85_000_000, "high_hz": 110_000_000, "step_hz": 100_000, "mode": "wfm",
+     # Marge reduite par rapport au defaut (9 dB) : la FM commerciale est un
+     # signal large bande (~200 kHz) et fort quand present, contrairement aux
+     # bandes etroites (446, aviation) ou la marge stricte sert a rejeter du
+     # bruit/parasites. Calibre sur mesure reelle en session : station locale
+     # Saint-Etienne (97.1 MHz) mesuree a 7.17 dB au-dessus du plancher local
+     # -- 6 dB capte ce signal reel avec une petite marge de securite.
+     "margin_db": 6.0},
+]
+# Note : le trafic radioamateur relaye par satellite (ISS, cubesats...) tombe dans les
+# memes plages 2m/70cm/23cm ci-dessus, pas besoin d'entree dediee.
+# HF (160m/80m/40m/20m, ondes courtes...) : HORS DE PORTEE avec ce dongle,
+# confirme par test en session (pas juste un choix editorial). "-E direct"
+# (rtl_fm) / "-D" (rtl_power) demarre sans erreur logicielle mais produit
+# ZERO octet de donnees sur plusieurs frequences/modes testes (dont
+# 4625 kHz, "UVB-76") -- root cause probable : ce dongle generique
+# ("Realtek RTL2838UHIDIR, Generic RTL2832U OEM") n'a vraisemblablement pas
+# le commutateur materiel d'echantillonnage direct present sur les dongles
+# dedies HF (RTL-SDR Blog v3/v4). Le pilote ne remonte aucune erreur car la
+# commande "reussit" de son point de vue, le probleme est en aval dans le
+# circuit. Necessiterait un dongle avec vrai support HF materiel ou un
+# upconverter externe -- ne pas retenter sur ce materiel sans lecture de
+# cette note. Independamment de cette limitation materielle, ces bandes
+# seraient de toute facon de la RADIODIFFUSION (contenu a sens unique), pas
+# des echanges reels entre personnes -- voir plus haut dans ce document :
+# priorite explicite aux echanges locaux imprevisibles. Exception notee par
+# l'utilisateur : les "stations fantomes" type UVB-76 (imprevisibilite
+# genuine, contenu mysterieux) l'interessent malgre le caractere
+# unidirectionnel -- mais restent bloquees par le materiel pour l'instant.
+#
+# Deliberement NON inclus, confirme inecoutable par recherche documentaire (2026) :
+# - Secours (police/pompiers/SAMU) : reseau ANTARES, numerique chiffre (TETRAPOL,
+#   380-400 MHz), aucun outil ici ne peut le decoder.
+# - SNCF grandes lignes : GSM-R chiffre (876-880/921-925 MHz).
+# - Manoeuvres SNCF modernes : reseau TETRA chiffre.
+# La bande "radio professionnelle UHF" ci-dessus (440-470 MHz) est un compromis :
+# elle peut capter du trafic local non chiffre (securite, taxis, evenementiel,
+# eventuels restes de manoeuvre ferroviaire regionale en analogique) mais rien n'est
+# garanti -- ce sont des frequences attribuees au cas par cas, pas une liste fixe.
+
+SQUELCH_CHECK_INTEGRATION_SEC = 1
+
+# --- Squelch RELATIF au plancher de bruit (pas de seuil absolu global) ---
+# Un pic n'est retenu que s'il depasse le plancher de bruit local (mediane des
+# lectures de la bande / du passage) d'au moins cette marge, en dB.
+NOISE_MARGIN_DB = 9.0
+
+# --- Discrimination bruit / signal reel : RNNoise (reseau de neurones) ---
+# Remplace l'ancienne heuristique maison (ratio passe-haut + taux de passage
+# par zero, calibree "a l'aveugle" sur donnees synthetiques -- voir ROADMAP.md
+# 2026-08-30) par un modele entraine specifiquement a distinguer voix et
+# bruit large bande (Xiph/Mozilla RNNoise, via le wrapper local rnnoise_lib/).
+# rnnoise_process_frame() retourne une probabilite de voix par frame de 10ms
+# a 48kHz.
+#
+# IMPORTANT, trouve en session (2026-08-30) sur une VRAIE capture radio (pas
+# du bruit blanc synthetique) : la probabilite par morceau de 200ms oscille
+# violemment d'un morceau au suivant sur du bruit reel (mesure : 0.16 a 0.82
+# sur une meme frequence vide en 4 secondes) -- un seuil brut applique
+# directement au morceau courant declenchait donc de faux positifs frequents
+# (le scanner "s'arretait sur tout", signale par l'utilisateur). Lissage par
+# moyenne mobile exponentielle avant de comparer au seuil : nettement plus
+# resistant a un pic isole de bruit. Seuil et facteur de lissage sont des
+# POINTS DE DEPART, a affiner avec un retour reel sur le terrain, comme tous
+# les autres seuils de ce fichier.
+SPEECH_PROB_THRESHOLD = 0.65
+SPEECH_PROB_SMOOTHING_ALPHA = 0.3  # poids du morceau courant dans la moyenne mobile
+
+# --- Comportement scanner "nerveux" ---
+SILENCE_DEBOUNCE_SEC = 1.5
+MAX_HOLD_SEC = 45
+MIN_RMS_ACTIVE = 60
+ANALYSIS_WINDOW_MS = 200  # granularite de l'analyse bruit/signal pendant le direct
+
+# Il faut ce nombre de fenetres CONSECUTIVES classees "signal" avant de considerer
+# qu'il y a vraiment une reception (evite de reagir a un simple declic/artefact
+# d'ouverture de squelch d'une seule fenetre).
+MIN_CONSECUTIVE_SIGNAL_WINDOWS = 3
+
+# Voix numerique (DMR, P25, D-STAR, YSF, X2-TDMA, dPMR...) via dsd-fme, compile
+# manuellement (voir ROADMAP.md). Tente d'abord un decodage numerique direct
+# depuis le dongle sur les candidats FM etroite ; si rien n'accroche, on
+# retombe sur l'ecoute analogique classique.
+# Reactive en session : dsd-fme n'a pas de sortie ALSA directe (seulement
+# pulse/udp/null/dev-dsp -- voir "dsd-fme -h"), et c'etait justement sa sortie
+# "-o pulse" par defaut qui avait bloque tout le scanner au debut de la
+# session (PulseAudio pas fiable en contexte service headless). Fix : sortie
+# "-o udp" (dsd-fme "blaste" l'audio decode en PCM brut par UDP local) que
+# l'on relit nous-memes via aplay/AUDIO_DEVICE, exactement comme pour l'audio
+# analogique -- on ne demande plus jamais a dsd-fme de toucher l'audio
+# lui-meme, PulseAudio n'est plus dans la chaine.
+DSD_FME_AVAILABLE = True
+DSD_FME_UDP_HOST = "127.0.0.1"
+DSD_FME_UDP_PORT = 23456
+# Frequence d'echantillonnage standard de la voix synthetisee par mbelib/dsd-fme.
+DSD_FME_VOICE_SAMPLE_RATE = 8000
+# Duree max d'attente d'un premier paquet audio decode avant d'abandonner et
+# de retomber sur l'ecoute analogique. Volontairement court (le scanner est
+# "nerveux", pas question de s'attarder sur chaque candidat) -- a ajuster si
+# le decodage reel met plus de temps a accrocher en pratique.
+DSD_FME_PROBE_SEC = 4
+
+# Pic DC : artefact materiel propre aux dongles RTL-SDR (architecture a conversion
+# directe), qui apparait comme un pic artificiel au centre exact de chaque segment
+# balaye par rtl_power. On exclut les bins trop proches du centre de chaque
+# segment pour ne pas le prendre pour un vrai signal.
+DC_SPIKE_GUARD_BINS = 3
+
+
+def _read_csv_bins(path):
+    """Lit un CSV rtl_power et retourne la liste de tous les niveaux dB valides,
+    ainsi que la liste (freq, db) de chaque bin pour retrouver le pic. Exclut les
+    bins trop proches du centre de chaque segment balaye (pic DC materiel) --
+    mais SEULEMENT s'il y a plusieurs segments : sur une plage etroite tenant en
+    un seul segment (ex: verification d'une frequence precise), le centre du
+    segment peut coincider exactement avec la frequence recherchee, et exclure
+    cette zone reviendrait a s'aveugler soi-meme sur la seule donnee utile
+    (bug trouve en session sur un test cible a 97.1 MHz)."""
+    rows = []
+    with open(path, "r", errors="replace") as f:
+        for line in f:
+            fields = line.strip().split(",")
+            if len(fields) < 7:
+                continue
+            rows.append(fields)
+
+    hop_count = len({(fields[2], fields[3]) for fields in rows})
+    apply_dc_guard = hop_count > 1
+
+    all_db = []
+    bins = []
+    for fields in rows:
+        hz_low = float(fields[2])
+        hz_high = float(fields[3])
+        hz_step = float(fields[4])
+        db_values = fields[6:]
+        hop_center = (hz_low + hz_high) / 2
+        for i, raw in enumerate(db_values):
+            try:
+                db = float(raw)
+            except ValueError:
+                continue
+            if math.isnan(db):
+                continue
+            freq = hz_low + i * hz_step
+            if apply_dc_guard and abs(freq - hop_center) <= hz_step * DC_SPIKE_GUARD_BINS:
+                continue  # zone du pic DC, on ignore ce bin
+            all_db.append(db)
+            bins.append((freq, db))
+    return all_db, bins
+
+
+def _percentile(values, pct):
+    """Estimateur de plancher de bruit plus robuste que la mediane sur les bandes
+    densement occupees (ex: FM commerciale) : avec une mediane, si plus de la
+    moitie des bins contiennent un vrai signal, le "plancher" est deja tire vers
+    le haut par du contenu reel, ce qui peut faire echouer la detection meme d'un
+    signal tres fort (bug trouve en session sur la bande FM). Un percentile bas
+    (ex: 20e) reste ancre sur le vrai bruit tant qu'une minorite de bins suffit a
+    l'estimer, meme si la majorite de la bande est occupee."""
+    if not values:
+        return None
+    s = sorted(values)
+    idx = int(len(s) * pct / 100)
+    idx = min(idx, len(s) - 1)
+    return s[idx]
+
+
+def _median(values):
+    return _percentile(values, 50)
+
+
+def check_channels_relative(freqs, span_hz=25_000, margin_db=None):
+    """Lit la puissance de plusieurs canaux fixes en un seul passage rtl_power,
+    calcule le plancher de bruit local (mediane de tous les canaux lus), et
+    retourne la liste des (freq, db) qui depassent plancher + marge, triee par
+    force decroissante."""
+    if margin_db is None:
+        margin_db = NOISE_MARGIN_DB
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        low = int(min(freqs) - span_hz)
+        high = int(max(freqs) + span_hz)
+        step = span_hz
+        band = f"{low}:{high}:{step}"
+        result = subprocess.run(
+            ["rtl_power", "-f", band, "-i", str(SQUELCH_CHECK_INTEGRATION_SEC), "-1", tmp_path],
+            capture_output=True, text=True, errors="replace", timeout=20,
+        )
+        global _rtl_power_failure_count
+        if result.returncode != 0:
+            _rtl_power_failure_count += 1
+            print(f"[radio_watch] ECHEC rtl_power (canaux fixes) rc={result.returncode}: {result.stderr.strip()[-200:]}")
+            return []
+
+        all_db, bins = _read_csv_bins(tmp_path)
+        noise_floor = _percentile(all_db, 20)
+        if noise_floor is None:
+            _rtl_power_failure_count += 1
+            return []
+        _rtl_power_failure_count = 0
+
+        threshold = noise_floor + margin_db
+        candidates = []
+        for target in freqs:
+            nearest_db = min(bins, key=lambda b: abs(b[0] - target))[1] if bins else None
+            if nearest_db is not None and nearest_db > threshold:
+                candidates.append((target, nearest_db))
+        candidates.sort(key=lambda c: c[1], reverse=True)
+        return candidates
+    except Exception:
+        return []
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def sweep_band_peak_relative(low_hz, high_hz, step_hz, margin_db=None):
+    """Balaye une plage large, calcule le plancher de bruit local (mediane du
+    balayage) et retourne (freq, db) du pic seulement s'il depasse
+    plancher + marge. Sinon (None, None)."""
+    if margin_db is None:
+        margin_db = NOISE_MARGIN_DB
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        band = f"{low_hz}:{high_hz}:{step_hz}"
+        result = subprocess.run(
+            ["rtl_power", "-f", band, "-i", "1", "-1", tmp_path],
+            capture_output=True, text=True, errors="replace", timeout=60,
+        )
+        global _rtl_power_failure_count
+        if result.returncode != 0:
+            _rtl_power_failure_count += 1
+            print(f"[radio_watch] ECHEC rtl_power (balayage) rc={result.returncode}: {result.stderr.strip()[-200:]}")
+            return None, None
+
+        all_db, bins = _read_csv_bins(tmp_path)
+        noise_floor = _percentile(all_db, 20)
+        if noise_floor is None or not bins:
+            _rtl_power_failure_count += 1
+            return None, None
+        _rtl_power_failure_count = 0
+
+        best_freq, best_db = max(bins, key=lambda b: b[1])
+        if best_db > noise_floor + margin_db:
+            return best_freq, best_db
+        return None, None
+    except Exception:
+        return None, None
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
+def _rnnoise_speech_probability(pcm_bytes, rnnoise_state):
+    """Fait tourner RNNoise sur le morceau (deja a 48kHz mono int16, voir
+    _chunk_is_signal) frame par frame (10ms/480 echantillons chacune) et
+    retourne la moyenne des probabilites de voix sur toutes les frames du
+    morceau -- moyenner plusieurs frames stabilise la decision par rapport a
+    une seule frame de 10ms (mesure en session : bruit blanc pur donne des
+    probabilites par frame etalees sur toute la plage 0.04-0.83)."""
+    samples = np.frombuffer(pcm_bytes, dtype=np.int16)
+    n_frames = len(samples) // RNNOISE_FRAME_SIZE
+    if n_frames == 0:
+        return 0.0
+    probs = []
+    for i in range(n_frames):
+        frame = samples[i * RNNOISE_FRAME_SIZE : (i + 1) * RNNOISE_FRAME_SIZE]
+        _, prob = _rnnoise_process_frame(rnnoise_state, frame)
+        probs.append(prob)
+    return sum(probs) / len(probs)
+
+
+def _chunk_is_signal(chunk_bytes, sample_rate, rnnoise_state, resample_state, smoothed_prob):
+    """Decide si un morceau audio ressemble a un signal module plutot qu'a du
+    bruit : filtre RMS bon marche d'abord (evite de solliciter RNNoise sur du
+    silence pur), puis probabilite de voix RNNoise (lissee, voir plus haut)
+    sur le morceau resample a 48kHz (frequence native du modele -- voir
+    rnnoise_lib/rnnoise.py). Retourne (is_signal, rms, resample_state,
+    smoothed_prob) -- resample_state ET smoothed_prob doivent tous les deux
+    etre reportes d'un appel a l'autre (continuite du reechantillonnage et
+    du lissage)."""
+    n = len(chunk_bytes) // 2
+    if n < 32:
+        return False, 0, resample_state, smoothed_prob
+    try:
+        rms = audioop.rms(chunk_bytes, 2)
+    except Exception:
+        rms = 0
+    if rms < MIN_RMS_ACTIVE:
+        return False, rms, resample_state, smoothed_prob
+
+    if sample_rate != RNNOISE_SAMPLE_RATE:
+        resampled, resample_state = audioop.ratecv(
+            chunk_bytes, 2, 1, sample_rate, RNNOISE_SAMPLE_RATE, resample_state
+        )
+    else:
+        resampled = chunk_bytes
+
+    chunk_prob = _rnnoise_speech_probability(resampled, rnnoise_state)
+    if smoothed_prob is None:
+        smoothed_prob = chunk_prob
+    else:
+        smoothed_prob = (
+            SPEECH_PROB_SMOOTHING_ALPHA * chunk_prob
+            + (1 - SPEECH_PROB_SMOOTHING_ALPHA) * smoothed_prob
+        )
+    is_signal = smoothed_prob >= SPEECH_PROB_THRESHOLD
+    return is_signal, rms, resample_state, smoothed_prob
+
+
+def _dsdfme_stdout_watcher(proc):
+    """Affiche en continu la sortie texte de dsd-fme (statut de synchro,
+    identifiants, etc.) dans les logs -- utile pour comprendre en pratique ce
+    qui accroche ou pas, sans avoir a rejouer manuellement."""
+    try:
+        for raw_line in proc.stdout:
+            text = raw_line.decode(errors="replace").strip()
+            if text:
+                print(f"[radio_watch] dsd-fme: {text}")
+    except Exception:
+        pass
+
+
+def try_digital_voice_decode(freq_hz):
+    """Tente un decodage vocal numerique (DMR/P25/NXDN/D-STAR/YSF/dPMR/X2-TDMA)
+    directement depuis le dongle RTL-SDR via dsd-fme. dsd-fme n'a pas de
+    sortie ALSA directe -- on le fait sortir en UDP local (PCM brut, voix
+    synthetisee) et on relit ce flux nous-memes via aplay/AUDIO_DEVICE,
+    plutot que de lui laisser gerer l'audio (sa sortie "pulse" par defaut est
+    ce qui avait bloque tout le scanner plus tot dans la session). Retourne
+    True des qu'un premier paquet audio decode est recu (heuristique directe
+    : si dsd-fme envoie de l'audio synthetise, c'est qu'il a reellement
+    accroche quelque chose -- pas de decode = pas d'envoi)."""
+    if not DSD_FME_AVAILABLE:
+        return False
+    sock = None
+    proc = None
+    aplay = None
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.bind((DSD_FME_UDP_HOST, DSD_FME_UDP_PORT))
+        sock.settimeout(0.5)
+
+        proc = subprocess.Popen(
+            ["dsd-fme", "-fa", "-i", f"rtl:0:{int(freq_hz)}:0:0:12:0:2",
+             "-o", f"udp:{DSD_FME_UDP_HOST}:{DSD_FME_UDP_PORT}"],
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        )
+        stdout_thread = threading.Thread(target=_dsdfme_stdout_watcher, args=(proc,), daemon=True)
+        stdout_thread.start()
+
+        # Tampon audible pendant la sonde dsd-fme (jusqu'a DSD_FME_PROBE_SEC
+        # de silence sinon) -- comble le delai entre la detection du
+        # candidat et la confirmation d'un decodage reel.
+        play_sound_effect(DECODING_NUMERIC_SOUND, timeout_sec=DSD_FME_PROBE_SEC, label="radio_watch")
+
+        aplay = subprocess.Popen(
+            ["aplay", "-D", AUDIO_DEVICE, "-r", str(DSD_FME_VOICE_SAMPLE_RATE),
+             "-f", "S16_LE", "-c", "1", "-q"],
+            stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
+        )
+
+        got_audio = False
+        captured_chunks = []
+        deadline = time.time() + DSD_FME_PROBE_SEC
+        while time.time() < deadline:
+            try:
+                data, _ = sock.recvfrom(65536)
+            except socket.timeout:
+                continue
+            if not data:
+                continue
+            got_audio = True
+            captured_chunks.append(data)
+            try:
+                aplay.stdin.write(data)
+            except Exception:
+                break
+
+        log_session = sound_player.get_recording_session()
+        if log_session is not None and captured_chunks:
+            log_session.add_raw_pcm(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, "s16le")
+
+        if got_audio:
+            print(f"[radio_watch] dsd-fme a decode de l'audio numerique sur {freq_hz/1e6:.4f} MHz")
+        return got_audio
+    except Exception as exc:
+        print(f"[radio_watch] dsd-fme indisponible: {exc}")
+        return False
+    finally:
+        for p in (proc, aplay):
+            if p is not None:
+                try:
+                    p.terminate()
+                    p.wait(timeout=2)
+                except Exception:
+                    try:
+                        p.kill()
+                    except Exception:
+                        pass
+        if sock is not None:
+            try:
+                sock.close()
+            except Exception:
+                pass
+
+
+# Nombre minimal de caracteres alphanumeriques utiles pour qu'un message
+# decode soit considere reel plutot que bruit. Trouve en session : sur une
+# fenetre de 25 minutes d'ecoute reelle, TOUS les messages decodes etaient
+# soit un caractere isole ("O", "G"...) soit du bruit MORSE_CW non resolu
+# (notation entre chevrons type "<___.>", "<____>") -- zero vrai contenu.
+# MORSE_CW en particulier est tres sujet aux faux positifs sur du bruit/clics
+# rythmiques (risque deja identifie a son ajout, confirme ici par les logs).
+MIN_DECODED_MESSAGE_CHARS = 4
+
+
+def _is_meaningful_decoded_message(msg, min_chars=MIN_DECODED_MESSAGE_CHARS):
+    """Filtre les faux positifs des decodeurs multimon-ng : retire d'abord
+    les fragments morse non resolus (notation entre chevrons, ex:
+    "<___.>") puis exige un minimum de caracteres alphanumeriques reels
+    dans ce qui reste."""
+    cleaned = re.sub(r"<[^>]*>", "", msg)
+    alnum_count = sum(1 for c in cleaned if c.isalnum())
+    return alnum_count >= min_chars
+
+
+def _multimon_reader(proc, out_queue):
+    try:
+        for raw_line in proc.stdout:
+            text = raw_line.decode(errors="replace").strip()
+            if not text:
+                continue
+            if text.startswith("Enabled demodulators") or text.startswith("multimon-ng"):
+                continue
+            out_queue.put(text)
+    except Exception:
+        pass
+
+
+RTL_FM_LOCK_ATTEMPTS = 3
+RTL_FM_LOCK_PROBE_SEC = 0.5
+
+
+def _aplay_stderr_watcher(proc):
+    """Lit en continu le stderr d'aplay pendant toute la diffusion. Le mode
+    silencieux (-q) supprime l'affichage normal, mais pas forcement les
+    avertissements de sous-alimentation de tampon (underrun) -- invisibles
+    jusqu'ici puisque rien ne lisait ce flux en continu (seulement sur echec
+    d'ecriture). Un underrun cote ALSA se traduit typiquement par un
+    grattement/craquement audible, hypothese testee ici pour la distorsion
+    signalee en session (voir ROADMAP.md)."""
+    try:
+        for raw_line in proc.stderr:
+            text = raw_line.decode(errors="replace").strip()
+            if not text:
+                continue
+            print(f"[radio_watch] aplay signalement: {text}")
+    except Exception:
+        pass
+
+
+def _rtl_fm_stderr_watcher(proc, pll_failed_event):
+    """Lit en continu le stderr de rtl_fm (jete auparavant via DEVNULL -- ce
+    qui masquait ce bug pendant tout le debut de la session). Signale via
+    l'evenement partage un verrouillage PLL rate, sans quoi le message reste
+    invisible bien que le flux audio demodule soit inutilisable (bruit/
+    sifflement au lieu du contenu reel, meme symptome que celui deja trouve
+    avec rtl_power en session -- voir ROADMAP.md)."""
+    try:
+        for raw_line in proc.stderr:
+            text = raw_line.decode(errors="replace").strip()
+            if not text:
+                continue
+            if "PLL not locked" in text:
+                pll_failed_event.set()
+            elif "error" in text.lower() or "failed" in text.lower():
+                print(f"[radio_watch] rtl_fm signalement: {text}")
+    except Exception:
+        pass
+
+
+def _open_rtl_fm(rtl_fm_cmd):
+    """Ouvre rtl_fm et verifie que le tuner a bien verrouille sa frequence
+    avant de rendre la main. Le R820T rate parfois son verrouillage PLL sur
+    un changement de frequence a froid (confirme a plusieurs reprises en
+    session, aussi bien avec rtl_power qu'ici) : le process ne plante pas,
+    mais le signal demodule est inutilisable. Reessaie quelques fois avant
+    d'abandonner et d'utiliser quand meme le dernier essai (mieux que rien)."""
+    proc = None
+    for attempt in range(1, RTL_FM_LOCK_ATTEMPTS + 1):
+        proc = subprocess.Popen(rtl_fm_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        pll_failed_event = threading.Event()
+        stderr_thread = threading.Thread(
+            target=_rtl_fm_stderr_watcher, args=(proc, pll_failed_event), daemon=True,
+        )
+        stderr_thread.start()
+        time.sleep(RTL_FM_LOCK_PROBE_SEC)
+        if not pll_failed_event.is_set():
+            return proc
+        if attempt < RTL_FM_LOCK_ATTEMPTS:
+            print(f"[radio_watch] rtl_fm: PLL non verrouille (essai {attempt}/{RTL_FM_LOCK_ATTEMPTS}), nouvelle tentative...")
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+    print(f"[radio_watch] rtl_fm: echec de verrouillage PLL apres {RTL_FM_LOCK_ATTEMPTS} tentatives, on continue quand meme")
+    return proc
+
+
+def _rtl_fm_reader(stream, out_queue, chunk_size):
+    """Lit en continu le flux demodule de rtl_fm et empile les morceaux dans
+    une file, independamment du rythme de consommation cote lecture/analyse.
+    Demarre des l'ouverture du canal (avant meme l'annonce TTS) pour que rien
+    ne soit perdu du debut de la transmission pendant que l'annonce et le son
+    d'ouverture jouent -- la file sert de cache, videe en rafale des que la
+    lecture commence reellement."""
+    try:
+        while True:
+            chunk = stream.read(chunk_size)
+            if not chunk:
+                out_queue.put(None)
+                break
+            out_queue.put(chunk)
+    except Exception:
+        out_queue.put(None)
+
+
+def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
+    """Diffuse en direct sur les haut-parleurs tant qu'il y a un vrai signal
+    (pas juste du bruit), coupe des que le canal redevient silencieux/bruite
+    (avec un court debounce), plafonne a MAX_HOLD_SEC. Pour les canaux FM, tente
+    en parallele un decodage numerique (APRS, pageurs) via multimon-ng et lit au
+    TTS tout texte decode. Retourne True si un signal reel a ete entendu ou si du
+    texte a ete decode."""
+    mhz = freq_hz / 1_000_000
+    rtl_fm_mode = "wbfm" if mode == "wfm" else mode
+    if mode == "wfm":
+        # bug trouve en session : rtl_fm plante (SIGFPE) en mode wbfm avec un
+        # taux de sortie de 22050 Hz (ratio de suréchantillonnage problematique).
+        # Un taux d'entree/sortie plus classique pour la diffusion FM evite le crash.
+        sample_rate = 48000
+        # "-E dc" : filtre de blocage DC. Le tuner R820T a un artefact materiel
+        # connu (architecture a conversion directe) qui produit un decalage/pic
+        # DC pres du centre de la bande accordee -- deja identifie en session
+        # avec rtl_power (DC_SPIKE_GUARD_BINS) et confirme responsable d'un
+        # sifflement aigu constant, present meme sur du bruit neutre, signale
+        # par l'utilisateur sur plusieurs bandes.
+        rtl_fm_cmd = ["rtl_fm", "-f", str(int(freq_hz)), "-M", rtl_fm_mode,
+                      "-s", "200000", "-r", str(sample_rate), "-l", "0",
+                      "-E", "dc", "-E", "deemp"]
+    else:
+        # Pas de "-E deemp" ici : cette correction compense la pre-accentuation
+        # des emetteurs de diffusion FM commerciale (wfm) -- appliquee a tort
+        # au NFM/AM (446, aviation, marine, radioamateur...) qui n'utilisent
+        # pas cette convention, ca attenue anormalement les aigus et rend la
+        # voix etouffee/brouillee (trouve en session : la voix de test PMR446
+        # etait audible mais peu claire, symptome caracteristique). "-E dc"
+        # garde par contre : voir commentaire ci-dessus (branche wfm).
+        rtl_fm_cmd = ["rtl_fm", "-f", str(int(freq_hz)), "-M", rtl_fm_mode,
+                      "-s", str(sample_rate), "-l", "0", "-E", "dc"]
+
+    rtl_fm = _open_rtl_fm(rtl_fm_cmd)
+
+    chunk_size = int(sample_rate * 2 * ANALYSIS_WINDOW_MS / 1000)
+    audio_queue = queue.Queue()
+    reader_thread = threading.Thread(
+        target=_rtl_fm_reader, args=(rtl_fm.stdout, audio_queue, chunk_size), daemon=True,
+    )
+    reader_thread.start()
+
+    # Annonce et son d'ouverture AVANT la diffusion : la capture tourne deja
+    # en arriere-plan (fil ci-dessus) pendant ce temps, donc rien n'est perdu
+    # du debut de la transmission -- voir _rtl_fm_reader. "incoming" avant
+    # l'annonce (tampon pendant la synthese cloud, voir speak_with_lead_sound) ;
+    # annonce simplifiee (2026-08-30, demande de l'utilisateur) : la bande
+    # seule, sans la frequence exacte en MHz -- peu intelligible a l'oral et
+    # sans interet pour l'usage courant, band_label porte deja le nom
+    # d'usage clair ("canal 446 civil", "bande aviation militaire UHF"...).
+    speak_with_lead_sound(INCOMING_SOUND, band_label, label="radio_watch")
+    play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
+
+    # Peripherique explicite (AUDIO_DEVICE) : le "default" ALSA de cette
+    # machine route vers PulseAudio, qui se heurte a un bug connu du pilote
+    # audio embarque du Pi (snd_bcm2835 -- "ALSA woke us up... nothing to
+    # write", confirme dans le journal systemd) et echoue silencieusement a
+    # produire du son (aucune exception cote Python : les ecritures dans le
+    # pipe reussissent meme si rien n'est reellement joue). plughw parle
+    # direct au materiel et fait la conversion de format/frequence/canaux
+    # necessaire (dmix seul refuse le mono demande ici -- teste et ecarte en
+    # session). L'acces exclusif qu'il impose n'est pas un probleme : espeak
+    # et les effets sonores ne sont appeles qu'avant ou apres la diffusion,
+    # jamais pendant, donc aucune vraie concurrence sur le peripherique.
+    aplay = subprocess.Popen(
+        # -B : tampon ALSA elargi (500ms) pour absorber l'irregularite de
+        # rythme d'ecriture introduite par le passage par la file
+        # audio_queue/fil de lecture (hypothese de sous-alimentation de
+        # tampon -- underrun -- comme cause de la distorsion signalee en
+        # session, a confirmer via le flux d'erreur surveille ci-dessous).
+        ["aplay", "-D", AUDIO_DEVICE,
+         "-r", str(sample_rate), "-f", "S16_LE", "-c", "1", "-q", "-B", "500000"],
+        stdin=subprocess.PIPE, stderr=subprocess.PIPE,
+    )
+    aplay_stderr_thread = threading.Thread(
+        target=_aplay_stderr_watcher, args=(aplay,), daemon=True,
+    )
+    aplay_stderr_thread.start()
+
+    multimon = None
+    multimon_queue = None
+    multimon_thread = None
+    if mode == "nfm":
+        try:
+            multimon = subprocess.Popen(
+                ["multimon-ng"] + MULTIMON_ARGS,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            )
+            multimon_queue = queue.Queue()
+            multimon_thread = threading.Thread(
+                target=_multimon_reader, args=(multimon, multimon_queue), daemon=True,
+            )
+            multimon_thread.start()
+        except Exception:
+            multimon = None
+
+    quiet_windows_needed = int(SILENCE_DEBOUNCE_SEC * 1000 / ANALYSIS_WINDOW_MS)
+    quiet_windows_seen = 0
+    consecutive_signal_windows = 0
+    total_bytes = 0
+    max_bytes = int(sample_rate * 2 * MAX_HOLD_SEC)
+    heard_signal = False  # confirmé : au moins MIN_CONSECUTIVE_SIGNAL_WINDOWS de suite
+    decoded_messages = []
+
+    rnnoise_state = _rnnoise_create()
+    resample_state = None
+    smoothed_prob = None
+    captured_chunks = []
+
+    # Filtre passe-bande vocal (300-3000Hz, 2026-08-31, demande explicite
+    # de l'utilisateur suite a l'analyse spectrale de noise_study/) -- pas
+    # applique en WFM (diffusion FM commerciale/pirate : musique/parole a
+    # pleine bande, un filtrage vocal etroit degraderait le contenu sans
+    # raison, ce n'est pas la bande visee par cette demande).
+    voice_filter = audio_filters.VoiceBandpassFilter(sample_rate) if mode != "wfm" else None
+
+    start = time.time()
+    try:
+        while total_bytes < max_bytes and time.time() - start < MAX_HOLD_SEC + 5:
+            # Timeout (pas un .get() bloquant sans limite) : une attente
+            # bloquante pure sur Condition.wait() ne se reveille QUE quand la
+            # file recoit quelque chose, et un signal (SIGTERM, "systemctl
+            # restart") ne peut alors pas interrompre l'attente -- ca laissait
+            # rtl_fm/aplay/multimon orphelins indefiniment (observe et
+            # corrige en session, plusieurs redemarrages bloques). Une
+            # reverification periodique laisse le signal s'appliquer.
+            try:
+                chunk = audio_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            if chunk is None:
+                break
+            if multimon is not None:
+                # Signal BRUT, non filtre -- multimon-ng decode des tons
+                # numeriques (POCSAG, AFSK1200...) qui peuvent deborder ou
+                # etre sensibles a la phase/amplitude alteree par le
+                # filtre vocal, mieux vaut ne pas y toucher pour le decode.
+                try:
+                    multimon.stdin.write(chunk)
+                except Exception:
+                    pass
+            if voice_filter is not None:
+                chunk = voice_filter.process_s16le(chunk)
+            try:
+                aplay.stdin.write(chunk)
+            except Exception:
+                # Le detail de l'erreur remonte via le fil aplay_stderr_thread
+                # (surveillance continue, voir _aplay_stderr_watcher) -- ne pas
+                # relire aplay.stderr ici, ce serait un deuxieme lecteur sur le
+                # meme flux et ca entrerait en conflit avec ce fil.
+                break
+            captured_chunks.append(chunk)
+            total_bytes += len(chunk)
+
+            is_signal, rms, resample_state, smoothed_prob = _chunk_is_signal(
+                chunk, sample_rate, rnnoise_state, resample_state, smoothed_prob
+            )
+            if is_signal:
+                consecutive_signal_windows += 1
+                quiet_windows_seen = 0
+                if consecutive_signal_windows >= MIN_CONSECUTIVE_SIGNAL_WINDOWS and not heard_signal:
+                    # Diagnostic (2026-08-30) : trace la valeur reelle qui a
+                    # declenche la detection -- indispensable pour calibrer
+                    # SPEECH_PROB_THRESHOLD/SPEECH_PROB_SMOOTHING_ALPHA sur de
+                    # vraies conditions RF (impossible a rejouer apres coup,
+                    # le spectre change en permanence -- voir ROADMAP.md).
+                    print(f"[radio_watch] declenchement signal : smoothed_prob={smoothed_prob:.3f}, rms={rms}")
+                    heard_signal = True
+            else:
+                consecutive_signal_windows = 0
+                quiet_windows_seen += 1
+                if heard_signal and quiet_windows_seen >= quiet_windows_needed:
+                    break
+
+            if multimon_queue is not None:
+                while not multimon_queue.empty():
+                    decoded_messages.append(multimon_queue.get_nowait())
+    finally:
+        procs = [rtl_fm, aplay]
+        if multimon is not None:
+            procs.append(multimon)
+        for proc in procs:
+            try:
+                proc.terminate()
+                proc.wait(timeout=2)
+            except Exception:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+        _rnnoise_destroy(rnnoise_state)
+
+    log_session = sound_player.get_recording_session()
+    if log_session is not None and captured_chunks:
+        log_session.add_raw_pcm(b"".join(captured_chunks), sample_rate, "s16le")
+
+    if multimon_queue is not None:
+        time.sleep(0.2)
+        while not multimon_queue.empty():
+            decoded_messages.append(multimon_queue.get_nowait())
+
+    meaningful_messages = [m for m in decoded_messages if _is_meaningful_decoded_message(m)]
+    ignored_count = len(decoded_messages) - len(meaningful_messages)
+    if ignored_count:
+        print(f"[radio_watch] {ignored_count} message(s) decode(s) ignore(s) (trop court/bruit)")
+    for msg in meaningful_messages:
+        print(f"[radio_watch] decode numerique: {msg}")
+        speak_with_lead_sound(DECODING_MORSE_SOUND, f"Message numérique décodé : {msg}", label="radio_watch")
+
+    return heard_signal or bool(meaningful_messages)
+
+
+def _handle_candidate(freq, mode, band_label):
+    # Verrou audio partage avec adsb_watch.py (processus separe) : garantit
+    # qu'aucune annonce d'avion ne chevauche l'annonce/diffusion/son de fin
+    # d'un candidat radio. Tenu pendant tout le cycle actif, relache des que
+    # termine (y compris en cas d'echec/candidat ecarte).
+    lock = audio_lock.acquire()
+    # Journal audio (radio_log.py, 2026-08-31, demande explicite) : une
+    # session par candidat, activee pour toute la duree du cycle -- tout
+    # son joue via play_sound_effect() (habillage + annonce TTS cloud) y
+    # est automatiquement copie (voir sound_player.py), le contenu radio
+    # capte y est ajoute explicitement dans try_digital_voice_decode()/
+    # stream_until_quiet(). Sauvegardee seulement si un vrai signal a ete
+    # entendu -- un candidat ecarte comme bruit n'est pas archive.
+    log_session = radio_log.RadioLogSession(band_label)
+    sound_player.set_recording_session(log_session)
+    try:
+        if mode == "nfm" and try_digital_voice_decode(freq):
+            speak(f"Réception numérique terminée, {band_label}.")
+            log_session.finalize()
+            return True
+        if stream_until_quiet(freq, mode, band_label):
+            play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
+            log_session.finalize()
+            return True
+        log_session.discard()
+        print("[radio_watch] candidat ecarte (bruit, pas de signal reel)")
+        return False
+    finally:
+        sound_player.set_recording_session(None)
+        audio_lock.release(lock)
+
+
+def scan_fm_band(band):
+    margin_db = band.get("margin_db", NOISE_MARGIN_DB)
+    span_hz = band.get("span_hz", 25_000)
+    candidates = check_channels_relative(band["channels"], span_hz=span_hz, margin_db=margin_db)
+    for freq, db in candidates:
+        print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.5f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")
+        if _handle_candidate(freq, band["mode"], f"canal {band['name_spoken']}"):
+            return True
+    return False
+
+
+def scan_sweep_band(band):
+    margin_db = band.get("margin_db", NOISE_MARGIN_DB)
+    freq, db = sweep_band_peak_relative(band["low_hz"], band["high_hz"], band["step_hz"], margin_db=margin_db)
+    if freq is not None:
+        print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.4f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")
+        if _handle_candidate(freq, band["mode"], f"bande {band['name_spoken']}"):
+            return True
+    return False
+
+
+def _get_cpu_temp_c():
+    """Temperature CPU du Pi via vcgencmd (integre a Raspberry Pi OS).
+    Retourne None si indisponible plutot que de lever une exception --
+    la securite thermique se contente alors du cycle marche/pause
+    regulier."""
+    try:
+        result = subprocess.run(
+            ["vcgencmd", "measure_temp"], capture_output=True, timeout=5, text=True,
+        )
+        # format attendu : "temp=74.5'C"
+        value = result.stdout.strip().split("=")[1].rstrip("'C")
+        return float(value)
+    except Exception:
+        return None
+
+
+def _get_cpu_load_1min():
+    """Charge moyenne 1 minute (os.getloadavg(), integre a Python/Linux,
+    pas de dependance externe). Sert a distinguer une chauffe due a un
+    calcul intense en cours (dsd-fme, decode numerique...) d'une chauffe
+    due a l'environnement (chaleur ambiante) -- voir CPU_LOAD_WATCH_THRESHOLD.
+    Retourne None si indisponible."""
+    try:
+        return os.getloadavg()[0]
+    except Exception:
+        return None
+
+
+def _fetch_outdoor_temp_c():
+    """Temperature exterieure actuelle (Open-Meteo, meme source que
+    meteo_watch.py, gratuite/sans cle). Retourne None en cas d'echec --
+    l'appelant retombe alors sur un bonus environnemental neutre."""
+    try:
+        resp = requests.get(
+            OUTDOOR_WEATHER_URL,
+            params={
+                "latitude": OUTDOOR_REF_LAT,
+                "longitude": OUTDOOR_REF_LON,
+                "current": "temperature_2m",
+                "timezone": "Europe/Paris",
+            },
+            timeout=10,
+        )
+        resp.raise_for_status()
+        return resp.json().get("current", {}).get("temperature_2m")
+    except Exception as exc:
+        print(f"[radio_watch] erreur API temperature exterieure : {exc}")
+        return None
+
+
+def _is_night_now():
+    hour = time.localtime().tm_hour
+    if NIGHT_START_HOUR > NIGHT_END_HOUR:
+        return hour >= NIGHT_START_HOUR or hour < NIGHT_END_HOUR
+    return NIGHT_START_HOUR <= hour < NIGHT_END_HOUR
+
+
+def _outdoor_temp_bonus_c(outdoor_temp):
+    if outdoor_temp is None:
+        return 0.0
+    for threshold, bonus in OUTDOOR_TEMP_BONUS_TIERS:
+        if outdoor_temp < threshold:
+            return bonus
+    return 0.0
+
+
+def _compute_env_bonus_c(outdoor_temp):
+    """Bonus (ou malus) a ajouter au seuil de coupure de base, combinant
+    heure (nuit = plus de marge, la temperature ne peut que descendre) et
+    temperature exterieure actuelle. Toujours ecrete a ENV_BONUS_MAX_C --
+    le garde-fou TEMP_CRITICAL_C - 2.0 protege quoi qu'il arrive."""
+    bonus = _outdoor_temp_bonus_c(outdoor_temp)
+    if _is_night_now():
+        bonus += NIGHT_BONUS_C
+    return max(-ENV_BONUS_MAX_C, min(bonus, ENV_BONUS_MAX_C))
+
+
+def _speak_pause(message, sound=None):
+    lock = audio_lock.acquire()
+    try:
+        if sound:
+            speak_with_lead_sound(sound, message, label="radio_watch")
+        else:
+            speak(message)
+    finally:
+        audio_lock.release(lock)
+
+
+def main():
+    print("[radio_watch] demarrage de la veille radio")
+    radio_log.start_purge_scheduler()
+    fm_bands = [b for b in BANDS if b["type"] == "fm_channels"]
+    sweep_bands = [b for b in BANDS if b["type"] == "sweep"]
+    sweep_idx = 0
+    device_down_announced = False
+
+    cycle_start = time.time()
+    last_temp_check = 0.0
+
+    # Historique glissant des pauses thermiques -- voir commentaire sur
+    # PAUSE_HISTORY_LEN plus haut. pause_active_durations garde la duree de
+    # chaque periode active (entre la fin d'une pause et le debut de la
+    # suivante) ; sert a detecter un resserrement (les pauses se rapprochent)
+    # et a etirer resume_adaptive_offset_c en reponse. pause_durations garde
+    # la duree de chaque pause elle-meme (temps de refroidissement reel) ;
+    # sert a relever pause_adaptive_offset_c quand le refroidissement est
+    # rapide (bonne marge thermique -- voir TEMP_PAUSE_ADAPTIVE_MAX_C).
+    pause_active_durations = collections.deque(maxlen=PAUSE_HISTORY_LEN)
+    pause_durations = collections.deque(maxlen=PAUSE_HISTORY_LEN)
+    last_pause_end_time = None
+    resume_adaptive_offset_c = 0.0
+    pause_adaptive_offset_c = 0.0
+
+    # Zone de surveillance (voir CPU_LOAD_WATCH_THRESHOLD) : quand le seuil
+    # de coupure adaptatif est atteint mais que le CPU n'est pas charge par
+    # autre chose, reste actif mais verifie beaucoup plus souvent au lieu de
+    # couper franchement -- seul TEMP_CRITICAL_C force alors une coupure.
+    in_watch_zone = False
+
+    # Contexte environnemental (voir _compute_env_bonus_c) -- sonde exterieur
+    # peu frequente (30 min), bonus recalcule a chaque verification thermique
+    # (l'heure, elle, change en continu sans appel reseau).
+    last_outdoor_poll = 0.0
+    outdoor_temp_c = None
+
+    while True:
+        now = time.time()
+        check_interval = WATCH_ZONE_CHECK_INTERVAL_SEC if in_watch_zone else TEMP_CHECK_INTERVAL_SEC
+
+        if now - last_outdoor_poll >= OUTDOOR_TEMP_POLL_INTERVAL_SEC:
+            last_outdoor_poll = now
+            outdoor_temp_c = _fetch_outdoor_temp_c()
+
+        # Securite thermique -- verifiee AVANT la pause programmee, peut se
+        # declencher meme en pleine phase active si ca chauffe trop.
+        if now - last_temp_check >= check_interval:
+            last_temp_check = now
+            temp = _get_cpu_temp_c()
+            env_bonus_c = _compute_env_bonus_c(outdoor_temp_c)
+            effective_pause_c = min(
+                TEMP_PAUSE_C_BASE + pause_adaptive_offset_c + env_bonus_c,
+                TEMP_CRITICAL_C - 2.0,
+            )
+
+            should_pause = False
+            if temp is not None and temp >= TEMP_CRITICAL_C:
+                # Plafond dur : coupure immediate, aucune exception possible
+                # (ni marge adaptative, ni zone de surveillance).
+                should_pause = True
+            elif temp is not None and temp >= effective_pause_c:
+                load = _get_cpu_load_1min()
+                if load is not None and load < CPU_LOAD_WATCH_THRESHOLD:
+                    if not in_watch_zone:
+                        in_watch_zone = True
+                        print(f"[radio_watch] zone de surveillance thermique : {temp:.1f}C >= "
+                              f"{effective_pause_c:.1f}C mais charge CPU basse ({load:.2f}) -- "
+                              f"pas de coupure, verification toutes les {WATCH_ZONE_CHECK_INTERVAL_SEC}s")
+                    # reste actif, pas de coupure tant que la charge reste basse
+                else:
+                    should_pause = True
+            elif in_watch_zone:
+                in_watch_zone = False
+                print(f"[radio_watch] sortie de la zone de surveillance thermique "
+                      f"(temperature redescendue sous {effective_pause_c:.1f}C)")
+
+            if should_pause:
+                in_watch_zone = False
+                pause_start_time = now
+                if last_pause_end_time is not None:
+                    active_duration = pause_start_time - last_pause_end_time
+                    if pause_active_durations:
+                        avg_previous = sum(pause_active_durations) / len(pause_active_durations)
+                        if active_duration < avg_previous * 0.8:
+                            resume_adaptive_offset_c = min(
+                                resume_adaptive_offset_c + TEMP_RESUME_ADAPTIVE_STEP_C,
+                                TEMP_RESUME_ADAPTIVE_MAX_C,
+                            )
+                            print(f"[radio_watch] resserrement des pauses thermiques detecte "
+                                  f"(actif {active_duration:.0f}s contre {avg_previous:.0f}s en moyenne) -- "
+                                  f"marge de refroidissement etiree a {TEMP_RESUME_C - resume_adaptive_offset_c:.1f}C")
+                        elif active_duration > avg_previous * 1.2 and resume_adaptive_offset_c > 0:
+                            resume_adaptive_offset_c = max(resume_adaptive_offset_c - TEMP_RESUME_ADAPTIVE_STEP_C, 0.0)
+                            print(f"[radio_watch] intervalle actif redevenu normal -- "
+                                  f"marge relachee a {TEMP_RESUME_C - resume_adaptive_offset_c:.1f}C")
+                    pause_active_durations.append(active_duration)
+
+                effective_resume_c = TEMP_RESUME_C - resume_adaptive_offset_c
+                print(f"[radio_watch] pause thermique : {temp:.1f}C >= {effective_pause_c:.1f}C "
+                      f"(base {TEMP_PAUSE_C_BASE:.1f}C + adaptatif {pause_adaptive_offset_c:+.1f}C "
+                      f"+ environnement {env_bonus_c:+.1f}C [exterieur "
+                      f"{outdoor_temp_c if outdoor_temp_c is not None else '?'}C, "
+                      f"{'nuit' if _is_night_now() else 'jour'}]) "
+                      f"(reprise prevue sous {effective_resume_c:.1f}C)")
+                _speak_pause(
+                    f"Pause du scanner radio, température élevée : {temp:.0f} degrés.",
+                    sound=SCANER_ERROR_SOUND,
+                )
+                pause_actual_start = time.time()
+                while True:
+                    time.sleep(TEMP_CHECK_INTERVAL_SEC)
+                    temp = _get_cpu_temp_c()
+                    if temp is None or temp <= effective_resume_c:
+                        break
+                last_pause_end_time = time.time()
+                pause_duration = last_pause_end_time - pause_actual_start
+
+                if pause_durations:
+                    avg_pause_duration = sum(pause_durations) / len(pause_durations)
+                    if pause_duration < avg_pause_duration * 0.8:
+                        pause_adaptive_offset_c = min(
+                            pause_adaptive_offset_c + TEMP_PAUSE_ADAPTIVE_STEP_C,
+                            TEMP_PAUSE_ADAPTIVE_MAX_C,
+                        )
+                        print(f"[radio_watch] refroidissement rapide constate "
+                              f"({pause_duration:.0f}s contre {avg_pause_duration:.0f}s en moyenne) -- "
+                              f"seuil de coupure releve a {TEMP_PAUSE_C_BASE + pause_adaptive_offset_c:.1f}C")
+                    elif pause_duration > avg_pause_duration * 1.2 and pause_adaptive_offset_c > 0:
+                        pause_adaptive_offset_c = max(pause_adaptive_offset_c - TEMP_PAUSE_ADAPTIVE_STEP_C, 0.0)
+                        print(f"[radio_watch] refroidissement redevenu normal -- "
+                              f"seuil de coupure relache a {TEMP_PAUSE_C_BASE + pause_adaptive_offset_c:.1f}C")
+                pause_durations.append(pause_duration)
+
+                print(f"[radio_watch] reprise apres refroidissement (temperature : {temp})")
+                _speak_pause("Le scanner radio reprend, température redescendue.")
+                cycle_start = time.time()
+                continue
+
+        # Pause reguliere programmee -- repos du dongle/antenne meme sans
+        # probleme de temperature.
+        if now - cycle_start >= SCAN_ON_DURATION_SEC:
+            print(f"[radio_watch] pause programmee ({SCAN_OFF_DURATION_SEC}s)")
+            _speak_pause(
+                f"Pause programmée du scanner radio, reprise dans {SCAN_OFF_DURATION_SEC // 60} minutes."
+            )
+            time.sleep(SCAN_OFF_DURATION_SEC)
+            _speak_pause("Le scanner radio reprend.")
+            cycle_start = time.time()
+            continue
+
+        activity = False
+
+        for band in fm_bands:
+            if scan_fm_band(band):
+                activity = True
+
+        # PMR446 et toutes les frequences aeronautiques locales : squelch reel
+        # RTLSDR-Airband, voir airband_bridge.py. Meme dongle, meme boucle
+        # sequentielle -- jamais en parallele avec le reste de cette fonction.
+        # dwell_sec par fenetre (voir AIRBAND_WINDOWS) : 6 fenetres maintenant,
+        # duree individuelle reduite en consequence pour garder une cadence de
+        # rotation raisonnable vers les bandes sweep.
+        for window in airband_bridge.AIRBAND_WINDOWS:
+            if airband_bridge.scan_window(window, dwell_sec=window.get("dwell_sec", 15)):
+                activity = True
+
+        # ACARS (donnees numeriques avion/compagnie) -- meme discipline de
+        # partage sequentiel du dongle que les fenetres RTLSDR-Airband
+        # ci-dessus. Voir acars_watch.py pour le detail du filtrage
+        # (texte libre + phases OOOI modernes uniquement).
+        if acars_watch.scan_window(dwell_sec=30):
+            activity = True
+
+        if sweep_bands:
+            band = sweep_bands[sweep_idx % len(sweep_bands)]
+            sweep_idx += 1
+            if scan_sweep_band(band):
+                activity = True
+
+        # Chien de garde : avertir vocalement si le dongle semble indisponible
+        # depuis un moment, plutot que de rester silencieux sans explication.
+        # Verrou audio partage (voir _handle_candidate) : ce bloc tournait
+        # jusqu'ici SANS le verrou, seul point du fichier a etre passe entre
+        # les mailles -- corrige en session (2026-08-30, audit demande par
+        # l'utilisateur sur le chevauchement des annonces inter-services).
+        global _rtl_power_failure_count
+        if _rtl_power_failure_count == DEVICE_DOWN_WARNING_THRESHOLD and not device_down_announced:
+            lock = audio_lock.acquire()
+            try:
+                speak_with_lead_sound(SCANER_ERROR_SOUND, "Attention, le dongle radio semble indisponible. Vérifie la connexion USB.", label="radio_watch")
+            finally:
+                audio_lock.release(lock)
+            device_down_announced = True
+        elif _rtl_power_failure_count == 0 and device_down_announced:
+            lock = audio_lock.acquire()
+            try:
+                speak("Le dongle radio est de nouveau disponible.")
+            finally:
+                audio_lock.release(lock)
+            device_down_announced = False
+        elif device_down_announced and _rtl_power_failure_count % DEVICE_DOWN_REMINDER_EVERY == 0:
+            lock = audio_lock.acquire()
+            try:
+                speak_with_lead_sound(SCANER_ERROR_SOUND, "Le dongle radio est toujours indisponible.", label="radio_watch")
+            finally:
+                audio_lock.release(lock)
+
+        if not activity:
+            time.sleep(0.3)
+
+
+if __name__ == "__main__":
+    main()

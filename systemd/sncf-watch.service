@@ -1,0 +1,16 @@
+[Unit]
+Description=Veille gare Saint-Etienne Chateaucreux (API SNCF)
+After=multi-user.target network-online.target
+Wants=network-online.target
+
+[Service]
+ExecStart=/usr/bin/python3 -u /home/vador/autopilot/pi_console/sncf_watch.py
+User=vador
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

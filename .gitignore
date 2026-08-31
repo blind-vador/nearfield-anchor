@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+*.pyo
+
+# Identifiants reels -- jamais commites. Voir config/credentials.example.py
+# pour le modele.
+config/credentials.py
