@@ -22,21 +22,97 @@ ACARS_UDP_PORT = 23457  # local uniquement, distinct du port dsd-fme (23456)
 ACARS_DEDUP_WINDOW_SEC = 300  # meme evenement (vol+phase, ou vol+texte) pas repete avant 5 min
 ACARS_DEDUP_PURGE_FACTOR = 4  # purge les entrees > 4x la fenetre pour ne pas grossir indefiniment
 
-# Labels OOOI modernes (serie Q) uniquement -- acarsdec sait aussi decoder
-# en interne une longue liste de labels numeriques/legacy (10,11,12,15,17,
-# 20,21,26,2N,2Z,33,39,44,45,80,83,8D,8E,8S, cf. label.c) mais ce sont des
-# formats plus anciens/rares en trafic reel europeen actuel, moins fiables
-# a mapper sans validation sur du trafic capte -- pas inclus ici. S'ils
-# portent du texte lisible, le filtre "texte present" ci-dessous les
-# couvre deja independamment de cette table.
-ACARS_PHASE_LABELS = {
+# --- Traduction OOOI serie Q -> phrase francaise vulgarisee ---
+# Demande explicite de l'utilisateur (2026-08-31) : plutot que d'ignorer
+# les messages structures, les "traduire" en une phrase humaine. Portage
+# DIRECT des extracteurs de champs de label.c (source officielle
+# d'acarsdec, memes decalages d'octets exacts) -- pas une supposition.
+# Perimetre volontairement limite a la serie Q (protocole OOOI moderne,
+# la plus probable en trafic reel europeen actuel) -- les labels
+# numeriques/legacy (10,11,12,15,17,20,21,26,2N,2Z,33,39,44,45,80,83,8D,
+# 8E,8S, egalement geres par acarsdec en interne, cf. label.c) restent
+# hors perimetre pour l'instant : aucun exemple reel capte cette session
+# pour valider leur format avant de les annoncer a voix haute -- a
+# etendre plus tard si du vrai trafic les confirme.
+#
+# sa=aeroport/station actuel, da=destination (codes bruts, PAS forcement
+# IATA/ICAO standard -- format propre a chaque compagnie, aucune table de
+# correspondance code->ville disponible localement pour l'instant),
+# heures gout/woff/won/gin/eta au format brut HHMM.
+Q_FIELD_SPECS = {
+    "Q1": [("sa", 0, 4), ("gout", 4, 8), ("woff", 8, 12), ("won", 12, 16), ("gin", 16, 20), ("da", 24, 28)],
+    "Q2": [("sa", 0, 4), ("eta", 4, 8)],
+    "QA": [("sa", 0, 4), ("gout", 4, 8)],
+    "QB": [("sa", 0, 4), ("woff", 4, 8)],
+    "QC": [("sa", 0, 4), ("won", 4, 8)],
+    "QD": [("sa", 0, 4), ("gin", 4, 8)],
+    "QE": [("sa", 0, 4), ("gout", 4, 8), ("da", 8, 12)],
+    "QF": [("sa", 0, 4), ("woff", 4, 8), ("da", 8, 12)],
+    "QG": [("sa", 0, 4), ("gout", 4, 8), ("gin", 8, 12)],
+    "QH": [("sa", 0, 4), ("gout", 4, 8)],
+    "QK": [("sa", 0, 4), ("won", 4, 8), ("da", 8, 12)],
+    "QL": [("da", 0, 4), ("gin", 8, 12), ("sa", 13, 17)],
+    "QM": [("da", 0, 4), ("sa", 8, 12)],
+    "QN": [("da", 4, 8), ("eta", 8, 12)],
+    "QP": [("sa", 0, 4), ("da", 4, 8), ("gout", 8, 12)],
+    "QQ": [("sa", 0, 4), ("da", 4, 8), ("woff", 8, 12)],
+    "QR": [("sa", 0, 4), ("da", 4, 8), ("won", 8, 12)],
+    "QS": [("sa", 0, 4), ("da", 4, 8), ("gin", 8, 12)],
+    "QT": [("sa", 0, 4), ("da", 4, 8), ("gout", 8, 12), ("gin", 12, 16)],
+}
+
+# Verbe/evenement vulgarise par label -- un evenement principal par
+# label (Q1 combine tout, traite a part comme "compte-rendu complet").
+Q_PHASE_VERBS = {
+    "Q1": "compte-rendu de vol complet",
+    "Q2": "heure d'arrivée estimée mise à jour",
     "QA": "sortie de porte",
     "QB": "décollage",
     "QC": "atterrissage",
     "QD": "arrivée à la porte",
+    "QE": "sortie de porte",
+    "QF": "décollage",
+    "QG": "sortie de porte",
     "QH": "sortie de porte",
     "QK": "atterrissage",
+    "QL": "arrivée à la porte",
+    "QM": "arrivée",
+    "QN": "heure d'arrivée estimée",
+    "QP": "sortie de porte",
+    "QQ": "décollage",
+    "QR": "atterrissage",
+    "QS": "arrivée à la porte",
+    "QT": "sortie de porte",
 }
+
+
+def _extract_q_fields(label, txt):
+    """Retourne un dict des champs non vides pour un label serie Q connu
+    (voir Q_FIELD_SPECS), ou None si le label n'est pas gere ou le texte
+    trop court pour l'offset attendu."""
+    specs = Q_FIELD_SPECS.get(label)
+    if not specs or not txt:
+        return None
+    result = {}
+    for name, start, end in specs:
+        if len(txt) < end:
+            continue
+        value = txt[start:end].strip()
+        if value:
+            result[name] = value
+    return result or None
+
+
+def _vulgarize_oooi(identity, label, fields):
+    """Phrase vulgarisee, volontairement simple et un peu fantasque
+    ("le vol X confirme : evenement[, vers destination]") -- demande
+    explicite de l'utilisateur, style "totalement fantasque" assume."""
+    verb = Q_PHASE_VERBS.get(label, "événement de vol")
+    message = f"Le vol {identity} confirme : {verb}"
+    da = fields.get("da")
+    if da:
+        message += f", vers {da}"
+    return message + "."
 
 SOUND_EFFECTS_DIR = "/media/nas/nd1/server/radio_scaner"
 ACARS_SOUND = f"{SOUND_EFFECTS_DIR}/decoding_numeric.mp3"
@@ -89,34 +165,46 @@ def _announce(text, label_for_log):
 
 
 def _process_message(msg):
-    """Annonce le message s'il est exploitable (texte libre present, ou
-    label de phase de vol connu) et pas deja annonce recemment pour ce
-    vol/cette phase. Retourne True si une annonce a reellement eu lieu."""
+    """Annonce le message s'il est exploitable (texte libre H1 SANS
+    sous-label, ou label serie Q traduisible) et pas deja annonce
+    recemment pour ce vol/cet evenement. Retourne True si une annonce a
+    reellement eu lieu."""
     identity = _identity(msg)
     label = msg.get("label", "")
     text = (msg.get("text") or "").strip()
 
     if text and label == FREE_TEXT_LABEL:
-        key = (identity, "texte", text[:60])
-        if not _should_announce(key):
+        sublabel = msg.get("sublabel")
+        if sublabel:
+            # H1 avec sous-label = rapport structure (ex: "DF" = dump
+            # DFDAU, donnees de vol brutes), pas du texte redige par un
+            # humain -- meme signature que le message KL0592 signale par
+            # l'utilisateur, reproduite sur un exemple reel du fichier
+            # de test acarsdec (sublabel "DF", contenu illisible).
+            print(f"[acars_watch] H1 avec sous-label {sublabel!r} non annonce (donnees structurees) : {text[:80]!r}")
+        else:
+            key = (identity, "texte", text[:60])
+            if _should_announce(key):
+                _announce(f"Message ACARS de {identity} : {text}", f"ACARS_texte_{identity}")
+                return True
             return False
-        _announce(f"Message ACARS de {identity} : {text}", f"ACARS_texte_{identity}")
-        return True
 
-    phase = ACARS_PHASE_LABELS.get(label)
-    if phase:
-        key = (identity, phase)
-        if not _should_announce(key):
-            return False
-        _announce(f"Vol {identity}, {phase}.", f"ACARS_{phase}_{identity}")
-        return True
+    fields = _extract_q_fields(label, text)
+    if fields:
+        key = (identity, label, tuple(sorted(fields.items())))
+        if _should_announce(key):
+            message = _vulgarize_oooi(identity, label, fields)
+            _announce(message, f"ACARS_{label}_{identity}")
+            return True
+        return False
 
-    if text:
-        # Texte present mais pas le label H1/OOOI connu -- probablement
-        # de la telemetrie structuree, pas annonce (voir FREE_TEXT_LABEL
-        # ci-dessus). Loggue pour pouvoir diagnostiquer/ajouter ce label
-        # plus tard si besoin, plutot que de perdre l'information.
-        print(f"[acars_watch] label {label!r} non annonce (texte present, pas H1/OOOI connu) : {text[:80]!r}")
+    if text and label != FREE_TEXT_LABEL:
+        # Texte present mais label non gere -- probablement de la
+        # telemetrie structuree (voir label.c : nombreux labels
+        # numeriques/legacy non couverts par Q_FIELD_SPECS). Loggue pour
+        # diagnostiquer/etendre plus tard, plutot que de perdre
+        # l'information.
+        print(f"[acars_watch] label {label!r} non annonce (texte present, pas H1 libre ni serie Q connue) : {text[:80]!r}")
 
     return False
 
