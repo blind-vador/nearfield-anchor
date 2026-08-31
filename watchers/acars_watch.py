@@ -41,6 +41,16 @@ ACARS_PHASE_LABELS = {
 SOUND_EFFECTS_DIR = "/media/nas/nd1/server/radio_scaner"
 ACARS_SOUND = f"{SOUND_EFFECTS_DIR}/decoding_numeric.mp3"
 
+# Label standard pour le texte REDIGE par l'equipage/le dispatch (pas une
+# donnee structuree automatique) -- confirme par l'usage etabli du
+# protocole ACARS. D'autres labels peuvent aussi porter un champ "text"
+# non vide (rapports de position/telemetrie), mais leur contenu n'est PAS
+# concu pour etre lu comme une phrase : cas reel capte en session
+# (2026-08-31) et signale par l'utilisateur -- "de KL592 à M I M 41 06 41
+# B..." (coordonnees/donnees codees illisibles), pas du texte libre.
+# Restreint desormais l'annonce parlee a ce seul label.
+FREE_TEXT_LABEL = "H1"
+
 # Historique de deduplication, en memoire seulement (remis a zero a chaque
 # redemarrage du service, comme le reste des traces glissantes du projet).
 _recent_events = {}
@@ -86,7 +96,7 @@ def _process_message(msg):
     label = msg.get("label", "")
     text = (msg.get("text") or "").strip()
 
-    if text:
+    if text and label == FREE_TEXT_LABEL:
         key = (identity, "texte", text[:60])
         if not _should_announce(key):
             return False
@@ -100,6 +110,13 @@ def _process_message(msg):
             return False
         _announce(f"Vol {identity}, {phase}.", f"ACARS_{phase}_{identity}")
         return True
+
+    if text:
+        # Texte present mais pas le label H1/OOOI connu -- probablement
+        # de la telemetrie structuree, pas annonce (voir FREE_TEXT_LABEL
+        # ci-dessus). Loggue pour pouvoir diagnostiquer/ajouter ce label
+        # plus tard si besoin, plutot que de perdre l'information.
+        print(f"[acars_watch] label {label!r} non annonce (texte present, pas H1/OOOI connu) : {text[:80]!r}")
 
     return False
 

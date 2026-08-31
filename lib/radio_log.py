@@ -29,6 +29,29 @@ RETENTION_HOURS = 48
 # pas a gerer de changement de sample rate en cours de fichier.
 LOG_SAMPLE_RATE = 22050
 
+# Noms de jours/mois en francais pour des noms de fichiers lisibles par
+# NVDA (2026-08-31, demande explicite de l'utilisateur) -- l'ancien format
+# YYYYMMDD_HHMMSS ("20260831_091725") est lu chiffre par chiffre ou comme
+# un grand nombre illisible par un lecteur d'ecran. Pas de dependance a la
+# locale systeme (souvent absente/mal configuree sur ce Pi) -- tables
+# explicites.
+JOURS_FR = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+MOIS_FR = [
+    "janvier", "fevrier", "mars", "avril", "mai", "juin",
+    "juillet", "aout", "septembre", "octobre", "novembre", "decembre",
+]
+
+
+def _readable_timestamp(dt):
+    """Bande/libelle EN PREMIER (fait par l'appelant), puis jour en
+    lettres, numero du jour, mois en lettres, annee en chiffres -- ordre
+    exact demande par l'utilisateur -- puis l'heure a la fin pour garder
+    des noms de fichiers uniques (plusieurs captures possibles le meme
+    jour sur la meme bande)."""
+    jour_nom = JOURS_FR[dt.weekday()]
+    mois_nom = MOIS_FR[dt.month - 1]
+    return f"{jour_nom}_{dt.day}_{mois_nom}_{dt.year}_{dt.hour:02d}h{dt.minute:02d}m{dt.second:02d}s"
+
 
 class RadioLogSession:
     """Une session = un evenement de capture (candidat detecte -> ... ->
@@ -89,9 +112,10 @@ class RadioLogSession:
 
     def finalize(self):
         """Concatene tous les segments en un seul fichier MP3 dans
-        RADIO_LOG_DIR, nomme par horodatage + libelle assaini. Retourne le
-        chemin final ou None si rien a sauvegarder/echec. Nettoie le
-        dossier temporaire dans tous les cas."""
+        RADIO_LOG_DIR, nomme par libelle assaini + horodatage lisible
+        (voir _readable_timestamp). Retourne le chemin final ou None si
+        rien a sauvegarder/echec. Nettoie le dossier temporaire dans tous
+        les cas."""
         try:
             if not self.segments:
                 return None
@@ -100,9 +124,9 @@ class RadioLogSession:
             with open(concat_list, "w", encoding="utf-8") as f:
                 for seg in self.segments:
                     f.write(f"file '{seg}'\n")
-            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             safe_label = "".join(c if c.isalnum() else "_" for c in self.label).strip("_")[:40] or "capture"
-            out_path = os.path.join(RADIO_LOG_DIR, f"{timestamp}_{safe_label}.mp3")
+            timestamp = _readable_timestamp(datetime.datetime.now())
+            out_path = os.path.join(RADIO_LOG_DIR, f"{safe_label}_{timestamp}.mp3")
             result = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                  "-f", "concat", "-safe", "0", "-i", concat_list,
