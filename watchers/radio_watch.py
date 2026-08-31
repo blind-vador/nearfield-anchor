@@ -22,6 +22,7 @@ import radio_log
 import sound_player
 import audio_filters
 import acars_watch
+import spectral_diagnostic
 from rnnoise_lib import (
     create as _rnnoise_create,
     destroy as _rnnoise_destroy,
@@ -1135,6 +1136,13 @@ def scan_sweep_band(band):
     freq, db = sweep_band_peak_relative(band["low_hz"], band["high_hz"], band["step_hz"], margin_db=margin_db)
     if freq is not None:
         print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.4f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")
+        # Mode diagnostic spectral (2026-08-31, demande explicite) : ne fait
+        # rien (cout quasi nul) sauf si arme sur CETTE bande via
+        # "spectral_diagnostic.py arm <bande>". Si arme, affine
+        # immediatement sur ce meme candidat avant la vraie capture --
+        # retarde son demarrage de ~1-2s tant que le mode reste arme,
+        # accepte car opt-in et sert justement a etudier la bande armee.
+        spectral_diagnostic.maybe_diagnose(band, freq, db)
         if _handle_candidate(freq, band["mode"], f"bande {band['name_spoken']}"):
             return True
     return False
