@@ -153,6 +153,12 @@ def _announce(text, label_for_log):
     """Meme schema que _handle_candidate dans radio_watch.py : session de
     journal audio active pendant l'annonce (son + voix TTS captes
     automatiquement via sound_player), verrou audio partage."""
+    # Marqueur explicite (2026-09-01, demande explicite) -- meme tag que
+    # "decode numerique:" dans radio_watch.py, pour que log_ship.py puisse
+    # extraire les messages decodes vers un fichier dedie sur le NAS sans
+    # dependre du texte brut (partage avec d'autres watchers dans le
+    # journal, pas fiable a filtrer seul).
+    print(f"[acars_watch] annonce : {text}")
     log_session = radio_log.RadioLogSession(label_for_log)
     sound_player.set_recording_session(log_session)
     lock = audio_lock.acquire()

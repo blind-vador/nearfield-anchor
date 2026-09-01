@@ -18,7 +18,7 @@ l'installation complète en cas de panne de carte SD.
 | `lib/` | Bibliothèques partagées (synthèse vocale, verrou audio, filtres...) |
 | `nas/` | Gestion du NAS (montage/remontage automatique des disques) |
 | `radiono/` | Alarme sonore aléatoire anti-effet-tunnel |
-| `tools/` | `spectral_diagnostic.py` — mode diagnostic spectral générique, activable à la demande (voir ci-dessous) |
+| `tools/` | `spectral_diagnostic.py` (diagnostic spectral, voir ci-dessous), `log_ship.py` (copie des logs vers le NAS, voir ci-dessous) |
 | `config/` | `sound_paths.py` — chemins des banques sonores, un seul endroit à modifier |
 | `systemd/` | Unités systemd de tous les services |
 | `install.sh` | Installeur complet (apt + compilation + déploiement) |
@@ -99,6 +99,22 @@ accumulés dans `radio_log/diagnostic/` sur le NAS, pour les deux modes —
 signale automatiquement les captures où plusieurs porteuses distinctes
 sont détectées dans la fenêtre affinée (marge calibrée par bande, pas un
 seuil fixe — voir le module pour le détail).
+
+### Copie des logs vers le NAS (`tools/log_ship.py`)
+
+Service permanent (`log-ship.service`) qui suit en continu (`journalctl
+-u <unit> -f`) les 7 watchers et copie chaque ligne dans
+`logs/<unit>.log` sur le NAS — survit à la rotation/troncature
+du journal systemd local (carte SD), et reste accessible même en cas de
+panne de carte SD. Extrait en plus les messages décodés (ACARS, Morse/
+multimon-ng) vers un fichier dédié `decoded_messages.log`, facile à
+relire sans le bruit du reste.
+
+Attend explicitement que le NAS soit réellement monté avant d'écrire
+quoi que ce soit (`os.path.ismount`) — `/media/nas/nd1` n'est pas dans
+`fstab` (voir `nas/nas_watch.py`), écrire avant le montage réel
+risquerait de perdre les lignes une fois le disque monté par-dessus.
+Rotation simple à 20 Mo par fichier (1 sauvegarde `.1`).
 
 ## Installation
 
