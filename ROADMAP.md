@@ -4563,3 +4563,116 @@ dans adsb_watch.py) -- choix assume car le remote est prive (NAS
 personnel, pas de publication publique), documente explicitement dans
 le README et le message de fin d'install.sh plutot que silencieusement
 laisse de cote.
+
+
+## 2026-09-28 : reinstallation complete apres perte de la carte SD + console reconstruite
+
+L'ancienne carte SD a grille (perte totale). Nouvelle carte, image OctoPi
+(Debian 12 bookworm, armhf, Python 3.11), memes nom d'hote (`deepspace9`)
+et utilisateur (`vador`). Les deux disques NAS etaient intacts (`e2fsck -n`
+propre sur les deux) : ce depot, sauvegarde sur `nd1`, a permis de tout
+reconstruire. Seule vraie perte : la console vocale (voir plus bas).
+
+### Probleme USB 2 -- resolu (c'etait le "probleme bloquant" du debut de ce document)
+
+Meme signature que celle documentee en tete de ROADMAP (`error -32` /
+`error -71` / `unable to enumerate`), sur TOUT l'USB 2 (clavier, dongle,
+moitie USB 2 des hubs), alors que l'USB 3 (disques) marchait. Demarche,
+dans l'ordre : essais logiciels sans effet (reset des ports,
+`old_scheme_first`, firmware VL805 deja a jour), redemarrage a froid sans
+effet, puis isolement physique. Causes reelles trouvees :
+
+1. **Le hub de l'antenne (puces VIA USB 2) n'avait pas d'alimentation
+   propre** : a son branchement, il faisait decrocher le hub des disques
+   (deux deconnexions en 3 s). Avec son bloc secteur : tout se stabilise,
+   dongle vu en haute vitesse. L'hypothese "alimentation" de ce document
+   etait donc la bonne, mais c'etait celle du hub, pas celle du Pi.
+2. **La moitie USB 2 du gros hub Genesys (disques) est defaillante** : les
+   disques passent par sa moitie USB 3, qui marche. Tout peripherique USB 2
+   (clavier, dongle, imprimante) doit aller sur le hub VIA alimente ou
+   directement sur le Pi, jamais sur le hub Genesys.
+3. **Le port noir du bas du Pi semble abime** (tentatives fantomes alors
+   qu'il est vide) : ne plus l'utiliser.
+
+Branchement valide : hub Genesys (disques) sur un port bleu ; hub VIA
+alimente (antenne, webcam et carte de l'imprimante, ces deux dernieres
+derriere des interrupteurs USB physiques) sur l'autre port bleu ; clavier
+en direct sur le port noir du haut.
+
+Bootloader EEPROM encore de 2020 (mise a jour disponible, pas faite : ne
+s'est pas revelee necessaire).
+
+### install.sh repare (il ne fonctionnait plus tel quel sur la nouvelle image)
+
+- Garde-fou OctoPi `/root/bin/git` (refuse git en root) : contourne en
+  retirant `/root/bin` du PATH le temps du script, sans le supprimer.
+- `pip` bloque par PEP 668 sur Debian 12 : `PIP_BREAK_SYSTEM_PACKAGES=1`.
+- RTLSDR-Airband : CMakeLists desormais a la racine du depot ; construit
+  depuis la racine vers `src/build` (chemin `AIRBAND_BIN` inchange), et
+  depuis le depot (son `find_version` appelle `git describe` dans le
+  repertoire courant).
+- Dependances de compilation manquantes ajoutees (airband, dsd-fme,
+  libacars) + `libopenblas0` (numpy, sinon radio-watch plante a l'import).
+- **RNNoise n'etait pas du tout dans l'installeur** (`librnnoise.so`
+  compile a la main en "suite 16") : radio-watch plantait en boucle.
+  Ajoute, avec les flags NEON.
+- `tools/*.py` n'etait jamais copie : log-ship plantait en boucle.
+- `magicsound.py` visait `python3.9` en dur : chemin calcule via sysconfig.
+- **Bug dangereux corrige** : une reinstallation ecrasait le
+  `credentials.py` rempli du Pi par le modele vide. Il n'est plus copie
+  que s'il est absent.
+- Ajoutes : blacklist du pilote DVB, `loginctl enable-linger` (session
+  audio sans connexion), points de montage NAS, sudo sans mot de passe
+  LIMITE (`/etc/sudoers.d/020-pi-console-watchers` : mount, umount,
+  systemctl reboot/poweroff), deploiement de la console et masquage de
+  `getty@tty1`.
+
+Valide en relancant l'installeur complet depuis ce depot sur le Pi
+reinstalle : code 0, 9 services actifs.
+
+### Console vocale reconstruite (`console/`, `systemd/pi-console.service`)
+
+Elle n'avait jamais ete mise dans ce depot (choix de perimetre de la
+creation du depot) : perdue avec la carte SD. Reconstruite d'apres la
+description en tete de ce document, **et cette fois versionnee ici**.
+Architecture d'origine conservee (registre deterministe, mots-cles puis
+repli flou `fuzzywuzzy`, seuil 65, "fail closed", espeak local), plus :
+
+- **Echo vocal de la frappe** (evolution prevue plus haut) : tty en mode
+  brut, chaque touche est dite ; la disposition AZERTY etant appliquee par
+  le noyau, on lit le vrai caractere, accents compris. Toute touche coupe
+  la parole. Retour arriere / Echap / Tab (relire la ligne).
+- **Mode reperage des touches** (outil de calibration prevu plus haut) :
+  commande "touches", annonce chaque touche sans rien executer ; les
+  touches sans caractere (Maj, Ctrl, Alt, AltGr, Windows, verrouillages,
+  multimedia) sont lues via evdev. Sortie : 3 x Echap.
+- Score flou = moyenne `token_set_ratio` / `token_sort_ratio` :
+  `token_set_ratio` seul donnait 100 a des saisies d'un mot ("le").
+- Reponses sous le verrou audio partage des watchers, attente bornee a
+  10 s (pas de silence de plusieurs minutes derriere une annonce longue).
+- Commandes : aide, imprimante (API OctoPrint, `OCTOPRINT_API_KEY` dans
+  `credentials.py`), temperature, heure, radio (scan FM `rtl_power` ;
+  dit clairement si radio-watch occupe le dongle), touches, repete,
+  **redemarrer / eteindre** (confirmation "oui" obligatoire, mots-cles
+  explicites seulement, jamais par le repli flou, annonce avant d'agir),
+  **simulation**.
+- **Simulation** (successeur de `simulate_all.py`, perdu lui aussi) :
+  23 scenarios (trains x6, avions x2, meteo x6, crue x2, bus/tram x2,
+  radio x2, disques x3) qui appellent directement les fonctions
+  d'annonce des watchers deployes, avec des donnees fictives. Selection
+  par mots-cles : "simulation train" (categorie), "simulation train
+  retard" (le plus precis), "simulation tout".
+
+### Correctif meteo_watch.py
+
+"Vient du ouest-nord-ouest" -> elision : "de l'est", "de l'ouest-nord-
+ouest", "du nord", "du sud-est". (Les horaires SNCF "23 heure 11" restent
+volontairement au singulier.)
+
+### Reste a faire cote utilisateur
+
+- Remplir `credentials.py` (SNCF, OpenSky, cle API OctoPrint) sur le Pi.
+- Terminer l'assistant de premiere configuration d'OctoPrint.
+- `/etc/sudoers.d/010-vador-nopasswd` (sudo total sans mot de passe) a ete
+  ajoute pour la reinstallation : peut etre supprime, la regle limitee
+  suffit aux services.

@@ -17,6 +17,7 @@ l'installation complète en cas de panne de carte SD.
 | `watchers/` | Les 7 veilles autonomes (voir tableau ci-dessous) |
 | `lib/` | Bibliothèques partagées (synthèse vocale, verrou audio, filtres...) |
 | `nas/` | Gestion du NAS (montage/remontage automatique des disques) |
+| `console/` | Console vocale sur tty1, pilotée au clavier (voir ci-dessous) |
 | `radiono/` | Alarme sonore aléatoire anti-effet-tunnel |
 | `tools/` | `spectral_diagnostic.py` (diagnostic spectral, voir ci-dessous), `log_ship.py` (copie des logs vers le NAS, voir ci-dessous) |
 | `config/` | `sound_paths.py` — chemins des banques sonores, un seul endroit à modifier |
@@ -41,6 +42,28 @@ l'installation complète en cas de panne de carte SD.
 Chaque watcher tourne comme un service systemd indépendant (`Restart=always`),
 sauf `airband_bridge.py`/`acars_watch.py` qui sont des modules importés par
 `radio_watch.py` (partagent le même dongle RTL-SDR en rotation séquentielle).
+
+### Console vocale (`console/`)
+
+Interface texte sur `tty1` au demarrage (`pi-console.service`), pilotee
+par un clavier USB branche directement sur le Pi, sans ecran : chaque
+touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
+
+| Fichier | Role |
+|---|---|
+| `main.py` | Boucle clavier (tty en mode brut, echo vocal, Entree / Retour arriere / Echap / Tab) |
+| `commands.py` | Registre des commandes -- en ajouter une = un handler + une entree dans `COMMANDS` |
+| `matcher.py` | Mots-cles puis repli flou (seuil 65) ; sinon "commande non reconnue" |
+| `simulation.py` | 23 scenarios qui font parler les vraies fonctions d'annonce des watchers |
+| `keys.py` | Noms parles des touches ; mode reperage (evdev pour Maj/Ctrl/Alt...) |
+| `voix.py` | espeak interruptible ; reponses sous le verrou audio partage |
+
+Commandes : `aide`, `imprimante`, `température`, `heure`, `radio`,
+`touches` (reperage des touches, 3 x Echap pour sortir), `répète`,
+`redémarrer` / `éteindre` (confirmation "oui" obligatoire), `simulation`
+(`simulation train`, `simulation météo`, `simulation train retard`,
+`simulation tout`...). Formulation libre : "il est quelle heure", "ça
+imprime ?"...
 
 ### Gestion NAS (`nas/`)
 
@@ -126,7 +149,7 @@ sudo bash install.sh
 
 Voir `APT_PACKAGES.md` pour le détail des dépendances (l'installeur les
 gère automatiquement, y compris la compilation depuis les sources de
-RTLSDR-Airband, dsd-fme/mbelib et libacars/acarsdec — aucun de ces
+RTLSDR-Airband, dsd-fme/mbelib, libacars/acarsdec et RNNoise — aucun de ces
 projets n'est empaqueté Debian pour ce Pi).
 
 ## Points d'attention avant un déploiement sur une autre installation
@@ -136,8 +159,9 @@ projets n'est empaqueté Debian pour ce Pi).
   modèle (committé, valeurs vides) — `install.sh` le copie
   automatiquement en `credentials.py` si absent. Édite ensuite ce
   fichier avec tes propres identifiants (`SNCF_TOKEN`,
-  `OPENSKY_CLIENT_ID`/`OPENSKY_CLIENT_SECRET`) puis redémarre
-  `sncf-watch`/`adsb-watch`.
+  `OPENSKY_CLIENT_ID`/`OPENSKY_CLIENT_SECRET`, `OCTOPRINT_API_KEY`) puis
+  redémarre `sncf-watch`/`adsb-watch`/`pi-console`. Une réinstallation
+  n'écrase jamais un `credentials.py` déjà présent sur le Pi.
 - **Chemins des banques sonores** : tout centralisé dans
   `config/sound_paths.py` (`NAS_BASE` + un chemin par catégorie) — adapte
   simplement `NAS_BASE` si ton NAS est organisé différemment. Les

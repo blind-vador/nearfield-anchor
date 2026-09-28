@@ -1,0 +1,21 @@
+[Unit]
+Description=Console vocale du Pi (tty1, clavier USB + espeak)
+After=multi-user.target sound.target
+Conflicts=getty@tty1.service
+
+[Service]
+User=vador
+ExecStart=/usr/bin/python3 -u /home/vador/autopilot/console/main.py
+StandardInput=tty
+StandardOutput=tty
+StandardError=journal
+TTYPath=/dev/tty1
+TTYReset=yes
+TTYVHangup=yes
+Restart=always
+RestartSec=2
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Environment=TERM=linux
+
+[Install]
+WantedBy=multi-user.target

@@ -17,3 +17,7 @@ SNCF_TOKEN = ""
 # Utilise par watchers/adsb_watch.py.
 OPENSKY_CLIENT_ID = ""
 OPENSKY_CLIENT_SECRET = ""
+
+# Cle API OctoPrint -- a creer dans OctoPrint (Parametres > Application
+# Keys). Utilisee par la commande "imprimante" de la console (console/commands.py).
+OCTOPRINT_API_KEY = ""

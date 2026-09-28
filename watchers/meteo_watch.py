@@ -284,7 +284,9 @@ def _nowcast_announce(level, metric, minutes_ahead, data=None):
         cardinal = _cardinal_direction(directions[index]) if index < len(directions) else None
         speed = speeds[index] if index < len(speeds) else None
         if cardinal:
-            message += f" Vient du {cardinal}."
+            # Elision : "de l'est", "de l'ouest-nord-ouest" mais "du nord", "du sud-est".
+            origin = f"de l'{cardinal}" if cardinal[0] in "eo" else f"du {cardinal}"
+            message += f" Vient {origin}."
         if speed:
             message += f" Vent à {speed:.0f} kilomètres par heure."
 

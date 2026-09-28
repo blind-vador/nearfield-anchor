@@ -86,6 +86,30 @@ consommés jusqu'à la fin ; les placer avant d'autres options les fait
 interpréter comme des fréquences supplémentaires ("Frequencies too far
 apart").
 
+### RNNoise (discrimination voix/bruit de `radio_watch.py`)
+
+Pas de roue pip pour l'ARM 32 bits : compilation du module natif de
+`pyrnnoise`, avec les flags NEON (sans eux : 0,6x le temps réel,
+inutilisable). `install.sh` le fait automatiquement :
+
+```bash
+git clone --recursive --depth 1 https://github.com/pengzhendong/pyrnnoise.git
+cd pyrnnoise
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-march=armv8-a -mfpu=neon-fp-armv8 -O3"
+make -C build -j4
+cp build/librnnoise.so /home/vador/autopilot/pi_console/rnnoise_lib/
+```
+
+## Paquets ajoutés lors de la réinstallation du 2026-09-28 (Debian 12)
+
+- Compilation : `pkg-config`, `libconfig++-dev`, `libmp3lame-dev`,
+  `libshout3-dev`, `libfftw3-dev`, `libpulse-dev` (RTLSDR-Airband) ;
+  `libsndfile1-dev`, `libitpp-dev`, `libncurses-dev`, `libcodec2-dev`,
+  `portaudio19-dev` (dsd-fme) ; `zlib1g-dev`, `libxml2-dev` (libacars).
+- `libopenblas0` : requis par numpy (sinon radio-watch plante à l'import).
+- Console : `python3-evdev`, `python3-fuzzywuzzy`, `python3-levenshtein`.
+- `wget` : téléchargement du modèle RNNoise pendant sa compilation.
+
 ## Dépendances Python (pip)
 
 Voir `requirements.txt` à la racine. `pip3 install -r requirements.txt`.
