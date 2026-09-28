@@ -47,7 +47,7 @@ apt-get install -y \
     libconfig++-dev libmp3lame-dev libshout3-dev libfftw3-dev libpulse-dev \
     libsndfile1-dev libitpp-dev libncurses-dev libcodec2-dev portaudio19-dev \
     zlib1g-dev libxml2-dev \
-    libopenblas0 \
+    libopenblas0 samba \
     python3-evdev python3-fuzzywuzzy python3-levenshtein
 
 echo "=== 2/6 : compilation des bibliotheques externes (idempotent) ==="
@@ -167,6 +167,14 @@ cat > "$SUDOERS_FILE.tmp" <<EOF
 $RUN_USER ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff
 EOF
 visudo -cf "$SUDOERS_FILE.tmp" && chmod 440 "$SUDOERS_FILE.tmp" && mv "$SUDOERS_FILE.tmp" "$SUDOERS_FILE"
+# Partages reseau "server" (nd1) et "stockage" (nd2) pour les autres
+# machines de la maison (Mac, Windows). Le mot de passe Samba n'est pas
+# gere ici : a creer une fois a la main (sudo smbpasswd -a $RUN_USER).
+cp /etc/samba/smb.conf /etc/samba/smb.conf.avant-install 2>/dev/null || true
+cp "$REPO_DIR/nas/smb.conf" /etc/samba/smb.conf
+testparm -s >/dev/null
+systemctl enable smbd
+systemctl restart smbd
 # tty1 appartient a la console vocale : plus de login classique sur l'ecran
 # (SSH reste le moyen normal d'administration).
 systemctl stop getty@tty1.service 2>/dev/null || true
@@ -192,6 +200,8 @@ Points a verifier manuellement :
   systemctl restart sncf-watch adsb-watch pi-console
 - config/sound_paths.py suppose un NAS monte sur /media/nas/nd1/server --
   adapte NAS_BASE si ton organisation differe.
+- Partages Samba "server" et "stockage" : si ce Pi est neuf, cree le
+  mot de passe de partage : sudo smbpasswd -a $RUN_USER
 - Le pilote TNT du dongle radio n'est completement decharge qu'apres un
   redemarrage : sudo reboot
 - nas/legacy/ (nas.py, smbv1.conf, smbv2.conf) n'est PAS deploye

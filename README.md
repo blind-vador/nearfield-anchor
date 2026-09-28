@@ -74,6 +74,13 @@ NAS montés par UUID (stable, indépendant de l'ordre d'énumération USB),
 remonte automatiquement en cas de déconnexion/reconnexion, et annonce
 vocalement (espeak) l'état au démarrage et sur tout changement.
 
+**Partages réseau** (`nas/smb.conf`, déployé par `install.sh`) : `server`
+(petit disque nd1 entier : système, serveur, dépôt git) et `stockage` (gros
+disque nd2 entier), réservés à l'utilisateur `vador`, avec les réglages de
+compatibilité macOS (`vfs_fruit`). Le mot de passe Samba se crée une fois à
+la main : `sudo smbpasswd -a vador`. `nas/smb.conf.current` est l'ancienne
+configuration (partages `nd1`/`nd2`), gardée pour référence.
+
 `nas/legacy/` (`nas.py`, `smbv1.conf`, `smbv2.conf`) est **conservé pour
 référence historique uniquement** — l'ancien script de montage au
 démarrage (`@reboot`), remplacé par `nas_watch.py` qui résout mieux son

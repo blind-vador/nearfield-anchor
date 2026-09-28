@@ -4676,3 +4676,19 @@ volontairement au singulier.)
 - `/etc/sudoers.d/010-vador-nopasswd` (sudo total sans mot de passe) a ete
   ajoute pour la reinstallation : peut etre supprime, la regle limitee
   suffit aux services.
+
+### Partages Samba pour le Mac (2026-09-29)
+
+Samba reinstalle (absent de la nouvelle image). Nouvelle configuration
+`nas/smb.conf`, deployee par `install.sh` : partages `server` (nd1 entier)
+et `stockage` (nd2 entier), `valid users = vador`, `force user = vador`,
+masques 0664/0775 (l'ancienne config avait 766 pour les dossiers, sans
+droit de traversee), `vfs_fruit` pour le Finder, annonce mDNS. Mot de
+passe Samba cree a la main par l'utilisateur (`smbpasswd -a vador`).
+
+Cote Mac : partages montes sous `/Volumes/server` et `/Volumes/stockage`,
+mot de passe dans le trousseau, affichage des serveurs connectes sur le
+bureau (Finder), et agent `~/Library/LaunchAgents/local.deepspace9.disques.plist`
+qui attend que le port 445 du Pi reponde puis remonte les deux partages a
+l'ouverture de session (teste : demontage puis remontage automatique sans
+invite de mot de passe).
