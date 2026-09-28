@@ -161,10 +161,13 @@ loginctl enable-linger "$RUN_USER"
 # Points de montage de nas_watch.py (pas d'entree fstab, volontairement).
 mkdir -p /media/nas/nd1 /media/nas/nd2
 # sudo sans mot de passe limite a ce dont les services ont besoin :
-# nas_watch.py (mount/umount) et la console (redemarrer/eteindre).
+# nas_watch.py (mount/umount) et la console (redemarrer/eteindre, mise a jour).
 SUDOERS_FILE=/etc/sudoers.d/020-pi-console-watchers
+# apt-get : commande "mise a jour" de la console (env_keep pour qu elle
+# reste non interactive : apt ne doit jamais poser de question sur tty1).
 cat > "$SUDOERS_FILE.tmp" <<EOF
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff
+Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND LC_ALL"
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/apt-get
 EOF
 visudo -cf "$SUDOERS_FILE.tmp" && chmod 440 "$SUDOERS_FILE.tmp" && mv "$SUDOERS_FILE.tmp" "$SUDOERS_FILE"
 # Partages reseau "server" (nd1) et "stockage" (nd2) pour les autres

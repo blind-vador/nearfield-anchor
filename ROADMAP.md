@@ -4692,3 +4692,18 @@ bureau (Finder), et agent `~/Library/LaunchAgents/local.deepspace9.disques.plist
 qui attend que le port 445 du Pi reponde puis remonte les deux partages a
 l'ouverture de session (teste : demontage puis remontage automatique sans
 invite de mot de passe).
+
+### Commande console "mise a jour" (2026-09-29)
+
+`console/maj.py` : apt-get update, full-upgrade, autoremove --purge, clean,
+en arriere-plan, apres confirmation "oui". Etapes parlees seulement
+(recherche, nombre de paquets, telechargement, installation par quarts,
+nettoyage, fin + conseil de redemarrage si noyau/firmware/libc/systemd
+touches ou /var/run/reboot-required) ; detail complet dans
+`server/logs/mise_a_jour_<date>.log` sur le NAS. Retaper la commande
+pendant qu'elle tourne donne l'etape en cours. apt ne doit jamais poser de
+question sur tty1 (il avalerait le clavier) : stdin=/dev/null,
+DEBIAN_FRONTEND=noninteractive, --force-confold. Regle sudoers limitee
+etendue a /usr/bin/apt-get (+ env_keep DEBIAN_FRONTEND). Teste avec une
+fausse installation et un vrai `apt-get update` ; premiere vraie mise a
+jour a faire par l'utilisateur (241 paquets en attente le 2026-09-29).

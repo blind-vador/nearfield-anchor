@@ -144,6 +144,10 @@ def run_command(line, key_source, last_response):
     cmd, score = matcher.match(line, commands.COMMANDS)
     if cmd is None:
         return f"Commande non reconnue : {line}."
+    if cmd.busy:
+        state = cmd.busy()
+        if state:
+            return state
     if cmd.confirm:
         out(f"{cmd.confirm}\n? ")
         voix.say(cmd.confirm, lock=True)

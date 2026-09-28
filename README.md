@@ -55,12 +55,14 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `commands.py` | Registre des commandes -- en ajouter une = un handler + une entree dans `COMMANDS` |
 | `matcher.py` | Mots-cles puis repli flou (seuil 65) ; sinon "commande non reconnue" |
 | `simulation.py` | 23 scenarios qui font parler les vraies fonctions d'annonce des watchers |
+| `maj.py` | Mise à jour apt en arrière-plan, étapes parlées, détail dans `server/logs/mise_a_jour_*.log` |
 | `keys.py` | Noms parles des touches ; mode reperage (evdev pour Maj/Ctrl/Alt...) |
 | `voix.py` | espeak interruptible ; reponses sous le verrou audio partage |
 
 Commandes : `aide`, `santé` ("comment tu vas" : processeur, alimentation,
 mémoire, disques, veilles), `rire` ("fais-moi rire" : lance radiono),
-`imprimante`, `température`, `heure`, `radio`,
+`mise à jour` (mise à jour complète + nettoyage, confirmée, suivie à la voix
+par étapes ; retaper la commande donne l'avancement), `imprimante`, `température`, `heure`, `radio`,
 `touches` (reperage des touches, 3 x Echap pour sortir), `répète`,
 `redémarrer` / `éteindre` (confirmation "oui" obligatoire), `simulation`
 (`simulation train`, `simulation météo`, `simulation train retard`,

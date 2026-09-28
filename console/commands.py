@@ -33,6 +33,7 @@ class Command:
     keywords: list = field(default_factory=list)
     examples: list = field(default_factory=list)
     confirm: str = ""  # si renseigne : question posee, "oui" exige avant d'agir
+    busy: object = None  # si renseigne : rend l'etat parle d'une action deja en cours, ou ""
 
 
 def _fr_number(value, decimals=1):
@@ -266,6 +267,14 @@ def sante():
     return " ".join([summary] + details)
 
 
+def mise_a_jour(announce):
+    import maj
+    import voix
+    # Les etapes sont dites par maj.py lui-meme, dans l'ordre (say_and_wait).
+    maj.start(voix.say_and_wait)
+    return ""
+
+
 def help_text():
     lines = [f"{c.name} : {c.description}." for c in COMMANDS]
     return "Commandes disponibles. " + " ".join(lines)
@@ -314,6 +323,13 @@ COMMANDS = [
             keywords=["temperature du pi", "temperature pi", "chaleur", "temp"],
             examples=["quelle température fait le pi", "le pi chauffe",
                       "température processeur"]),
+    Command("mise à jour", "mise à jour complète du système et nettoyage, après confirmation",
+            mise_a_jour,
+            keywords=["mise a jour", "mises a jour", "mets a jour", "mettre a jour", "update", "upgrade"],
+            confirm="Lancer la mise à jour complète du système ? Évite pendant une impression. "
+                    "Ça peut durer un quart d'heure, je te préviens à chaque étape. "
+                    "Tape oui puis entrée. Toute autre réponse annule.",
+            busy=lambda: __import__("maj").busy()),
     Command("santé", "bilan de santé du Pi : processeur, alimentation, mémoire, disques, veilles", sante,
             keywords=["sante", "comment tu vas", "comment vas tu", "comment va le pi",
                       "ca va", "tu vas bien", "etat du pi", "bilan", "diagnostic"],
