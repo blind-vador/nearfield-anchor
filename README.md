@@ -58,7 +58,9 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `keys.py` | Noms parles des touches ; mode reperage (evdev pour Maj/Ctrl/Alt...) |
 | `voix.py` | espeak interruptible ; reponses sous le verrou audio partage |
 
-Commandes : `aide`, `imprimante`, `température`, `heure`, `radio`,
+Commandes : `aide`, `santé` ("comment tu vas" : processeur, alimentation,
+mémoire, disques, veilles), `rire` ("fais-moi rire" : lance radiono),
+`imprimante`, `température`, `heure`, `radio`,
 `touches` (reperage des touches, 3 x Echap pour sortir), `répète`,
 `redémarrer` / `éteindre` (confirmation "oui" obligatoire), `simulation`
 (`simulation train`, `simulation météo`, `simulation train retard`,

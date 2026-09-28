@@ -122,6 +122,150 @@ def radio_scan():
     return f"Signal FM le plus fort : {_fr_number(best_freq / 1e6)} mégahertz."
 
 
+RADIONO_SCRIPT = "/home/vador/autopilot/radiono.py"
+AUDIO_LOCK_PATH = "/tmp/radio_watch_audio.lock"
+_radiono_thread = None
+
+
+def _play_radiono():
+    import fcntl
+    with open(AUDIO_LOCK_PATH, "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)  # attend la fin d'une annonce en cours
+        try:
+            subprocess.run(["python3", RADIONO_SCRIPT], cwd=os.path.dirname(RADIONO_SCRIPT),
+                           stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=600)
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+
+
+def rire():
+    """Lance radiono (un son au hasard dans les capsules du NAS), en
+    arriere-plan : un clip peut durer plusieurs minutes."""
+    global _radiono_thread
+    import threading
+    if not os.path.isfile(RADIONO_SCRIPT):
+        return "Le script radiono est introuvable."
+    if _radiono_thread is not None and _radiono_thread.is_alive():
+        return "Un son de radiono est déjà en cours."
+    # Petit delai : laisser la console dire sa reponse avant le son.
+    _radiono_thread = threading.Timer(3, _play_radiono)
+    _radiono_thread.daemon = True
+    _radiono_thread.start()
+    return "Radiono, un son au hasard."
+
+
+WATCHERS = {
+    "nas-watch": "disques", "radio-watch": "radio", "meteo-watch": "météo",
+    "crue-watch": "crues", "sncf-watch": "trains", "adsb-watch": "avions",
+    "stas-watch": "bus et tram", "log-ship": "copie des journaux",
+}
+NAS_MOUNTS = ["/media/nas/nd1", "/media/nas/nd2"]
+
+
+def _cpu_percent(interval=0.5):
+    def sample():
+        with open("/proc/stat") as f:
+            values = [int(v) for v in f.readline().split()[1:]]
+        idle = values[3] + values[4]  # idle + iowait
+        return idle, sum(values)
+    idle1, total1 = sample()
+    import time
+    time.sleep(interval)
+    idle2, total2 = sample()
+    return 100 * (1 - (idle2 - idle1) / max(1, total2 - total1))
+
+
+def _vcgencmd(*args):
+    return subprocess.run(["vcgencmd", *args], capture_output=True, text=True, timeout=5).stdout.strip()
+
+
+def _uptime_text():
+    with open("/proc/uptime") as f:
+        minutes = int(float(f.read().split()[0]) // 60)
+    days, rem = divmod(minutes, 1440)
+    hours, mins = divmod(rem, 60)
+    if days:
+        return f"{days} jour{'s' if days > 1 else ''} et {hours} heures"
+    if hours:
+        return f"{hours} heures {mins}"
+    return f"{mins} minutes"
+
+
+def sante():
+    """Bilan de sante : problemes d'abord, puis les mesures."""
+    problems, details = [], []
+
+    cpu = _cpu_percent()
+    load1 = os.getloadavg()[0]
+    details.append(f"Processeur à {round(cpu)} pour cent, charge moyenne {_fr_number(load1)}.")
+    if cpu > 90:
+        problems.append("processeur saturé")
+
+    try:
+        temp = float(_vcgencmd("measure_temp").split("=")[1].split("'")[0])
+        details.append(f"Température {_fr_number(temp)} degrés.")
+        if temp >= 80:
+            problems.append("température critique, le Pi ralentit")
+        elif temp >= 75:
+            problems.append("température élevée")
+    except (IndexError, ValueError, OSError):
+        details.append("Température illisible.")
+
+    # get_throttled : bits 0-3 = etat actuel, bits 16-19 = survenu depuis
+    # le demarrage (0 sous-tension, 1 frequence bridee, 2 ralenti, 3 limite thermique).
+    try:
+        flags = int(_vcgencmd("get_throttled").split("=")[1], 16)
+        volts = _vcgencmd("measure_volts", "core").split("=")[1].rstrip("V")
+        if flags & 0x1:
+            problems.append("sous-tension en ce moment, l'alimentation est trop faible")
+            details.append("Alimentation : sous-tension en cours.")
+        elif flags & 0x10000:
+            problems.append("sous-tension survenue depuis le démarrage")
+            details.append("Alimentation : correcte maintenant, mais une sous-tension a eu lieu depuis le démarrage.")
+        else:
+            details.append("Alimentation correcte, aucune sous-tension depuis le démarrage.")
+        details.append(f"Tension du processeur {_fr_number(float(volts), 2)} volt.")
+        if flags & 0x4:
+            problems.append("processeur ralenti en ce moment")
+        elif flags & 0x40000:
+            details.append("Le processeur a été ralenti depuis le démarrage.")
+    except (IndexError, ValueError, OSError):
+        details.append("État de l'alimentation illisible.")
+
+    with open("/proc/meminfo") as f:
+        mem = {line.split(":")[0]: int(line.split()[1]) for line in f}
+    mem_used = 100 * (1 - mem["MemAvailable"] / mem["MemTotal"])
+    details.append(f"Mémoire utilisée {round(mem_used)} pour cent.")
+    if mem_used > 90:
+        problems.append("mémoire presque pleine")
+
+    import shutil
+    sd = shutil.disk_usage("/")
+    sd_used = 100 * sd.used / sd.total
+    details.append(f"Carte SD remplie à {round(sd_used)} pour cent.")
+    if sd_used > 90:
+        problems.append("carte SD presque pleine")
+
+    mounted = sum(os.path.ismount(p) for p in NAS_MOUNTS)
+    details.append(f"Disques du NAS : {mounted} sur {len(NAS_MOUNTS)} montés.")
+    if mounted < len(NAS_MOUNTS):
+        problems.append("disque du NAS manquant")
+
+    states = subprocess.run(["systemctl", "is-active", *WATCHERS], capture_output=True,
+                            text=True, timeout=10).stdout.split()
+    down = [WATCHERS[u] for u, s in zip(WATCHERS, states) if s != "active"]
+    if down:
+        problems.append(f"veille arrêtée : {', '.join(down)}")
+        details.append(f"{len(WATCHERS) - len(down)} veilles sur {len(WATCHERS)} actives.")
+    else:
+        details.append(f"Les {len(WATCHERS)} veilles sont actives.")
+
+    details.append(f"Allumé depuis {_uptime_text()}.")
+    summary = ("Le Pi va bien." if not problems
+               else "Attention : " + ", ".join(problems) + ".")
+    return " ".join([summary] + details)
+
+
 def help_text():
     lines = [f"{c.name} : {c.description}." for c in COMMANDS]
     return "Commandes disponibles. " + " ".join(lines)
@@ -170,6 +314,15 @@ COMMANDS = [
             keywords=["temperature du pi", "temperature pi", "chaleur", "temp"],
             examples=["quelle température fait le pi", "le pi chauffe",
                       "température processeur"]),
+    Command("santé", "bilan de santé du Pi : processeur, alimentation, mémoire, disques, veilles", sante,
+            keywords=["sante", "comment tu vas", "comment vas tu", "comment va le pi",
+                      "ca va", "tu vas bien", "etat du pi", "bilan", "diagnostic"],
+            examples=["comment tu vas", "comment va le pi", "tout va bien",
+                      "le pi va bien", "donne moi des nouvelles du pi"]),
+    Command("rire", "un son de radiono au hasard", rire,
+            keywords=["rire", "rigoler", "marrer", "blague", "drole", "radiono"],
+            examples=["fais moi rire", "fait moi rire", "raconte une blague",
+                      "un truc drôle", "amuse moi"]),
     Command("heure", "heure et date", heure,
             keywords=["heure", "date", "quel jour"],
             examples=["il est quelle heure", "on est quel jour"]),
