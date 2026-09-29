@@ -27,6 +27,7 @@ import keys  # noqa: E402
 import matcher  # noqa: E402
 import manuel  # noqa: E402
 import simulation  # noqa: E402
+import veilles  # noqa: E402
 import vision  # noqa: E402
 import voix  # noqa: E402
 
@@ -143,6 +144,10 @@ def read_line(key_source):
 
 
 def run_command(line, key_source, last_response):
+    # Veilles d'abord : "arrete radio", "redemarre radio"... (voir veilles.py).
+    request = veilles.parse(line)
+    if request:
+        return veilles.handle(*request)
     cmd, score = matcher.match(line, commands.COMMANDS)
     if cmd is None:
         return f"Commande non reconnue : {line}."
@@ -165,6 +170,8 @@ def run_command(line, key_source, last_response):
         question = "" if matcher.normalize(line) in map(matcher.normalize, cmd.keywords) else line
         vision.start(question, voix.say_and_wait)
         return ""
+    if cmd.name == "veilles":
+        return veilles.status_text()
     if cmd.name == "manuel":
         return manuel.run(key_source, voix.say, out)
     if cmd.name == "simulation":

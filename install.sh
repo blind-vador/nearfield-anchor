@@ -163,11 +163,21 @@ mkdir -p /media/nas/nd1 /media/nas/nd2
 # sudo sans mot de passe limite a ce dont les services ont besoin :
 # nas_watch.py (mount/umount) et la console (redemarrer/eteindre, mise a jour).
 SUDOERS_FILE=/etc/sudoers.d/020-pi-console-watchers
+# systemctl start/stop/restart/enable/disable des veilles : commandes
+# "arrete"/"reprends" de la console (console/veilles.py).
+VEILLE_CMDS=""
+for unit in "$REPO_DIR"/systemd/*.service; do
+    name="$(basename "$unit" .service)"
+    [ "$name" = "pi-console" ] && continue
+    for action in start stop restart enable disable; do
+        VEILLE_CMDS="$VEILLE_CMDS, /usr/bin/systemctl $action $name"
+    done
+done
 # apt-get : commande "mise a jour" de la console (env_keep pour qu elle
 # reste non interactive : apt ne doit jamais poser de question sur tty1).
 cat > "$SUDOERS_FILE.tmp" <<EOF
 Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND LC_ALL"
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/apt-get
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/apt-get$VEILLE_CMDS
 EOF
 visudo -cf "$SUDOERS_FILE.tmp" && chmod 440 "$SUDOERS_FILE.tmp" && mv "$SUDOERS_FILE.tmp" "$SUDOERS_FILE"
 # Partages reseau "server" (nd1) et "stockage" (nd2) pour les autres

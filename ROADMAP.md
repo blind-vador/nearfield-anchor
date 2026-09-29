@@ -4848,3 +4848,19 @@ USB 3 alimente. Pas besoin de changer de Pi.
 Bug trouve : en deplacant le hub des disques, montages morts + nas-watch
 plante (EIO en lisant le cache vocal sur le disque mort). Corrige dans
 lib/speak.py (toute OSError = pas de cache).
+
+### Console : arreter / reprendre les veilles (2026-09-29)
+
+`console/veilles.py`, aiguille AVANT la reconnaissance normale (main.py) :
+une action + un nom de veille = ce module ("arrete radio" -> stop + disable,
+persiste apres redemarrage ; "reprends radio" -> enable + start ; "redemarre
+radio" -> restart). "arrete" seul ou "veilles" = liste avec l'etat.
+"toutes les veilles" exclut nas-watch et log-ship (protection des disques).
+Conflits evites : "redemarre" seul redemarre toujours le Pi (confirmation),
+"reprends" seul et "reprends le scan" decrochent toujours le scanner (d'ou
+l'absence de l'alias "scan" pour la veille radio), "arrete le pi" eteint
+toujours. Regle sudoers limitee etendue, generee par install.sh (start,
+stop, restart, enable, disable de chaque unite sauf pi-console). Teste :
+aiguillage de 19 phrases, aller-retour reel arret/reprise de stas-watch.
+Contexte : antenne indisponible (voir diagnostic USB ci-dessus), la veille
+radio peut etre arretee en attendant le nouveau materiel.
