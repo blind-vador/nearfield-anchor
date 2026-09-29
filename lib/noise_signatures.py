@@ -28,6 +28,7 @@ SIGNATURES_NAS = f"{NAS_ROOT}/server/radio_log/parasites_connus.json"
 SIGNATURES_LOCAL = "/home/vador/autopilot/pi_console/parasites_connus.json"
 LAST_CAPTURE_PATH = "/tmp/radio_watch_derniere_capture.json"
 CONTROL_PATH = "/tmp/radio_watch_controle.json"
+PLAGES_PATH = "/tmp/radio_watch_plages.json"
 
 SIGNATURE_BANDS = 24
 SIGNATURE_LOW_HZ = 300.0
@@ -185,3 +186,22 @@ def lock_request():
     """La capture a laquelle se verrouiller, ou None si balayage normal."""
     control = _read_json(CONTROL_PATH, {})
     return control.get("capture") if control.get("lock") else None
+
+
+# --- Mode manuel (dialogue de la console, ecoute en direct) ---
+
+def request_manual(target):
+    _atomic_write_json(CONTROL_PATH, {"lock": False, "manual": target, "time": time.time()})
+
+
+def manual_request():
+    """La frequence a ecouter en direct, ou None hors mode manuel."""
+    return _read_json(CONTROL_PATH, {}).get("manual")
+
+
+def write_plages(plages):
+    _atomic_write_json(PLAGES_PATH, plages)
+
+
+def read_plages():
+    return _read_json(PLAGES_PATH, [])

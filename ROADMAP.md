@@ -4781,3 +4781,23 @@ Nouveau `lib/noise_signatures.py`, partage scanner / console :
   decroche en 5 s. L'ATIS n'etait pas captee a ce moment-la (conditions).
 - Pas encore vu en conditions reelles : l'abandon d'un parasite connu
   (il faut qu'un parasite signale revienne).
+
+### Console : mode "manuel" (2026-09-29)
+
+`console/manuel.py` (dialogue) + `lib/manual_tuner.py` (ecoute). Le
+scanner publie au demarrage ses 21 plages (`/tmp/radio_watch_plages.json` :
+15 bandes balayees avec pas, 6 fenetres RTLSDR-Airband a canaux fixes) --
+aucune liste en double dans la console. Pendant le dialogue, la console
+ecrit `{"manual": ...}` dans le fichier de controle ; la boucle principale
+(apres la securite thermique, qui coupe aussi l'ecoute manuelle) fait
+tourner un pipeline `rtl_fm | aplay` SANS silencieux sur la frequence,
+relance a chaque changement. Sortie sur ALSA "default" (dmix) et non
+plughw : verifie que deux lectures simultanees reussissent sur "default",
+pour que la console annonce les frequences pendant la diffusion. Echap
+convertit le mode manuel en verrouillage (avec silencieux) sur la
+frequence choisie ; "decroche" reprend le balayage.
+
+Teste : logique du dialogue sur les vraies plages (pas, dix pas, bords de
+plage, bouclage des plages, verrouillage final), et ecoute reelle 93,9 puis
+107,0 MHz (stations deja detectees par le scanner), relance sur changement
+de frequence, arret propre sans processus orphelin au "decroche".

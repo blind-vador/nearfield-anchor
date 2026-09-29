@@ -25,6 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import commands  # noqa: E402
 import keys  # noqa: E402
 import matcher  # noqa: E402
+import manuel  # noqa: E402
 import simulation  # noqa: E402
 import vision  # noqa: E402
 import voix  # noqa: E402
@@ -164,6 +165,8 @@ def run_command(line, key_source, last_response):
         question = "" if matcher.normalize(line) in map(matcher.normalize, cmd.keywords) else line
         vision.start(question, voix.say_and_wait)
         return ""
+    if cmd.name == "manuel":
+        return manuel.run(key_source, voix.say, out)
     if cmd.name == "simulation":
         return simulation.handle(line)
     if cmd.name == "touches":

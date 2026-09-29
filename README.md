@@ -57,6 +57,7 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `simulation.py` | 23 scenarios qui font parler les vraies fonctions d'annonce des watchers |
 | `maj.py` | Mise à jour apt en arrière-plan, étapes parlées, détail dans `server/logs/mise_a_jour_*.log` |
 | `vision.py` | Photo via mjpg-streamer, refus si trop sombre, description Gemini lue puis oubliée |
+| `manuel.py` | Dialogue du mode manuel ; plages publiées par le scanner (`/tmp/radio_watch_plages.json`) |
 | `keys.py` | Noms parles des touches ; mode reperage (evdev pour Maj/Ctrl/Alt...) |
 | `voix.py` | espeak interruptible ; reponses sous le verrou audio partage |
 
@@ -65,7 +66,9 @@ mémoire, disques, veilles), `rire` ("fais-moi rire" : lance radiono),
 `décris` ("qu'est-ce que tu vois", "photo, la pièce est-elle décollée ?" :
 photo de la webcam de l'imprimante décrite par Gemini, rien n'est gardé),
 `mise à jour` (mise à jour complète + nettoyage, confirmée, suivie à la voix
-par étapes ; retaper la commande donne l'avancement), `parasite` ("c'était du bruit" : dernière réception radio effacée du journal et
+par étapes ; retaper la commande donne l'avancement), `manuel` (balayage suspendu, radio en direct : flèches haut/bas = plage,
+gauche/droite = pas de fréquence, page haut/bas = dix pas, Entrée = relire,
+Échap = fermer en restant fixé sur la fréquence), `parasite` ("c'était du bruit" : dernière réception radio effacée du journal et
 apprise pour être ignorée), `accroche` / `décroche` ("scan verrouiller",
 "reprend" : fixer le scanner sur la fréquence de la dernière réception, puis
 reprendre le balayage), `imprimante`, `température`, `heure`, `radio`,

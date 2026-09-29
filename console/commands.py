@@ -328,7 +328,7 @@ def accroche():
 
 def decroche():
     import noise_signatures as ns
-    if not ns.lock_request():
+    if not ns.lock_request() and not ns.manual_request():
         return "Le scanner n'est pas verrouillé, il balaye déjà."
     ns.request_unlock()
     return "Reprise du balayage demandée."
@@ -411,6 +411,9 @@ COMMANDS = [
             keywords=["parasite", "parasites", "faux positif", "c est du bruit", "que du bruit",
                       "bruit parasite", "juste du bruit"],
             examples=["c'était du bruit", "c'était un parasite", "fausse alerte radio"]),
+    Command("manuel", "mode manuel : choisir soi-même la plage et la fréquence aux flèches", None,
+            keywords=["manuel", "manuelle", "mode manuel", "reglage manuel", "accord manuel"],
+            examples=["je veux régler moi-même", "passe en manuel", "je choisis la fréquence"]),
     Command("accroche", "le scanner se fixe sur la fréquence de la dernière réception", accroche,
             keywords=["accroche", "accrocher", "verrouille", "verrouiller", "verrouillage",
                       "scan verrouiller", "bloque le scan", "reste dessus", "reste sur cette frequence"],

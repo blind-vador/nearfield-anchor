@@ -24,6 +24,7 @@ import audio_filters
 import acars_watch
 import spectral_diagnostic
 import noise_signatures
+from manual_tuner import ManualStream
 from rnnoise_lib import (
     create as _rnnoise_create,
     destroy as _rnnoise_destroy,
@@ -1228,7 +1229,28 @@ def _scan_locked(capture):
 
 
 def _lock_pending():
-    return noise_signatures.lock_request() is not None
+    return noise_signatures.lock_request() is not None or noise_signatures.manual_request() is not None
+
+
+def _publish_plages():
+    """Liste des plages pour le mode manuel de la console : les bandes de
+    ce fichier et les fenetres RTLSDR-Airband, sans liste en double."""
+    plages = []
+    for b in BANDS:
+        sweep = b["type"] == "sweep"
+        plages.append({
+            "source": "rtl_fm", "target": b["name"], "mode": b["mode"],
+            "label": f"{'bande' if sweep else 'canal'} {b['name_spoken']}",
+            "low_hz": b.get("low_hz"), "high_hz": b.get("high_hz"), "step_hz": b.get("step_hz"),
+            "channels": [] if sweep else list(b["channels"]),
+        })
+    for w in airband_bridge.AIRBAND_WINDOWS:
+        plages.append({
+            "source": "airband", "target": w["name"], "mode": w["mode"], "label": w["name_spoken"],
+            "low_hz": None, "high_hz": None, "step_hz": None,
+            "channels": [f for f, _ in w["channels"]],
+        })
+    noise_signatures.write_plages(plages)
 
 
 def _get_cpu_temp_c():
@@ -1322,6 +1344,8 @@ def _speak_pause(message, sound=None):
 def main():
     print("[radio_watch] demarrage de la veille radio")
     radio_log.start_purge_scheduler()
+    _publish_plages()
+    manual_stream = ManualStream()
     fm_bands = [b for b in BANDS if b["type"] == "fm_channels"]
     sweep_bands = [b for b in BANDS if b["type"] == "sweep"]
     sweep_idx = 0
@@ -1426,6 +1450,7 @@ def main():
                       f"{outdoor_temp_c if outdoor_temp_c is not None else '?'}C, "
                       f"{'nuit' if _is_night_now() else 'jour'}]) "
                       f"(reprise prevue sous {effective_resume_c:.1f}C)")
+                manual_stream.stop()  # la securite thermique coupe aussi l'ecoute manuelle
                 _speak_pause(
                     f"Pause du scanner radio, température élevée : {temp:.0f} degrés.",
                     sound=SCANER_ERROR_SOUND,
@@ -1487,10 +1512,26 @@ def main():
         # Verrouillage (commandes console "accroche"/"decroche", 2026-09-29) :
         # apres la securite thermique (toujours prioritaire), avant la pause
         # programmee (suspendue tant que l'utilisateur ecoute une frequence).
+        # Mode manuel (console, 2026-09-29) : ecoute en direct sans
+        # silencieux de la frequence choisie au clavier. La console annonce
+        # elle-meme les frequences : rien a dire ici.
+        manual = noise_signatures.manual_request()
+        if manual:
+            if current_lock_key != "manuel":
+                print("[radio_watch] mode manuel")
+                current_lock_key = "manuel"
+            manual_stream.tune(manual["freq_hz"], manual["mode"])
+            time.sleep(0.3)
+            continue
+        manual_stream.stop()
+
         lock_capture = noise_signatures.lock_request()
         lock_key = (lock_capture["freq_hz"], lock_capture.get("target")) if lock_capture else None
         if lock_key != current_lock_key:
-            if lock_capture:
+            if lock_capture and current_lock_key == "manuel":
+                # La console vient de le dire en fermant le mode manuel.
+                print(f"[radio_watch] fin du mode manuel, verrouillage sur {lock_capture['freq_hz']/1e6:.4f} MHz")
+            elif lock_capture:
                 print(f"[radio_watch] verrouillage sur {lock_capture['freq_hz']/1e6:.4f} MHz ({lock_capture['label']})")
                 _speak_pause(f"Scanner verrouillé sur {lock_capture['label']}.")
             else:
