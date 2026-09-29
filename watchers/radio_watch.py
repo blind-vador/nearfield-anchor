@@ -1232,6 +1232,51 @@ def _lock_pending():
     return noise_signatures.lock_request() is not None or noise_signatures.manual_request() is not None
 
 
+class _ManualSquelch:
+    """Touche F du mode manuel : le MEME traitement qu'en reception
+    (stream_until_quiet) -- filtre de bande vocale 300-3000 Hz (coupe les
+    sifflements aigus), puis silencieux RNNoise : ouverture apres
+    MIN_CONSECUTIVE_SIGNAL_WINDOWS fenetres de signal, fermeture apres
+    SILENCE_DEBOUNCE_SEC de bruit. Audio retarde de ces quelques fenetres
+    pour ne pas couper le debut des transmissions ; silence (zeros) quand
+    le silencieux est ferme, pour garder la sortie son alimentee."""
+
+    def __init__(self, sample_rate):
+        self.rate = sample_rate
+        self.voice_filter = audio_filters.VoiceBandpassFilter(sample_rate)
+        self.rnnoise = _rnnoise_create()
+        self.resample_state = None
+        self.smoothed_prob = None
+        self.signal_windows = 0
+        self.quiet_windows = 0
+        self.is_open = False
+        self.delay = collections.deque()
+        self.quiet_needed = int(SILENCE_DEBOUNCE_SEC * 1000 / ANALYSIS_WINDOW_MS)
+
+    def process(self, chunk):
+        chunk = self.voice_filter.process_s16le(chunk)
+        is_signal, _, self.resample_state, self.smoothed_prob = _chunk_is_signal(
+            chunk, self.rate, self.rnnoise, self.resample_state, self.smoothed_prob)
+        if is_signal:
+            self.signal_windows += 1
+            self.quiet_windows = 0
+            if self.signal_windows >= MIN_CONSECUTIVE_SIGNAL_WINDOWS:
+                self.is_open = True
+        else:
+            self.signal_windows = 0
+            self.quiet_windows += 1
+            if self.is_open and self.quiet_windows >= self.quiet_needed:
+                self.is_open = False
+        self.delay.append(chunk)
+        if len(self.delay) <= MIN_CONSECUTIVE_SIGNAL_WINDOWS:
+            return bytes(len(chunk))
+        out = self.delay.popleft()
+        return out if self.is_open else bytes(len(out))
+
+    def close(self):
+        _rnnoise_destroy(self.rnnoise)
+
+
 def _publish_plages():
     """Liste des plages pour le mode manuel de la console : les bandes de
     ce fichier et les fenetres RTLSDR-Airband, sans liste en double."""
@@ -1345,7 +1390,7 @@ def main():
     print("[radio_watch] demarrage de la veille radio")
     radio_log.start_purge_scheduler()
     _publish_plages()
-    manual_stream = ManualStream()
+    manual_stream = ManualStream(squelch_factory=_ManualSquelch)
     manual_pending = (None, 0.0)  # (frequence, mode) demandee, et depuis quand
     fm_bands = [b for b in BANDS if b["type"] == "fm_channels"]
     sweep_bands = [b for b in BANDS if b["type"] == "sweep"]
@@ -1523,7 +1568,7 @@ def main():
                 current_lock_key = "manuel"
             # Defilement rapide aux fleches : on attend que la frequence ne
             # bouge plus depuis MANUAL_SETTLE_SEC avant de relancer rtl_fm.
-            wanted = (manual["freq_hz"], manual["mode"])
+            wanted = (manual["freq_hz"], manual["mode"], manual.get("filter", False))
             if wanted != manual_pending[0]:
                 manual_pending = (wanted, time.time())
             elif time.time() - manual_pending[1] >= MANUAL_SETTLE_SEC:

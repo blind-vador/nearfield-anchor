@@ -4808,3 +4808,25 @@ fait planter le mode manuel -- un rtl_fm orphelin restait accroche au dongle
 enfants directs arretes un par un (SIGKILL au besoin), accord seulement apres
 0,5 s de frequence stable. Piege rencontre : `process_group` vers le groupe
 d'une autre session -> EPERM. Test d'endurance passe.
+
+### Plantage du pilote son + touche F du mode manuel (2026-09-29)
+
+Console muette : le pilote du jack (snd_bcm2835, "staging") avait plante
+a 12 h 17 ("vchi message timeout", puis "failed to open VCHI service
+connection") ; plus aucun son, rechargement du module bloque en etat D,
+redemarrage bloque, coupure de courant necessaire. Apres redemarrage, 71
+"failed to close VCHI service connection (status=-11)" en 8 min, par
+rafales EXACTEMENT pendant l'usage du mode manuel : chaque relance d'aplay
+refermait la carte. Une voix espeak ou une lecture isolee ne declenchent
+rien. Correctif : aplay unique pendant tout le mode manuel (voir
+lib/manual_tuner.py). Verifie : 20 relances -> 0 nouvelle erreur.
+Autre fragilite connue : la sortie exclusive plughw du scanner bloque la
+voix de la console pendant une diffusion (jusqu'a 45 s). A revoir.
+
+Touche F (demande utilisateur) : _ManualSquelch dans radio_watch.py =
+filtre de bande vocale + silencieux RNNoise de la reception, applique en
+continu ; sans effet en WFM (musique).
+
+Le meme apres-midi, le hub VIA de l'antenne a decroche ~6 min apres le
+redemarrage force (erreurs -71 sur le port bleu) : antenne et webcam
+absentes, rtl_fm "No supported devices found".

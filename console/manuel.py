@@ -3,6 +3,8 @@
   fleches haut / bas       plage precedente / suivante
   fleches gauche / droite  un pas de frequence (ou canal) en moins / en plus
   page haut / page bas     dix pas
+  F                        filtre on/off : filtre de bande vocale + silencieux,
+                           comme en reception normale (coupe sifflements et souffle)
   Entree                   redit la plage et la frequence
   Echap                    ferme le dialogue ; le scanner reste fixe sur la
                            frequence (avec silencieux) jusqu'a "decroche"
@@ -20,7 +22,7 @@ import noise_signatures as ns  # noqa: E402
 BIG_STEP = 10
 INTRO = ("Mode manuel, balayage suspendu. Flèches haut et bas : changer de plage. "
          "Gauche et droite : ajuster la fréquence. Page haut et page bas : dix pas. "
-         "Entrée : relire. Échap : fermer.")
+         "F : filtre et silencieux. Entrée : relire. Échap : fermer.")
 
 
 def spoken_mhz(freq_hz):
@@ -31,6 +33,7 @@ def spoken_mhz(freq_hz):
 class Tuner:
     def __init__(self, plages, start=None):
         self.plages = plages
+        self.filtered = False
         self.index = 0
         self.freq = None
         if start:
@@ -77,6 +80,14 @@ class Tuner:
             return ("Début de plage, " if count < 0 else "Fin de plage, ") + spoken_mhz(self.freq)
         return spoken_mhz(self.freq)
 
+    def toggle_filter(self):
+        self.filtered = not self.filtered
+        if not self.filtered:
+            return "Filtre désactivé."
+        if self.plage["mode"] == "wfm":
+            return "Filtre activé, mais sans effet sur la radio FM."
+        return "Filtre activé."
+
     def describe(self, with_plage=True):
         text = spoken_mhz(self.freq)
         return f"{self.plage['label']}, {text}" if with_plage else text
@@ -86,7 +97,7 @@ class Tuner:
         plage = self.plage
         return {"source": plage["source"], "freq_hz": self.freq, "mode": plage["mode"],
                 "label": plage["label"], "target": plage["target"], "log_path": None,
-                "fingerprint": None, "time": 0}
+                "fingerprint": None, "time": 0, "filter": self.filtered}
 
 
 KEYS = {
@@ -113,10 +124,12 @@ def run(key_source, say, out):
             text = tuner.change_plage(action[1])
         elif action:
             text = tuner.step(action[1])
+        elif key in ("f", "F"):
+            text = tuner.toggle_filter()
         elif key in ("\r", "\n"):
-            text = tuner.describe()
+            text = tuner.describe() + (", filtre activé" if tuner.filtered else "")
         else:
-            text = "Flèches, entrée, ou échap pour fermer."
+            text = "Flèches, F, entrée, ou échap pour fermer."
         ns.request_manual(tuner.target())
         out(f"[{text}]\n")
         say(text)
