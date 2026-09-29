@@ -4,7 +4,11 @@ import subprocess
 # heurte a un bug connu du pilote audio embarque du Pi (snd_bcm2835) et
 # echoue silencieusement a produire du son (voir ROADMAP.md). Meme
 # peripherique utilise partout dans tous les services audio de ce projet.
-AUDIO_DEVICE = "plughw:CARD=Headphones,DEV=0"
+# "default" = adaptateur son USB via son mixeur dmix (/etc/asound.conf,
+# 2026-09-29) : plusieurs sons peuvent jouer en meme temps, la console parle
+# donc meme pendant une diffusion radio. Avant : plughw exclusif du jack
+# integre, dont le pilote (snd_bcm2835) plantait.
+AUDIO_DEVICE = "default"
 
 # Session d'enregistrement active (voir radio_log.py) -- si definie, tout
 # son joue via play_sound_effect() y est aussi copie. Global simple (pas

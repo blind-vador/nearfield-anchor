@@ -4885,3 +4885,24 @@ changement de jour) + lecture reelle : aucune nouvelle erreur du pilote.
 apres le redemarrage de 14 h 13, sans mode manuel, dont 2 "failed to open"
 (precurseurs du plantage de midi). Pistes : sortie son maintenue ouverte en
 permanence + tout sur "default" ; ou carte son USB (contourne snd_bcm2835).
+
+### Sortie son deplacee sur un adaptateur USB (2026-09-29)
+
+Le pilote du jack integre (snd_bcm2835) accumulait les "failed to close /
+failed to open VCHI service connection" meme en usage normal (188 en 53 min),
+avec risque d'un nouveau blocage complet du son. Remplace par un adaptateur
+USB vers jack de l'utilisateur ("USB Audio Device", Generalplus 1b3f:2008,
+pilote snd-usb-audio). `config/asound.conf` (deploye si l'adaptateur est
+detecte) : "default" = plug -> dmix sur la carte "Device" (nom stable, pas
+d'index). `lib/sound_player.py` : AUDIO_DEVICE "default" au lieu de plughw
+exclusif -> la console parle meme pendant une diffusion radio (auparavant
+muette jusqu'a 45 s). Verifie : deux lectures simultanees, espeak, format
+flottant 16 kHz de l'aviation, ffmpeg ; carillon + voix en meme temps ;
+plus aucune erreur VCHI. Volume Speaker 85 %, memorise (alsactl store).
+Piege : `defaults.pcm.card Device` est refuse ("card is not a string") et
+casse TOUT le son tant que le fichier est la.
+
+Ports USB (mis a jour) : le bleu du BAS est defaillant en USB 2 (adaptateur
+neuf refuse, -71) mais bon en USB 3 -> hub des disques dessus ; bleu du
+haut (bon USB 2/3) -> adaptateur son ; noir du haut -> clavier ; noir du
+bas suspect.

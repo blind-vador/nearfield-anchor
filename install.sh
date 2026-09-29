@@ -188,6 +188,17 @@ cp "$REPO_DIR/nas/smb.conf" /etc/samba/smb.conf
 testparm -s >/dev/null
 systemctl enable smbd
 systemctl restart smbd
+# Sortie son : adaptateur USB (config/asound.conf) plutot que le jack
+# integre, dont le pilote snd_bcm2835 plantait (2026-09-29). Seulement si
+# l'adaptateur est branche : sinon "default" viserait une carte absente et
+# plus rien ne sortirait.
+if aplay -l 2>/dev/null | grep -q "USB Audio"; then
+    cp "$REPO_DIR/config/asound.conf" /etc/asound.conf
+    amixer -q -c Device sset Speaker 85% || true
+    alsactl store Device || true
+else
+    echo "!! Pas d'adaptateur son USB detecte : sortie sur le jack integre (pilote fragile)."
+fi
 # tty1 appartient a la console vocale : plus de login classique sur l'ecran
 # (SSH reste le moyen normal d'administration).
 systemctl stop getty@tty1.service 2>/dev/null || true
