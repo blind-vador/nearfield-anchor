@@ -4906,3 +4906,6 @@ Ports USB (mis a jour) : le bleu du BAS est defaillant en USB 2 (adaptateur
 neuf refuse, -71) mais bon en USB 3 -> hub des disques dessus ; bleu du
 haut (bon USB 2/3) -> adaptateur son ; noir du haut -> clavier ; noir du
 bas suspect.
+Jack integre ensuite desactive (`dtparam=audio=off` dans
+/boot/firmware/config.txt, applique par install.sh si l'adaptateur est la) :
+snd_bcm2835 n'est plus charge, plus aucune erreur VCHI possible.

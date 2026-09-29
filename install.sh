@@ -196,6 +196,8 @@ if aplay -l 2>/dev/null | grep -q "USB Audio"; then
     cp "$REPO_DIR/config/asound.conf" /etc/asound.conf
     amixer -q -c Device sset Speaker 85% || true
     alsactl store Device || true
+    # Et le jack integre n'est plus charge du tout (effet au redemarrage).
+    sed -i "s/^dtparam=audio=on/dtparam=audio=off/" /boot/firmware/config.txt
 else
     echo "!! Pas d'adaptateur son USB detecte : sortie sur le jack integre (pilote fragile)."
 fi
