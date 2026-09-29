@@ -4732,3 +4732,20 @@ pour "repete" (reponse vide = rien a memoriser, voir main.py). Mais la
 photo part chez Google, qui peut l'utiliser sur l'offre gratuite.
 Description lue avec espeak (interruptible) plutot que la voix cloud :
 `play_sound_effect` coupe a 15 s, trop court pour trois phrases.
+
+### radio_watch : reprise sur plateau thermique (2026-09-29)
+
+Scanner bloque en pause thermique de 7 h a 11 h : le Pi restait a 65C au
+repos (charge ~0, CPU a 600 MHz), donc jamais sous TEMP_RESUME_C = 60C.
+Ajout, a la demande de l'utilisateur, d'une reprise sur plateau bornee a
+60-68C : temperature stable (<= 1,5C d'ecart) pendant 20 min et <= 68C ->
+reprise annoncee ; au-dessus, pause maintenue et un seul avertissement
+vocal. Cause de fond : refroidissement insuffisant. Boitier plastique avec
+petit ventilateur monte par l'utilisateur, non pilote par le systeme
+(aucun overlay de ventilateur, donc branche en direct sur le 5 V) : a
+verifier au toucher/a l'oreille. Un boitier aluminium double ventilateur
+attend d'etre monte.
+
+Attention : `watchers/radio_watch.py` est en fins de ligne CRLF (seul
+fichier du depot dans ce cas) -- un script Python qui le reecrit en mode
+texte les convertit en LF sans prevenir (diff de tout le fichier).

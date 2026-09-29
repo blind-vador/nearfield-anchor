@@ -82,6 +82,19 @@ TEMP_CRITICAL_C = 80.0
 # refroidissement demandee entre deux pauses.
 TEMP_RESUME_C = 60.0  # hysteresis : attend d'etre redescendu sous ce seuil
 
+# Reprise sur plateau (2026-09-29, demande explicite de l'utilisateur) :
+# apres la reinstallation, le Pi restait a 65C AU REPOS, charge nulle,
+# pendant 4 h -- jamais sous 60C, scanner bloque en pause indefiniment.
+# Si la temperature ne baisse plus du tout pendant PLATEAU_WINDOW_SEC, le
+# Pi a atteint son plancher de refroidissement : on reprend quand meme,
+# mais seulement si ce plancher reste dans la plage demandee (60-68C).
+# Au-dessus de PLATEAU_RESUME_MAX_C, on reste en pause et on previent une
+# fois (ventilation a verifier). Ne remplace pas TEMP_RESUME_C : une
+# reprise normale sous 60C reste prioritaire.
+PLATEAU_WINDOW_SEC = 1200       # 20 min sans baisse = plancher atteint
+PLATEAU_TOLERANCE_C = 1.5       # ecart max sur la fenetre (bruit de mesure du capteur)
+PLATEAU_RESUME_MAX_C = 68.0     # borne haute de la reprise sur plateau
+
 # Marge adaptative additionnelle (2026-08-30, demande explicite) : si les
 # pauses thermiques se rapprochent dans le temps (intervalle actif entre
 # deux pauses qui raccourcit -- signe d'une degradation progressive :
@@ -1348,11 +1361,32 @@ def main():
                     sound=SCANER_ERROR_SOUND,
                 )
                 pause_actual_start = time.time()
+                recent_temps = collections.deque()  # (horodatage, temperature) sur PLATEAU_WINDOW_SEC
+                plateau_resume = False
+                plateau_warned = False
                 while True:
                     time.sleep(TEMP_CHECK_INTERVAL_SEC)
                     temp = _get_cpu_temp_c()
                     if temp is None or temp <= effective_resume_c:
                         break
+                    now = time.time()
+                    recent_temps.append((now, temp))
+                    while recent_temps and now - recent_temps[0][0] > PLATEAU_WINDOW_SEC:
+                        recent_temps.popleft()
+                    window_full = now - pause_actual_start >= PLATEAU_WINDOW_SEC
+                    values = [t for _, t in recent_temps]
+                    if window_full and max(values) - min(values) <= PLATEAU_TOLERANCE_C:
+                        if temp <= PLATEAU_RESUME_MAX_C:
+                            plateau_resume = True
+                            print(f"[radio_watch] plateau thermique a {temp:.1f}C depuis "
+                                  f"{PLATEAU_WINDOW_SEC // 60} min (<= {PLATEAU_RESUME_MAX_C:.0f}C) -- reprise")
+                            break
+                        if not plateau_warned:
+                            plateau_warned = True
+                            print(f"[radio_watch] plateau thermique a {temp:.1f}C, au-dessus de "
+                                  f"{PLATEAU_RESUME_MAX_C:.0f}C -- pause maintenue")
+                            _speak_pause(f"Le Pi ne refroidit plus et reste à {temp:.0f} degrés. "
+                                         f"Le scanner radio reste en pause. Vérifie la ventilation.")
                 last_pause_end_time = time.time()
                 pause_duration = last_pause_end_time - pause_actual_start
 
@@ -1373,7 +1407,10 @@ def main():
                 pause_durations.append(pause_duration)
 
                 print(f"[radio_watch] reprise apres refroidissement (temperature : {temp})")
-                _speak_pause("Le scanner radio reprend, température redescendue.")
+                if plateau_resume:
+                    _speak_pause(f"Le Pi ne refroidit plus, le scanner radio reprend à {temp:.0f} degrés.")
+                else:
+                    _speak_pause("Le scanner radio reprend, température redescendue.")
                 cycle_start = time.time()
                 continue
 
