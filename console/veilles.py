@@ -65,18 +65,35 @@ def parse(line):
     return None
 
 
-def _state(unit):
-    active = subprocess.run(["systemctl", "is-active", unit], capture_output=True, text=True).stdout.strip()
-    enabled = subprocess.run(["systemctl", "is-enabled", unit], capture_output=True, text=True).stdout.strip()
-    if active == "active":
-        return "active"
-    return "arrêtée" + ("" if enabled == "enabled" else ", désactivée au démarrage")
+UNSTABLE_RESTARTS = 3  # au-dela, la veille "redemarre en boucle" (plante et repart)
+
+
+def _problem(unit):
+    """None si la veille tourne normalement, sinon une courte description."""
+    out = subprocess.run(["systemctl", "show", "-p", "ActiveState,SubState,NRestarts,UnitFileState", unit],
+                         capture_output=True, text=True).stdout
+    info = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
+    active, sub = info.get("ActiveState"), info.get("SubState")
+    restarts = int(info.get("NRestarts") or 0)
+    if active == "active" and restarts < UNSTABLE_RESTARTS:
+        return None
+    if active == "active" or sub == "auto-restart" or active == "activating":
+        return f"redémarre en boucle, {restarts} fois"
+    if active == "failed":
+        return "en panne"
+    return "arrêtée" + ("" if info.get("UnitFileState") == "enabled" else ", ne repartira pas au démarrage")
 
 
 def status_text():
-    parts = [f"{name}, {_state(unit)}" for unit, name, _ in WATCHERS]
-    return ("Veilles : " + " ; ".join(parts) + ". "
-            "Tape arrête ou reprends, suivi du nom d'une veille, ou de toutes les veilles.")
+    problems = [(name, _problem(unit)) for unit, name, _ in WATCHERS]
+    bad = [(name, pb) for name, pb in problems if pb]
+    total = len(WATCHERS)
+    if not bad:
+        return (f"Les {total} veilles tournent normalement : "
+                + ", ".join(name for name, _ in problems) + ".")
+    return (f"{total - len(bad)} veilles sur {total} tournent normalement. "
+            + " ".join(f"{name.capitalize()} : {pb}." for name, pb in bad)
+            + " Tape arrête ou reprends, suivi du nom d'une veille.")
 
 
 def _systemctl(*args):
