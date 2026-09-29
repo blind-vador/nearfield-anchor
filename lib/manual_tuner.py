@@ -43,7 +43,11 @@ WFM_ARGS = ["-M", "wbfm", "-s", "200000", "-r", str(OUT_RATE), "-l", "0", "-E", 
 
 AIRBAND_UDP_PORT = 9290            # hors de la plage des fenetres (9100-9204)
 AIRBAND_CONFIG = "/tmp/airband_manuel.conf"
-AIRBAND_CENTER_OFFSET_HZ = 300_000  # le centre ne doit jamais tomber sur le canal (pic DC)
+# Centre du tuner : jamais sur le canal (pic DC). Celui de la fenetre airband
+# qui contient la frequence quand il y en a une (eprouve en verrouillage),
+# sinon un decalage fixe. NB : "[R82XX] PLL not locked!" s'affiche au
+# demarrage de la cle quel que soit le centre -- ce n'est PAS une panne.
+AIRBAND_CENTER_OFFSET_HZ = 300_000
 AIRBAND_RATE = 16000                # sortie UDP de RTLSDR-Airband : PCM flottant 32 bits mono
 
 
@@ -65,16 +69,16 @@ def _stop_process(proc):
 
 
 def _airband_window(freq_hz, mode):
-    """Reglages de la fenetre airband_bridge qui contient cette frequence,
-    sinon de la premiere fenetre du meme mode (volume calibre avec
-    l'utilisateur), recentres sur ce seul canal."""
+    """Reglages de la fenetre airband_bridge qui contient cette frequence
+    (centre compris), sinon de la premiere fenetre du meme mode (volume
+    calibre avec l'utilisateur), sur ce seul canal."""
     import airband_bridge
     windows = airband_bridge.AIRBAND_WINDOWS
-    ref = (next((w for w in windows if any(f == freq_hz for f, _ in w["channels"])), None)
-           or next((w for w in windows if w["mode"] == mode), {}))
+    own = next((w for w in windows if any(f == freq_hz for f, _ in w["channels"])), None)
+    ref = own or next((w for w in windows if w["mode"] == mode), {})
     window = {k: ref[k] for k in ("gain", "ampfactor", "squelch_snr_threshold") if k in ref}
-    window.update(centerfreq_hz=int(freq_hz) + AIRBAND_CENTER_OFFSET_HZ, mode=mode,
-                  channels=[(int(freq_hz), AIRBAND_UDP_PORT)])
+    center = own["centerfreq_hz"] if own else int(freq_hz) + AIRBAND_CENTER_OFFSET_HZ
+    window.update(centerfreq_hz=center, mode=mode, channels=[(int(freq_hz), AIRBAND_UDP_PORT)])
     return airband_bridge._build_config(window), airband_bridge.AIRBAND_BIN
 
 
@@ -134,35 +138,53 @@ class ManualStream:
 
     # --- RTLSDR-Airband, avec silencieux (touche F) ---
     def _start_airband(self, freq_hz, mode, generation):
-        config, binary = _airband_window(freq_hz, mode)
-        with open(AIRBAND_CONFIG, "w") as f:
-            f.write(config)
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # rebind immediat apres un changement
         self._sock.bind(("127.0.0.1", AIRBAND_UDP_PORT))
         self._sock.settimeout(0.3)
+        config, binary = _airband_window(freq_hz, mode)
+        with open(AIRBAND_CONFIG, "w") as f:
+            f.write(config)
         self._rx = subprocess.Popen([binary, "-F", "-e", "-c", AIRBAND_CONFIG],
-                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
+        threading.Thread(target=self._log_stderr, args=(self._rx,), daemon=True).start()
         threading.Thread(target=self._relay_airband, args=(self._sock, generation), daemon=True).start()
+
+    @staticmethod
+    def _log_stderr(rx):
+        # Messages de rtl_airband dans le journal (diagnostic de la touche F).
+        for line in rx.stderr:
+            line = line.strip()
+            if line:
+                print(f"[manual_tuner] rtl_airband : {line[:160]}")
 
     def _relay_airband(self, sock, generation):
         import audio_filters
         import numpy as np
         voice_filter = audio_filters.VoiceBandpassFilter(AIRBAND_RATE)  # comme _relay_channel()
         state = None
+        packets = written = 0
+        last_report = time.time()
         while generation == self._generation:
+            if time.time() - last_report >= 5:
+                print(f"[manual_tuner] airband 5 s : {packets} paquets recus, {written} octets joues")
+                packets = written = 0
+                last_report = time.time()
             try:
                 data, _ = sock.recvfrom(65536)
             except socket.timeout:
                 continue  # silencieux ferme : rien a jouer
             except OSError:
                 return
+            packets += 1
             data = voice_filter.process_f32le(data)
             samples = np.frombuffer(data[: len(data) - len(data) % 4], dtype=np.float32)
             pcm = np.clip(samples * 32767.0, -32768, 32767).astype(np.int16).tobytes()
             pcm, state = audioop.ratecv(pcm, 2, 1, AIRBAND_RATE, OUT_RATE, state)
             if not self._write(pcm, generation):
+                print("[manual_tuner] airband : ecriture vers la sortie son refusee, relais arrete")
                 return
+            written += len(pcm)
 
     def _write(self, data, generation):
         with self._write_guard:
