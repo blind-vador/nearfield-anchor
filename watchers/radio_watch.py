@@ -1232,6 +1232,18 @@ def _lock_pending():
     return noise_signatures.lock_request() is not None or noise_signatures.manual_request() is not None
 
 
+# Silencieux "porteuse" du mode manuel (2026-09-29) : en FM, sans emetteur,
+# le demodulateur sort un souffle riche en aigus ; des qu'une porteuse est
+# la, ce souffle s'effondre ("effet de silence" FM), meme si l'audio sature.
+# Ajoute parce que RNNoise seul restait ferme sur un talkie tout proche,
+# fort et clair (teste par l'utilisateur sur 446). Seuil calibre sur mesures.
+CARRIER_HF_LOW_HZ = 5000       # bande du souffle mesuree : 5 kHz -> Nyquist
+# Mesure 2026-09-29, canaux PMR446 vides : 0,54 a 0,56, tres stable. 0,35 laisse une
+# vraie marge contre les fausses ouvertures tout en acceptant les emetteurs moyens.
+CARRIER_HF_MAX_RATIO = 0.35    # part du souffle aigu en dessous de laquelle une porteuse est la
+MANUAL_SQUELCH_LOG_EVERY = 50  # bilan dans le journal toutes les 50 fenetres (10 s)
+
+
 class _ManualSquelch:
     """Touche F du mode manuel : le MEME traitement qu'en reception
     (stream_until_quiet) -- filtre de bande vocale 300-3000 Hz (coupe les
@@ -1252,11 +1264,35 @@ class _ManualSquelch:
         self.is_open = False
         self.delay = collections.deque()
         self.quiet_needed = int(SILENCE_DEBOUNCE_SEC * 1000 / ANALYSIS_WINDOW_MS)
+        self.stats = {"n": 0, "carrier": 0, "voice": 0, "open": 0, "hf": []}
+
+    def _hf_ratio(self, raw):
+        """Part de l'energie au-dessus de CARRIER_HF_LOW_HZ (audio BRUT, avant
+        le filtre vocal qui justement coupe ces aigus)."""
+        x = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+        if len(x) < 64:
+            return 1.0
+        power = np.abs(np.fft.rfft(x * np.hanning(len(x)))) ** 2
+        freqs = np.fft.rfftfreq(len(x), 1.0 / self.rate)
+        total = power[freqs > 300].sum() + 1e-9
+        return float(power[freqs > CARRIER_HF_LOW_HZ].sum() / total)
 
     def process(self, chunk):
+        hf = self._hf_ratio(chunk)
+        carrier = hf < CARRIER_HF_MAX_RATIO
         chunk = self.voice_filter.process_s16le(chunk)
-        is_signal, _, self.resample_state, self.smoothed_prob = _chunk_is_signal(
+        voice, _, self.resample_state, self.smoothed_prob = _chunk_is_signal(
             chunk, self.rate, self.rnnoise, self.resample_state, self.smoothed_prob)
+        is_signal = carrier or voice
+        st = self.stats
+        st["n"] += 1; st["carrier"] += carrier; st["voice"] += voice; st["open"] += self.is_open
+        st["hf"].append(hf)
+        if st["n"] >= MANUAL_SQUELCH_LOG_EVERY:
+            hfs = sorted(st["hf"])
+            print(f"[manual_squelch] 10 s : porteuse {100 * st['carrier'] // st['n']} %, voix "
+                  f"{100 * st['voice'] // st['n']} %, ouvert {100 * st['open'] // st['n']} % | souffle aigu "
+                  f"min {hfs[0]:.2f} med {hfs[len(hfs) // 2]:.2f} max {hfs[-1]:.2f}")
+            self.stats = {"n": 0, "carrier": 0, "voice": 0, "open": 0, "hf": []}
         if is_signal:
             self.signal_windows += 1
             self.quiet_windows = 0
