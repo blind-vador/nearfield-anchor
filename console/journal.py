@@ -19,6 +19,7 @@ alimente par ffmpeg) : passer vite d'un enregistrement a l'autre ne
 referme pas la carte son a chaque fois -- c'est ce qui faisait planter le
 pilote du jack du Pi (voir lib/manual_tuner.py).
 """
+import audioop
 import datetime
 import fcntl
 import os
@@ -103,6 +104,7 @@ class Player:
             ["aplay", "-q", "-D", "default", "-r", str(RATE), "-f", "S16_LE", "-c", "1", "-B", "500000"],
             stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self._ffmpeg = None
+        self.gain = 1.0  # volume de lecture (dialogue "archives" : fleches gauche/droite)
         self._generation = 0
         self._guard = threading.Lock()
 
@@ -118,6 +120,8 @@ class Player:
             data = proc.stdout.read(RATE // 5 * 2)  # 200 ms
             if not data:
                 return
+            if self.gain != 1.0:
+                data = audioop.mul(data, 2, self.gain)  # ecretage automatique au-dela du maximum
             with self._guard:
                 if generation != self._generation:
                     return

@@ -4909,3 +4909,12 @@ bas suspect.
 Jack integre ensuite desactive (`dtparam=audio=off` dans
 /boot/firmware/config.txt, applique par install.sh si l'adaptateur est la) :
 snd_bcm2835 n'est plus charge, plus aucune erreur VCHI possible.
+
+### Console : dialogue "archives" (2026-09-29)
+
+`console/archives.py` : extraits gardes de `storage/radio/`, en lecture
+seule. Meme navigation que le journal (Tab = jour, haut/bas = ecouter) ;
+gauche/droite = volume de lecture temporaire (20 % a 300 %, par pas de 20,
+`Player.gain` + audioop.mul). Date : celle du nom si l'extrait vient du
+journal, sinon celle du fichier ; pour les extraits nommes a la main, le
+titre est lu en entier (espeak bloquant) avant l'ecoute.
