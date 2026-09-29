@@ -132,7 +132,10 @@ def _cached_repetitive_sample(text):
     cache_dir = _repetitive_cache_dir(text)
     try:
         samples = [f for f in os.listdir(cache_dir) if f.endswith(".mp3")]
-    except FileNotFoundError:
+    except OSError:
+        # Cache sur le NAS : dossier absent, mais aussi disque decroche
+        # (EIO, 2026-09-29 -- nas-watch plantait en annoncant justement la
+        # perte du disque). Pas de cache = synthese normale, jamais de plantage.
         return None
     if len(samples) < len(EDGE_TTS_VOICES):
         return None
@@ -149,7 +152,10 @@ def _missing_voices_for(text):
     cache_dir = _repetitive_cache_dir(text)
     try:
         existing = {os.path.splitext(f)[0] for f in os.listdir(cache_dir) if f.endswith(".mp3")}
-    except FileNotFoundError:
+    except OSError:
+        # Cache sur le NAS : dossier absent, mais aussi disque decroche
+        # (EIO, 2026-09-29 -- nas-watch plantait en annoncant justement la
+        # perte du disque). Pas de cache = synthese normale, jamais de plantage.
         return None
     missing = [v for v in EDGE_TTS_VOICES if v not in existing]
     return missing or None

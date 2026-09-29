@@ -4830,3 +4830,21 @@ continu ; sans effet en WFM (musique).
 Le meme apres-midi, le hub VIA de l'antenne a decroche ~6 min apres le
 redemarrage force (erreurs -71 sur le port bleu) : antenne et webcam
 absentes, rtl_fm "No supported devices found".
+
+### Diagnostic USB de l'apres-midi (2026-09-29) et bug nas-watch
+
+Apres le redemarrage force, le hub VIA de l'antenne ne s'enumere plus et
+secoue le bus a chaque branchement (disques du hub 1 decroches 3 fois).
+Tests au clavier (appareil sain) : ports bleu du haut et noir du haut SAINS ;
+bleu du bas sain en USB 3 (disques) ; noir du bas suspect -- il ne s'agite
+que quand on branche sur le port juste au-dessus (connecteur mecanique ?).
+Aucune cause logicielle : pas de reglage USB, VL805 a jour, aucune erreur
+du controleur xHCI, erreurs deja presentes sous l'ancien noyau. La cle
+RTL-SDR, au bout d'une longue rallonge passive vers le mat exterieur, echoue
+(-71) sur deux ports sains : tres probablement la rallonge sans hub
+alimente (ca marchait le matin via le hub VIA). A racheter : un bon hub
+USB 3 alimente. Pas besoin de changer de Pi.
+
+Bug trouve : en deplacant le hub des disques, montages morts + nas-watch
+plante (EIO en lisant le cache vocal sur le disque mort). Corrige dans
+lib/speak.py (toute OSError = pas de cache).
