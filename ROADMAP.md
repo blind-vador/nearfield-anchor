@@ -4801,3 +4801,10 @@ Teste : logique du dialogue sur les vraies plages (pas, dix pas, bords de
 plage, bouclage des plages, verrouillage final), et ecoute reelle 93,9 puis
 107,0 MHz (stations deja detectees par le scanner), relance sur changement
 de frequence, arret propre sans processus orphelin au "decroche".
+
+**Correctif le jour meme** : en defilant vite aux fleches, l'utilisateur a
+fait planter le mode manuel -- un rtl_fm orphelin restait accroche au dongle
+(la 1re version n'attendait que le shell de "rtl_fm | aplay"). Corrige :
+enfants directs arretes un par un (SIGKILL au besoin), accord seulement apres
+0,5 s de frequence stable. Piege rencontre : `process_group` vers le groupe
+d'une autre session -> EPERM. Test d'endurance passe.

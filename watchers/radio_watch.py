@@ -24,7 +24,7 @@ import audio_filters
 import acars_watch
 import spectral_diagnostic
 import noise_signatures
-from manual_tuner import ManualStream
+from manual_tuner import ManualStream, SETTLE_SEC as MANUAL_SETTLE_SEC
 from rnnoise_lib import (
     create as _rnnoise_create,
     destroy as _rnnoise_destroy,
@@ -1346,6 +1346,7 @@ def main():
     radio_log.start_purge_scheduler()
     _publish_plages()
     manual_stream = ManualStream()
+    manual_pending = (None, 0.0)  # (frequence, mode) demandee, et depuis quand
     fm_bands = [b for b in BANDS if b["type"] == "fm_channels"]
     sweep_bands = [b for b in BANDS if b["type"] == "sweep"]
     sweep_idx = 0
@@ -1520,8 +1521,14 @@ def main():
             if current_lock_key != "manuel":
                 print("[radio_watch] mode manuel")
                 current_lock_key = "manuel"
-            manual_stream.tune(manual["freq_hz"], manual["mode"])
-            time.sleep(0.3)
+            # Defilement rapide aux fleches : on attend que la frequence ne
+            # bouge plus depuis MANUAL_SETTLE_SEC avant de relancer rtl_fm.
+            wanted = (manual["freq_hz"], manual["mode"])
+            if wanted != manual_pending[0]:
+                manual_pending = (wanted, time.time())
+            elif time.time() - manual_pending[1] >= MANUAL_SETTLE_SEC:
+                manual_stream.tune(*wanted)
+            time.sleep(0.1)
             continue
         manual_stream.stop()
 
