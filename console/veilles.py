@@ -68,32 +68,57 @@ def parse(line):
 UNSTABLE_RESTARTS = 3  # au-dela, la veille "redemarre en boucle" (plante et repart)
 
 
-def _problem(unit):
-    """None si la veille tourne normalement, sinon une courte description."""
-    out = subprocess.run(["systemctl", "show", "-p", "ActiveState,SubState,NRestarts,UnitFileState", unit],
-                         capture_output=True, text=True).stdout
+def _since(timestamp):
+    """ "@1790676390" (systemctl --timestamp=unix) -> "depuis 2 heures 5" """
+    import time
+    try:
+        seconds = time.time() - int(timestamp.lstrip("@"))
+    except ValueError:
+        # Pas d'horodatage : l'unite n'a pas change d'etat depuis le demarrage.
+        return "depuis le démarrage du Pi"
+    minutes = int(seconds // 60)
+    if minutes < 1:
+        return "depuis moins d'une minute"
+    if minutes < 60:
+        return f"depuis {minutes} minute{'s' if minutes > 1 else ''}"
+    hours, minutes = divmod(minutes, 60)
+    if hours < 24:
+        return f"depuis {hours} heure{'s' if hours > 1 else ''}" + (f" {minutes}" if minutes else "")
+    days = hours // 24
+    return f"depuis {days} jour{'s' if days > 1 else ''}"
+
+
+def _describe(unit):
+    """(tourne normalement ?, etat precis a dire)."""
+    out = subprocess.run(
+        ["systemctl", "show", "--timestamp=unix", "-p",
+         "ActiveState,SubState,NRestarts,UnitFileState,ActiveEnterTimestamp,InactiveEnterTimestamp", unit],
+        capture_output=True, text=True).stdout
     info = dict(line.split("=", 1) for line in out.splitlines() if "=" in line)
     active, sub = info.get("ActiveState"), info.get("SubState")
     restarts = int(info.get("NRestarts") or 0)
-    if active == "active" and restarts < UNSTABLE_RESTARTS:
-        return None
-    if active == "active" or sub == "auto-restart" or active == "activating":
-        return f"redémarre en boucle, {restarts} fois"
+    at_boot = info.get("UnitFileState") == "enabled"
+    if active == "active":
+        since = _since(info.get("ActiveEnterTimestamp", ""))
+        if restarts >= UNSTABLE_RESTARTS:
+            return False, f"active {since}, mais a redémarré {restarts} fois : instable"
+        return True, f"active {since}"
+    if sub == "auto-restart" or active == "activating":
+        return False, f"redémarre en boucle, {restarts} fois"
     if active == "failed":
-        return "en panne"
-    return "arrêtée" + ("" if info.get("UnitFileState") == "enabled" else ", ne repartira pas au démarrage")
+        return False, f"en panne {_since(info.get('InactiveEnterTimestamp', ''))}"
+    return False, (f"arrêtée {_since(info.get('InactiveEnterTimestamp', ''))}"
+                   + ("" if at_boot else ", ne repartira pas au démarrage"))
 
 
 def status_text():
-    problems = [(name, _problem(unit)) for unit, name, _ in WATCHERS]
-    bad = [(name, pb) for name, pb in problems if pb]
-    total = len(WATCHERS)
-    if not bad:
-        return (f"Les {total} veilles tournent normalement : "
-                + ", ".join(name for name, _ in problems) + ".")
-    return (f"{total - len(bad)} veilles sur {total} tournent normalement. "
-            + " ".join(f"{name.capitalize()} : {pb}." for name, pb in bad)
-            + " Tape arrête ou reprends, suivi du nom d'une veille.")
+    states = [(name, *_describe(unit)) for unit, name, _ in WATCHERS]
+    ok_count = sum(1 for _, ok, _ in states if ok)
+    total = len(states)
+    summary = (f"Les {total} veilles tournent normalement." if ok_count == total
+               else f"{ok_count} veilles sur {total} tournent normalement.")
+    details = " ".join(f"{name.capitalize()} : {text}." for name, _, text in states)
+    return f"{summary} {details}"
 
 
 def _systemctl(*args):
