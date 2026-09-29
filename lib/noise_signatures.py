@@ -159,6 +159,45 @@ def record_capture(source, freq_hz, mode, label, target, log_path, fp):
         })
     except OSError as exc:
         print(f"[noise_signatures] derniere capture non memorisee : {exc}")
+    if log_path and fp:
+        try:
+            _remember_capture(log_path, {"freq_hz": freq_hz, "label": label, "fingerprint": fp})
+        except OSError as exc:
+            print(f"[noise_signatures] empreinte non rangee pres de l'enregistrement : {exc}")
+
+
+# --- Empreintes rangees a cote des enregistrements du journal ---
+# Pour pouvoir rejeter APRES COUP n'importe quel enregistrement (dialogue
+# "journal" de la console), pas seulement la derniere capture : le mp3 du
+# journal contient les annonces et carillons, inutilisables comme empreinte.
+
+INDEX_NAME = ".empreintes.json"
+
+
+def _index_path(log_path):
+    return os.path.join(os.path.dirname(log_path), INDEX_NAME)
+
+
+def _remember_capture(log_path, entry):
+    index_path = _index_path(log_path)
+    index = _read_json(index_path, {})
+    folder = os.path.dirname(log_path)
+    # Menage : les enregistrements purges (48 h) n'ont plus besoin d'empreinte.
+    index = {name: e for name, e in index.items() if os.path.exists(os.path.join(folder, name))}
+    index[os.path.basename(log_path)] = entry
+    _atomic_write_json(index_path, index)
+
+
+def capture_info(log_path):
+    """Frequence, libelle et empreinte d'un enregistrement du journal, ou None."""
+    return _read_json(_index_path(log_path), {}).get(os.path.basename(log_path))
+
+
+def forget_capture(log_path):
+    index_path = _index_path(log_path)
+    index = _read_json(index_path, {})
+    if index.pop(os.path.basename(log_path), None) is not None:
+        _atomic_write_json(index_path, index)
 
 
 def last_capture():

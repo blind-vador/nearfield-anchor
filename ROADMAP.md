@@ -4864,3 +4864,24 @@ stop, restart, enable, disable de chaque unite sauf pi-console). Teste :
 aiguillage de 19 phrases, aller-retour reel arret/reprise de stas-watch.
 Contexte : antenne indisponible (voir diagnostic USB ci-dessus), la veille
 radio peut etre arretee en attendant le nouveau materiel.
+
+### Console : dialogue "journal" (2026-09-29)
+
+`console/journal.py` : enregistrements de `server/radio_log/` (48 h, date
+dans le nom) et de ses dossiers d'archives par jour. Tab / Maj+Tab = jour
+(annonce jour + nombre), haut/bas = ecouter (sans annonce), droite = copie
+dans `storage/radio/` nommee "mardi 29 septembre 2026 06h59m56s.mp3",
+gauche = rejet (suppression + apprentissage de l'empreinte comme
+"parasite"), Entree = rejouer, Echap = fermer. Lecteur : aplay unique pour
+tout le dialogue, alimente par ffmpeg (meme precaution que le mode manuel).
+Empreintes : `record_capture()` les range desormais dans
+`radio_log/.empreintes.json` (par nom de fichier, menage des fichiers
+purges) : tout enregistrement recent peut etre rejete ET appris ; les
+anciens (avant ce changement) sont seulement supprimes. Teste sur copies
+(position initiale, garder, deja garde, rejet avec et sans empreinte,
+changement de jour) + lecture reelle : aucune nouvelle erreur du pilote.
+
+**Pilote son toujours fragile** : 188 "failed to close VCHI" en 53 min
+apres le redemarrage de 14 h 13, sans mode manuel, dont 2 "failed to open"
+(precurseurs du plantage de midi). Pistes : sortie son maintenue ouverte en
+permanence + tout sur "default" ; ou carte son USB (contourne snd_bcm2835).
