@@ -23,6 +23,7 @@ import sound_player
 import audio_filters
 import acars_watch
 import spectral_diagnostic
+import noise_signatures
 from rnnoise_lib import (
     create as _rnnoise_create,
     destroy as _rnnoise_destroy,
@@ -931,6 +932,35 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
     )
     reader_thread.start()
 
+    # Parasites connus (commande console "parasite", 2026-09-29) : si cette
+    # frequence a deja donne un faux positif signale par l'utilisateur, on
+    # ecoute PRECHECK_SEC SANS RIEN ANNONCER et on compare l'empreinte
+    # sonore ; si c'est le meme parasite, abandon silencieux. Aucun delai
+    # sur les autres frequences. L'audio pre-ecoute n'est pas perdu : il
+    # est rejoue en tete de diffusion (prebuffer).
+    prebuffer = []
+    if noise_signatures.has_signatures_near(freq_hz):
+        precheck_end = time.time() + noise_signatures.PRECHECK_SEC
+        while time.time() < precheck_end:
+            try:
+                item = audio_queue.get(timeout=0.3)
+            except queue.Empty:
+                continue
+            prebuffer.append(item)
+            if item is None:
+                break
+        is_noise, sim = noise_signatures.matches_known_noise(
+            freq_hz, b"".join(c for c in prebuffer if c), sample_rate, "s16le")
+        if is_noise:
+            print(f"[radio_watch] parasite connu ignore a {mhz:.4f} MHz (similarite {sim:.2f})")
+            try:
+                rtl_fm.terminate()
+                rtl_fm.wait(timeout=2)
+            except Exception:
+                rtl_fm.kill()
+            return False
+        print(f"[radio_watch] pre-ecoute : pas un parasite connu (meilleure similarite {sim})")
+
     # Annonce et son d'ouverture AVANT la diffusion : la capture tourne deja
     # en arriere-plan (fil ci-dessus) pendant ce temps, donc rien n'est perdu
     # du debut de la transmission -- voir _rtl_fm_reader. "incoming" avant
@@ -1017,10 +1047,13 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
             # rtl_fm/aplay/multimon orphelins indefiniment (observe et
             # corrige en session, plusieurs redemarrages bloques). Une
             # reverification periodique laisse le signal s'appliquer.
-            try:
-                chunk = audio_queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
+            if prebuffer:
+                chunk = prebuffer.pop(0)
+            else:
+                try:
+                    chunk = audio_queue.get(timeout=1.0)
+                except queue.Empty:
+                    continue
             if chunk is None:
                 break
             if multimon is not None:
@@ -1086,6 +1119,11 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
     log_session = sound_player.get_recording_session()
     if log_session is not None and captured_chunks:
         log_session.add_raw_pcm(b"".join(captured_chunks), sample_rate, "s16le")
+    # Empreinte de l'audio radio seul (sans annonces) : memorisee avec la
+    # derniere capture, pour la commande console "parasite".
+    global _last_stream_fingerprint
+    _last_stream_fingerprint = (noise_signatures.fingerprint(b"".join(captured_chunks), sample_rate, "s16le")
+                                if captured_chunks else None)
 
     if multimon_queue is not None:
         time.sleep(0.2)
@@ -1103,7 +1141,10 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
     return heard_signal or bool(meaningful_messages)
 
 
-def _handle_candidate(freq, mode, band_label):
+_last_stream_fingerprint = None
+
+
+def _handle_candidate(freq, mode, band_label, target=None):
     # Verrou audio partage avec adsb_watch.py (processus separe) : garantit
     # qu'aucune annonce d'avion ne chevauche l'annonce/diffusion/son de fin
     # d'un candidat radio. Tenu pendant tout le cycle actif, relache des que
@@ -1121,11 +1162,14 @@ def _handle_candidate(freq, mode, band_label):
     try:
         if mode == "nfm" and try_digital_voice_decode(freq):
             speak(f"Réception numérique terminée, {band_label}.")
-            log_session.finalize()
+            path = log_session.finalize()
+            noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None)
             return True
         if stream_until_quiet(freq, mode, band_label):
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
-            log_session.finalize()
+            path = log_session.finalize()
+            noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path,
+                                            _last_stream_fingerprint)
             return True
         log_session.discard()
         print("[radio_watch] candidat ecarte (bruit, pas de signal reel)")
@@ -1141,7 +1185,7 @@ def scan_fm_band(band):
     candidates = check_channels_relative(band["channels"], span_hz=span_hz, margin_db=margin_db)
     for freq, db in candidates:
         print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.5f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")
-        if _handle_candidate(freq, band["mode"], f"canal {band['name_spoken']}"):
+        if _handle_candidate(freq, band["mode"], f"canal {band['name_spoken']}", band["name"]):
             return True
     return False
 
@@ -1158,9 +1202,33 @@ def scan_sweep_band(band):
         # retarde son demarrage de ~1-2s tant que le mode reste arme,
         # accepte car opt-in et sert justement a etudier la bande armee.
         spectral_diagnostic.maybe_diagnose(band, freq, db)
-        if _handle_candidate(freq, band["mode"], f"bande {band['name_spoken']}"):
+        if _handle_candidate(freq, band["mode"], f"bande {band['name_spoken']}", band["name"]):
             return True
     return False
+
+
+def _scan_locked(capture):
+    """Une iteration d'ecoute verrouillee sur la frequence de la capture
+    demandee par la console ("accroche"). Meme chaine que le balayage
+    normal (squelch reel, annonce, diffusion, journal), sur une seule
+    frequence. Retourne True si une transmission a ete relayee."""
+    if capture["source"] == "airband":
+        window = next((w for w in airband_bridge.AIRBAND_WINDOWS if w["name"] == capture["target"]), None)
+        port = next((pt for f, pt in window["channels"] if f == capture["freq_hz"]), None) if window else None
+        if port is None:
+            return False
+        return airband_bridge.scan_window(dict(window, channels=[(capture["freq_hz"], port)]), dwell_sec=20)
+    band = next((b for b in BANDS if b["name"] == capture.get("target")), {})
+    candidates = check_channels_relative([capture["freq_hz"]], span_hz=band.get("span_hz", 25_000),
+                                         margin_db=band.get("margin_db", NOISE_MARGIN_DB))
+    if candidates:
+        return _handle_candidate(capture["freq_hz"], capture["mode"], capture["label"], capture.get("target"))
+    time.sleep(1)
+    return False
+
+
+def _lock_pending():
+    return noise_signatures.lock_request() is not None
 
 
 def _get_cpu_temp_c():
@@ -1288,6 +1356,8 @@ def main():
     last_outdoor_poll = 0.0
     outdoor_temp_c = None
 
+    current_lock_key = None  # (frequence, bande/fenetre) du verrouillage en cours
+
     while True:
         now = time.time()
         check_interval = WATCH_ZONE_CHECK_INTERVAL_SEC if in_watch_zone else TEMP_CHECK_INTERVAL_SEC
@@ -1414,6 +1484,24 @@ def main():
                 cycle_start = time.time()
                 continue
 
+        # Verrouillage (commandes console "accroche"/"decroche", 2026-09-29) :
+        # apres la securite thermique (toujours prioritaire), avant la pause
+        # programmee (suspendue tant que l'utilisateur ecoute une frequence).
+        lock_capture = noise_signatures.lock_request()
+        lock_key = (lock_capture["freq_hz"], lock_capture.get("target")) if lock_capture else None
+        if lock_key != current_lock_key:
+            if lock_capture:
+                print(f"[radio_watch] verrouillage sur {lock_capture['freq_hz']/1e6:.4f} MHz ({lock_capture['label']})")
+                _speak_pause(f"Scanner verrouillé sur {lock_capture['label']}.")
+            else:
+                print("[radio_watch] fin du verrouillage, reprise du balayage")
+                _speak_pause("Balayage radio repris.")
+                cycle_start = time.time()
+            current_lock_key = lock_key
+        if lock_capture:
+            _scan_locked(lock_capture)
+            continue
+
         # Pause reguliere programmee -- repos du dongle/antenne meme sans
         # probleme de temperature.
         if now - cycle_start >= SCAN_ON_DURATION_SEC:
@@ -1429,6 +1517,8 @@ def main():
         activity = False
 
         for band in fm_bands:
+            if _lock_pending():
+                break
             if scan_fm_band(band):
                 activity = True
 
@@ -1439,6 +1529,8 @@ def main():
         # duree individuelle reduite en consequence pour garder une cadence de
         # rotation raisonnable vers les bandes sweep.
         for window in airband_bridge.AIRBAND_WINDOWS:
+            if _lock_pending():
+                break
             if airband_bridge.scan_window(window, dwell_sec=window.get("dwell_sec", 15)):
                 activity = True
 
@@ -1446,10 +1538,10 @@ def main():
         # partage sequentiel du dongle que les fenetres RTLSDR-Airband
         # ci-dessus. Voir acars_watch.py pour le detail du filtrage
         # (texte libre + phases OOOI modernes uniquement).
-        if acars_watch.scan_window(dwell_sec=30):
+        if not _lock_pending() and acars_watch.scan_window(dwell_sec=30):
             activity = True
 
-        if sweep_bands:
+        if sweep_bands and not _lock_pending():
             band = sweep_bands[sweep_idx % len(sweep_bands)]
             sweep_idx += 1
             if scan_sweep_band(band):

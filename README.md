@@ -65,7 +65,10 @@ mémoire, disques, veilles), `rire` ("fais-moi rire" : lance radiono),
 `décris` ("qu'est-ce que tu vois", "photo, la pièce est-elle décollée ?" :
 photo de la webcam de l'imprimante décrite par Gemini, rien n'est gardé),
 `mise à jour` (mise à jour complète + nettoyage, confirmée, suivie à la voix
-par étapes ; retaper la commande donne l'avancement), `imprimante`, `température`, `heure`, `radio`,
+par étapes ; retaper la commande donne l'avancement), `parasite` ("c'était du bruit" : dernière réception radio effacée du journal et
+apprise pour être ignorée), `accroche` / `décroche` ("scan verrouiller",
+"reprend" : fixer le scanner sur la fréquence de la dernière réception, puis
+reprendre le balayage), `imprimante`, `température`, `heure`, `radio`,
 `touches` (reperage des touches, 3 x Echap pour sortir), `répète`,
 `redémarrer` / `éteindre` (confirmation "oui" obligatoire), `simulation`
 (`simulation train`, `simulation météo`, `simulation train retard`,

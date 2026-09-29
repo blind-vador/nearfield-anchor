@@ -4749,3 +4749,35 @@ attend d'etre monte.
 Attention : `watchers/radio_watch.py` est en fins de ligne CRLF (seul
 fichier du depot dans ce cas) -- un script Python qui le reecrit en mode
 texte les convertit en LF sans prevenir (diff de tout le fichier).
+
+### Console : "parasite", "accroche" / "decroche" (2026-09-29)
+
+Nouveau `lib/noise_signatures.py`, partage scanner / console :
+- **Derniere capture** (`/tmp/radio_watch_derniere_capture.json`), ecrite
+  par `_handle_candidate()` (canaux FM et balayages, via rtl_fm) et
+  `_relay_channel()` (fenetres RTLSDR-Airband) : frequence, bande ou
+  fenetre, fichier du journal, empreinte sonore de l'audio radio seul.
+  ACARS n'est pas concerne (donnees, pas d'audio).
+- **Empreinte** : energie sur 24 bandes log-espacees 300-3000 Hz, en log,
+  centree, normalisee ; similarite cosinus. Mesures : un meme bruit a deux
+  volumes 0,99 ; bruit contre voix -0,1 a -0,3 ; vraies captures de la
+  nuit : "VHF basse" et "VHF marine" 0,99 entre leurs deux moitiees
+  (parasites continus typiques), transmissions aviation ~0,8, captures
+  differentes <= 0,82. Seuil de reconnaissance 0,92, et frequence a
+  +/- 12,5 kHz obligatoire.
+- **"parasite"** : supprime l'enregistrement du journal, ajoute l'empreinte
+  a `server/radio_log/parasites_connus.json` (NAS : survit a une panne de
+  carte SD). Ensuite, sur une frequence proche d'un parasite connu
+  SEULEMENT, pre-ecoute silencieuse de 1,5 s avant toute annonce ; si
+  l'empreinte correspond, abandon silencieux ; sinon l'audio pre-ecoute
+  est rejoue en tete de diffusion (rien de perdu). Aucun delai ailleurs.
+- **"accroche"** : `/tmp/radio_watch_controle.json` ; la boucle principale
+  l'applique apres la securite thermique (toujours prioritaire), suspend
+  la pause programmee, et interrompt les etapes restantes du cycle
+  (`_lock_pending()`). Ecoute verrouillee : fenetre RTLSDR-Airband reduite
+  au seul canal (squelch reel), ou verification rtl_power de la seule
+  frequence puis `_handle_candidate()`. Teste en direct sur l'ATIS de Lyon
+  (126,175 MHz) : verrouille en 10 s, ecoute bien limitee a ce canal,
+  decroche en 5 s. L'ATIS n'etait pas captee a ce moment-la (conditions).
+- Pas encore vu en conditions reelles : l'abandon d'un parasite connu
+  (il faut qu'un parasite signale revienne).

@@ -10,6 +10,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 from dataclasses import dataclass, field
 
 import requests
@@ -275,6 +276,64 @@ def mise_a_jour(announce):
     return ""
 
 
+def _ago(timestamp):
+    minutes = int((time.time() - timestamp) // 60)
+    if minutes < 1:
+        return "à l'instant"
+    if minutes < 60:
+        return f"il y a {minutes} minute{'s' if minutes > 1 else ''}"
+    hours = minutes // 60
+    return f"il y a {hours} heure{'s' if hours > 1 else ''}"
+
+
+def parasite():
+    """Derniere reception radio = faux positif : supprimee du journal,
+    empreinte sonore apprise pour l'ignorer si elle revient (le scanner la
+    compare en pre-ecoute silencieuse, voir lib/noise_signatures.py)."""
+    import noise_signatures as ns
+    capture = ns.last_capture()
+    if not capture:
+        return "Aucune réception radio récente à signaler."
+    label = capture["label"]
+    if capture.get("marked_noise"):
+        return f"La dernière réception, {label}, est déjà marquée comme parasite."
+    parts = [f"Réception {label}, {_ago(capture['time'])}, marquée comme parasite."]
+    path = capture.get("log_path")
+    if path and os.path.isfile(path):
+        os.remove(path)
+        parts.append("Supprimée du journal.")
+    else:
+        parts.append("Elle n'était pas, ou plus, dans le journal.")
+    if capture.get("fingerprint"):
+        ns.add_signature(capture)
+        parts.append("J'ai retenu sa forme sonore : si elle revient sur cette fréquence, le scanner l'ignorera.")
+    else:
+        parts.append("Pas d'empreinte sonore pour cette réception, je ne peux pas l'apprendre.")
+    ns.mark_last_capture_noise()
+    return " ".join(parts)
+
+
+def accroche():
+    import noise_signatures as ns
+    locked = ns.lock_request()
+    if locked:
+        return f"Le scanner est déjà verrouillé sur {locked['label']}. Tape décroche pour reprendre le balayage."
+    capture = ns.last_capture()
+    if not capture:
+        return "Aucune réception récente sur laquelle se fixer."
+    ns.request_lock(capture)
+    return (f"Verrouillage demandé sur {capture['label']}, capté {_ago(capture['time'])}. "
+            "Le scanner s'y fixe dans moins d'une demi-minute.")
+
+
+def decroche():
+    import noise_signatures as ns
+    if not ns.lock_request():
+        return "Le scanner n'est pas verrouillé, il balaye déjà."
+    ns.request_unlock()
+    return "Reprise du balayage demandée."
+
+
 def help_text():
     lines = [f"{c.name} : {c.description}." for c in COMMANDS]
     return "Commandes disponibles. " + " ".join(lines)
@@ -347,6 +406,19 @@ COMMANDS = [
     Command("heure", "heure et date", heure,
             keywords=["heure", "date", "quel jour"],
             examples=["il est quelle heure", "on est quel jour"]),
+    # Avant "radio" : "scan verrouiller" contient le mot-cle "scan".
+    Command("parasite", "la dernière réception radio était un parasite : l'effacer et l'apprendre", parasite,
+            keywords=["parasite", "parasites", "faux positif", "c est du bruit", "que du bruit",
+                      "bruit parasite", "juste du bruit"],
+            examples=["c'était du bruit", "c'était un parasite", "fausse alerte radio"]),
+    Command("accroche", "le scanner se fixe sur la fréquence de la dernière réception", accroche,
+            keywords=["accroche", "accrocher", "verrouille", "verrouiller", "verrouillage",
+                      "scan verrouiller", "bloque le scan", "reste dessus", "reste sur cette frequence"],
+            examples=["fixe toi sur cette fréquence", "garde cette fréquence", "reste sur ce canal"]),
+    Command("décroche", "le scanner reprend son balayage normal", decroche,
+            keywords=["decroche", "decrocher", "deverrouille", "deverrouiller", "scan reprise",
+                      "reprend", "reprends", "reprise du scan", "relache"],
+            examples=["reprends le balayage", "lâche cette fréquence", "reprends le scan"]),
     Command("radio", "scan de la bande FM", radio_scan,
             keywords=["radio", "scan", "fm"],
             examples=["scanne la bande fm", "cherche une station"]),

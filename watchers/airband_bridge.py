@@ -10,6 +10,7 @@ import sound_player
 from speak import speak_with_lead_sound
 import audio_lock
 import radio_log
+import noise_signatures
 import audio_filters
 from sound_paths import RADIO_SCANER_DIR
 
@@ -240,7 +241,7 @@ def _udp_reader(sock, out_queue, stop_event):
     out_queue.put(None)
 
 
-def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC):
+def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window_name=None):
     """Diffuse en direct l'audio UDP recu tant qu'il arrive, coupe apres
     SILENCE_DEBOUNCE_SEC sans paquet (le squelch de RTLSDR-Airband a alors
     ferme -- pas besoin de RNNoise ici, la decision "signal reel" est deja
@@ -268,6 +269,29 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC):
         stop_event = threading.Event()
         reader_thread = threading.Thread(target=_udp_reader, args=(sock, packet_queue, stop_event), daemon=True)
         reader_thread.start()
+
+        # Parasites connus (commande console "parasite", 2026-09-29) : voir
+        # stream_until_quiet() dans radio_watch.py -- pre-ecoute silencieuse,
+        # seulement si cette frequence a deja donne un parasite signale.
+        prebuffer = []
+        if noise_signatures.has_signatures_near(freq_hz):
+            precheck_end = time.time() + noise_signatures.PRECHECK_SEC
+            while time.time() < precheck_end:
+                try:
+                    item = packet_queue.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                prebuffer.append(item)
+                if item is None:
+                    break
+            is_noise, sim = noise_signatures.matches_known_noise(
+                freq_hz, b"".join(d for d in prebuffer if d), AIRBAND_SAMPLE_RATE_HZ, "f32le")
+            if is_noise:
+                print(f"[airband_bridge] parasite connu ignore a {freq_hz/1e6:.5f} MHz (similarite {sim:.2f})")
+                stop_event.set()
+                log_session.discard()
+                return False
+            print(f"[airband_bridge] pre-ecoute : pas un parasite connu (meilleure similarite {sim})")
 
         # "incoming" avant l'annonce (tampon pendant la synthese cloud, voir
         # speak_with_lead_sound) ; annonce simplifiee (2026-08-30, demande de
@@ -302,10 +326,13 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC):
                     break
                 if time.time() - last_packet_time > SILENCE_DEBOUNCE_SEC:
                     break
-                try:
-                    data = packet_queue.get(timeout=0.3)
-                except queue.Empty:
-                    continue
+                if prebuffer:
+                    data = prebuffer.pop(0)
+                else:
+                    try:
+                        data = packet_queue.get(timeout=0.3)
+                    except queue.Empty:
+                        continue
                 if data is None:
                     break
                 last_packet_time = time.time()
@@ -338,7 +365,10 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC):
 
         print(f"[airband_bridge] canal termine : {total_bytes} octets relayes")
         play_sound_effect(FREQ_OVER_SOUND, label="airband_bridge")
-        log_session.finalize()
+        path = log_session.finalize()
+        fp = (noise_signatures.fingerprint(b"".join(captured_chunks), AIRBAND_SAMPLE_RATE_HZ, "f32le")
+              if captured_chunks else None)
+        noise_signatures.record_capture("airband", freq_hz, "am", name_spoken, window_name, path, fp)
         return True
     finally:
         sound_player.set_recording_session(None)
@@ -401,7 +431,8 @@ def scan_window(window, dwell_sec=25):
             s = ready[0]
             freq_hz = socks[s]
             print(f"[airband_bridge] activite detectee sur {window['name']} a {freq_hz/1e6:.5f} MHz")
-            return _relay_channel(s, freq_hz, window["name_spoken"], max_hold_sec=window.get("max_hold_sec", MAX_HOLD_SEC))
+            return _relay_channel(s, freq_hz, window["name_spoken"], max_hold_sec=window.get("max_hold_sec", MAX_HOLD_SEC),
+                                  window_name=window["name"])
         return False
     finally:
         for s in socks:
