@@ -4918,3 +4918,14 @@ gauche/droite = volume de lecture temporaire (20 % a 300 %, par pas de 20,
 `Player.gain` + audioop.mul). Date : celle du nom si l'extrait vient du
 journal, sinon celle du fichier ; pour les extraits nommes a la main, le
 titre est lu en entier (espeak bloquant) avant l'ecoute.
+
+### Console muette apres defilement rapide : verrou JACK d'espeak (2026-09-29)
+
+Symptome : en mode manuel, defilement rapide aux fleches, puis plus aucune
+voix ; la confirmation "redemarre" restait figee. Pas un plantage : un
+espeak bloque (futex) sur /dev/shm/jack_db-1000. espeak -> PortAudio ->
+tentative JACK ; tue pendant cette tentative (la console coupe la voix a
+chaque touche), il laisse le verrou ferme, et tout espeak suivant attend.
+Deblocage : tuer les espeak, supprimer /dev/shm/jack_db-*. Correctif :
+lib/espeak_out.py (espeak --stdout | aplay), plus jamais d'acces audio par
+espeak lui-meme. Verifie : --stdout ne cree aucun verrou JACK.

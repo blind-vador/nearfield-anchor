@@ -20,6 +20,7 @@ import re
 import subprocess
 
 import journal
+import espeak_out  # noqa: E402  (chemin ajoute par journal)
 
 ARCHIVE_DIR = journal.KEEP_DIR
 AUDIO_EXT = (".mp3", ".wav", ".ogg", ".m4a", ".flac")
@@ -94,8 +95,7 @@ def run(key_source, say, out):
                         # avant l'extrait (espeak bloquant, pas la voix asynchrone).
                         player.stop()
                         say("")
-                        subprocess.run(["espeak", "-v", "fr", "-b", "1", "-s", "190", title],
-                                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=20)
+                        espeak_out.say(title, rate=190, timeout=20)
                     player.play(path)
                     out(f"[{os.path.basename(path)}]\n")
                 else:

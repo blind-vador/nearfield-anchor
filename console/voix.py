@@ -12,9 +12,12 @@ Deux usages distincts :
   rester des minutes dans le silence derriere une longue annonce de gare.
 """
 import fcntl
-import subprocess
+import sys
 import threading
 import time
+
+sys.path.insert(0, "/home/vador/autopilot/pi_console")
+import espeak_out  # noqa: E402  (espeak -> aplay, jamais de verrou JACK)
 
 LOCK_PATH = "/tmp/radio_watch_audio.lock"
 LOCK_WAIT_SEC = 10
@@ -31,17 +34,14 @@ def stop():
     global _proc, _generation
     with _proc_guard:
         _generation += 1
-        if _proc is not None and _proc.poll() is None:
-            _proc.kill()
+        if _proc is not None:
+            _proc.kill()  # coupe si besoin, et ramasse toujours les processus
         _proc = None
 
 
 def _spawn(text, rate):
     global _proc
-    p = subprocess.Popen(
-        ["espeak", "-v", "fr", "-b", "1", "-s", str(rate), text],
-        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-    )
+    p = espeak_out.Speech(text, "fr", rate)
     with _proc_guard:
         _proc = p
     return p
