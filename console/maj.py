@@ -72,6 +72,24 @@ def _explain(error):
     return "Le détail est dans le journal de mise à jour."
 
 
+def _newer_kernel_installed():
+    """Raspberry Pi OS ne pose pas toujours /var/run/reboot-required apres
+    un nouveau noyau (constate le 2026-09-29 : 6.12 installe, 6.6 toujours
+    actif, aucun drapeau). On compare donc directement le noyau actif a
+    ceux presents dans /lib/modules, de la meme variante (v7l, v8...)."""
+    running = os.uname().release  # ex. 6.6.51+rpt-rpi-v7l
+    variant = running.rsplit("-", 1)[-1]
+
+    def version(release):
+        return tuple(int(p) for p in re.findall(r"\d+", release.split("+")[0]))
+
+    try:
+        installed = [d for d in os.listdir("/lib/modules") if d.endswith("-" + variant)]
+    except OSError:
+        return False
+    return any(version(d) > version(running) for d in installed)
+
+
 def _run(say):
     global _stage
     path = _log_path()
@@ -122,7 +140,8 @@ def _run(say):
         _apt(["autoremove", "--purge", *APT_OPTS], log)
         _apt(["clean"], log)
 
-        reboot = os.path.exists("/var/run/reboot-required") or (total and state["reboot"])
+        reboot = (os.path.exists("/var/run/reboot-required") or (total and state["reboot"])
+                  or _newer_kernel_installed())
         end = "Mise à jour terminée, système propre."
         if reboot:
             end += " Un redémarrage est conseillé : tape redémarre quand tu veux."
