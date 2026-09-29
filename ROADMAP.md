@@ -4929,3 +4929,14 @@ chaque touche), il laisse le verrou ferme, et tout espeak suivant attend.
 Deblocage : tuer les espeak, supprimer /dev/shm/jack_db-*. Correctif :
 lib/espeak_out.py (espeak --stdout | aplay), plus jamais d'acces audio par
 espeak lui-meme. Verifie : --stdout ne cree aucun verrou JACK.
+
+**Touche F revue le meme jour** : le silencieux maison (RNNoise + souffle
+aigu > 5 kHz, calibre a 0,54-0,56 sur canaux vides) ouvrait sur tonalites et
+DTMF mais jamais sur la voix du talkie de test (journal : voix 0 %, souffle
+aigu jusqu'a 0,85 pendant la parole -- audio de rtl_fm sature). F lance
+maintenant RTLSDR-Airband sur le seul canal (port UDP 9290, centre decale
+de 300 kHz, reglages de la fenetre airband contenant la frequence), relaye
+vers l'aplay unique. Sans F : rtl_fm inchange.
+
+Aussi : "verrouille, aucune annonce" s'expliquait par une pause thermique
+(16 h 40 - 17 h 19, Pi a 74 C) : en pause, rien n'est ecoute, meme verrouille.
