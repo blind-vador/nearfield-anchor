@@ -48,7 +48,7 @@ apt-get install -y \
     libsndfile1-dev libitpp-dev libncurses-dev libcodec2-dev portaudio19-dev \
     zlib1g-dev libxml2-dev \
     libopenblas0 samba \
-    python3-evdev python3-fuzzywuzzy python3-levenshtein
+    python3-evdev python3-fuzzywuzzy python3-levenshtein python3-pil
 
 echo "=== 2/6 : compilation des bibliotheques externes (idempotent) ==="
 mkdir -p "$BUILD_DIR"

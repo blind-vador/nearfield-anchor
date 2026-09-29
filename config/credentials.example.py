@@ -21,3 +21,8 @@ OPENSKY_CLIENT_SECRET = ""
 # Cle API OctoPrint -- a creer dans OctoPrint (Parametres > Application
 # Keys). Utilisee par la commande "imprimante" de la console (console/commands.py).
 OCTOPRINT_API_KEY = ""
+
+# Cle API Google Gemini (offre gratuite, aistudio.google.com/apikey) --
+# commande "décris" de la console (console/vision.py). Sur l'offre gratuite,
+# Google peut utiliser les photos envoyees pour ameliorer ses modeles.
+GEMINI_API_KEY = ""

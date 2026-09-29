@@ -26,6 +26,7 @@ import commands  # noqa: E402
 import keys  # noqa: E402
 import matcher  # noqa: E402
 import simulation  # noqa: E402
+import vision  # noqa: E402
 import voix  # noqa: E402
 
 WELCOME = "Console vocale du Pi prête. Tape aide pour la liste des commandes."
@@ -157,6 +158,12 @@ def run_command(line, key_source, last_response):
             out(f"{text}\n")
             voix.say_and_wait(text)
         return cmd.handler(announce)
+    if cmd.name == "décris":
+        # Tout ce qui n'est pas un simple mot declencheur devient une question
+        # posee en plus a l'IA ("photo, la piece est-elle decollee ?").
+        question = "" if matcher.normalize(line) in map(matcher.normalize, cmd.keywords) else line
+        vision.start(question, voix.say_and_wait)
+        return ""
     if cmd.name == "simulation":
         return simulation.handle(line)
     if cmd.name == "touches":
@@ -189,7 +196,10 @@ def main():
                 out("> ")
                 continue
             response = run_command(line, key_source, last_response)
-            last_response = response
+            # Reponse vide = la commande parle elle-meme en arriere-plan
+            # (description, mise a jour) : rien a memoriser pour "repete".
+            if response:
+                last_response = response
             out(f"{response}\n> ")
             voix.say(response, lock=True)
     except EOFError:

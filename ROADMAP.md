@@ -4707,3 +4707,28 @@ DEBIAN_FRONTEND=noninteractive, --force-confold. Regle sudoers limitee
 etendue a /usr/bin/apt-get (+ env_keep DEBIAN_FRONTEND). Teste avec une
 fausse installation et un vrai `apt-get update` ; premiere vraie mise a
 jour a faire par l'utilisateur (241 paquets en attente le 2026-09-29).
+
+### Commande console "décris" : webcam + IA (2026-09-29)
+
+`console/vision.py`. Photo demandee au mjpg-streamer d'OctoPi
+(`127.0.0.1:8080/?action=snapshot`) : il occupe deja la webcam pour
+OctoPrint, ouvrir `/dev/video0` directement echouerait. Webcam : Sonix
+0c45:6536, sur le hub VIA alimente, derriere un interrupteur USB ; elle ne
+voit que l'interieur du caisson de l'imprimante.
+
+**Fournisseur** : Google Gemini, offre gratuite (cle `GEMINI_API_KEY`,
+nouveau format de 53 caracteres, sans le prefixe `AIza`). Essais en
+cascade `gemini-2.5-flash` -> `gemini-flash-latest` ->
+`gemini-flash-lite-latest` sur 429/5xx. ~6 s par description.
+Pistes ecartees, verifiees le 2026-09-29 : **GitHub Models est ferme
+depuis le 30 juillet 2026** (l'API ne repond plus que "OK") ; l'acces
+anonyme de Pollinations n'a plus de modele avec vision. `gh` est
+neanmoins installe et connecte (compte blind-vador), utile pour git.
+
+Photo refusee si luminosite moyenne < 10 (rien n'est envoye). Mesure : a
+17 (bureau eteint), Gemini decrivait encore correctement le caisson.
+Photo et description jamais ecrites sur disque, description non gardee
+pour "repete" (reponse vide = rien a memoriser, voir main.py). Mais la
+photo part chez Google, qui peut l'utiliser sur l'offre gratuite.
+Description lue avec espeak (interruptible) plutot que la voix cloud :
+`play_sound_effect` coupe a 15 s, trop court pour trois phrases.

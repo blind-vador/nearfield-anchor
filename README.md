@@ -56,11 +56,14 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `matcher.py` | Mots-cles puis repli flou (seuil 65) ; sinon "commande non reconnue" |
 | `simulation.py` | 23 scenarios qui font parler les vraies fonctions d'annonce des watchers |
 | `maj.py` | Mise à jour apt en arrière-plan, étapes parlées, détail dans `server/logs/mise_a_jour_*.log` |
+| `vision.py` | Photo via mjpg-streamer, refus si trop sombre, description Gemini lue puis oubliée |
 | `keys.py` | Noms parles des touches ; mode reperage (evdev pour Maj/Ctrl/Alt...) |
 | `voix.py` | espeak interruptible ; reponses sous le verrou audio partage |
 
 Commandes : `aide`, `santé` ("comment tu vas" : processeur, alimentation,
 mémoire, disques, veilles), `rire` ("fais-moi rire" : lance radiono),
+`décris` ("qu'est-ce que tu vois", "photo, la pièce est-elle décollée ?" :
+photo de la webcam de l'imprimante décrite par Gemini, rien n'est gardé),
 `mise à jour` (mise à jour complète + nettoyage, confirmée, suivie à la voix
 par étapes ; retaper la commande donne l'avancement), `imprimante`, `température`, `heure`, `radio`,
 `touches` (reperage des touches, 3 x Echap pour sortir), `répète`,
