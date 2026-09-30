@@ -11,13 +11,15 @@ from speak import speak_with_lead_sound
 import audio_lock
 from sound_player import play_sound_effect
 from sound_paths import TRAIN_SCANER_DIR
-from credentials import SNCF_TOKEN
+import reglages
 
 # API SNCF (moteur Navitia), gratuite avec compte -- 150 000 requetes/mois
-# (5000/jour). Jeton isole dans credentials.py (2026-08-31, jamais commite,
-# voir .gitignore) -- fourni par l'utilisateur en session (2026-08-30).
-STATION_UIC = "87726000"
-STATION_NAME = "Saint-Étienne Châteaucreux"
+# (5000/jour). Jeton dans nearfield-anchor-settings/cles/sncf.txt, relu a
+# chaque requete (voir reglages.py). Gare choisie par la commande "gare" de
+# la console (trains.json), lue au demarrage.
+_TRAINS = reglages.get("trains")
+STATION_UIC = str(_TRAINS["uic"])
+STATION_NAME = _TRAINS["gare"]
 STATION_BASE_URL = f"https://api.sncf.com/v1/coverage/sncf/stop_areas/stop_area:SNCF:{STATION_UIC}"
 DEPARTURES_URL = f"{STATION_BASE_URL}/departures"
 ARRIVALS_URL = f"{STATION_BASE_URL}/arrivals"
@@ -105,7 +107,7 @@ def fetch_departures():
     déjà incluses dans la même réponse, pas d'appel API séparé."""
     params = {"duration": UPCOMING_WINDOW_SEC, "count": 50}
     try:
-        resp = requests.get(DEPARTURES_URL, params=params, auth=(SNCF_TOKEN, ""), timeout=15)
+        resp = requests.get(DEPARTURES_URL, params=params, auth=(reglages.cle("sncf"), ""), timeout=15)
         resp.raise_for_status()
         data = resp.json()
         return data.get("departures") or [], data.get("disruptions") or []
@@ -122,7 +124,7 @@ def fetch_arrivals():
     tableau "origins" de haut niveau de la réponse."""
     params = {"duration": UPCOMING_WINDOW_SEC, "count": 50}
     try:
-        resp = requests.get(ARRIVALS_URL, params=params, auth=(SNCF_TOKEN, ""), timeout=15)
+        resp = requests.get(ARRIVALS_URL, params=params, auth=(reglages.cle("sncf"), ""), timeout=15)
         resp.raise_for_status()
         data = resp.json()
         origins_by_id = {o["id"]: o.get("name", "origine inconnue") for o in data.get("origins") or []}

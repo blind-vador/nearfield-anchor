@@ -8,15 +8,15 @@ import requests
 from speak import speak, speak_with_lead_sound
 import audio_lock
 from sound_paths import FLIGHT_SCANER_DIR
-from credentials import OPENSKY_CLIENT_ID, OPENSKY_CLIENT_SECRET
+import reglages
 
 # API OpenSky Network. Compte authentifie cree en session (username
 # blind_vador) -- l'API exige desormais OAuth2 (client_credentials).
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
 OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
 
-# Identifiants du compte isoles dans credentials.py (2026-08-31, jamais
-# commite, voir .gitignore) -- recuperes via le tableau de bord OpenSky
+# Identifiants du compte dans nearfield-anchor-settings/cles/opensky_id.txt
+# et opensky_secret.txt, relus a chaque demande de jeton (voir reglages.py) -- recuperes via le tableau de bord OpenSky
 # (client secret obtenu en session par l'utilisateur via une manip NVDA
 # apres un blocage serveur 503 persistant sur le bouton "Reset Credential"
 # -- voir ROADMAP.md pour le detail complet de cette peripetie).
@@ -34,13 +34,15 @@ def _get_access_token():
     global _access_token, _token_expiry
     if _access_token and time.time() < _token_expiry - 60:
         return _access_token
+    if not reglages.cle("opensky_id"):
+        return None  # pas de cle : anonyme, sans erreur a chaque sondage
     try:
         resp = requests.post(
             OPENSKY_TOKEN_URL,
             data={
                 "grant_type": "client_credentials",
-                "client_id": OPENSKY_CLIENT_ID,
-                "client_secret": OPENSKY_CLIENT_SECRET,
+                "client_id": reglages.cle("opensky_id"),
+                "client_secret": reglages.cle("opensky_secret"),
             },
             timeout=15,
         )
@@ -55,23 +57,40 @@ def _get_access_token():
         return None
 
 
-# Boite de recherche autour de Saint-Etienne, assez large pour couvrir
-# l'approche/depart de Lyon-Saint-Exupery et le trafic local
-# Andrezieux-Boutheon (~1 degre de marge dans chaque direction). Sert
-# uniquement a limiter la requete API -- le vrai filtre de zone est le
-# rayon MAX_RADIUS_KM ci-dessous (une boite rectangulaire inclut les coins,
-# plus loin que le rayon voulu). Aire ~1.4 sq deg, sous le seuil de 25 sq
-# deg -- cout de 1 credit/requete (voir doc API), largement dans le budget
-# de 4000 credits/jour du compte authentifie.
-LAT_MIN, LAT_MAX = 44.9, 45.9
-LON_MIN, LON_MAX = 3.9, 5.3
+# Commune de reference (commande "ville") et aeroports surveilles (commande
+# "aeroport") : lieu.json et avions.json, voir reglages.py. Lus au demarrage.
+_LIEU = reglages.get("lieu")
+_AVIONS = reglages.get("avions")
+REF_LAT = float(_LIEU["lat"])
+REF_LON = float(_LIEU["lon"])
+AIRPORT_NEAR = (float(_AVIONS["proche"]["lat"]), float(_AVIONS["proche"]["lon"]))
+AIRPORT_BIG = (float(_AVIONS["grand"]["lat"]), float(_AVIONS["grand"]["lon"]))
 
-# Position de reference (Saint-Etienne).
-REF_LAT = 45.4397
-REF_LON = 4.3872
+# Boite de recherche : la commune et les deux aeroports, plus BBOX_MARGIN_DEG
+# de marge (approches et departs). Sert uniquement a limiter la requete API
+# -- le vrai filtre des annonces est le rayon MAX_RADIUS_KM ci-dessous. Au
+# dela de BBOX_MAX_SQ_DEG (grand aeroport tres loin), on se limite a la
+# commune : sous 25 sq deg, une requete coute 1 credit (voir doc API), dans
+# le budget de 4000 credits/jour du compte authentifie.
+BBOX_MARGIN_DEG = 0.5
+BBOX_MAX_SQ_DEG = 20.0
+
+
+def _bbox():
+    lats = [REF_LAT, AIRPORT_NEAR[0], AIRPORT_BIG[0]]
+    lons = [REF_LON, AIRPORT_NEAR[1], AIRPORT_BIG[1]]
+    box = (min(lats) - BBOX_MARGIN_DEG, max(lats) + BBOX_MARGIN_DEG,
+           min(lons) - BBOX_MARGIN_DEG, max(lons) + BBOX_MARGIN_DEG)
+    if (box[1] - box[0]) * (box[3] - box[2]) > BBOX_MAX_SQ_DEG:
+        return REF_LAT - 1, REF_LAT + 1, REF_LON - 1, REF_LON + 1
+    return box
+
+
+LAT_MIN, LAT_MAX, LON_MIN, LON_MAX = _bbox()
 
 # Rayon de veille reel -- resserre en session (2026-08-30) : 50km -> 20km,
-# puis borne a la distance reelle de l'aeroport de l'utilisateur (15.9km).
+# puis borne a la distance reelle de l'aeroport de l'utilisateur (15.9km,
+# Saint-Etienne -> Bouthéon ; a revoir si la commune change beaucoup).
 MAX_RADIUS_KM = 15.9
 
 # Rayon "juste au-dessus de moi" -- au-dela de la simple presence dans la
@@ -109,12 +128,10 @@ IDX_CATEGORY = 17
 IDX_VERTICAL_RATE = 11
 
 # Contexte aerien pour le systeme d'attention du scanner radio (2026-10-01) :
-# calcule sur TOUS les avions de la zone interrogee (qui couvre deja Lyon),
+# calcule sur TOUS les avions de la zone interrogee (qui couvre les deux aeroports),
 # alors que les annonces vocales restent limitees a MAX_RADIUS_KM. Piqures par
 # fenetre radio, d'apres position, altitude, taux de montee et sol/vol.
 AIR_CONTEXT_PATH = "/tmp/contexte_aerien.json"
-LFMH = (45.5406, 4.2964)   # Saint-Etienne-Boutheon, ~13 km de chez l'utilisateur
-LFLL = (45.7256, 5.0811)   # Lyon Saint-Exupery, ~63 km
 AIR_TARGET_CAP = 3.0
 
 # Categorie ADS-B (norme DO-260B) -- l'API OpenSky ne documente PAS de
@@ -166,8 +183,8 @@ def _publish_air_context(states):
         alt = st[IDX_BARO_ALTITUDE] or 0
         vrate = abs(st[IDX_VERTICAL_RATE] or 0) if len(st) > IDX_VERTICAL_RATE else 0
         moving = 0.5 if vrate > 2 else 0.0          # monte ou descend : on lui parle
-        d_ste = _distance_km(LFMH[0], LFMH[1], lat, lon)
-        d_lyon = _distance_km(LFLL[0], LFLL[1], lat, lon)
+        d_ste = _distance_km(AIRPORT_NEAR[0], AIRPORT_NEAR[1], lat, lon)
+        d_lyon = _distance_km(AIRPORT_BIG[0], AIRPORT_BIG[1], lat, lon)
         if st[IDX_ON_GROUND]:
             if d_lyon < 5:
                 add("aviation_sol", 0.3)          # faible : a 63 km, au ras du sol

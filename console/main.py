@@ -29,6 +29,7 @@ import archives  # noqa: E402
 import bilan  # noqa: E402
 import journal  # noqa: E402
 import manuel  # noqa: E402
+import reglages_cmd  # noqa: E402
 import simulation  # noqa: E402
 import veilles  # noqa: E402
 import vision  # noqa: E402
@@ -183,6 +184,14 @@ def run_command(line, key_source, last_response):
         return journal.run(key_source, voix.say, out)
     if cmd.name == "manuel":
         return manuel.run(key_source, voix.say, out)
+    if cmd.name == "réglages":
+        return reglages_cmd.status()
+    if cmd.name == "ville":
+        return reglages_cmd.ville(line, key_source, voix.say, out, read_line)
+    if cmd.name == "gare":
+        return reglages_cmd.gare(key_source, voix.say, out)
+    if cmd.name == "aéroport":
+        return reglages_cmd.aeroport(line, key_source, voix.say, out)
     if cmd.name == "simulation":
         return simulation.handle(line)
     if cmd.name == "touches":

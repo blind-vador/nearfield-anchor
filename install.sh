@@ -137,6 +137,11 @@ if [ ! -f "$TARGET_DIR/credentials.py" ]; then
     echo "!! ne fonctionneront PAS tant que $TARGET_DIR/credentials.py n'est pas rempli."
     cp "$REPO_DIR/config/credentials.example.py" "$TARGET_DIR/credentials.py"
 fi
+# Dossier de reglages sur le NAS (lieu, gare, aeroports, un fichier texte
+# par cle API -- voir lib/reglages.py). Ne touche a rien d'existant ; une
+# cle deja dans credentials.py est recopiee dans son fichier vide.
+sudo -u "$RUN_USER" python3 -c "import sys; sys.path.insert(0, '$TARGET_DIR'); import reglages; reglages.ensure()" \
+    || echo "!! dossier de reglages non cree (NAS absent ?) -- relancer la commande reglages de la console"
 cp "$REPO_DIR"/radiono/radiono.py "$RADIONO_TARGET_DIR/"
 cp "$REPO_DIR"/config/sound_paths.py "$RADIONO_TARGET_DIR/"
 PYTHON_SITE="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"

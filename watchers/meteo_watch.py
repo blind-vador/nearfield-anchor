@@ -8,6 +8,7 @@ import requests
 from speak import speak, speak_with_lead_sound
 import audio_lock
 from sound_paths import METEO_SCANER_DIR
+import reglages
 
 # Miroir public (sans cle) des donnees officielles de vigilance
 # Meteo-France, sur Opendatasoft. L'API officielle exige desormais un
@@ -15,15 +16,17 @@ from sound_paths import METEO_SCANER_DIR
 # echeance) sans authentification. Teste et confirme en session.
 METEO_URL = "https://public.opendatasoft.com/api/explore/v2.1/catalog/datasets/weatherref-france-vigilance-meteo-departement/records"
 
-# Departement de la Loire (Saint-Etienne).
-DOMAIN_ID = "42"
-DEPARTMENT_NAME = "Loire"
+# Departement et position de la commune choisie par la commande "ville"
+# de la console (lieu.json, voir reglages.py), lus au demarrage.
+_LIEU = reglages.get("lieu")
+DOMAIN_ID = str(_LIEU["departement"])
+DEPARTMENT_NAME = _LIEU["departement_nom"]
 
-# Position exacte (Saint-Etienne) pour l'alerte hyper-locale ci-dessous --
-# la vigilance departementale est trop large (tout le departement peut etre
-# orange sans que ca touche precisement ici).
-REF_LAT = 45.4397
-REF_LON = 4.3872
+# Position exacte pour l'alerte hyper-locale ci-dessous -- la vigilance
+# departementale est trop large (tout le departement peut etre orange sans
+# que ca touche precisement ici).
+REF_LAT = float(_LIEU["lat"])
+REF_LON = float(_LIEU["lon"])
 
 # But du service : ALERTER quand un phenomene dangereux approche, pas
 # fournir une prevision meteo routiniere. On ne regarde que l'echeance "J"

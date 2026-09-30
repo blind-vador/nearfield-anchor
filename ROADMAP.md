@@ -4994,3 +4994,31 @@ Mesure du 1er octobre : 14,5 h de pause thermique sur 24 h -- le
 refroidissement reste le premier gain possible. OpenSky anonyme : 400
 requetes/jour pour 960 demandees (90 s) -> 429 une bonne partie de la
 journee ; identifiants OpenSky necessaires.
+
+## 2026-09-30 : reglages sur le NAS et commandes ville, gare, aeroport
+
+Demande utilisateur : un dossier de reglages sur le NAS (accessible depuis
+le Mac et l'iPhone), les cles API dans des fichiers texte a remplir par
+copier-coller, et des commandes console pour choisir sa commune, la gare
+et les aeroports, avec une arborescence alphabetique au clavier.
+
+- `lib/reglages.py` : `server/nearfield-anchor-settings/` (lieu.json,
+  trains.json, avions.json, cles/*.txt, LISEZMOI.txt, listes/ en cache).
+  Repli : copie sur la carte SD (`reglages_cache`, dernier contenu valide),
+  puis valeurs par defaut (Saint-Etienne), puis credentials.py pour les
+  cles. Cles relues a chaque usage (pas de redemarrage) ; lieux lus au
+  demarrage des veilles, la console relance celles concernees.
+- Nettoyage des cles collees : BOM, espaces, guillemets, retour chariot ;
+  premiere ligne non vide seulement.
+- Veilles branchees : sncf (gare + cle), meteo (departement + position),
+  adsb (position, deux aeroports, boite de requete calculee autour d'eux,
+  plafonnee a 20 sq deg ; plus de tentative OAuth sans cle).
+- Console : `reglages` (etat + cles presentes, jamais lues), `ville <nom>`
+  (geo.api.gouv.fr, homonymes en liste), `gare` et `aeroport` (arborescence
+  : haut/bas, droite deplie, gauche replie, lettres tapees = recherche,
+  retour arriere, entree, echap). Aerodromes : OurAirports, France, code
+  OACI LF (433) ; gares : open data SNCF (2782, premier code UIC).
+- Limites connues : la veille crues garde son troncon (Loire forezienne),
+  la veille STAS reste propre a Saint-Etienne, les frequences radio
+  tour/approche restent LFMH/LFLL (piste : airport-frequencies.csv
+  d'OurAirports), MAX_RADIUS_KM des annonces avions reste 15.9 km.

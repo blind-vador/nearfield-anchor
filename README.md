@@ -58,6 +58,9 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `maj.py` | Mise à jour apt en arrière-plan, étapes parlées, détail dans `server/logs/mise_a_jour_*.log` |
 | `vision.py` | Photo via mjpg-streamer, refus si trop sombre, description Gemini lue puis oubliée |
 | `manuel.py` | Dialogue du mode manuel ; plages publiées par le scanner (`/tmp/radio_watch_plages.json`) |
+| `reglages_cmd.py` | Commandes `réglages`, `ville`, `gare`, `aéroport` : choix écrits sur le NAS, veilles concernées relancées |
+| `arbre.py` | Arborescence alphabétique au clavier (flèches, recherche en tapant) et liste simple |
+| `sources.py` | Listes publiques sans clé : communes (geo.api.gouv.fr), gares (open data SNCF), aérodromes (OurAirports) |
 | `veilles.py` | Arrêt / reprise / relance des veilles, aiguillé avant la reconnaissance normale |
 | `notation.py` | Touche N du journal : grille de 11 critères (SINPO, P.835, NISQA, erreurs de VAD) |
 | `bilan.py` | Confronte notes et mesures du système, propose des réglages par bande |
@@ -185,14 +188,16 @@ projets n'est empaqueté Debian pour ce Pi).
 
 ## Points d'attention avant un déploiement sur une autre installation
 
-- **Identifiants** : isolés dans `config/credentials.py`, **jamais
-  commité** (voir `.gitignore`). `config/credentials.example.py` est le
-  modèle (committé, valeurs vides) — `install.sh` le copie
-  automatiquement en `credentials.py` si absent. Édite ensuite ce
-  fichier avec tes propres identifiants (`SNCF_TOKEN`,
-  `OPENSKY_CLIENT_ID`/`OPENSKY_CLIENT_SECRET`, `OCTOPRINT_API_KEY`) puis
-  redémarre `sncf-watch`/`adsb-watch`/`pi-console`. Une réinstallation
-  n'écrase jamais un `credentials.py` déjà présent sur le Pi.
+- **Réglages et clés API** : dossier `nearfield-anchor-settings` à la
+  racine du disque `server` du NAS (créé par `install.sh` ou la commande
+  `réglages` de la console, voir `lib/reglages.py`). `lieu.json`,
+  `trains.json`, `avions.json` se règlent depuis la console (`ville`,
+  `gare`, `aéroport`) ; le sous-dossier `cles` contient un fichier texte
+  par clé (`sncf.txt`, `opensky_id.txt`, `opensky_secret.txt`,
+  `gemini.txt`, `octoprint.txt`) : coller la clé seule, enregistrer, rien
+  à redémarrer. Copie de secours sur la carte SD
+  (`/home/vador/autopilot/reglages_cache`) si le disque décroche.
+  L'ancien `credentials.py` (jamais commité) reste lu en dernier recours.
 - **Chemins des banques sonores** : tout centralisé dans
   `config/sound_paths.py` (`NAS_BASE` + un chemin par catégorie) — adapte
   simplement `NAS_BASE` si ton NAS est organisé différemment. Les

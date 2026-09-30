@@ -2,7 +2,7 @@
 
 Photo prise via le service camera d'OctoPi (mjpg-streamer, qui occupe deja
 la webcam pour OctoPrint : ouvrir /dev/video0 directement echouerait),
-envoyee a Gemini (offre gratuite, GEMINI_API_KEY dans credentials.py),
+envoyee a Gemini (offre gratuite, cles/gemini.txt des reglages),
 description lue a voix haute, puis tout est oublie.
 
 Confidentialite :
@@ -24,10 +24,7 @@ import urllib.error
 import urllib.request
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
-try:
-    import credentials
-except ImportError:
-    credentials = None
+import reglages  # noqa: E402
 
 SNAPSHOT_URL = "http://127.0.0.1:8080/?action=snapshot"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -70,9 +67,9 @@ def _brightness(jpeg):
 
 
 def _ask_gemini(jpeg, question):
-    key = getattr(credentials, "GEMINI_API_KEY", "") if credentials else ""
+    key = reglages.cle("gemini")
     if not key:
-        return None, "Clé Gemini absente : ajoute GEMINI_API_KEY dans credentials point py."
+        return None, "Clé Gemini absente : colle-la dans le fichier gemini point txt du dossier cles des réglages."
     prompt = PROMPT + (f" La personne demande en plus : {question}" if question else "")
     body = json.dumps({"contents": [{"parts": [
         {"text": prompt},

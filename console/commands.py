@@ -16,10 +16,7 @@ from dataclasses import dataclass, field
 import requests
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
-try:
-    import credentials
-except ImportError:
-    credentials = None
+import reglages  # noqa: E402
 
 OCTOPRINT_URL = "http://127.0.0.1:5000"
 FM_RANGE = "88M:108M:125k"
@@ -62,10 +59,10 @@ def heure():
 
 
 def printer_status():
-    api_key = getattr(credentials, "OCTOPRINT_API_KEY", "") if credentials else ""
+    api_key = reglages.cle("octoprint")
     if not api_key:
-        return ("Clé API OctoPrint non configurée. Ajoute OCTOPRINT_API_KEY "
-                "dans le fichier credentials point py.")
+        return ("Clé API OctoPrint absente : colle-la dans le fichier octoprint point txt "
+                "du dossier cles des réglages.")
     headers = {"X-Api-Key": api_key}
     try:
         printer = requests.get(f"{OCTOPRINT_URL}/api/printer", headers=headers, timeout=5)
@@ -388,6 +385,20 @@ COMMANDS = [
     Command("aide", "liste des commandes", help_text,
             keywords=["aide", "help", "commandes"],
             examples=["aide", "qu'est-ce que tu sais faire", "liste des commandes"]),
+    # Avant les autres : un nom de commune tape apres "ville" ne doit pas
+    # declencher une autre commande par ses mots.
+    Command("ville", "choisir sa commune : météo et position de référence ; ville suivi du nom", None,
+            keywords=["ville", "commune", "ma ville", "ma commune"],
+            examples=["change de ville", "je suis à"]),
+    Command("gare", "choisir la gare suivie, dans une arborescence alphabétique", None,
+            keywords=["gare", "gares", "choisir la gare"],
+            examples=["change de gare", "quelle gare surveiller"]),
+    Command("aéroport", "choisir l'aéroport proche ou le grand aéroport surveillés", None,
+            keywords=["aeroport", "aeroports", "aerodrome", "aerodromes"],
+            examples=["change d'aéroport", "quel aéroport surveiller"]),
+    Command("réglages", "réglages en place et clés API présentes ou manquantes", None,
+            keywords=["reglages", "cles", "cle", "cles api", "parametres", "configuration"],
+            examples=["qu'est-ce qui est réglé", "où en sont les clés"]),
     Command("décris", "photo de l'imprimante décrite par une intelligence artificielle", None,
             keywords=["decris", "decrire", "description", "qu est ce que tu vois", "que vois tu",
                       "tu vois quoi", "photo", "camera", "webcam"],
