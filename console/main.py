@@ -32,6 +32,7 @@ import manuel  # noqa: E402
 import reglages_cmd  # noqa: E402
 import tableaux  # noqa: E402
 import flash  # noqa: E402
+import voix_cmd  # noqa: E402
 import simulation  # noqa: E402
 import veilles  # noqa: E402
 import vision  # noqa: E402
@@ -186,6 +187,8 @@ def run_command(line, key_source, last_response):
         return journal.run(key_source, voix.say, out)
     if cmd.name == "manuel":
         return manuel.run(key_source, voix.say, out)
+    if cmd.name == "voix":
+        return voix_cmd.run(key_source, voix.say, out)
     if cmd.name == "flash":
         return flash.run(line, key_source, voix.say, out)
     if cmd.name == "tableau":
@@ -221,6 +224,9 @@ def main():
     try:
         out(f"\n{WELCOME}\n> ")
         voix.say_and_wait(WELCOME)
+        # Noms de touches dans la voix choisie, prepares en fond (espeak en attendant).
+        voix.prune_cache()
+        voix.prewarm(voix_cmd.echo_texts())
         last_response = WELCOME
         key_source = read_keys(fd)
         while True:

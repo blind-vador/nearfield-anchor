@@ -388,6 +388,9 @@ COMMANDS = [
     # Avant les autres : un nom de commune tape apres "ville" ne doit pas
     # declencher une autre commande par ses mots ; "tableau gare" doit
     # ouvrir le tableau, pas le choix de la gare suivie.
+    Command("voix", "choisir la voix de la console et son débit, ou la voix locale espeak", None,
+            keywords=["voix", "changer de voix", "change de voix", "choisir la voix", "debit de la voix"],
+            examples=["parle plus vite", "change ta voix"]),
     Command("flash", "flash d'info locale de la ville choisie ; flash détails pour les sujets par rubrique", None,
             keywords=["flash", "flash info", "flashinfo", "flash infos", "info locale", "infos locales",
                       "information locale", "informations locales", "quoi de neuf", "actualites",

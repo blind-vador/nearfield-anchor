@@ -5062,3 +5062,26 @@ et les aeroports, avec une arborescence alphabetique au clavier.
   rubrique > sujet > articles (source, age, titre, resume France 3).
 - Pas de jingle (a ajouter quand l'utilisateur en fournira un). Pas encore
   de flash automatique a heure fixe (question laissee ouverte).
+
+## 2026-09-30 : voix Microsoft pour la console
+
+- Demande : la console parle avec les voix Microsoft (edge-tts, deja celles
+  des annonces), voix choisie dans les reglages, echo des touches en cache,
+  repli espeak si le service gele ou tombe.
+- Mesures depuis le Pi : premier son en 0,3 a 0,5 s, meme pour un long flash
+  (lecture au fil de l'eau : edge-tts stream -> mpg123 -o alsa, paquet
+  mpg123 ajoute). Echo de touche en cache : WAV sans silences (ffmpeg
+  silenceremove debut + fin), joue par aplay, instantane.
+- Regles (console/voix.py) : en cache -> joue ; echo <= 30 caracteres pas
+  en cache -> espeak tout de suite + preparation Microsoft en fond ; le reste
+  -> au fil de l'eau, garde en cache si <= 200 caracteres. Rien dans 1,5 s ou
+  erreur -> espeak prend le relais et le service est ignore 60 s.
+- Cache sur la carte SD (/home/vador/autopilot/voix_cache/<voix>/), 100 Mo
+  max, menage au demarrage (moins recemment utilises d'abord). 235 sons
+  d'echo prepares au demarrage et a chaque changement de voix (3 fils, ~1
+  min 30).
+- Commande "voix" : les 13 voix des annonces + espeak, chaque voix se
+  presente elle-meme ; puis 5 debits (echo = debit + 30 points, max +100 %).
+  console.json : voix, debit, debit_echo. Defaut : Denise, +20 %, echo +50 %.
+- A verifier a l'oreille par l'utilisateur : prononciation des lettres
+  isolees par les voix neuronales (mode "touches").

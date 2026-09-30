@@ -42,7 +42,7 @@ export DEBIAN_FRONTEND=noninteractive
 echo "=== 1/6 : paquets systeme (apt) ==="
 apt-get update
 apt-get install -y \
-    espeak ffmpeg rtl-sdr librtlsdr-dev libjansson-dev \
+    espeak ffmpeg mpg123 rtl-sdr librtlsdr-dev libjansson-dev \
     build-essential cmake git python3-pip pkg-config wget \
     libconfig++-dev libmp3lame-dev libshout3-dev libfftw3-dev libpulse-dev \
     libsndfile1-dev libitpp-dev libncurses-dev libcodec2-dev portaudio19-dev \

@@ -6,6 +6,7 @@ l'iPhone, ou la console (commandes ville, gare, aeroport).
   trains.json    gare suivie par la veille trains
   avions.json    aeroport proche et grand aeroport (contexte aerien)
   favoris.json   gares et aeroports favoris (en tete des listes de la console)
+  console.json   voix de la console (Microsoft ou "espeak") et debits
   cles/*.txt     une cle API par fichier, en texte brut : coller, enregistrer
 
 Le disque du NAS decroche parfois : chaque lecture reussie est recopiee
@@ -36,6 +37,8 @@ DEFAULTS = {
         "grand": {"nom": "Lyon Saint-Exupéry", "oaci": "LFLL", "lat": 45.7256, "lon": 5.0811},
     },
     "favoris": {"gares": [], "aeroports": []},
+    # debit : reponses ; debit_echo : touches et navigation (plus rapide).
+    "console": {"voix": "fr-FR-DeniseNeural", "debit": "+20%", "debit_echo": "+50%"},
 }
 
 # fichier cles/<nom>.txt -> (ancien nom dans credentials.py, usage dit a voix haute)
