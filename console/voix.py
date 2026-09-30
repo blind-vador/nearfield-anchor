@@ -27,6 +27,7 @@ import fcntl
 import hashlib
 import os
 import queue
+import re
 import subprocess
 import sys
 import tempfile
@@ -56,6 +57,13 @@ FIRST_AUDIO_SEC = 1.5
 CLOUD_RETRY_SEC = 60
 SYNTH_TIMEOUT_SEC = 10
 STREAM_TIMEOUT_SEC = 120
+# Phrases qui ne se rediront jamais a l'identique : heure et date (demande
+# utilisateur 2026-09-30, "mardi 39 decembre a 23 h 56"). Jamais gardees.
+VOLATILE = re.compile(
+    r"\b\d{1,2} ?(heures?|h)\b|\b\d{1,2}:\d{2}\b"
+    r"|\b(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)\b"
+    r"|\b\d{1,2} (janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\b",
+    re.IGNORECASE)
 
 _proc = None
 _proc_guard = threading.Lock()
@@ -380,7 +388,9 @@ def _spawn(text, echo):
     if echo and len(text) <= ECHO_MAX_CHARS:
         _prepare(text, voice, rate)  # Microsoft la prochaine fois
         return _set_current(espeak_out.Speech(text, "fr", espeak_rate))
-    keep = _cache_path(text, voice, rate) if len(text) <= CACHE_TEXT_MAX else None
+    keep = None
+    if len(text) <= CACHE_TEXT_MAX and not VOLATILE.search(text):
+        keep = _cache_path(text, voice, rate)
     return _set_current(Cloud(text, voice, rate, espeak_rate, keep))
 
 
