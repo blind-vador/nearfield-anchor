@@ -59,6 +59,9 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `vision.py` | Photo via mjpg-streamer, refus si trop sombre, description Gemini lue puis oubliée |
 | `manuel.py` | Dialogue du mode manuel ; plages publiées par le scanner (`/tmp/radio_watch_plages.json`) |
 | `veilles.py` | Arrêt / reprise / relance des veilles, aiguillé avant la reconnaissance normale |
+| `notation.py` | Touche N du journal : grille de 11 critères (SINPO, P.835, NISQA, erreurs de VAD) |
+| `bilan.py` | Confronte notes et mesures du système, propose des réglages par bande |
+| `archives.py` | Écoute des extraits gardés (storage/radio), lecture seule, volume réglable |
 | `journal.py` | Dialogue d'écoute et de tri des enregistrements, sortie son unique |
 | `keys.py` | Noms parles des touches ; mode reperage (evdev pour Maj/Ctrl/Alt...) |
 | `voix.py` | espeak interruptible ; reponses sous le verrou audio partage |
@@ -68,9 +71,11 @@ mémoire, disques, veilles), `rire` ("fais-moi rire" : lance radiono),
 `décris` ("qu'est-ce que tu vois", "photo, la pièce est-elle décollée ?" :
 photo de la webcam de l'imprimante décrite par Gemini, rien n'est gardé),
 `mise à jour` (mise à jour complète + nettoyage, confirmée, suivie à la voix
-par étapes ; retaper la commande donne l'avancement), `journal` (enregistrements radio : Tab/Maj+Tab = jour, haut/bas = écouter,
+par étapes ; retaper la commande donne l'avancement), `bilan` (notes radio par bande, propositions de réglages sans rien appliquer),
+`archives` (extraits gardés : Tab = jour, haut/bas = écouter, gauche/droite = volume
+temporaire, rien n'est supprimé), `journal` (enregistrements radio : Tab/Maj+Tab = jour, haut/bas = écouter,
 droite = garder dans storage/radio sous sa date, gauche = rejeter comme
-parasite), `veilles` / `arrête` / `reprends` / `redémarre` + nom de veille ("arrête radio",
+parasite, N = noter), `veilles` / `arrête` / `reprends` / `redémarre` + nom de veille ("arrête radio",
 "reprends toutes les veilles" : arrêt persistant après redémarrage, reprise,
 relance ; "veilles" ou "arrête" seul = liste avec l'état), `manuel` (balayage suspendu, radio en direct : flèches haut/bas = plage,
 gauche/droite = pas de fréquence, page haut/bas = dix pas, Entrée = relire,

@@ -26,6 +26,7 @@ import commands  # noqa: E402
 import keys  # noqa: E402
 import matcher  # noqa: E402
 import archives  # noqa: E402
+import bilan  # noqa: E402
 import journal  # noqa: E402
 import manuel  # noqa: E402
 import simulation  # noqa: E402
@@ -174,6 +175,8 @@ def run_command(line, key_source, last_response):
         return ""
     if cmd.name == "veilles":
         return veilles.status_text()
+    if cmd.name == "bilan":
+        return bilan.summary()
     if cmd.name == "archives":
         return archives.run(key_source, voix.say, out)
     if cmd.name == "journal":

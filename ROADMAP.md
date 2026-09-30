@@ -4959,3 +4959,19 @@ Correctifs : voir le commit. Observation apres correctif : les emissions
 du canal 1 sont des begaiements du silencieux (4,6 s de son en 24 morceaux
 sur 53 s) -- la pre-ecoute ne peut pas les reconnaitre ; avec le delai de
 3 s, elles restent ouvertes jusqu'a la limite. A trancher par la notation.
+
+### Notation des enregistrements et bilan (2026-09-30)
+
+Idee de l'utilisateur ("machine learning du pauvre") : touche N du journal,
+`console/notation.py`. 11 champs (haut/bas = champ, gauche/droite = valeur,
+Entree sur OK) : contenu (voix, musique, tonalites, donnees, rien),
+lisibilite 1-5, souffle, brouillage (type), son deforme (coloration NISQA),
+volume, stabilite (haché), debut coupe, fin (coupee trop tot / correcte /
+trop longue : erreurs de detecteur de voix), meritait l'annonce, certitude.
+References : SINPO (UIT-R SM.1135), ITU-T P.835, NISQA, metriques VAD
+(front-end clipping, mid-speech clipping, overhang, noise as speech),
+AudioSet. Notes dans `server/radio_notes.json` (jamais purge), avec les
+mesures du systeme pour la capture. `console/bilan.py` : resume par bande et
+propositions (a partir de 8 notes, notes "hesitant" a demi-poids), adaptees
+au chemin (seuil de voix RNNoise pour rtl_fm, silencieux pour RTLSDR-Airband) ;
+rien n'est applique automatiquement. "bilan" retire des mots-cles de "sante".

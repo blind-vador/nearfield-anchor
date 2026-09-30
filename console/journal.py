@@ -33,6 +33,7 @@ import time
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import noise_signatures as ns  # noqa: E402
+import notation  # noqa: E402
 
 LOG_DIR = "/media/nas/nd1/server/radio_log"
 KEEP_DIR = "/media/nas/nd2/storage/radio"
@@ -53,7 +54,7 @@ RE_TIME_ONLY = re.compile("_" + _TIME)
 
 INTRO = ("Journal radio. Tab et majuscule tab : changer de jour. Flèches haut et bas : "
          "écouter les enregistrements. Flèche droite : garder. Flèche gauche : rejeter comme "
-         "parasite. Entrée : rejouer. Échap : fermer.")
+         "parasite. N : noter. Entrée : rejouer. Échap : fermer.")
 
 
 def _date(day, month_name, year):
@@ -226,7 +227,7 @@ def run(key_source, say, out):
                 else:
                     player.stop()
                     text = "Début de la journée." if new_i < 0 else "Fin de la journée."
-            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D"):
+            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N"):
                 text = "Choisis d'abord un enregistrement avec la flèche bas."
             elif key in ("\r", "\n"):
                 player.play(recs[rec_i][1])
@@ -250,8 +251,12 @@ def run(key_source, say, out):
                         text += " Journée vide. " + announce_day()
                     else:
                         rec_i = min(rec_i, len(recs) - 1)
+            elif key in ("n", "N"):
+                player.stop()
+                stamp, path = recs[rec_i]
+                text = notation.rate(key_source, say, out, path, stamp)
             else:
-                text = "Tab, flèches, entrée, ou échap pour fermer."
+                text = "Tab, flèches, N, entrée, ou échap pour fermer."
             if text:
                 out(f"[{text}]\n")
                 say(text)
