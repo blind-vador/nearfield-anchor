@@ -24,6 +24,7 @@ import audio_filters
 import acars_watch
 import spectral_diagnostic
 import noise_signatures
+import attention
 from manual_tuner import ManualStream, SETTLE_SEC as MANUAL_SETTLE_SEC
 from rnnoise_lib import (
     create as _rnnoise_create,
@@ -1605,30 +1606,37 @@ def main():
             if scan_fm_band(band):
                 activity = True
 
-        # PMR446 et toutes les frequences aeronautiques locales : squelch reel
-        # RTLSDR-Airband, voir airband_bridge.py. Meme dongle, meme boucle
-        # sequentielle -- jamais en parallele avec le reste de cette fonction.
-        # dwell_sec par fenetre (voir AIRBAND_WINDOWS) : 6 fenetres maintenant,
-        # duree individuelle reduite en consequence pour garder une cadence de
-        # rotation raisonnable vers les bandes sweep.
-        for window in airband_bridge.AIRBAND_WINDOWS:
+        # Programme du cycle donne par le systeme d'attention (lib/attention.py,
+        # 2026-10-01) au lieu d'un tourniquet fixe : fenetres RTLSDR-Airband
+        # (PMR446, aeroports), ACARS et bandes balayees recoivent plus de temps
+        # et de visites la ou "ca pique" (activite captee recente, notes de
+        # l'utilisateur, contexte aerien d'adsb_watch), avec un plancher
+        # d'exploration pour les bandes balayees. Meme dongle, toujours en
+        # sequence -- jamais deux ecoutes en parallele.
+        try:
+            plan = attention.plan_cycle(airband_bridge.AIRBAND_WINDOWS, sweep_bands)
+        except Exception as exc:  # l'attention ne doit jamais arreter la veille
+            print(f"[radio_watch] attention indisponible ({exc!r}), tourniquet simple")
+            plan = ([("airband", w, w["name"], w.get("dwell_sec", 15), 0) for w in airband_bridge.AIRBAND_WINDOWS]
+                    + [("acars", None, "acars", 30, 0)]
+                    + ([("sweep", sweep_bands[sweep_idx % len(sweep_bands)], "", None, 0)] if sweep_bands else []))
+            sweep_idx += 1
+        for kind, obj, target, dwell, air_boost in plan:
             if _lock_pending():
                 break
-            if airband_bridge.scan_window(window, dwell_sec=window.get("dwell_sec", 15)):
+            if kind == "airband":
+                hit = airband_bridge.scan_window(obj, dwell_sec=dwell)
+            elif kind == "acars":
+                hit = acars_watch.scan_window(dwell_sec=dwell)
+            else:
+                hit = scan_sweep_band(obj)
+            if hit:
                 activity = True
-
-        # ACARS (donnees numeriques avion/compagnie) -- meme discipline de
-        # partage sequentiel du dongle que les fenetres RTLSDR-Airband
-        # ci-dessus. Voir acars_watch.py pour le detail du filtrage
-        # (texte libre + phases OOOI modernes uniquement).
-        if not _lock_pending() and acars_watch.scan_window(dwell_sec=30):
-            activity = True
-
-        if sweep_bands and not _lock_pending():
-            band = sweep_bands[sweep_idx % len(sweep_bands)]
-            sweep_idx += 1
-            if scan_sweep_band(band):
-                activity = True
+            if target:
+                try:
+                    attention.visited(target, hit, air_boost)
+                except Exception as exc:
+                    print(f"[radio_watch] attention : memorisation impossible ({exc!r})")
 
         # Chien de garde : avertir vocalement si le dongle semble indisponible
         # depuis un moment, plutot que de rester silencieux sans explication.

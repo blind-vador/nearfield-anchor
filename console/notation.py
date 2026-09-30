@@ -110,6 +110,11 @@ def rate(key_source, say, out, path, stamp):
                 "reponses": {code: FIELDS[i][2][values[i]][0] for i, (code, *_) in enumerate(FIELDS)},
             }
             total = _save_note(note)
+            try:  # "meritait : oui" pique la bande, "non" l'apaise
+                import attention
+                attention.stimulate(note["bande"], attention.NOTE_POINTS.get(note["reponses"]["merite"], 0))
+            except Exception:
+                pass
             return f"Note enregistrée. {total} note{'s' if total > 1 else ''} au total."
         elif key in ("\r", "\n"):
             text = "Descends jusqu'à OK pour enregistrer."

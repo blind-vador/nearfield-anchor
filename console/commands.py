@@ -310,7 +310,21 @@ def parasite():
     else:
         parts.append("Pas d'empreinte sonore pour cette réception, je ne peux pas l'apprendre.")
     ns.mark_last_capture_noise()
+    try:  # un parasite ne doit pas attirer l'attention du scanner
+        import attention
+        attention.stimulate(capture.get("target"), attention.PARASITE_POINTS)
+    except Exception:
+        pass
     return " ".join(parts)
+
+
+def attention_status():
+    """Ou le scanner concentre son ecoute, et pourquoi (lib/attention.py)."""
+    import attention
+    import noise_signatures as ns
+    labels = {p["target"]: p["label"] for p in ns.read_plages()}
+    labels["acars"] = "ACARS"
+    return attention.describe(labels)
 
 
 def accroche():
@@ -425,6 +439,9 @@ COMMANDS = [
             keywords=["journal", "journal radio", "enregistrements", "enregistrement", "captures",
                       "log", "logs radio"],
             examples=["écouter les enregistrements", "ce que la radio a capté", "les réceptions de la nuit"]),
+    Command("attention", "où le scanner concentre son écoute, et pourquoi", attention_status,
+            keywords=["attention", "piqure", "piqures", "priorites", "ou ecoutes tu", "ou tu ecoutes"],
+            examples=["qu'est-ce qui t'intéresse en ce moment", "où tu écoutes le plus"]),
     Command("manuel", "mode manuel : choisir soi-même la plage et la fréquence aux flèches", None,
             keywords=["manuel", "manuelle", "mode manuel", "reglage manuel", "accord manuel"],
             examples=["je veux régler moi-même", "passe en manuel", "je choisis la fréquence"]),

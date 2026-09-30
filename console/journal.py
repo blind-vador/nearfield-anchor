@@ -180,6 +180,11 @@ def _reject(path):
     last = ns.last_capture()
     if last and last.get("log_path") == path:
         ns.mark_last_capture_noise()
+    try:  # un parasite ne doit pas attirer l'attention du scanner
+        import attention
+        attention.stimulate((info or {}).get("target"), attention.PARASITE_POINTS)
+    except Exception:
+        pass
     if info and info.get("fingerprint"):
         ns.add_signature(info)
         return "Rejeté, empreinte apprise."

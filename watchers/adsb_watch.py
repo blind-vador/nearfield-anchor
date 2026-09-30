@@ -1,4 +1,6 @@
 import math
+import os
+import json
 import time
 
 import requests
@@ -104,6 +106,16 @@ IDX_LATITUDE = 6
 IDX_BARO_ALTITUDE = 7
 IDX_ON_GROUND = 8
 IDX_CATEGORY = 17
+IDX_VERTICAL_RATE = 11
+
+# Contexte aerien pour le systeme d'attention du scanner radio (2026-10-01) :
+# calcule sur TOUS les avions de la zone interrogee (qui couvre deja Lyon),
+# alors que les annonces vocales restent limitees a MAX_RADIUS_KM. Piqures par
+# fenetre radio, d'apres position, altitude, taux de montee et sol/vol.
+AIR_CONTEXT_PATH = "/tmp/contexte_aerien.json"
+LFMH = (45.5406, 4.2964)   # Saint-Etienne-Boutheon, ~13 km de chez l'utilisateur
+LFLL = (45.7256, 5.0811)   # Lyon Saint-Exupery, ~63 km
+AIR_TARGET_CAP = 3.0
 
 # Categorie ADS-B (norme DO-260B) -- l'API OpenSky ne documente PAS de
 # lookup de modele d'appareil precis (ex: "Airbus A320"), meme authentifie
@@ -137,6 +149,45 @@ def _distance_km(lat1, lon1, lat2, lon2):
     d_lambda = math.radians(lon2 - lon1)
     a = math.sin(d_phi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(d_lambda / 2) ** 2
     return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(a))
+
+
+def _publish_air_context(states):
+    targets = {}
+
+    def add(target, points):
+        targets[target] = min(AIR_TARGET_CAP, targets.get(target, 0.0) + points)
+
+    count = 0
+    for st in states:
+        lat, lon = st[IDX_LATITUDE], st[IDX_LONGITUDE]
+        if lat is None or lon is None:
+            continue
+        count += 1
+        alt = st[IDX_BARO_ALTITUDE] or 0
+        vrate = abs(st[IDX_VERTICAL_RATE] or 0) if len(st) > IDX_VERTICAL_RATE else 0
+        moving = 0.5 if vrate > 2 else 0.0          # monte ou descend : on lui parle
+        d_ste = _distance_km(LFMH[0], LFMH[1], lat, lon)
+        d_lyon = _distance_km(LFLL[0], LFLL[1], lat, lon)
+        if st[IDX_ON_GROUND]:
+            if d_lyon < 5:
+                add("aviation_sol", 0.3)          # faible : a 63 km, au ras du sol
+            continue
+        if d_ste < 25 and alt < 2000:
+            add("aviation_st_etienne", 1.0 + moving)
+        if d_lyon < 20 and alt < 1500:
+            add("aviation_tour", 1.0)
+        elif 20 <= d_lyon < 60 and 1500 <= alt < 6000:
+            add("aviation_approche", 0.5 + moving)
+        if alt >= 6000:                            # croisiere : ACARS, controle en route
+            add("acars", 0.3)
+            add("aviation", 0.2)
+    try:
+        tmp = AIR_CONTEXT_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump({"cibles": targets, "avions": count, "updated": time.time()}, f)
+        os.replace(tmp, AIR_CONTEXT_PATH)
+    except OSError as exc:
+        print(f"[adsb_watch] contexte aerien non publie : {exc}")
 
 
 def fetch_aircraft():
@@ -204,6 +255,7 @@ def main():
             time.sleep(POLL_INTERVAL_SEC)
             continue
 
+        _publish_air_context(states)
         current_aircraft = {}
         for state in states:
             if state[IDX_ON_GROUND]:

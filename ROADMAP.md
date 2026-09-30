@@ -4975,3 +4975,22 @@ mesures du systeme pour la capture. `console/bilan.py` : resume par bande et
 propositions (a partir de 8 notes, notes "hesitant" a demi-poids), adaptees
 au chemin (seuil de voix RNNoise pour rtl_fm, silencieux pour RTLSDR-Airband) ;
 rien n'est applique automatiquement. "bilan" retire des mots-cles de "sante".
+
+## 2026-10-01 : systeme d'attention (reconstruction)
+
+Constat : le scanner tournait en tourniquet fixe (cycle ~113 s, fenetres
+fixes 8-15 s chacune, chaque bande balayee revue toutes les ~28 min), sans
+memoire d'activite. Un systeme de priorite existait du 1er au 4 septembre
+(channel_stats.json : 46 canaux/bandes, 20 dernieres visites ; message
+"balayage bonus priorise aviation/ACARS" quand un avion etait proche ; et
+un "relachement progressif du seuil de reprise" thermique) mais n'est
+jamais entre dans le depot : perdu avec la carte SD, comme la console.
+Reconstruit : lib/attention.py (voir commit), contexte aerien dans
+adsb_watch, commande console "attention". Tests hors ligne : sans piqure
+le programme est identique au tourniquet ; PMR446 actif -> 37,5 s + une
+visite de plus ; piqure divisee par 4 en 1 h ; recevabilite de Lyon sol
+tombee a 0,2 apres 20 visites piquees sans capture ; plancher strict.
+Mesure du 1er octobre : 14,5 h de pause thermique sur 24 h -- le
+refroidissement reste le premier gain possible. OpenSky anonyme : 400
+requetes/jour pour 960 demandees (90 s) -> 429 une bonne partie de la
+journee ; identifiants OpenSky necessaires.
