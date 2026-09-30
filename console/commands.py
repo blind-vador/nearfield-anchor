@@ -388,6 +388,11 @@ COMMANDS = [
     # Avant les autres : un nom de commune tape apres "ville" ne doit pas
     # declencher une autre commande par ses mots ; "tableau gare" doit
     # ouvrir le tableau, pas le choix de la gare suivie.
+    Command("flash", "flash d'info locale de la ville choisie ; flash détails pour les sujets par rubrique", None,
+            keywords=["flash", "flash info", "flashinfo", "flash infos", "info locale", "infos locales",
+                      "information locale", "informations locales", "quoi de neuf", "actualites",
+                      "actualite", "actus", "actu", "nouvelles", "infos", "info"],
+            examples=["qu'est-ce qui se passe dans le coin", "les nouvelles du jour", "donne moi les infos"]),
     Command("tableau", "départs et arrivées d'une gare ou d'un aéroport ; tableau gare ou tableau aéroport", None,
             keywords=["tableau", "tableaux", "departs", "arrivees", "horaires"],
             examples=["prochains trains", "prochains vols", "tableau des départs"]),

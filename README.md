@@ -60,6 +60,7 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `manuel.py` | Dialogue du mode manuel ; plages publiées par le scanner (`/tmp/radio_watch_plages.json`) |
 | `reglages_cmd.py` | Commandes `réglages`, `ville`, `gare`, `aéroport` : choix écrits sur le NAS, veilles concernées relancées |
 | `arbre.py` | Arborescence au clavier (flèches, recherche en tapant, étoile = favori) et liste simple |
+| `flash.py` | Commande `flash` (« info locale », « quoi de neuf »...) et `flash détails` : sujets par rubrique ; moteur dans `lib/flash_info.py` |
 | `tableaux.py` | Commande `tableau` : départs et arrivées d'une gare (API SNCF) ou d'un aéroport (AirLabs) ; listes avec favoris partagées avec `gare` et `aéroport` |
 | `sources.py` | Listes publiques sans clé : communes (geo.api.gouv.fr), gares (open data SNCF), aérodromes (OurAirports) |
 | `veilles.py` | Arrêt / reprise / relance des veilles, aiguillé avant la reconnaissance normale |

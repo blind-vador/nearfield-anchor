@@ -5041,3 +5041,24 @@ et les aeroports, avec une arborescence alphabetique au clavier.
   suivie. Recherche d'aeroport aussi par code IATA ou OACI.
 - `arbre.py` generalise : noeuds a profondeur libre, chargement a
   l'ouverture (LoadError = phrase dite), annonce du nombre d'entrees.
+
+## 2026-09-30 : flash d'info locale
+
+- `lib/flash_info.py` : presse des dernieres 24 h (Google Actualites sur la
+  commune, fil France 3 du departement -- adresse deduite de geo.api.gouv.fr
+  region + departement), homonymes filtres ("Saint-Etienne-de-Montluc" pour
+  Saint-Etienne), articles regroupes par sujet (similarite des mots du titre
+  >= 0.5), sujets classes par nombre de medias puis fraicheur.
+- Redaction : Gemini (JSON : flash + rubrique par sujet), consigne de ne
+  rien ajouter et d'ecarter les titres racoleurs. Repli sans Gemini : les 5
+  meilleurs titres, sans mise en cache (on retente au prochain appel).
+- Regle de cache voulue par l'utilisateur : le texte presse n'est reecrit
+  que si la peche change (ensemble des titres des 12 sujets retenus) ; sinon
+  relu tel quel (~1 s au lieu de ~20 s). Cache : reglages_cache/flash_info.json.
+- Toujours frais a chaque demande : heure, vigilances (etat des veilles
+  meteo et crues), meteo Open-Meteo (aujourd'hui, ou demain apres 18 h),
+  retards et suppressions de la gare suivie sur 3 h, bus et tram (Loire).
+- Console : "flash", "info locale", "quoi de neuf"... ; "flash details" :
+  rubrique > sujet > articles (source, age, titre, resume France 3).
+- Pas de jingle (a ajouter quand l'utilisateur en fournira un). Pas encore
+  de flash automatique a heure fixe (question laissee ouverte).
