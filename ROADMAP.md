@@ -5022,3 +5022,22 @@ et les aeroports, avec une arborescence alphabetique au clavier.
   la veille STAS reste propre a Saint-Etienne, les frequences radio
   tour/approche restent LFMH/LFLL (piste : airport-frequencies.csv
   d'OurAirports), MAX_RADIUS_KM des annonces avions reste 15.9 km.
+
+### Commande "tableau" : departs et arrivees, favoris (2026-09-30)
+
+- `tableau gare` / `tableau aeroport` (sinon choix en liste). Premier
+  niveau : gare suivie (ou aeroport proche et grand), favoris, puis les
+  lettres. Une gare se deplie en Departs / Arrivees, chacun charge a
+  l'ouverture (API SNCF, 20 trains, temps reel : heure theorique, mode,
+  numero, destination ou origine, retard ou suppression).
+- Aeroports : seulement ceux a code IATA et vols commerciaux. Source
+  AirLabs /schedules (cle cles/airlabs.txt, gratuit ~1000 requetes/mois,
+  cache 5 min par tableau). Vols en partage de code ignores ; destination
+  dite par le nom de l'aeroport (liste IATA mondiale OurAirports en cache).
+  Code compagnie = 2 premiers caracteres (U2, V7...). Format AirLabs teste
+  seulement sur des donnees simulees : a verifier avec la vraie cle.
+- Favoris : etoile sur une gare ou un aeroport, dans `tableau`, `gare` et
+  `aeroport` ; `favoris.json` (UIC / OACI). Pas de doublon avec la gare
+  suivie. Recherche d'aeroport aussi par code IATA ou OACI.
+- `arbre.py` generalise : noeuds a profondeur libre, chargement a
+  l'ouverture (LoadError = phrase dite), annonce du nombre d'entrees.

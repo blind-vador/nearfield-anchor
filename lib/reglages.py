@@ -5,6 +5,7 @@ l'iPhone, ou la console (commandes ville, gare, aeroport).
   lieu.json      commune de reference : meteo, avions, distances
   trains.json    gare suivie par la veille trains
   avions.json    aeroport proche et grand aeroport (contexte aerien)
+  favoris.json   gares et aeroports favoris (en tete des listes de la console)
   cles/*.txt     une cle API par fichier, en texte brut : coller, enregistrer
 
 Le disque du NAS decroche parfois : chaque lecture reussie est recopiee
@@ -34,6 +35,7 @@ DEFAULTS = {
         "proche": {"nom": "Saint-Étienne Bouthéon", "oaci": "LFMH", "lat": 45.5406, "lon": 4.2964},
         "grand": {"nom": "Lyon Saint-Exupéry", "oaci": "LFLL", "lat": 45.7256, "lon": 5.0811},
     },
+    "favoris": {"gares": [], "aeroports": []},
 }
 
 # fichier cles/<nom>.txt -> (ancien nom dans credentials.py, usage dit a voix haute)
@@ -43,6 +45,7 @@ KEYS = {
     "opensky_secret": ("OPENSKY_CLIENT_SECRET", "avions, secret"),
     "gemini": ("GEMINI_API_KEY", "description photo"),
     "octoprint": ("OCTOPRINT_API_KEY", "imprimante"),
+    "airlabs": ("AIRLABS_API_KEY", "tableau des aéroports"),
 }
 
 README = """Réglages de nearfield anchor (deepspace9)
@@ -55,9 +58,11 @@ relisent les clés à chaque usage : rien à redémarrer.
   opensky_secret.txt  OpenSky, client secret (veille avions)
   gemini.txt          Google Gemini (commande décris)
   octoprint.txt       OctoPrint (commande imprimante)
+  airlabs.txt         AirLabs, airlabs.co (commande tableau aéroport)
 
 lieu.json, trains.json, avions.json : se règlent depuis la console avec
-les commandes ville, gare et aéroport. Modifiables à la main aussi ; si
+les commandes ville, gare et aéroport. favoris.json : l'étoile dans les
+listes de gares et d'aéroports. Modifiables à la main aussi ; si
 le fichier devient illisible, le Pi garde la dernière version valide.
 La commande réglages de la console dit ce qui est en place.
 """
@@ -184,7 +189,11 @@ def ensure():
             if not os.path.exists(path):
                 _atomic_write(path, json.dumps(values, ensure_ascii=False, indent=2) + "\n")
         readme = os.path.join(SETTINGS_DIR, "LISEZMOI.txt")
-        if not os.path.exists(readme):
+        try:
+            current_readme = _read_text(readme)
+        except FileNotFoundError:
+            current_readme = None
+        if current_readme != README:  # notre fichier : tenu a jour
             _atomic_write(readme, README)
         for name in KEYS:
             path = os.path.join(KEYS_DIR, f"{name}.txt")

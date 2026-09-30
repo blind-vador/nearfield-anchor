@@ -140,7 +140,25 @@ def aeroports():
             if a["iso_country"] != "FR" or a["type"] not in AIRPORT_TYPES or not code.startswith("LF"):
                 continue
             items.append({"nom": _airport_name(a["name"]), "oaci": code,
+                          "iata": a["iata_code"], "commercial": a["scheduled_service"] == "yes",
                           "ville": a["municipality"], "type": a["type"],
                           "lat": float(a["latitude_deg"]), "lon": float(a["longitude_deg"])})
         return items
-    return _cached_list("aeroports", build)
+    # v2 : ajout des codes IATA et du drapeau vols commerciaux (tableaux).
+    return _cached_list("aeroports_v2", build)
+
+
+def iata_names():
+    """{code IATA: nom de l'aeroport} pour dire les destinations des vols
+    (le nom plutot que la commune : "Lyon Saint-Exupéry", pas
+    "Colombier-Saugnieu"). Monde entier, garde en cache."""
+    def build():
+        resp = requests.get(AEROPORTS_URL, timeout=TIMEOUT)
+        resp.raise_for_status()
+        resp.encoding = "utf-8"
+        names = {}
+        for a in csv.DictReader(io.StringIO(resp.text)):
+            if a["iata_code"] and a["type"] in AIRPORT_TYPES:
+                names[a["iata_code"]] = _airport_name(a["name"])
+        return names
+    return _cached_list("iata", build) or {}

@@ -12,6 +12,7 @@ import arbre  # noqa: E402
 import matcher  # noqa: E402
 import reglages  # noqa: E402
 import sources  # noqa: E402
+import tableaux  # noqa: E402
 import veilles  # noqa: E402
 
 VILLE_WORDS = {"ville", "commune"}
@@ -91,31 +92,21 @@ def ville(line, key_source, say, out, read_line):
             + _restart(["meteo-watch", "adsb-watch"]))
 
 
-def _gare_spoken(g):
-    return f"{g['nom']}, {g['departement_nom'] or g['departement']}"
-
-
 def gare(key_source, say, out):
     say("Chargement de la liste des gares.")
-    items = sources.gares()
-    if not items:
+    nav = tableaux.station_navigator(board=False, select=lambda node: node.item)
+    if nav is None:
         return "Liste des gares indisponible : pas de réseau et pas de copie sur le NAS."
     current = reglages.get("trains")["gare"]
-    intro = (f"Gares, par ordre alphabétique. Gare actuelle : {current}. "
+    intro = (f"Gares, favoris en tête puis par ordre alphabétique. Gare actuelle : {current}. "
              "Droite déplie une lettre, gauche la replie, tape des lettres pour chercher, "
-             "entrée choisit, échap annule.")
-    tree = arbre.Tree(items, _gare_spoken, "gare", "gares")
-    chosen = arbre.run_tree(tree, key_source, say, out, intro)
+             "étoile pour les favoris, entrée choisit, échap annule.")
+    chosen = arbre.run(nav, key_source, say, out, intro)
     if chosen is None:
         return "Annulé, gare inchangée."
     if not reglages.save("trains", {"gare": chosen["nom"], "uic": chosen["uic"]}):
         return NO_NAS
     return f"Gare enregistrée : {chosen['nom']}." + _restart(["sncf-watch"])
-
-
-def _airport_spoken(a):
-    ville_txt = f", {a['ville']}" if a["ville"] else ""
-    return f"{a['nom']}{ville_txt}, {' '.join(a['oaci'])}"
 
 
 def aeroport(line, key_source, say, out):
@@ -134,14 +125,13 @@ def aeroport(line, key_source, say, out):
             return "Annulé, aéroports inchangés."
         role = roles[index]
     say("Chargement de la liste des aérodromes.")
-    items = sources.aeroports()
-    if not items:
+    nav = tableaux.airport_navigator(board=False, select=lambda node: node.item)
+    if nav is None:
         return "Liste des aérodromes indisponible : pas de réseau et pas de copie sur le NAS."
-    intro = (f"{AIRPORT_ROLES[role]}, actuellement {avions[role]['nom']}. Aérodromes français "
-             "par ordre alphabétique. Droite déplie une lettre, gauche la replie, "
-             "tape des lettres pour chercher, entrée choisit, échap annule.")
-    tree = arbre.Tree(items, _airport_spoken, "aérodrome", "aérodromes")
-    chosen = arbre.run_tree(tree, key_source, say, out, intro)
+    intro = (f"{AIRPORT_ROLES[role]}, actuellement {avions[role]['nom']}. Aérodromes français, "
+             "favoris en tête puis par ordre alphabétique. Droite déplie une lettre, gauche la replie, "
+             "tape des lettres pour chercher, étoile pour les favoris, entrée choisit, échap annule.")
+    chosen = arbre.run(nav, key_source, say, out, intro)
     if chosen is None:
         return "Annulé, aéroport inchangé."
     avions[role] = {"nom": chosen["nom"], "oaci": chosen["oaci"],

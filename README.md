@@ -59,7 +59,8 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `vision.py` | Photo via mjpg-streamer, refus si trop sombre, description Gemini lue puis oubliée |
 | `manuel.py` | Dialogue du mode manuel ; plages publiées par le scanner (`/tmp/radio_watch_plages.json`) |
 | `reglages_cmd.py` | Commandes `réglages`, `ville`, `gare`, `aéroport` : choix écrits sur le NAS, veilles concernées relancées |
-| `arbre.py` | Arborescence alphabétique au clavier (flèches, recherche en tapant) et liste simple |
+| `arbre.py` | Arborescence au clavier (flèches, recherche en tapant, étoile = favori) et liste simple |
+| `tableaux.py` | Commande `tableau` : départs et arrivées d'une gare (API SNCF) ou d'un aéroport (AirLabs) ; listes avec favoris partagées avec `gare` et `aéroport` |
 | `sources.py` | Listes publiques sans clé : communes (geo.api.gouv.fr), gares (open data SNCF), aérodromes (OurAirports) |
 | `veilles.py` | Arrêt / reprise / relance des veilles, aiguillé avant la reconnaissance normale |
 | `notation.py` | Touche N du journal : grille de 11 critères (SINPO, P.835, NISQA, erreurs de VAD) |
@@ -194,7 +195,7 @@ projets n'est empaqueté Debian pour ce Pi).
   `trains.json`, `avions.json` se règlent depuis la console (`ville`,
   `gare`, `aéroport`) ; le sous-dossier `cles` contient un fichier texte
   par clé (`sncf.txt`, `opensky_id.txt`, `opensky_secret.txt`,
-  `gemini.txt`, `octoprint.txt`) : coller la clé seule, enregistrer, rien
+  `gemini.txt`, `octoprint.txt`, `airlabs.txt`) : coller la clé seule, enregistrer, rien
   à redémarrer. Copie de secours sur la carte SD
   (`/home/vador/autopilot/reglages_cache`) si le disque décroche.
   L'ancien `credentials.py` (jamais commité) reste lu en dernier recours.

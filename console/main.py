@@ -30,6 +30,7 @@ import bilan  # noqa: E402
 import journal  # noqa: E402
 import manuel  # noqa: E402
 import reglages_cmd  # noqa: E402
+import tableaux  # noqa: E402
 import simulation  # noqa: E402
 import veilles  # noqa: E402
 import vision  # noqa: E402
@@ -184,6 +185,8 @@ def run_command(line, key_source, last_response):
         return journal.run(key_source, voix.say, out)
     if cmd.name == "manuel":
         return manuel.run(key_source, voix.say, out)
+    if cmd.name == "tableau":
+        return tableaux.run(line, key_source, voix.say, out)
     if cmd.name == "réglages":
         return reglages_cmd.status()
     if cmd.name == "ville":
