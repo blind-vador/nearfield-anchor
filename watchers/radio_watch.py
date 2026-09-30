@@ -459,11 +459,20 @@ DSD_FME_UDP_HOST = "127.0.0.1"
 DSD_FME_UDP_PORT = 23456
 # Frequence d'echantillonnage standard de la voix synthetisee par mbelib/dsd-fme.
 DSD_FME_VOICE_SAMPLE_RATE = 8000
+# En mode -fa, dsd-fme sort la voix en STEREO (une voie par slot DMR/TDMA,
+# s16le entrelace, datagrammes de 640 octets). La relire en mono faisait
+# jouer l'audio deux fois trop lentement, une octave plus grave, avec les
+# deux slots melanges en gresillements.
+DSD_FME_VOICE_CHANNELS = 2
 # Duree max d'attente d'un premier paquet audio decode avant d'abandonner et
 # de retomber sur l'ecoute analogique. Volontairement court (le scanner est
 # "nerveux", pas question de s'attarder sur chaque candidat) -- a ajuster si
 # le decodage reel met plus de temps a accrocher en pratique.
 DSD_FME_PROBE_SEC = 4
+# Une fois la voix accrochee, on continue tant que des paquets arrivent :
+# fin apres DSD_FME_IDLE_SEC sans paquet, plafond DSD_FME_MAX_SEC.
+DSD_FME_IDLE_SEC = 3.0
+DSD_FME_MAX_SEC = 60
 
 # Pic DC : artefact materiel propre aux dongles RTL-SDR (architecture a conversion
 # directe), qui apparait comme un pic artificiel au centre exact de chaque segment
@@ -726,13 +735,14 @@ def try_digital_voice_decode(freq_hz):
 
         aplay = subprocess.Popen(
             ["aplay", "-D", AUDIO_DEVICE, "-r", str(DSD_FME_VOICE_SAMPLE_RATE),
-             "-f", "S16_LE", "-c", "1", "-q"],
+             "-f", "S16_LE", "-c", str(DSD_FME_VOICE_CHANNELS), "-q"],
             stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
 
         got_audio = False
         captured_chunks = []
-        deadline = time.time() + DSD_FME_PROBE_SEC
+        start = time.time()
+        deadline = start + DSD_FME_PROBE_SEC
         while time.time() < deadline:
             try:
                 data, _ = sock.recvfrom(65536)
@@ -740,7 +750,9 @@ def try_digital_voice_decode(freq_hz):
                 continue
             if not data:
                 continue
-            got_audio = True
+            if not got_audio:
+                got_audio = True
+            deadline = min(time.time() + DSD_FME_IDLE_SEC, start + DSD_FME_MAX_SEC)
             captured_chunks.append(data)
             try:
                 aplay.stdin.write(data)
@@ -749,7 +761,8 @@ def try_digital_voice_decode(freq_hz):
 
         log_session = sound_player.get_recording_session()
         if log_session is not None and captured_chunks:
-            log_session.add_raw_pcm(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, "s16le")
+            log_session.add_raw_pcm(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, "s16le",
+                                    channels=DSD_FME_VOICE_CHANNELS)
 
         if got_audio:
             print(f"[radio_watch] dsd-fme a decode de l'audio numerique sur {freq_hz/1e6:.4f} MHz")
