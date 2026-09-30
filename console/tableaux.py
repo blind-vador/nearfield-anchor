@@ -166,7 +166,7 @@ def _flight_rows(rows, departures):
         if status not in ("annulé", "atterri") and isinstance(delay, (int, float)) and delay > 0:
             status = f"retard {int(delay)} minutes"
         code = r.get("flight_iata") or r.get("flight_icao") or ""
-        label = (f"{_spoken_time(sched)}, vol {_spoken_flight(code, r.get("airline_iata"))}, "
+        label = (f"{_spoken_time(sched)}, vol {_spoken_flight(code, r.get('airline_iata'))}, "
                  f"{'vers' if departures else 'de'} {place}" + (f", {status}" if status else ""))
         out.append((sched, arbre.Node(label)))
     out.sort(key=lambda p: p[0])
