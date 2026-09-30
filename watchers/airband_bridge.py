@@ -37,7 +37,10 @@ FREQ_OPEN_SOUND = f"{SOUND_EFFECTS_DIR}/freq_open.mp3"
 FREQ_OVER_SOUND = f"{SOUND_EFFECTS_DIR}/freq_over.mp3"
 INCOMING_SOUND = f"{SOUND_EFFECTS_DIR}/incoming.mp3"
 
-SILENCE_DEBOUNCE_SEC = 1.5
+# 1,5 -> 3 s (2026-09-30) : une fin coupee trop tot est pire qu'un peu de
+# silence en fin de capture (priorites de veille fixees avec l'utilisateur).
+SILENCE_DEBOUNCE_SEC = 3.0
+GAP_SEC = 0.3  # un trou plus long entre deux paquets = le silencieux s'est ferme puis rouvert
 MAX_HOLD_SEC = 45
 
 # centerfreq toujours decale de la frequence des canaux (jamais confondu) :
@@ -275,8 +278,17 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         # seulement si cette frequence a deja donne un parasite signale.
         prebuffer = []
         if noise_signatures.has_signatures_near(freq_hz):
-            precheck_end = time.time() + noise_signatures.PRECHECK_SEC
-            while time.time() < precheck_end:
+            # L'audio arrive par morceaux (silencieux) : on prolonge jusqu'a avoir
+            # assez de son pour une empreinte, dans la limite de PRECHECK_MAX_SEC.
+            needed = int(noise_signatures.MIN_AUDIO_SEC * AIRBAND_SAMPLE_RATE_HZ * 4 * 1.2)
+            begin = time.time()
+            collected = 0
+            while True:
+                elapsed = time.time() - begin
+                if elapsed >= noise_signatures.PRECHECK_MAX_SEC:
+                    break
+                if elapsed >= noise_signatures.PRECHECK_SEC and collected >= needed:
+                    break
                 try:
                     item = packet_queue.get(timeout=0.2)
                 except queue.Empty:
@@ -284,8 +296,12 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
                 prebuffer.append(item)
                 if item is None:
                     break
+                collected += len(item)
+            # Meme filtre que l'audio d'ou vient l'empreinte apprise (coherence).
+            pre_pcm = audio_filters.VoiceBandpassFilter(AIRBAND_SAMPLE_RATE_HZ).process_f32le(
+                b"".join(d for d in prebuffer if d))
             is_noise, sim = noise_signatures.matches_known_noise(
-                freq_hz, b"".join(d for d in prebuffer if d), AIRBAND_SAMPLE_RATE_HZ, "f32le")
+                freq_hz, pre_pcm, AIRBAND_SAMPLE_RATE_HZ, "f32le")
             if is_noise:
                 print(f"[airband_bridge] parasite connu ignore a {freq_hz/1e6:.5f} MHz (similarite {sim:.2f})")
                 stop_event.set()
@@ -314,6 +330,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         total_bytes = 0
         max_bytes = int(AIRBAND_SAMPLE_RATE_HZ * 4 * max_hold_sec)
         captured_chunks = []
+        gaps = 0
         # Filtre passe-bande vocal (300-3000Hz, 2026-08-31, demande
         # explicite de l'utilisateur suite a l'analyse spectrale de
         # noise_study/) -- une instance par reception, etat frais a chaque
@@ -335,6 +352,8 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
                         continue
                 if data is None:
                     break
+                if time.time() - last_packet_time > GAP_SEC:
+                    gaps += 1
                 last_packet_time = time.time()
                 data = voice_filter.process_f32le(data)
                 captured_chunks.append(data)
@@ -368,7 +387,11 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         path = log_session.finalize()
         fp = (noise_signatures.fingerprint(b"".join(captured_chunks), AIRBAND_SAMPLE_RATE_HZ, "f32le")
               if captured_chunks else None)
-        noise_signatures.record_capture("airband", freq_hz, "am", name_spoken, window_name, path, fp)
+        noise_signatures.record_capture("airband", freq_hz, "am", name_spoken, window_name, path, fp, {
+            "duree_audio_s": round(total_bytes / (AIRBAND_SAMPLE_RATE_HZ * 4), 1),
+            "duree_totale_s": round(time.time() - start, 1),
+            "trous_silencieux": gaps,
+        })
         return True
     finally:
         sound_player.set_recording_session(None)

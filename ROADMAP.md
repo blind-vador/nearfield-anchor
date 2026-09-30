@@ -4940,3 +4940,22 @@ vers l'aplay unique. Sans F : rtl_fm inchange.
 
 Aussi : "verrouille, aucune annonce" s'expliquait par une pause thermique
 (16 h 40 - 17 h 19, Pi a 74 C) : en pause, rien n'est ecoute, meme verrouille.
+
+## 2026-09-30 : etude du filtrage (code + mesures) et premiers correctifs
+
+Mesures sur le journal de septembre (566 candidats) : RNNoise ecarte 52 %
+des candidats, mais APRES les avoir diffuses jusqu'a 45 s (mediane 64 s,
+6 h de souffle) ; 41 % des declenchements entre 0,65 et 0,70 ; bandes a
+86-100 % de rejets (PMSE, 23 cm, pro UHF/VHF, 70 cm), VHF basse 90 % gardes
+malgre une signature de parasite continu. Filtre vocal : -0,1 dB a 1 kHz,
+-19 dB a 100 Hz, -16 dB a 6 kHz. 172 parasites appris, dont 115 sur
+446,00625 : effet reel nul sur le PMR446 (117 pre-ecoutes sur 128 sans
+empreinte), 6 vrais parasites ecartes sur les balayages (0,92-0,95).
+Priorites de veille fixees avec l'utilisateur : ne jamais bloquer a tort,
+ne pas couper les fins, ne pas manquer les voix faibles, continuite, pas de
+saturation ; souffle, traine et attente sont secondaires ; la largeur du
+filtre et le reste se decideront par la notation.
+Correctifs : voir le commit. Observation apres correctif : les emissions
+du canal 1 sont des begaiements du silencieux (4,6 s de son en 24 morceaux
+sur 53 s) -- la pre-ecoute ne peut pas les reconnaitre ; avec le delai de
+3 s, elles restent ouvertes jusqu'a la limite. A trancher par la notation.

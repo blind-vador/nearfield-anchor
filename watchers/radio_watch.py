@@ -422,7 +422,16 @@ SPEECH_PROB_THRESHOLD = 0.65
 SPEECH_PROB_SMOOTHING_ALPHA = 0.3  # poids du morceau courant dans la moyenne mobile
 
 # --- Comportement scanner "nerveux" ---
-SILENCE_DEBOUNCE_SEC = 1.5
+# Porte de 1,5 a 3 s (2026-09-30, priorites fixees avec l'utilisateur pour une
+# veille citoyenne : une fin coupee trop tot -- un interlocuteur qui marque une
+# pause puis reprend -- est pire qu'un peu de souffle en fin de capture).
+SILENCE_DEBOUNCE_SEC = 3.0
+# Coupure precoce (etude du 2026-09-30) : la boucle ne s'arretait sur un
+# silence qu'APRES avoir reconnu un signal ; un candidat juge "bruit" etait
+# donc diffuse jusqu'a MAX_HOLD_SEC (duree mediane mesuree : 64 s, 290 cas sur
+# 296, soit 6 h de souffle diffuse en septembre). Sans aucun signal reconnu
+# apres EARLY_CUT_SEC, on arrete.
+EARLY_CUT_SEC = 8
 MAX_HOLD_SEC = 45
 MIN_RMS_ACTIVE = 60
 ANALYSIS_WINDOW_MS = 200  # granularite de l'analyse bruit/signal pendant le direct
@@ -897,6 +906,8 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
     en parallele un decodage numerique (APRS, pageurs) via multimon-ng et lit au
     TTS tout texte decode. Retourne True si un signal reel a ete entendu ou si du
     texte a ete decode."""
+    global _last_stream_fingerprint, _last_stream_metrics
+    _last_stream_fingerprint, _last_stream_metrics = None, {}
     mhz = freq_hz / 1_000_000
     rtl_fm_mode = "wbfm" if mode == "wfm" else mode
     if mode == "wfm":
@@ -950,8 +961,11 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
             prebuffer.append(item)
             if item is None:
                 break
-        is_noise, sim = noise_signatures.matches_known_noise(
-            freq_hz, b"".join(c for c in prebuffer if c), sample_rate, "s16le")
+        pre_pcm = b"".join(c for c in prebuffer if c)
+        if mode != "wfm":
+            # Meme filtre que l'audio d'ou vient l'empreinte apprise (coherence).
+            pre_pcm = audio_filters.VoiceBandpassFilter(sample_rate).process_s16le(pre_pcm)
+        is_noise, sim = noise_signatures.matches_known_noise(freq_hz, pre_pcm, sample_rate, "s16le")
         if is_noise:
             print(f"[radio_watch] parasite connu ignore a {mhz:.4f} MHz (similarite {sim:.2f})")
             try:
@@ -1038,6 +1052,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
     # raison, ce n'est pas la bande visee par cette demande).
     voice_filter = audio_filters.VoiceBandpassFilter(sample_rate) if mode != "wfm" else None
 
+    probs_seen, trigger_prob, early_cut = [], None, False
     start = time.time()
     try:
         while total_bytes < max_bytes and time.time() - start < MAX_HOLD_SEC + 5:
@@ -1082,6 +1097,8 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
             is_signal, rms, resample_state, smoothed_prob = _chunk_is_signal(
                 chunk, sample_rate, rnnoise_state, resample_state, smoothed_prob
             )
+            if smoothed_prob is not None:
+                probs_seen.append(smoothed_prob)
             if is_signal:
                 consecutive_signal_windows += 1
                 quiet_windows_seen = 0
@@ -1093,11 +1110,16 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
                     # le spectre change en permanence -- voir ROADMAP.md).
                     print(f"[radio_watch] declenchement signal : smoothed_prob={smoothed_prob:.3f}, rms={rms}")
                     heard_signal = True
+                    trigger_prob = smoothed_prob
             else:
                 consecutive_signal_windows = 0
                 quiet_windows_seen += 1
                 if heard_signal and quiet_windows_seen >= quiet_windows_needed:
                     break
+            if not heard_signal and time.time() - start >= EARLY_CUT_SEC:
+                early_cut = True
+                print(f"[radio_watch] coupure precoce : aucun signal reconnu en {EARLY_CUT_SEC} s")
+                break
 
             if multimon_queue is not None:
                 while not multimon_queue.empty():
@@ -1122,9 +1144,17 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
         log_session.add_raw_pcm(b"".join(captured_chunks), sample_rate, "s16le")
     # Empreinte de l'audio radio seul (sans annonces) : memorisee avec la
     # derniere capture, pour la commande console "parasite".
-    global _last_stream_fingerprint
+    # (variables globales declarees en tete de fonction)
     _last_stream_fingerprint = (noise_signatures.fingerprint(b"".join(captured_chunks), sample_rate, "s16le")
                                 if captured_chunks else None)
+    # Mesures du systeme, confrontees plus tard aux notes de l'utilisateur.
+    _last_stream_metrics = {
+        "prob_declenchement": round(trigger_prob, 3) if trigger_prob is not None else None,
+        "prob_max": round(max(probs_seen), 3) if probs_seen else None,
+        "prob_mediane": round(sorted(probs_seen)[len(probs_seen) // 2], 3) if probs_seen else None,
+        "duree_s": round(total_bytes / (sample_rate * 2), 1),
+        "coupure_precoce": early_cut,
+    }
 
     if multimon_queue is not None:
         time.sleep(0.2)
@@ -1143,9 +1173,10 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
 
 
 _last_stream_fingerprint = None
+_last_stream_metrics = {}
 
 
-def _handle_candidate(freq, mode, band_label, target=None):
+def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     # Verrou audio partage avec adsb_watch.py (processus separe) : garantit
     # qu'aucune annonce d'avion ne chevauche l'annonce/diffusion/son de fin
     # d'un candidat radio. Tenu pendant tout le cycle actif, relache des que
@@ -1164,16 +1195,20 @@ def _handle_candidate(freq, mode, band_label, target=None):
         if mode == "nfm" and try_digital_voice_decode(freq):
             speak(f"Réception numérique terminée, {band_label}.")
             path = log_session.finalize()
-            noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None)
+            noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
+                                            {"niveau_db": level_db, "numerique": True})
             return True
         if stream_until_quiet(freq, mode, band_label):
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
             path = log_session.finalize()
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path,
-                                            _last_stream_fingerprint)
+                                            _last_stream_fingerprint,
+                                            dict(_last_stream_metrics, niveau_db=level_db))
             return True
         log_session.discard()
         print("[radio_watch] candidat ecarte (bruit, pas de signal reel)")
+        # Un candidat ecarte EST un echantillon du bruit de fond de sa bande.
+        noise_signatures.add_background(target, freq, _last_stream_fingerprint)
         return False
     finally:
         sound_player.set_recording_session(None)
@@ -1186,7 +1221,7 @@ def scan_fm_band(band):
     candidates = check_channels_relative(band["channels"], span_hz=span_hz, margin_db=margin_db)
     for freq, db in candidates:
         print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.5f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")
-        if _handle_candidate(freq, band["mode"], f"canal {band['name_spoken']}", band["name"]):
+        if _handle_candidate(freq, band["mode"], f"canal {band['name_spoken']}", band["name"], level_db=db):
             return True
     return False
 
@@ -1203,7 +1238,7 @@ def scan_sweep_band(band):
         # retarde son demarrage de ~1-2s tant que le mode reste arme,
         # accepte car opt-in et sert justement a etudier la bande armee.
         spectral_diagnostic.maybe_diagnose(band, freq, db)
-        if _handle_candidate(freq, band["mode"], f"bande {band['name_spoken']}", band["name"]):
+        if _handle_candidate(freq, band["mode"], f"bande {band['name_spoken']}", band["name"], level_db=db):
             return True
     return False
 

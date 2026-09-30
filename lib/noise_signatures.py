@@ -26,6 +26,8 @@ import time
 NAS_ROOT = "/media/nas/nd1"
 SIGNATURES_NAS = f"{NAS_ROOT}/server/radio_log/parasites_connus.json"
 SIGNATURES_LOCAL = "/home/vador/autopilot/pi_console/parasites_connus.json"
+BACKGROUND_NAS = f"{NAS_ROOT}/server/radio_log/bruit_de_fond.json"
+BACKGROUND_LOCAL = "/home/vador/autopilot/pi_console/bruit_de_fond.json"
 LAST_CAPTURE_PATH = "/tmp/radio_watch_derniere_capture.json"
 CONTROL_PATH = "/tmp/radio_watch_controle.json"
 PLAGES_PATH = "/tmp/radio_watch_plages.json"
@@ -38,6 +40,13 @@ MAX_AUDIO_SEC = 10.0
 FREQ_TOLERANCE_HZ = 12_500   # un parasite "revient" s'il retombe a +/- 12,5 kHz
 MATCH_SIMILARITY = 0.92
 PRECHECK_SEC = 1.5           # audio ecoute (sans rien annoncer) avant de decider
+# Canaux a silencieux (RTLSDR-Airband) : l'audio arrive par morceaux ; on
+# prolonge la pre-ecoute jusqu'a avoir assez de son pour une empreinte, sans
+# depasser PRECHECK_MAX_SEC (etude du 2026-09-30 : 117 pre-ecoutes sur 128 du
+# PMR446 n'avaient pas les 0,5 s necessaires et laissaient tout passer).
+PRECHECK_MAX_SEC = 3.0
+DUPLICATE_SIMILARITY = 0.98  # une empreinte a ce point identique n'apporte rien
+BACKGROUND_PER_BAND = 12     # echantillons de bruit de fond gardes par bande
 
 
 def _signatures_path():
@@ -132,8 +141,15 @@ def matches_known_noise(freq_hz, pcm_bytes, sample_rate, sample_format):
 
 
 def add_signature(capture):
+    """Ajoute l'empreinte aux parasites connus, sauf quasi-doublon (meme
+    frequence, similarite >= DUPLICATE_SIMILARITY : 7 paires de ce genre
+    trouvees parmi les 172 premieres). Rend le nombre total."""
     path = _signatures_path()
     entries = _read_json(path, [])
+    for e in entries:
+        if (abs(e["freq_hz"] - capture["freq_hz"]) <= FREQ_TOLERANCE_HZ
+                and similarity(e["fingerprint"], capture["fingerprint"]) >= DUPLICATE_SIMILARITY):
+            return len(entries)
     entries.append({
         "freq_hz": capture["freq_hz"],
         "label": capture["label"],
@@ -145,23 +161,63 @@ def add_signature(capture):
     return len(entries)
 
 
+# --- Bruit de fond (idee de l'utilisateur, 2026-09-30) ---
+# Chaque candidat que RNNoise ecarte comme bruit EST un echantillon du fond de
+# sa bande : on garde les derniers par bande, et chaque capture recoit sa
+# ressemblance au fond. Indicateur seulement : rien n'est bloque sur cette
+# base (priorite n 1 : ne jamais bloquer a tort).
+
+def _background_path():
+    return BACKGROUND_NAS if os.path.ismount(NAS_ROOT) else BACKGROUND_LOCAL
+
+
+def add_background(target, freq_hz, fp):
+    if not target or not fp:
+        return
+    path = _background_path()
+    data = _read_json(path, {})
+    samples = data.get(target, [])
+    samples.append({"freq_hz": freq_hz, "fingerprint": fp, "le": time.strftime("%Y-%m-%d %H:%M")})
+    data[target] = samples[-BACKGROUND_PER_BAND:]
+    try:
+        _atomic_write_json(path, data)
+    except OSError as exc:
+        print(f"[noise_signatures] echantillon de fond non range : {exc}")
+
+
+def background_similarity(target, fp):
+    """Ressemblance maximale au bruit de fond connu de la bande, ou None."""
+    if not target or not fp:
+        return None
+    samples = _read_json(_background_path(), {}).get(target, [])
+    if not samples:
+        return None
+    return round(max(similarity(fp, s["fingerprint"]) for s in samples), 3)
+
+
 # --- Derniere capture (ecrite par le scanner, lue par la console) ---
 
-def record_capture(source, freq_hz, mode, label, target, log_path, fp):
+def record_capture(source, freq_hz, mode, label, target, log_path, fp, metrics=None):
     """source : "rtl_fm" (canaux FM et balayages) ou "airband" (fenetres
     RTLSDR-Airband) ; target : nom de la bande ou de la fenetre, pour
-    pouvoir s'y verrouiller."""
+    pouvoir s'y verrouiller. metrics : ce que le systeme a mesure pendant la
+    capture (probabilite de voix, niveau, trous du silencieux...), confronte
+    plus tard aux notes de l'utilisateur (dialogue de notation du journal)."""
+    metrics = dict(metrics or {})
+    metrics["ressemblance_fond"] = background_similarity(target, fp)
     try:
         _atomic_write_json(LAST_CAPTURE_PATH, {
             "source": source, "freq_hz": freq_hz, "mode": mode, "label": label,
             "target": target, "log_path": log_path, "fingerprint": fp,
-            "time": time.time(), "marked_noise": False,
+            "time": time.time(), "marked_noise": False, "metrics": metrics,
         })
     except OSError as exc:
         print(f"[noise_signatures] derniere capture non memorisee : {exc}")
-    if log_path and fp:
+    if log_path:  # meme sans empreinte : les mesures servent a la notation
         try:
-            _remember_capture(log_path, {"freq_hz": freq_hz, "label": label, "fingerprint": fp})
+            _remember_capture(log_path, {"freq_hz": freq_hz, "label": label, "fingerprint": fp,
+                                         "source": source, "mode": mode, "target": target,
+                                         "metrics": metrics})
         except OSError as exc:
             print(f"[noise_signatures] empreinte non rangee pres de l'enregistrement : {exc}")
 
