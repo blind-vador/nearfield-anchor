@@ -320,8 +320,46 @@ def attention_status():
     import attention
     import noise_signatures as ns
     labels = {p["target"]: p["label"] for p in ns.read_plages()}
-    labels["acars"] = "ACARS"
+    labels.update(attention.DATA_LABELS)
     return attention.describe(labels)
+
+
+def capteurs():
+    """Derniers releves des capteurs sans fil (rtl_433) et des stations meteo
+    APRS captes par le scanner (watchers/capteurs_watch.py, aprs_watch.py)."""
+    import json
+    import time
+    import veille_donnees as vd
+    parts = []
+    try:
+        with open("/tmp/meteo_stations_aprs.json", encoding="utf-8") as f:
+            stations = json.load(f)
+    except (OSError, ValueError):
+        stations = {}
+    for call, st in sorted(stations.items(), key=lambda p: vd.distance_km(p[1]["lat"], p[1]["lon"])):
+        wx = st.get("meteo") or {}
+        if wx.get("temperature") is None:
+            continue
+        age = int((time.time() - st["t"]) // 60)
+        parts.append(f"Station météo {vd.spell(call)}, {vd.where(st['lat'], st['lon'])} : "
+                     f"{vd.fr_number(wx['temperature'])} degrés, il y a {age} minutes.")
+    try:
+        with open("/tmp/capteurs_releves.json", encoding="utf-8") as f:
+            readings = json.load(f)
+    except (OSError, ValueError):
+        readings = {}
+    for r in sorted(readings.values(), key=lambda r: -r["t"]):
+        v = r.get("valeurs") or {}
+        values = []
+        if v.get("temperature_C") is not None:
+            values.append(f"{vd.fr_number(v['temperature_C'], 1)} degrés")
+        if v.get("humidity") is not None:
+            values.append(f"humidité {v['humidity']} pour cent")
+        age = int((time.time() - r["t"]) // 60)
+        parts.append(f"{r['nom']}" + (f" : {', '.join(values)}" if values else "") + f", il y a {age} minutes.")
+    if not parts:
+        return "Aucun capteur ni station météo capté ces dernières heures."
+    return f"{len(parts)} source{'s' if len(parts) > 1 else ''}. " + " ".join(parts[:12])
 
 
 def accroche():
@@ -391,6 +429,9 @@ COMMANDS = [
     Command("voix", "choisir la voix de la console et son débit, ou la voix locale espeak", None,
             keywords=["voix", "changer de voix", "change de voix", "choisir la voix", "debit de la voix"],
             examples=["parle plus vite", "change ta voix"]),
+    Command("capteurs", "derniers relevés des capteurs sans fil et stations météo radioamateur captés", capteurs,
+            keywords=["capteurs", "capteur", "sondes", "stations meteo", "thermometres"],
+            examples=["quelle température chez les voisins", "les relevés des capteurs"]),
     Command("flash", "flash d'info locale de la ville choisie ; flash détails pour les sujets par rubrique", None,
             keywords=["flash", "flash info", "flashinfo", "flash infos", "info locale", "infos locales",
                       "information locale", "informations locales", "quoi de neuf", "actualites",

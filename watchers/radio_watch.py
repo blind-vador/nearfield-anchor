@@ -22,6 +22,9 @@ import radio_log
 import sound_player
 import audio_filters
 import acars_watch
+import aprs_watch
+import capteurs_watch
+import vdl2_watch
 import spectral_diagnostic
 import noise_signatures
 import attention
@@ -464,6 +467,18 @@ DSD_FME_VOICE_SAMPLE_RATE = 8000
 # jouer l'audio deux fois trop lentement, une octave plus grave, avec les
 # deux slots melanges en gresillements.
 DSD_FME_VOICE_CHANNELS = 2
+# Modes tentes en plus du -fa quand une reception analogique est ecartee
+# (un signal numerique passe pour du bruit aux yeux du detecteur de voix) :
+# (plage basse, plage haute, option dsd-fme, nom dit). dPMR, NXDN et M17
+# sortent en MONO (verifie dans dsd_main.c : pulse_digi_out_channels = 1).
+DSD_FME_EXTRA_MODES = [
+    (446_000_000, 446_200_000, "-fm", "dPMR"),
+    (144_000_000, 146_000_000, "-fz", "M17"),
+    (430_000_000, 440_000_000, "-fz", "M17"),
+    (148_000_000, 174_000_000, "-fi", "NXDN"),
+    (440_000_000, 470_000_000, "-fi", "NXDN"),
+]
+DSD_FME_MONO_MODES = {"-fm", "-fz", "-fi", "-fn"}
 # Duree max d'attente d'un premier paquet audio decode avant d'abandonner et
 # de retomber sur l'ecoute analogique. Volontairement court (le scanner est
 # "nerveux", pas question de s'attarder sur chaque candidat) -- a ajuster si
@@ -700,7 +715,14 @@ def _dsdfme_stdout_watcher(proc):
         pass
 
 
-def try_digital_voice_decode(freq_hz):
+def _extra_digital_mode(freq_hz):
+    for low, high, flag, name in DSD_FME_EXTRA_MODES:
+        if low <= freq_hz <= high:
+            return flag, name
+    return None
+
+
+def try_digital_voice_decode(freq_hz, mode_flag="-fa"):
     """Tente un decodage vocal numerique (DMR/P25/NXDN/D-STAR/YSF/dPMR/X2-TDMA)
     directement depuis le dongle RTL-SDR via dsd-fme. dsd-fme n'a pas de
     sortie ALSA directe -- on le fait sortir en UDP local (PCM brut, voix
@@ -721,7 +743,7 @@ def try_digital_voice_decode(freq_hz):
         sock.settimeout(0.5)
 
         proc = subprocess.Popen(
-            ["dsd-fme", "-fa", "-i", f"rtl:0:{int(freq_hz)}:0:0:12:0:2",
+            ["dsd-fme", mode_flag, "-i", f"rtl:0:{int(freq_hz)}:0:0:12:0:2",
              "-o", f"udp:{DSD_FME_UDP_HOST}:{DSD_FME_UDP_PORT}"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
@@ -733,9 +755,10 @@ def try_digital_voice_decode(freq_hz):
         # candidat et la confirmation d'un decodage reel.
         play_sound_effect(DECODING_NUMERIC_SOUND, timeout_sec=DSD_FME_PROBE_SEC, label="radio_watch")
 
+        channels = 1 if mode_flag in DSD_FME_MONO_MODES else DSD_FME_VOICE_CHANNELS
         aplay = subprocess.Popen(
             ["aplay", "-D", AUDIO_DEVICE, "-r", str(DSD_FME_VOICE_SAMPLE_RATE),
-             "-f", "S16_LE", "-c", str(DSD_FME_VOICE_CHANNELS), "-q"],
+             "-f", "S16_LE", "-c", str(channels), "-q"],
             stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
         )
 
@@ -762,7 +785,7 @@ def try_digital_voice_decode(freq_hz):
         log_session = sound_player.get_recording_session()
         if log_session is not None and captured_chunks:
             log_session.add_raw_pcm(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, "s16le",
-                                    channels=DSD_FME_VOICE_CHANNELS)
+                                    channels=channels)
 
         if got_audio:
             print(f"[radio_watch] dsd-fme a decode de l'audio numerique sur {freq_hz/1e6:.4f} MHz")
@@ -1190,6 +1213,17 @@ _last_stream_fingerprint = None
 _last_stream_metrics = {}
 
 
+# Fenetres de donnees du cycle (lib/attention.py, DATA_WINDOWS) : ACARS,
+# VDL2, APRS, capteurs sans fil 433/868 MHz. Chacune prend le dongle pour
+# sa duree d'ecoute puis le rend.
+DATA_SCANNERS = {
+    "acars": acars_watch.scan_window,
+    "vdl2": vdl2_watch.scan_window,
+    "aprs": aprs_watch.scan_window,
+    "capteurs": capteurs_watch.scan_window,
+}
+
+
 def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     # Verrou audio partage avec adsb_watch.py (processus separe) : garantit
     # qu'aucune annonce d'avion ne chevauche l'annonce/diffusion/son de fin
@@ -1220,6 +1254,18 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
                                             dict(_last_stream_metrics, niveau_db=level_db))
             return True
         log_session.discard()
+        extra = _extra_digital_mode(freq) if mode == "nfm" else None
+        if extra:
+            # Ecarte comme voix : peut-etre un mode numerique que -fa ne tente pas.
+            log_session = radio_log.RadioLogSession(band_label)
+            sound_player.set_recording_session(log_session)
+            if try_digital_voice_decode(freq, extra[0]):
+                speak(f"Réception {extra[1]} terminée, {band_label}.")
+                path = log_session.finalize()
+                noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
+                                                {"niveau_db": level_db, "numerique": True, "mode_numerique": extra[1]})
+                return True
+            log_session.discard()
         print("[radio_watch] candidat ecarte (bruit, pas de signal reel)")
         # Un candidat ecarte EST un echantillon du bruit de fond de sa bande.
         noise_signatures.add_background(target, freq, _last_stream_fingerprint)
@@ -1631,7 +1677,7 @@ def main():
         except Exception as exc:  # l'attention ne doit jamais arreter la veille
             print(f"[radio_watch] attention indisponible ({exc!r}), tourniquet simple")
             plan = ([("airband", w, w["name"], w.get("dwell_sec", 15), 0) for w in airband_bridge.AIRBAND_WINDOWS]
-                    + [("acars", None, "acars", 30, 0)]
+                    + [("data", name, name, dwell, 0) for name, dwell in attention.DATA_WINDOWS.items()]
                     + ([("sweep", sweep_bands[sweep_idx % len(sweep_bands)], "", None, 0)] if sweep_bands else []))
             sweep_idx += 1
         for kind, obj, target, dwell, air_boost in plan:
@@ -1639,8 +1685,8 @@ def main():
                 break
             if kind == "airband":
                 hit = airband_bridge.scan_window(obj, dwell_sec=dwell)
-            elif kind == "acars":
-                hit = acars_watch.scan_window(dwell_sec=dwell)
+            elif kind == "data":
+                hit = DATA_SCANNERS[obj](dwell_sec=dwell)
             else:
                 hit = scan_sweep_band(obj)
             if hit:

@@ -5085,3 +5085,36 @@ et les aeroports, avec une arborescence alphabetique au clavier.
   console.json : voix, debit, debit_echo. Defaut : Denise, +20 %, echo +50 %.
 - A verifier a l'oreille par l'utilisateur : prononciation des lettres
   isolees par les voix neuronales (mode "touches").
+
+## 2026-09-30 : nouvelles veilles de donnees et modes numeriques
+
+Demande utilisateur : tout ecouter de ce qui est ouvert autour de chez lui
+(aveugle, etre informe au maximum), l'attention fera le tri.
+
+- Constat : multimon-ng absent depuis la reinstallation (le scanner
+  l'ignorait sans rien dire : pagers, DTMF, morse, APRS non decodes) ;
+  installe et ajoute a install.sh.
+- Fenetres de donnees (lib/attention.py DATA_WINDOWS, radio_watch.DATA_SCANNERS,
+  outils communs lib/veille_donnees.py : annonce journalisee, anti-repetition
+  persistante, archive JSONL dans radio_log/donnees/, distance/direction) :
+  - aprs (30 s, watchers/aprs_watch.py) : rtl_fm 144,800 -> multimon-ng -A ->
+    aprslib ; paquets relayes (thirdparty) deballes ; annonces : messages et
+    bulletins, station nouvelle (6 h), station a moins de 3 km (30 min),
+    station meteo (3 h) ; releves meteo publies dans /tmp/meteo_stations_aprs.json.
+    Test reel : 4 paquets en 60 s (igate, objet a Saint-Etienne, station a 250 km ignoree).
+  - capteurs (30 s, watchers/capteurs_watch.py) : rtl_433, 433,92 et 868,3 MHz
+    en alternance ; alarmes et sonnettes a chaque evenement, nouveaux capteurs
+    une fois par semaine, pneus jamais annonces. Test reel : 3 thermometres
+    voisins (Oregon, LaCrosse, Acurite) en 30 s.
+  - vdl2 (25 s, watchers/vdl2_watch.py) : dumpvdl2 compile (install.sh ;
+    ici en attendant dans ~/autopilot/bin), 4 frequences europeennes, ACARS
+    transporte confie a acars_watch._process_message. Aucune trame a 23 h lors
+    du test (a revoir de jour). Contexte aerien : +0,3 comme l'ACARS.
+- Modes numeriques en plus du -fa : quand une reception rtl_fm est ecartee
+  comme non-voix, nouvel essai dsd-fme selon la frequence : dPMR (446,0-446,2),
+  M17 (2 m, 70 cm), NXDN48 (VHF/UHF pro). Ces modes sortent en MONO (verifie
+  dans dsd_main.c), le -fa en stereo : nombre de voies choisi selon le mode.
+- Console : commande "capteurs" ; le flash cite la station meteo APRS la
+  plus proche (moins de 20 km, moins de 2 h).
+- Reste a faire : DAB+ (welle.io disponible dans Debian) pour la commande
+  radio -- demande de prendre la cle en exclusivite, comme le mode manuel.

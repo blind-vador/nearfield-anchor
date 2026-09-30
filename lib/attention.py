@@ -44,6 +44,10 @@ MAX_EXTRA_SEC_PER_CYCLE = 150   # surplus total par cycle (au-dela, les bonus so
 SWEEP_FLOOR_SEC = 1800          # toute bande balayee revue au moins toutes les 30 min
 SECOND_SWEEP_SCORE = 1.0        # une bande balayee qui pique fort a droit a un 2e balayage
 ACARS_BASE_DWELL = 30
+# Fenetres de donnees (une ecoute par cycle chacune, meme dongle, en
+# sequence) : cible -> duree d'ecoute de base. Voir radio_watch.DATA_SCANNERS.
+DATA_WINDOWS = {"acars": ACARS_BASE_DWELL, "vdl2": 25, "aprs": 30, "capteurs": 30}
+DATA_LABELS = {"acars": "ACARS", "vdl2": "VDL2", "aprs": "APRS", "capteurs": "capteurs sans fil"}
 
 
 # --- etat partage (scanner + console), ecritures sous verrou ---
@@ -151,10 +155,11 @@ def plan_cycle(windows, sweeps):
         dwell = min(MAX_DWELL_SEC, base * (1 + DWELL_GAIN * total))
         steps.append(["airband", w, w["name"], dwell, air])
         extra.append(dwell - base)
-    total, _, air = pressure("acars", state, ctx)
-    acars_dwell = min(MAX_DWELL_SEC, ACARS_BASE_DWELL * (1 + DWELL_GAIN * total))
-    steps.append(["acars", None, "acars", acars_dwell, air])
-    extra.append(acars_dwell - ACARS_BASE_DWELL)
+    for name, base in DATA_WINDOWS.items():
+        total, _, air = pressure(name, state, ctx)
+        dwell = min(MAX_DWELL_SEC, base * (1 + DWELL_GAIN * total))
+        steps.append(["data", name, name, dwell, air])
+        extra.append(dwell - base)
 
     # Surplus borne : si les bonus depassent le budget, on les reduit tous a proportion.
     surplus = sum(extra)

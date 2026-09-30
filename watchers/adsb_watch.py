@@ -197,6 +197,7 @@ def _publish_air_context(states):
             add("aviation_approche", 0.5 + moving)
         if alt >= 6000:                            # croisiere : ACARS, controle en route
             add("acars", 0.3)
+            add("vdl2", 0.3)
             add("aviation", 0.2)
     try:
         tmp = AIR_CONTEXT_PATH + ".tmp"

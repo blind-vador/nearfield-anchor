@@ -48,6 +48,9 @@ NAVITIA_URL = "https://api.sncf.com/v1/coverage/sncf/stop_areas/stop_area:SNCF:{
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 GEMINI_MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"]
 
+APRS_WX_PATH = "/tmp/meteo_stations_aprs.json"
+APRS_WX_MAX_KM = 20
+APRS_WX_MAX_AGE_SEC = 2 * 3600
 METEO_STATE = "/tmp/meteo_watch_vigilance_state.json"
 CRUE_STATE = "/tmp/crue_watch_vigilance_state.json"
 STAS_STATE = "/tmp/stas_watch_state.json"
@@ -322,6 +325,28 @@ def weather_text(lieu):
     return text
 
 
+def nearby_station_text(lieu):
+    """Releve de la station meteo radioamateur (APRS) la plus proche, si recente."""
+    import math
+    stations = _read_json(APRS_WX_PATH) or {}
+    best = None
+    for call, st in stations.items():
+        wx = st.get("meteo") or {}
+        if wx.get("temperature") is None or time.time() - st.get("t", 0) > APRS_WX_MAX_AGE_SEC:
+            continue
+        dlat = math.radians(st["lat"] - float(lieu["lat"]))
+        dlon = math.radians(st["lon"] - float(lieu["lon"])) * math.cos(math.radians(float(lieu["lat"])))
+        km = 6371 * math.hypot(dlat, dlon)
+        if km <= APRS_WX_MAX_KM and (best is None or km < best[0]):
+            best = (km, wx)
+    if best is None:
+        return ""
+    km, wx = best
+    where = "tout près" if km < 1 else f"à {round(km)} kilomètre{'s' if round(km) > 1 else ''}"
+    temp = f"{wx['temperature']:.0f}".replace("-", "moins ")
+    return f"Relevé d'une station météo radioamateur {where} : {temp} degrés en ce moment."
+
+
 def alerts_text(lieu):
     parts = []
     meteo = _read_json(METEO_STATE) or {}
@@ -441,7 +466,8 @@ def build():
         news, rubriques = cache["texte"], cache.get("rubriques") or {}
     if failed and not articles:
         news = "La presse locale est injoignable pour le moment."
-    services = [t for t in (alerts_text(lieu), weather_text(lieu), trains_text(), stas_text(lieu)) if t]
+    services = [t for t in (alerts_text(lieu), weather_text(lieu), nearby_station_text(lieu),
+                            trains_text(), stas_text(lieu)) if t]
     text = f"Flash info de {lieu['commune']}, {_spoken_now()}. {news} " + " ".join(services)
     for story in stories:
         story["rubrique"] = rubriques.get(story["cle"], "Autres infos")

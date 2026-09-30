@@ -42,7 +42,7 @@ export DEBIAN_FRONTEND=noninteractive
 echo "=== 1/6 : paquets systeme (apt) ==="
 apt-get update
 apt-get install -y \
-    espeak ffmpeg mpg123 rtl-sdr librtlsdr-dev libjansson-dev \
+    espeak ffmpeg mpg123 multimon-ng rtl-433 libglib2.0-dev rtl-sdr librtlsdr-dev libjansson-dev \
     build-essential cmake git python3-pip pkg-config wget \
     libconfig++-dev libmp3lame-dev libshout3-dev libfftw3-dev libpulse-dev \
     libsndfile1-dev libitpp-dev libncurses-dev libcodec2-dev portaudio19-dev \
@@ -95,6 +95,16 @@ if [ ! -x /usr/local/bin/acarsdec ]; then
     (cd "$BUILD_DIR/acarsdec/build" && cmake -Drtl=1 .. && make -j4 && make install)
 else
     echo "-- acarsdec deja installe, saute --"
+fi
+
+# VDL2 (successeur de l'ACARS, watchers/vdl2_watch.py) : a compiler, comme
+# acarsdec, sur libacars deja installee.
+if [ ! -x /usr/local/bin/dumpvdl2 ]; then
+    echo "-- dumpvdl2 --"
+    rm -rf "$BUILD_DIR/dumpvdl2"
+    git clone https://github.com/szpajder/dumpvdl2.git "$BUILD_DIR/dumpvdl2"
+    mkdir -p "$BUILD_DIR/dumpvdl2/build"
+    (cd "$BUILD_DIR/dumpvdl2/build" && cmake .. && make -j4 && make install)
 fi
 
 if [ ! -f "$TARGET_DIR/rnnoise_lib/librnnoise.so" ]; then
