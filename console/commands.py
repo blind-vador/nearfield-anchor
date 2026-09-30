@@ -362,6 +362,22 @@ def capteurs():
     return f"{len(parts)} source{'s' if len(parts) > 1 else ''}. " + " ".join(parts[:12])
 
 
+def voitures_cmd(line):
+    """Statistiques de la rue (capteurs de pneus, lib/voitures.py), ou
+    "nomme la voiture 3 facteur"."""
+    import re
+    import matcher
+    import voitures
+    m = re.search(r"(?:vehicule|voiture)\s+(?:numero\s+)?(\d+)\s+(?:s appelle\s+|en\s+|comme\s+)?(.+)$",
+                  matcher.normalize(line))
+    if m and re.search(r"\bnomm|\bappel|\brenomm", matcher.normalize(line)):
+        vid, name = m.group(1), m.group(2).strip()
+        if voitures.rename(vid, name):
+            return f"Le véhicule numéro {vid} s'appelle maintenant {name}. Je dirai quand il passe."
+        return f"Je ne connais pas de véhicule numéro {vid}."
+    return voitures.summary()
+
+
 def accroche():
     import noise_signatures as ns
     locked = ns.lock_request()
@@ -429,6 +445,9 @@ COMMANDS = [
     Command("voix", "choisir la voix de la console et son débit, ou la voix locale espeak", None,
             keywords=["voix", "changer de voix", "change de voix", "choisir la voix", "debit de la voix"],
             examples=["parle plus vite", "change ta voix"]),
+    Command("voitures", "statistiques de la rue par les capteurs de pneus ; nomme la voiture 3 facteur", None,
+            keywords=["voitures", "voiture", "vehicules", "vehicule", "rue", "circulation", "trafic de la rue"],
+            examples=["combien de voitures passent", "qui passe dans la rue"]),
     Command("capteurs", "derniers relevés des capteurs sans fil et stations météo radioamateur captés", capteurs,
             keywords=["capteurs", "capteur", "sondes", "stations meteo", "thermometres"],
             examples=["quelle température chez les voisins", "les relevés des capteurs"]),

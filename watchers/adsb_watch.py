@@ -9,6 +9,8 @@ from speak import speak, speak_with_lead_sound
 import audio_lock
 from sound_paths import FLIGHT_SCANER_DIR
 import reglages
+import adsb_local_watch
+import ogn_watch
 
 # API OpenSky Network. Compte authentifie cree en session (username
 # blind_vador) -- l'API exige desormais OAuth2 (client_credentials).
@@ -251,16 +253,30 @@ def _announce_flyby(callsign):
         audio_lock.release(lock)
 
 
+# Un appareil disparu moins longtemps que ca n'est pas re-annonce : les
+# donnees de l'antenne (fenetre du scanner) arrivent par a-coups.
+FORGET_SEC = 600
+
+
+def _merge(remote, local):
+    """OpenSky + reception directe (adsb_local_watch). Rend (etats, icao
+    captes seulement par l'antenne)."""
+    seen = {s[0] for s in remote}
+    local_only = {s[0] for s in local if s[0] not in seen}
+    return remote + [s for s in local if s[0] in local_only], local_only
+
+
 def main():
-    print("[adsb_watch] demarrage de la veille ADS-B (API OpenSky)")
+    print("[adsb_watch] demarrage de la veille ADS-B (API OpenSky + antenne)")
     _speak_coordinated("Veille ADS-B démarrée.")
+    ogn_watch.start()
 
     # Buffer des appareils deja annonces (icao24 -> indicatif) : sert
     # uniquement a decider si un appareil est "nouveau" depuis le dernier
     # passage, pour ne jamais repeter la meme info en boucle -- un appareil
     # deja vu et toujours present reste muet tant qu'il ne disparait pas et
     # ne revient pas.
-    known_aircraft = {}
+    known_aircraft = {}  # icao24 -> dernier instant vu
     # Appareils pour lesquels le son de survol a deja ete joue -- persiste
     # entre les passages (contrairement a known_aircraft) pour ne jouer le
     # son qu'une fois par passage au-dessus, meme sur plusieurs sondages
@@ -268,10 +284,13 @@ def main():
     overhead_announced = set()
 
     while True:
-        states = fetch_aircraft()
-        if states is None:
+        remote = fetch_aircraft()
+        local = adsb_local_watch.as_states()
+        if remote is None and not local:
             time.sleep(POLL_INTERVAL_SEC)
             continue
+        states, local_only = _merge(remote or [], local)
+        now = time.time()
 
         _publish_air_context(states)
         current_aircraft = {}
@@ -292,8 +311,10 @@ def main():
             category = state[IDX_CATEGORY] if len(state) > IDX_CATEGORY else None
             current_aircraft[icao24] = callsign
 
-            if icao24 not in known_aircraft:
+            if now - known_aircraft.get(icao24, 0) > FORGET_SEC:
                 parts = [f"Avion détecté : {callsign}."]
+                if icao24 in local_only:
+                    parts.append("Capté en direct par l'antenne.")
                 category_name = CATEGORY_NAMES.get(category)
                 if category_name:
                     parts.append(f"{category_name.capitalize()}.")
@@ -315,7 +336,9 @@ def main():
             else:
                 overhead_announced.discard(icao24)
 
-        known_aircraft = current_aircraft
+        for icao24 in current_aircraft:
+            known_aircraft[icao24] = now
+        known_aircraft = {k: t for k, t in known_aircraft.items() if now - t <= FORGET_SEC}
         time.sleep(POLL_INTERVAL_SEC)
 
 

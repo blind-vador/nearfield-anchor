@@ -5118,3 +5118,32 @@ Demande utilisateur : tout ecouter de ce qui est ouvert autour de chez lui
   plus proche (moins de 20 km, moins de 2 h).
 - Reste a faire : DAB+ (welle.io disponible dans Debian) pour la commande
   radio -- demande de prendre la cle en exclusivite, comme le mode manuel.
+
+## 2026-10-01 : pneus, pagers, ADS-B direct, planeurs, balises 406
+
+- Voitures (lib/voitures.py, via capteurs_watch) : trames TPMS 433 MHz
+  regroupees en passages (moins de 10 s d'ecart), identifiants vus ensemble
+  = meme vehicule ; habituel apres 3 jours differents (annonce une fois) ;
+  annonces : vehicule inconnu la nuit (23 h-5 h), vehicule nomme qui passe,
+  pneu sous 160 kPa d'un vehicule nomme. Statistiques ramenees au temps
+  d'ecoute reel en 433. Etat : radio_log/voitures.json (NAS), 30 jours.
+  Commande "voitures" (stats, "nomme la voiture 3 facteur"). Limite : un
+  TPMS emet surtout en roulant, une voiture garee est invisible.
+- Pagers 466 MHz (watchers/pagers_watch.py) : reseau e*Message, une
+  frequence par passage parmi 6, multimon-ng POCSAG/FLEX ; messages
+  alphanumeriques lisibles annonces. Test : trame POCSAG sur 466,050.
+- ADS-B direct (watchers/adsb_local_watch.py) : dump1090-mutability en
+  fenetre (service Debian desactive : il avait pris la cle a
+  l'installation) ; publie /tmp/adsb_local.json, fusionne par adsb_watch
+  avec OpenSky ("capte en direct par l'antenne"), hysteresis de 10 min
+  avant re-annonce. Fenetre au plus toutes les 4 min. Antenne actuelle
+  (446) mediocre en 1090 : 1 message valide en 20 s la nuit.
+- Planeurs et petits aeronefs (watchers/ogn_watch.py) : pas par la cle mais
+  par internet, serveur APRS public de l'Open Glider Network (FLARM, FANET,
+  OGN), rayon 30 km, fil dans adsb_watch ; type d'appareil tire de l'id OGN.
+  Relais ADS-B et stations receptrices ignores.
+- Balises de detresse 406 MHz (watchers/balises_watch.py) : dec406_scan
+  (MIT, compile ; il a fallu libairspy-dev et libiio-dev), fenetre de 55 s
+  au plus tous les quarts d'heure (DATA_MIN_INTERVAL), toute salve annoncee.
+- Ballons-sondes : non retenus pour l'instant (l'utilisateur ne voyait pas
+  l'usage).

@@ -46,8 +46,12 @@ SECOND_SWEEP_SCORE = 1.0        # une bande balayee qui pique fort a droit a un 
 ACARS_BASE_DWELL = 30
 # Fenetres de donnees (une ecoute par cycle chacune, meme dongle, en
 # sequence) : cible -> duree d'ecoute de base. Voir radio_watch.DATA_SCANNERS.
-DATA_WINDOWS = {"acars": ACARS_BASE_DWELL, "vdl2": 25, "aprs": 30, "capteurs": 30}
-DATA_LABELS = {"acars": "ACARS", "vdl2": "VDL2", "aprs": "APRS", "capteurs": "capteurs sans fil"}
+DATA_WINDOWS = {"acars": ACARS_BASE_DWELL, "vdl2": 25, "aprs": 30, "capteurs": 30,
+                "pagers": 30, "adsb": 30, "balises": 55}
+DATA_LABELS = {"acars": "ACARS", "vdl2": "VDL2", "aprs": "APRS", "capteurs": "capteurs sans fil",
+               "pagers": "pagers 466", "adsb": "avions en direct", "balises": "balises de détresse"}
+# Fenetres espacees : pas plus d'une visite par intervalle (sauf si ca pique).
+DATA_MIN_INTERVAL = {"balises": 900, "adsb": 240}
 
 
 # --- etat partage (scanner + console), ecritures sous verrou ---
@@ -157,6 +161,9 @@ def plan_cycle(windows, sweeps):
         extra.append(dwell - base)
     for name, base in DATA_WINDOWS.items():
         total, _, air = pressure(name, state, ctx)
+        since = now - state.get(name, {}).get("last_visit", 0)
+        if since < DATA_MIN_INTERVAL.get(name, 0) and total < EXTRA_VISIT_SCORE:
+            continue
         dwell = min(MAX_DWELL_SEC, base * (1 + DWELL_GAIN * total))
         steps.append(["data", name, name, dwell, air])
         extra.append(dwell - base)

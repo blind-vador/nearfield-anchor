@@ -187,6 +187,8 @@ def run_command(line, key_source, last_response):
         return journal.run(key_source, voix.say, out)
     if cmd.name == "manuel":
         return manuel.run(key_source, voix.say, out)
+    if cmd.name == "voitures":
+        return commands.voitures_cmd(line)
     if cmd.name == "voix":
         return voix_cmd.run(key_source, voix.say, out)
     if cmd.name == "flash":

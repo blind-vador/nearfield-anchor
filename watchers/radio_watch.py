@@ -22,8 +22,11 @@ import radio_log
 import sound_player
 import audio_filters
 import acars_watch
+import adsb_local_watch
 import aprs_watch
+import balises_watch
 import capteurs_watch
+import pagers_watch
 import vdl2_watch
 import spectral_diagnostic
 import noise_signatures
@@ -1214,13 +1217,17 @@ _last_stream_metrics = {}
 
 
 # Fenetres de donnees du cycle (lib/attention.py, DATA_WINDOWS) : ACARS,
-# VDL2, APRS, capteurs sans fil 433/868 MHz. Chacune prend le dongle pour
+# VDL2, APRS, capteurs sans fil 433/868 MHz (et pneus), pagers 466 MHz,
+# ADS-B direct 1090 MHz, balises de detresse 406 MHz. Chacune prend le dongle pour
 # sa duree d'ecoute puis le rend.
 DATA_SCANNERS = {
     "acars": acars_watch.scan_window,
     "vdl2": vdl2_watch.scan_window,
     "aprs": aprs_watch.scan_window,
     "capteurs": capteurs_watch.scan_window,
+    "pagers": pagers_watch.scan_window,
+    "adsb": adsb_local_watch.scan_window,
+    "balises": balises_watch.scan_window,
 }
 
 

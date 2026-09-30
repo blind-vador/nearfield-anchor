@@ -19,6 +19,7 @@ import threading
 import time
 
 import veille_donnees as vd
+import voitures
 from sound_paths import RADIO_SCANER_DIR
 
 FREQUENCIES = ["433.92M", "868.3M"]
@@ -94,11 +95,21 @@ def _publish(key, event):
         pass
 
 
-def _process(event, freq):
+def _pressure_kpa(event):
+    if event.get("pressure_kPa") is not None:
+        return float(event["pressure_kPa"])
+    if event.get("pressure_PSI") is not None:
+        return float(event["pressure_PSI"]) * 6.895
+    return None
+
+
+def _process(event, freq, tpms, at):
     vd.archive("capteurs", dict(event, bande=freq))
     key = _key(event)
     kind = _kind(event)
     if kind == "pneu":
+        # Pas d'annonce directe : apprentissage des vehicules (lib/voitures.py).
+        tpms.append((at, key, _pressure_kpa(event)))
         return False
     _publish(key, event)
     values = _values(event)
@@ -122,9 +133,27 @@ def _process(event, freq):
 def _reader(proc, events):
     for raw in proc.stdout:
         try:
-            events.append(json.loads(raw))
+            events.append((time.time(), json.loads(raw)))
         except ValueError:
             continue
+
+
+def _cars(tpms, freq, listened_sec):
+    """Apprentissage et annonces des vehicules (pneus) apres une passe."""
+    if not freq.startswith("433"):
+        return False
+    try:
+        voitures.record_listening(listened_sec)
+        sentences = voitures.learn(tpms)
+    except Exception as exc:  # jamais bloquant pour le reste de la veille
+        print(f"[capteurs_watch] voitures : {exc!r}")
+        return False
+    announced = False
+    for sentence in sentences:
+        if _memory.due(f"voiture|{sentence[:40]}", 600):
+            vd.announce(sentence, SOUND, "voiture", "capteurs_watch")
+            announced = True
+    return announced
 
 
 def scan_window(dwell_sec=30):
@@ -139,18 +168,20 @@ def scan_window(dwell_sec=30):
     except FileNotFoundError:
         print("[capteurs_watch] rtl_433 introuvable")
         return False
-    events = []
+    events, tpms = [], []
     reader = threading.Thread(target=_reader, args=(proc, events), daemon=True)
     reader.start()
     announced = False
     count = 0
+    started = time.time()
     try:
         deadline = time.time() + dwell_sec + 5
         while time.time() < deadline and (proc.poll() is None or events):
             time.sleep(0.2)
             while events:
                 count += 1
-                if _process(events.pop(0), freq):
+                at, event = events.pop(0)
+                if _process(event, freq, tpms, at):
                     announced = True
     finally:
         if proc.poll() is None:
@@ -162,8 +193,11 @@ def scan_window(dwell_sec=30):
         reader.join(timeout=2)
         while events:
             count += 1
-            if _process(events.pop(0), freq):
+            at, event = events.pop(0)
+            if _process(event, freq, tpms, at):
                 announced = True
+        if _cars(tpms, freq, min(dwell_sec, time.time() - started)):
+            announced = True
         _memory.save()
     if count:
         print(f"[capteurs_watch] {count} trame(s) capteurs sur {freq}")
