@@ -5552,5 +5552,35 @@ sur une machine plus puissante. Donnees sur le disque nd1, dossier
 Compile en 2 h environ (tools/build_lora.sh, a la reinstallation : installer
 d'abord python3-gnuradio puis lancer ce script comme tache utilisateur). Le
 lanceur tools/python3-gnuradio, copie dans ~/autopilot/bin, ajoute ses
-chemins (bibliotheque et module Python). Reste : tools/lora_traitement.py
-pour decoder les rafales enregistrees par lora_watch.
+chemins (bibliotheque et module Python). Utilise par bridge/lora_decode.py
+(voir ci-dessous) : en secours seulement sur le Pi.
+
+### LoRa et Meshtastic decodes tout de suite, par le Mac (2026-10-01)
+
+Choix utilisateur : le travail differe part a la machine compagne des
+qu'elle est la ; LoRa n'est plus differe ; decodage LoRa eteint sur le Pi
+tant que le Mac repond.
+
+- lora_watch : chaque rafale gardee devient aussitot un travail "lora" du
+  pont (lib/lora_messages.py), copie de la rafale (moins de 1 Mo).
+- bridge/lora_decode.py (gr-lora_sdr, commun Pi et Mac) : filtre a la
+  largeur du canal, 2 echantillons par chip, essaie les facteurs
+  d'etalement (profil d'abord : SF11 / 250 kHz / sync 0x2B Meshtastic
+  LongFast, SF12 / 125 kHz / 0x12 APRS LoRa). Tampon agrandi pour SF12.
+  Valide sur des rafales generees par l'emetteur gr-lora_sdr (texte exact,
+  CRC bon) ; Mac 0,2 s par rafale, Pi 1,3 s.
+- Mac : GNU Radio de conda-forge dans ~/.nearfield-bridge/gnuradio
+  (Miniforge dans ~/.nearfield-bridge/conda) + gr-lora_sdr compile dessus
+  (il faut libboost-devel). Capacite "lora". Deux files de travail : LoRa
+  (rapide) ne passe jamais derriere un Meteor.
+- Pi : compagnon_serveur pousse le travail (tour toutes les 2 s) ; le
+  resultat signe (trames.json) est interprete sur le Pi : Meshtastic canal
+  public par defaut (lib/meshtastic_lite.py : message texte, nouveau noeud,
+  position une fois par heure ; canal prive archive seulement), APRS LoRa
+  par aprslib et l'annonce de aprs_watch. Fiche JSON de la rafale completee
+  ("decode"). Boucle complete mesuree : 2,8 s.
+- Secours : aucune machine capable connectee, ou travail pas pris en 20 s,
+  et Pi sous 72 C -> le Pi decode lui-meme (nice 19, SF du profil seul).
+  Mesure : 2,8 s, Mac en pause.
+- Les deux rafales APRS LoRa du 2026-10-01 (0,38 s) ne contiennent pas de
+  trame : trop courtes pour un paquet SF12 (plus de 1,5 s).
