@@ -5527,6 +5527,26 @@ sur une machine plus puissante. Donnees sur le disque nd1, dossier
   tools/meteor_traitement.py reste comme secours manuel sur le Pi.
 - A venir sur le meme pont : decodage LoRa/Meshtastic des rafales, SSTV ISS.
 
+### Pont : retours du premier essai reel (2026-10-01)
+
+- Appairage : valider d'un seul cote suffit. Oui sur le Mac -> confirme-<id>.json
+  signe par le Mac, le Pi accepte seul et ferme son dialogue (reveil de la
+  lecture clavier : keys.wake / keys.WAKE dans console/main.py). Entree sur
+  le Pi -> le dialogue du code du Mac (osascript lance par le module) se
+  ferme seul. Plus de voix "say" cote Mac : elle arrivait en retard,
+  VoiceOver lit deja les dialogues.
+- L'application etait "anglaise" (CFBundleDevelopmentRegion en) : VoiceOver
+  lisait le francais avec une voix anglaise. L'installateur la regle sur la
+  langue du systeme et la re-signe.
+- macOS refuse le disque reseau a un Python lance directement par launchd
+  (PermissionError, sans fenetre) : le service tourne dans une application
+  invisible ~/.nearfield-bridge/Nearfield Bridge Service.app (LSUIElement),
+  qui recoit l'autorisation "volumes reseau".
+- Premier passage traite par le Mac (Meteor M2 4, 16 h 43) : chaine complete
+  OK (pris, calcul, resultat signe, annonce du Pi 4 s apres), mais pas
+  d'image (signal trop faible, antenne fouet). 23 min, surtout du reseau :
+  le calcul se fait desormais sur le disque local du Mac apres une copie.
+
 ### gr-lora_sdr compile (2026-10-01)
 
 Compile en 2 h environ (tools/build_lora.sh, a la reinstallation : installer
