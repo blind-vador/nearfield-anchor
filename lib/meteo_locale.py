@@ -429,6 +429,8 @@ def wait_scan(asked, timeout):
         done = _read_json(SCAN_DONE_PATH)
         if done and done.get("debut", 0) >= asked - 1:
             return done
+        if scanner_busy() and scan_requested():
+            return None  # pause thermique, manuel, accroche : inutile d'attendre
         time.sleep(2)
     return None
 
@@ -438,6 +440,32 @@ def scan_counts(started):
     sensors = _read_json(SENSORS_PATH) or {}
     return (sum(1 for s in aprs.values() if s.get("t", 0) >= started),
             sum(1 for s in sensors.values() if s.get("t", 0) >= started))
+
+
+SCANNER_STATE_PATH = "/tmp/radio_watch_etat.json"
+# Etats ou le scanner ne peut pas faire le balayage (la console n'attend pas)
+SCANNER_BUSY = {"pause_thermique": "le scanner est en pause pour refroidir le Pi",
+                "manuel": "le scanner est en mode manuel",
+                "accroche": "le scanner est accroché sur une fréquence"}
+
+
+def set_scanner_state(state):
+    """Pour le scanner : son etat courant (actif, pause_thermique, manuel,
+    accroche, pause_programmee)."""
+    current = _read_json(SCANNER_STATE_PATH) or {}
+    if current.get("etat") != state:
+        _write_json(SCANNER_STATE_PATH, {"etat": state, "t": time.time()})
+
+
+def scanner_busy():
+    """Raison pour laquelle le scanner ne peut pas balayer, ou None."""
+    state = (_read_json(SCANNER_STATE_PATH) or {}).get("etat")
+    return SCANNER_BUSY.get(state)
+
+
+def scan_requested():
+    req = _read_json(SCAN_REQUEST_PATH)
+    return bool(req) and time.time() - req.get("t", 0) <= SCAN_REQUEST_MAX_AGE_SEC
 
 
 def take_scan_request():
@@ -500,7 +528,7 @@ def _sondes_text(lieu, found):
     return text + "."
 
 
-def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=False):
+def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
     """Bulletin meteo local complet, en phrases. scan : compte rendu du
     balayage radio qui vient d'etre fait (wait_scan)."""
     lieu = lieu or reglages.get("lieu")
@@ -586,8 +614,8 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=False):
                      f"{'s' if scan.get('stations', 0) > 1 else ''} radioamateur et {scan.get('capteurs', 0)} "
                      f"capteur{'s' if scan.get('capteurs', 0) > 1 else ''} reçus à l'instant.")
     elif scan_failed:
-        parts.append("Le scanner n'a pas pu balayer le panel radio météo (pause ou mode manuel) : "
-                     "relevés locaux des dernières heures.")
+        reason = scan_failed if isinstance(scan_failed, str) else "le scanner n'a pas répondu"
+        parts.append(f"Pas de balayage radio cette fois, {reason} : relevés locaux des dernières heures.")
     neighbors = _neighbors_text(lieu)
     if neighbors:
         parts.append(neighbors)

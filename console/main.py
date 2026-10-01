@@ -172,10 +172,13 @@ def meteo_cmd(line):
     asked = meteo_locale.request_scan()
     seconds = meteo_locale.scan_duration()
 
+    busy = meteo_locale.scanner_busy()
+
     def run():
-        scan = meteo_locale.wait_scan(asked, timeout=seconds + 180)
+        scan = None if busy else meteo_locale.wait_scan(asked, timeout=seconds + 180)
+        reason = busy or meteo_locale.scanner_busy()
         try:
-            text = meteo_locale.bulletin(scan=scan, scan_failed=scan is None)
+            text = meteo_locale.bulletin(scan=scan, scan_failed=(reason or True) if scan is None else None)
         except Exception as exc:  # une source au format inattendu ne doit pas tuer la console
             print(f"[console] meteo : {exc!r}", file=sys.stderr)
             text = "Le bulletin météo a échoué sur une erreur inattendue."
@@ -184,6 +187,8 @@ def meteo_cmd(line):
         voix.say_and_wait(text)
 
     threading.Thread(target=run, daemon=True).start()
+    if busy:
+        return f"Je prépare le bulletin météo ; pas de balayage radio, {busy}."
     minutes = max(2, round(seconds / 60))
     return (f"Je balaie d'abord le panel radio météo local, environ {minutes} minutes ; "
             "le bulletin complet suivra. Le clavier reste libre en attendant.")

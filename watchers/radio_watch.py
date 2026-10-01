@@ -1640,6 +1640,7 @@ def main():
                     f"Pause du scanner radio, température élevée : {temp:.0f} degrés.",
                     sound=SCANER_ERROR_SOUND,
                 )
+                meteo_locale.set_scanner_state("pause_thermique")
                 pause_actual_start = time.time()
                 recent_temps = collections.deque()  # (horodatage, temperature) sur PLATEAU_WINDOW_SEC
                 plateau_resume = False
@@ -1691,6 +1692,7 @@ def main():
                     _speak_pause(f"Le Pi ne refroidit plus, le scanner radio reprend à {temp:.0f} degrés.")
                 else:
                     _speak_pause("Le scanner radio reprend, température redescendue.")
+                meteo_locale.set_scanner_state("actif")
                 cycle_start = time.time()
                 continue
 
@@ -1702,6 +1704,7 @@ def main():
         # elle-meme les frequences : rien a dire ici.
         manual = noise_signatures.manual_request()
         if manual:
+            meteo_locale.set_scanner_state("manuel")
             if current_lock_key != "manuel":
                 print("[radio_watch] mode manuel")
                 current_lock_key = "manuel"
@@ -1731,8 +1734,10 @@ def main():
                 cycle_start = time.time()
             current_lock_key = lock_key
         if lock_capture:
+            meteo_locale.set_scanner_state("accroche")
             _scan_locked(lock_capture)
             continue
+        meteo_locale.set_scanner_state("actif")
 
         # Pause reguliere programmee -- repos du dongle/antenne meme sans
         # probleme de temperature.
@@ -1741,7 +1746,14 @@ def main():
             _speak_pause(
                 f"Pause programmée du scanner radio, reprise dans {SCAN_OFF_DURATION_SEC // 60} minutes."
             )
-            time.sleep(SCAN_OFF_DURATION_SEC)
+            # Un balayage meteo demande par la console passe quand meme.
+            meteo_locale.set_scanner_state("pause_programmee")
+            pause_end = time.time() + SCAN_OFF_DURATION_SEC
+            while time.time() < pause_end:
+                if meteo_locale.scan_requested():
+                    _meteo_scan_if_requested()
+                time.sleep(1)
+            meteo_locale.set_scanner_state("actif")
             _speak_pause("Le scanner radio reprend.")
             cycle_start = time.time()
             continue
