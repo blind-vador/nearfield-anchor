@@ -447,7 +447,25 @@ def _precursor_watcher():
         time.sleep(PRECURSOR_POLL_SEC)
 
 
+# --- Donnees ouvertes (lib/donnees_ouvertes.py, 2026-10-01) : seismes
+# notables, riviere qui monte vite ; orages signales par les aeroports
+# (repris par le niveau de menace).
+OPEN_DATA_POLL_SEC = 600
+
+
+def _open_data_watcher():
+    import donnees_ouvertes
+    while True:
+        try:
+            for sentence in donnees_ouvertes.watch():
+                _speak_lightly(sentence)
+        except Exception as exc:
+            print(f"[meteo_watch] donnees ouvertes : {exc!r}")
+        time.sleep(OPEN_DATA_POLL_SEC)
+
+
 def main():
+    threading.Thread(target=_open_data_watcher, daemon=True).start()
     nowcast_thread = threading.Thread(target=_nowcast_watcher, daemon=True)
     nowcast_thread.start()
     threading.Thread(target=_precursor_watcher, daemon=True).start()

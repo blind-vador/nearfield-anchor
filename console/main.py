@@ -249,6 +249,14 @@ def run_command(line, key_source, last_response):
         return commands.voitures_cmd(line)
     if cmd.name == "voix":
         return voix_cmd.run(key_source, voix.say, out)
+    if cmd.name == "trafic":
+        import trafic
+        voix.say("Je regarde l'état des routes.")
+        return trafic.summary()
+    if cmd.name == "environnement":
+        import donnees_ouvertes
+        voix.say("Je rassemble les données.")
+        return donnees_ouvertes.summary()
     if cmd.name == "observation":
         if matcher.normalize(line) in ("observation", "observer", "observation meteo"):
             return observation.run(line, key_source, voix.say, out)

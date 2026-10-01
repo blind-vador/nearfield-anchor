@@ -5430,3 +5430,24 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   Amorce depuis les archives : F5ZBR 145,612 (2 km), F6ZCD DMR 145,2875,
   F1ZEV 51,95, F1ZCK D-Star 438,2. L'annonce APRS dit "Je l'ajoute a mon
   ecoute des relais" quand un relais est appris.
+
+### Donnees ouvertes : aeroports, rivieres, seismes, air ; trafic a la demande (2026-10-01)
+
+- lib/trafic.py, commande "trafic" : flux DATEX II ouvert de Bison Fute
+  (reseau national), evenements a moins de 40 km tries par gene (accident,
+  bouchon, obstacle, puis fermetures, puis travaux) et distance ; route,
+  ville, direction, description utile. A la demande seulement (choix
+  utilisateur : pas de voiture, utile pour une visite).
+- lib/donnees_ouvertes.py, commande "environnement" et bulletin meteo :
+  METAR des deux aeroports (aviationweather.gov) traduits (vent, rafales,
+  visibilite, phenomenes "orage avec forte pluie", plafond, CB/TCU
+  expliques) ; rivieres Hub'Eau v2 (une station par riviere, les plus
+  proches : Ondaine, Loire a Grangent en altitude de retenue, Furan,
+  Semene ; hauteur, tendance 2 h, debit) ; seismes EMSC (rayon ~550 km,
+  "ressenti probable" selon magnitude et distance) ; qualite de l'air et
+  pollens abondants (Open-Meteo / CAMS).
+- meteo_watch (toutes les 10 min) annonce : seisme notable (M >= 2,5 a moins
+  de 150 km, ou M >= 4,5), riviere qui monte de 20 cm en une heure ; un
+  orage ou cumulonimbus au METAR fait monter la menace au niveau 2.
+- Teleray (radioactivite IRSN) : pas d'acces ouvert trouve ; coupures
+  d'electricite : pas d'API ouverte. Non branches.

@@ -394,6 +394,14 @@ def threat(lieu, fc=None, signs=None):
         elif observed.get("precip") == "forte":
             level = max(level, 1)
             reasons.append("forte pluie, d'après ton observation")
+    try:
+        import donnees_ouvertes
+        storms = donnees_ouvertes.airport_storms()
+    except Exception:
+        storms = []
+    if storms:
+        level = max(level, 2)
+        reasons.append("orage signalé par l'aéroport de " + " et de ".join(storms))
     signs = precursors(lieu) if signs is None else signs
     if any(s["gravite"] >= 2 for s in signs):
         level = max(level, 2)
@@ -702,6 +710,20 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
     elif scan_failed:
         reason = scan_failed if isinstance(scan_failed, str) else "le scanner n'a pas répondu"
         parts.append(f"Pas de balayage radio cette fois, {reason} : relevés locaux des dernières heures.")
+    try:
+        import donnees_ouvertes
+        airports, _ = donnees_ouvertes.airports_text()
+        rivers = donnees_ouvertes.rivers_text()
+        found = donnees_ouvertes.quakes() or []
+        quake = (donnees_ouvertes.quake_sentence(found[0])
+                 if found and found[0]["km"] <= donnees_ouvertes.QUAKE_NEAR_KM else "")
+        air = donnees_ouvertes.air_text()
+    except Exception as exc:
+        print(f"[meteo_locale] donnees ouvertes : {exc!r}")
+        airports = rivers = quake = air = ""
+    for text in (airports, rivers, quake, air):
+        if text:
+            parts.append(text)
     reference = ((fc or {}).get("current") or {}).get("temperature_2m")
     neighbors = _neighbors_text(lieu, reference)
     if neighbors:
