@@ -5248,3 +5248,25 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   commentaire) etaient coupees. Borne = duree reelle du MP3 (48 kbit/s) + 5 s.
 - Vu au passage : des annonces ont attendu 300 s le verrou pendant que le
   journal etait ouvert (le dialogue tient la sortie son tout du long).
+
+### Journal ouvert : captation silencieuse ; capteurs decodes en double (2026-10-01)
+
+- Journal ou archives ouverts (drapeau /tmp/journal_ouvert.json, pid
+  verifie) : les captations radio (source "radio" de l'arbitre) sont
+  enregistrees en silence -- ticket "silent" : ni carillon, ni annonce, son
+  en direct a volume 0, mais le son brut va au journal -- puis
+  speak.journal_notice() dit "Captation entrante ajoutee au journal."
+  (source console, entre deux ecoutes). Demande utilisateur : sinon on ne
+  sait plus si on entend le direct ou le journal.
+- Le journal ne tient plus la sortie son tout du long : Player la prend a
+  chaque lecture et la rend a la fin ou a l'arret (les annonces passent
+  entre deux ecoutes ; fin des attentes de 300 s).
+- Mise a jour du journal ouvert : radio_log touche /tmp/journal_maj a chaque
+  enregistrement ; le journal se rescanne a la touche suivante en gardant
+  sa position.
+- Capteurs : une meme emission reconnue par deux decodeurs de rtl_433
+  (Rubicson-Temperature et Solight-TE44 : meme id, canal, temperature,
+  meme seconde de reception rtl_433) etait annoncee deux fois. Doublon
+  ignore (archive marque "doublon") ; heure de reception prise dans le champ
+  "time" de rtl_433. Il y avait bien deux thermometres (id 25 et 164) : le
+  numero est maintenant dit dans l'annonce.

@@ -17,6 +17,7 @@ import os
 import subprocess
 import threading
 import time
+from datetime import datetime
 
 import veille_donnees as vd
 import voitures
@@ -38,6 +39,13 @@ IGNORED_KEYS = {"time", "model", "id", "channel", "mic", "mod", "freq", "freq1",
 
 _memory = vd.Memory(STATE_PATH)
 _next = 0
+# Une meme emission peut etre reconnue par plusieurs decodeurs de rtl_433
+# (2026-10-01 : "Rubicson-Temperature" et "Solight-TE44", meme identifiant,
+# canal et temperature, a la meme seconde : UN thermometre annonce deux
+# fois). Une trame identique d'un autre modele dans DOUBLE_DECODE_SEC est
+# ignoree.
+DOUBLE_DECODE_SEC = 3
+_recent_frames = {}
 
 
 def _key(event):
@@ -103,7 +111,31 @@ def _pressure_kpa(event):
     return None
 
 
+def _received_at(event, at):
+    """Heure de reception notee par rtl_433 (identique pour les decodages
+    multiples d'une meme emission), sinon l'heure de lecture."""
+    try:
+        return datetime.strptime(event["time"], "%Y-%m-%d %H:%M:%S").timestamp()
+    except (KeyError, TypeError, ValueError):
+        return at
+
+
+def _double_decode(event, at):
+    at = _received_at(event, at)
+    values = tuple(event.get(k) for k in ("id", "channel", "temperature_C", "humidity", "pressure_kPa"))
+    if values[0] is None:
+        return False
+    for key in [k for k, (t, _) in _recent_frames.items() if at - t > 60]:
+        del _recent_frames[key]
+    previous = _recent_frames.get(values)
+    _recent_frames[values] = (at, event.get("model"))
+    return previous is not None and at - previous[0] <= DOUBLE_DECODE_SEC and previous[1] != event.get("model")
+
+
 def _process(event, freq, tpms, at):
+    if _double_decode(event, at):
+        vd.archive("capteurs", dict(event, bande=freq, doublon=True))
+        return False
     vd.archive("capteurs", dict(event, bande=freq))
     key = _key(event)
     kind = _kind(event)
@@ -124,7 +156,8 @@ def _process(event, freq, tpms, at):
     if _memory.due(f"nouveau|{key}", NEW_EVERY_SEC):
         what = {"meteo": "thermomètre ou station météo", "alarme": "détecteur", "bouton": "bouton"}.get(kind, "capteur")
         freq_txt = "433" if freq.startswith("433") else "868"
-        vd.announce(f"Nouveau {what} sans fil en {freq_txt} mégahertz : {_name(event)}"
+        number = f", numéro {event['id']}" if event.get("id") is not None else ""
+        vd.announce(f"Nouveau {what} sans fil en {freq_txt} mégahertz : {_name(event)}{number}"
                     + (f", {values}" if values else "") + ".", SOUND, f"capteur_nouveau_{key}", "capteurs_watch")
         return True
     return False

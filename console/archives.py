@@ -65,7 +65,7 @@ def run(key_source, say, out):
         return "Aucune archive radio pour l'instant."
     order = sorted(days, reverse=True)
     day_i, rec_i = 0, -1  # -1 : "avant le premier"
-    lock = journal._acquire_audio_lock()
+    journal._journal_opened(True)
     player = journal.Player()
 
     def announce_day():
@@ -128,5 +128,5 @@ def run(key_source, say, out):
                 say(text)
     finally:
         player.close()
-        journal._release_audio_lock(lock)
+        journal._journal_opened(False)
     return "Archives radio fermées."

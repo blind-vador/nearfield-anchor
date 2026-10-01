@@ -64,6 +64,13 @@ SCRIPT_SOURCES = {
     "adsb_watch": "avions", "stas_watch": "bus", "nas_watch": "disques", "main": "console",
 }
 
+# Journal ouvert dans la console (console/journal.py, archives.py) : les
+# captations radio sont alors enregistrees EN SILENCE (ni carillon, ni
+# annonce, ni son en direct -- on ne saurait plus si on entend le direct ou
+# le journal), puis une phrase courte previent (speak.journal_notice).
+JOURNAL_FLAG = "/tmp/journal_ouvert.json"
+SILENT_WHEN_JOURNAL = {"radio"}
+
 _local = threading.local()
 _settings_cache = (0.0, None)
 
@@ -161,11 +168,31 @@ def _read():
         return []
 
 
+def journal_open():
+    try:
+        with open(JOURNAL_FLAG, encoding="utf-8") as f:
+            return _alive(int(json.load(f)["pid"]))
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def set_journal_open(is_open):
+    try:
+        if is_open:
+            with open(JOURNAL_FLAG, "w", encoding="utf-8") as f:
+                json.dump({"pid": os.getpid()}, f)
+        else:
+            os.remove(JOURNAL_FLAG)
+    except OSError:
+        pass
+
+
 class Ticket:
     def __init__(self, source):
         self.id = uuid.uuid4().hex
         self.source = source
         self.dropped = False
+        self.silent = False
         self.gain = 1.0
         self._gain_at = 0.0
 
@@ -195,6 +222,11 @@ def acquire(source=None, timeout=ACQUIRE_TIMEOUT_SEC):
     source = source if source in SOURCES else default_source()
     conf = settings()
     ticket = Ticket(source)
+    if source in SILENT_WHEN_JOURNAL and journal_open():
+        ticket.dropped = ticket.silent = True
+        _local.ticket = ticket
+        print(f"[audio_lock] journal ouvert : {source} capte en silence.")
+        return ticket
     me = {"id": ticket.id, "pid": os.getpid(), "source": source, "rang": conf["ordre"].index(source),
           "mode": conf["comportements"][source], "etat": "attente", "t": time.time()}
     deadline = time.time() + timeout

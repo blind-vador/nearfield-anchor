@@ -38,6 +38,7 @@ import voix  # noqa: E402
 
 LOG_DIR = "/media/nas/nd1/server/radio_log"
 KEEP_DIR = "/media/nas/nd2/storage/radio"
+UPDATE_FLAG = "/tmp/journal_maj"  # touche par radio_log a chaque captation enregistree
 LOCK_WAIT_SEC = 10
 RATE = 48000
 
@@ -110,9 +111,22 @@ class Player:
         self.gain = 1.0  # volume de lecture (dialogue "archives" : fleches gauche/droite)
         self._generation = 0
         self._guard = threading.Lock()
+        self._ticket = None  # sortie son prise seulement pendant une ecoute
+
+    def _hold(self):
+        import audio_lock
+        if self._ticket is None:
+            self._ticket = audio_lock.acquire("console", timeout=LOCK_WAIT_SEC)
+
+    def _let_go(self):
+        import audio_lock
+        ticket, self._ticket = self._ticket, None
+        if ticket is not None:
+            audio_lock.release(ticket)
 
     def play(self, path):
         self.stop()
+        self._hold()
         self._ffmpeg = subprocess.Popen(
             ["ffmpeg", "-v", "quiet", "-nostdin", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(RATE), "-"],
             stdout=subprocess.PIPE)
@@ -127,6 +141,9 @@ class Player:
         while True:
             data = proc.stdout.read(RATE // 5 * 2)  # 200 ms
             if not data:
+                with self._guard:
+                    if generation == self._generation:
+                        self._let_go()  # fin de l'ecoute : les annonces peuvent passer
                 return
             if self.gain != 1.0:
                 data = audioop.mul(data, 2, self.gain)  # ecretage automatique au-dela du maximum
@@ -142,6 +159,7 @@ class Player:
     def stop(self):
         with self._guard:
             self._generation += 1
+            self._let_go()
         if self._ffmpeg is not None and self._ffmpeg.poll() is None:
             self._ffmpeg.terminate()
             try:
@@ -159,14 +177,18 @@ class Player:
             self._aplay.kill()
 
 
-def _acquire_audio_lock():
+def _journal_opened(is_open):
+    """Pendant que le journal (ou les archives) est ouvert, les captations
+    radio s'enregistrent en silence (lib/audio_lock.py, SILENT_WHEN_JOURNAL)."""
     import audio_lock
-    return audio_lock.acquire("console", timeout=LOCK_WAIT_SEC)
+    audio_lock.set_journal_open(is_open)
 
 
-def _release_audio_lock(lock):
-    import audio_lock
-    audio_lock.release(lock)
+def _update_stamp():
+    try:
+        return os.path.getmtime(UPDATE_FLAG)
+    except OSError:
+        return 0.0
 
 
 def _keep(stamp, path):
@@ -205,8 +227,23 @@ def run(key_source, say, out):
     order = sorted(days, reverse=True)  # du plus recent au plus ancien
     # rec_i = -1 : "avant le premier" -- la premiere fleche bas joue le 1er enregistrement.
     day_i, rec_i = 0, -1
-    lock = _acquire_audio_lock()
+    _journal_opened(True)
     player = Player()
+    seen_update = _update_stamp()
+
+    def refresh():
+        """Nouvelle captation enregistree pendant que le journal est ouvert :
+        on la reprend dans la liste, sans perdre la position courante."""
+        nonlocal days, order, day_i, rec_i
+        current_day = order[day_i] if order else None
+        current = days[current_day][rec_i][1] if current_day and rec_i >= 0 else None
+        fresh = scan_recordings()
+        if not fresh:
+            return
+        days, order = fresh, sorted(fresh, reverse=True)
+        day_i = order.index(current_day) if current_day in order else 0
+        paths = [p for _, p in days[order[day_i]]]
+        rec_i = paths.index(current) if current in paths else min(rec_i, len(paths) - 1)
 
     def announce_day():
         date = order[day_i]
@@ -220,6 +257,10 @@ def run(key_source, say, out):
         for key in key_source:
             if key == "\x1b":
                 break
+            stamp_now = _update_stamp()
+            if stamp_now != seen_update:
+                seen_update = stamp_now
+                refresh()
             recs = days[order[day_i]]
             text = None
             if key in ("\t", "\x1b[Z"):
@@ -292,5 +333,5 @@ def run(key_source, say, out):
                 say(text)
     finally:
         player.close()
-        _release_audio_lock(lock)
+        _journal_opened(False)
     return "Journal radio fermé."

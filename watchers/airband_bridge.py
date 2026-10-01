@@ -7,7 +7,7 @@ import time
 
 from sound_player import AUDIO_DEVICE, play_sound_effect
 import sound_player
-from speak import speak_with_lead_sound
+from speak import journal_notice, speak_with_lead_sound
 import audio_lock
 import radio_log
 import noise_signatures
@@ -396,6 +396,8 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
     finally:
         sound_player.set_recording_session(None)
         audio_lock.release(lock)
+        if lock.silent:
+            journal_notice()
 
 
 def scan_window(window, dwell_sec=25):

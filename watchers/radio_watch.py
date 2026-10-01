@@ -15,7 +15,7 @@ import socket
 import numpy as np
 import requests
 
-from speak import speak, speak_with_lead_sound
+from speak import journal_notice, speak, speak_with_lead_sound
 import audio_lock
 import airband_bridge
 import radio_log
@@ -1299,6 +1299,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     # entendu -- un candidat ecarte comme bruit n'est pas archive.
     log_session = radio_log.RadioLogSession(band_label)
     sound_player.set_recording_session(log_session)
+    saved = False
     try:
         protocol = try_digital_voice_decode(freq, band_label=band_label) if mode == "nfm" else None
         if protocol:
@@ -1306,6 +1307,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             path = log_session.finalize()
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
                                             {"niveau_db": level_db, "numerique": True})
+            saved = True
             return True
         if stream_until_quiet(freq, mode, band_label):
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
@@ -1313,6 +1315,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path,
                                             _last_stream_fingerprint,
                                             dict(_last_stream_metrics, niveau_db=level_db))
+            saved = True
             return True
         log_session.discard()
         extra = _extra_digital_mode(freq) if mode == "nfm" else None
@@ -1325,6 +1328,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
                 path = log_session.finalize()
                 noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
                                                 {"niveau_db": level_db, "numerique": True, "mode_numerique": extra[1]})
+                saved = True
                 return True
             log_session.discard()
         print("[radio_watch] candidat ecarte (bruit, pas de signal reel)")
@@ -1334,6 +1338,9 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     finally:
         sound_player.set_recording_session(None)
         audio_lock.release(lock)
+        if saved and lock.silent:
+            # Journal ouvert : capte en silence, une phrase courte previent.
+            journal_notice()
 
 
 def scan_fm_band(band):

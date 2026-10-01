@@ -21,6 +21,15 @@ from sound_paths import RADIO_LOG_DIR
 # radio_scaner/train_scaner, deja tous places ici pour rester accessibles
 # depuis Windows. Chemin de base centralise dans sound_paths.py (2026-08-31).
 RETENTION_HOURS = 48
+JOURNAL_UPDATE_FLAG = "/tmp/journal_maj"
+
+
+def _touch(path):
+    try:
+        with open(path, "a"):
+            os.utime(path)
+    except OSError:
+        pass
 
 # Sample rate commun de sortie -- tous les segments (chimes mp3, annonces
 # TTS mp3, contenu radio brut a des sample rates varies selon le chemin
@@ -135,6 +144,7 @@ class RadioLogSession:
             )
             if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
                 print(f"[radio_log] capture enregistree : {out_path}")
+                _touch(JOURNAL_UPDATE_FLAG)  # le journal ouvert se met a jour
                 return out_path
             print(f"[radio_log] assemblage echoue : {result.stderr.decode(errors='replace')[-300:]}")
             return None

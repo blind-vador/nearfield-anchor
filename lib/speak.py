@@ -73,6 +73,21 @@ def _speech_timeout(path):
     return max(SPEECH_TIMEOUT_MIN_SEC, seconds + SPEECH_TIMEOUT_MARGIN_SEC)
 
 
+JOURNAL_NOTICE = "Captation entrante ajoutée au journal."
+
+
+def journal_notice():
+    """Previent qu'une captation a ete enregistree en silence pendant que le
+    journal est ouvert (audio_lock.SILENT_WHEN_JOURNAL). Source console :
+    passe entre deux ecoutes du journal."""
+    lock = audio_lock.acquire("console", timeout=120)
+    try:
+        if not lock.dropped:
+            speak_cloud(JOURNAL_NOTICE, repetitive=True)
+    finally:
+        audio_lock.release(lock)
+
+
 def speak(text, voice="fr"):
     """Repli local garanti (espeak) -- zero dependance reseau, toujours
     disponible. Utilisable directement pour un texte sans son
