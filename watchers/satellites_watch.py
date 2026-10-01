@@ -1,16 +1,16 @@
 """Ecoute des passages de satellites (lib/satellites.py), lancee par le
 scanner quand un passage commence ; la cle est occupee pendant le passage.
 
-  meteo  enregistrement I/Q large (137,1 et 137,9 MHz d'un coup) sur le
-         disque de stockage, puis traitement en arriere-plan, au ralenti
-         (tools/meteor_traitement.py) : image des nuages decrite par Gemini ;
+  meteo  enregistrement I/Q large (137,1 et 137,9 MHz d'un coup) dans un
+         travail du pont (lib/compagnon.py, disque nd1) : la machine compagne
+         calcule l'image, le Pi la fait decrire par Gemini et l'annonce
+         (resultats_compagnon). Sans machine compagne, pas d'ecoute Meteor ;
   iss    relais APRS de la station spatiale (145,825 MHz) : paquets annonces ;
   fm     relais FM radioamateur : le passage n'est garde au journal que si
          une voix a ete entendue (detecteur de voix du scanner).
 """
 import os
 import subprocess
-import sys
 import time
 
 import radio_log
@@ -18,10 +18,8 @@ import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
 
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
-METEOR_DIR = "/media/nas/nd2/storage/radio/satellites"
 METEOR_CENTER_HZ = 137_500_000
 METEOR_RATE = 1_024_000
-METEOR_SCRIPT = "/home/vador/autopilot/pi_console/meteor_traitement.py"
 FM_RATE = 22050
 FM_CHUNK_SEC = 0.2
 FM_MIN_VOICE_SEC = 4
@@ -34,25 +32,21 @@ def _announce(text, label):
 
 
 def _meteo(p, seconds):
-    os.makedirs(METEOR_DIR, exist_ok=True)
-    stamp = time.strftime("%Y-%m-%d_%Hh%M")
-    path = os.path.join(METEOR_DIR, f"{p['nom'].replace(' ', '_')}_{stamp}.u8")
+    import compagnon
+    params = {"satellite": p["nom"], "fichier": "iq.u8", "centre": METEOR_CENTER_HZ, "taux": METEOR_RATE,
+              "frequences": p["frequences"], "format": "u8"}
+    job_id, folder, job = compagnon.new_job("meteor", params)
+    path = os.path.join(folder, "iq.u8")
     proc = subprocess.run(["rtl_sdr", "-f", str(METEOR_CENTER_HZ), "-s", str(METEOR_RATE), "-g", "40",
                            "-n", str(int(seconds * METEOR_RATE)), path],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=seconds + 60)
     if proc.returncode != 0 or not os.path.exists(path):
         print(f"[satellites_watch] enregistrement Meteor echoue ({proc.returncode})")
+        import shutil
+        shutil.rmtree(folder, ignore_errors=True)
         return
-    # Traitement au ralenti, hors du scanner (CPU, chaleur) : demodulation,
-    # decodage, image decrite par Gemini puis annoncee. Lance comme tache
-    # utilisateur systemd a part : un simple processus detache est tue avec
-    # le service quand le scanner redemarre (constate le 2026-10-01).
-    env = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{os.getuid()}")
-    unit = f"meteor-{time.strftime('%Y%m%d-%H%M')}"
-    subprocess.Popen(["systemd-run", "--user", f"--unit={unit}", "--quiet", "nice", "-n", "19",
-                      sys.executable, METEOR_SCRIPT, path, p["nom"]],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
-    print(f"[satellites_watch] passage Meteor enregistre : {path}")
+    compagnon.submit(job)  # la machine compagne prend la suite
+    print(f"[satellites_watch] passage Meteor confie a la machine compagne : {job_id}")
 
 
 def _iss(p, seconds):

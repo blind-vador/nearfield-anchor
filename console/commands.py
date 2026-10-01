@@ -465,6 +465,13 @@ COMMANDS = [
             keywords=["environnement", "rivieres", "riviere", "seisme", "seismes", "tremblement de terre",
                       "qualite de l air", "pollution", "pollen", "pollens", "meteo des aeroports", "crue de la riviere"],
             examples=["la rivière monte-t-elle", "y a-t-il eu un séisme", "comment est l'air"]),
+    # Avant "satellites" : "machine compagne" ne doit pas lister les passages.
+    Command("appairage", "relier une machine compagne qui calcule à la place du Pi, les images de satellites météo par exemple", None,
+            keywords=["appairage", "appairer", "jumelage", "jumeler", "nouvelle machine compagne", "ajoute une machine"],
+            examples=["appaire mon mac", "ajoute une machine compagne"]),
+    Command("compagnon", "état des machines compagnes : présentes, ce qu'elles savent faire, travaux en attente", None,
+            keywords=["compagnon", "compagne", "compagnons", "machine compagne", "machines compagnes", "pont", "bridge"],
+            examples=["le mac est-il là", "état du pont"]),
     Command("satellites", "prochains passages de satellites écoutés : météo, station spatiale, radioamateurs", None,
             keywords=["satellites", "satellite", "passages", "station spatiale", "iss", "meteor"],
             examples=["quand passe l'iss", "prochain satellite"]),

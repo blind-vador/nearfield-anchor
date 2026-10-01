@@ -37,6 +37,7 @@ import voix_cmd  # noqa: E402
 import conseils  # noqa: E402
 import priorites  # noqa: E402
 import observation  # noqa: E402
+import appairage  # noqa: E402
 import simulation  # noqa: E402
 import veilles  # noqa: E402
 import vision  # noqa: E402
@@ -249,6 +250,11 @@ def run_command(line, key_source, last_response):
         return commands.voitures_cmd(line)
     if cmd.name == "voix":
         return voix_cmd.run(key_source, voix.say, out)
+    if cmd.name == "appairage":
+        return appairage.run(key_source, voix.say, out)
+    if cmd.name == "compagnon":
+        import compagnon
+        return compagnon.status()
     if cmd.name == "satellites":
         import satellites
         return satellites.spoken_list()

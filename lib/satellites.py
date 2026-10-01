@@ -152,6 +152,12 @@ def due(lead_sec=90):
     now = time.time()
     ready = [p for p in state["passages"]
              if p["debut"] - lead_sec <= now < p["fin"] - 120 and f"{p['nom']}|{int(p['debut'])}" not in state["faits"]]
+    if any(p["famille"] == "meteo" for p in ready):
+        # Image Meteor : traitement trop lourd pour le Pi, seulement si une
+        # machine compagne appairee et presente sait le faire (lib/compagnon.py).
+        import compagnon
+        if not compagnon.available("meteor"):
+            ready = [p for p in ready if p["famille"] != "meteo"]
     if not ready:
         return None
     best = max(ready, key=lambda p: p["elevation_max"])
@@ -165,8 +171,13 @@ def due(lead_sec=90):
 def spoken_list(hours=12):
     """Commande "satellites" : prochains passages ecoutes."""
     passes = upcoming(hours)
+    import compagnon
+    note = ""
+    if not compagnon.available("meteor"):
+        passes = [p for p in passes if p["famille"] != "meteo"]
+        note = " Les satellites météo ne sont écoutés que quand une machine compagne est là pour calculer les images."
     if not passes:
-        return f"Aucun passage de satellite assez haut dans les {hours} prochaines heures."
+        return f"Aucun passage de satellite assez haut dans les {hours} prochaines heures." + note
     families = {"meteo": "satellite météo", "iss": "station spatiale", "fm": "satellite radioamateur"}
     hour = lambda h: "minuit" if h == 0 else "midi" if h == 12 else f"{h} heures"
     lines = []
@@ -175,4 +186,4 @@ def spoken_list(hours=12):
         minutes = round((p["fin"] - p["debut"]) / 60)
         lines.append(f"{hour(start.hour)} {start.minute:02d}, {families[p['famille']]} {p['nom']}, "
                      f"{p['elevation_max']} degrés au plus haut, {minutes} minutes")
-    return f"{len(passes)} passages dans les {hours} prochaines heures : " + " ; ".join(lines) + "."
+    return f"{len(passes)} passages dans les {hours} prochaines heures : " + " ; ".join(lines) + "." + note
