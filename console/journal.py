@@ -57,7 +57,7 @@ RE_TIME_ONLY = re.compile("_" + _TIME)
 TITLE = "Journal radio."
 CONSIGNE = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : "
             "écouter les enregistrements. Flèche droite : garder. Flèche gauche : rejeter comme "
-            "parasite. N : noter. Entrée : rejouer. Échap : fermer. F1 redit ces touches.")
+            "parasite. V : valider, bonne prise. N : noter en détail. Entrée : rejouer. Échap : fermer. F1 redit ces touches.")
 
 
 def _date(day, month_name, year):
@@ -249,7 +249,7 @@ def run(key_source, say, out):
                         # selectionne (sinon on croit l'avoir ecoute alors que non).
                         voix.say_blocking(bound)
                         player.play(recs[rec_i][1])
-            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N"):
+            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V"):
                 text = "Choisis d'abord un enregistrement avec la flèche bas."
             elif key in ("\r", "\n"):
                 player.play(recs[rec_i][1])
@@ -279,6 +279,10 @@ def run(key_source, say, out):
                         text = None
                         player.play(recs[rec_i][1])
                         out(f"[{os.path.basename(recs[rec_i][1])}]\n")
+            elif key in ("v", "V"):
+                # La lecture continue : on valide sans interrompre l'ecoute.
+                stamp, path = recs[rec_i]
+                text = notation.validate(path, stamp)
             elif key in ("n", "N"):
                 player.stop()
                 stamp, path = recs[rec_i]
@@ -286,7 +290,7 @@ def run(key_source, say, out):
             elif conseils.is_help(key):
                 text = CONSIGNE
             else:
-                text = "Tab, flèches, N, entrée, ou échap pour fermer. F1 pour l'aide."
+                text = "Tab, flèches, V, N, entrée, ou échap pour fermer. F1 pour l'aide."
             if text:
                 out(f"[{text}]\n")
                 say(text)

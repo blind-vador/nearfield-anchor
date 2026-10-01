@@ -5174,3 +5174,13 @@ Demande utilisateur : tout ecouter de ce qui est ouvert autour de chez lui
   lecture, on l'arrete comme avant. Player.playing() (fil de relais vivant).
 - voix.say_blocking : phrase puis enregistrement sans chevauchement, sans
   reprendre le verrou audio deja tenu par le dialogue.
+
+### Journal : V pour valider une bonne prise (2026-10-01)
+
+- Touche V : note "bonne prise" en une touche, sans dialogue et sans
+  couper l'ecoute (notation.validate) : lisibilite 5, aucun souffle ni
+  brouillage, son naturel, volume correct, stable, debut complet, fin
+  correcte, meritait oui, certitude sure ; contenu "non_precise" (ignore par
+  le bilan dans les parts par contenu) ; marquee validation_rapide. Pique la
+  bande comme une note "oui". Une note detaillee existante n'est pas
+  ecrasee (N pour la modifier) ; deja validee : rien de plus.

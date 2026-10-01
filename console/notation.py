@@ -75,6 +75,49 @@ def _field_text(i, values):
     return f"{question} : {options[values[i]][1]}."
 
 
+# Validation rapide (touche V du journal) : "bonne prise", sans dialogue.
+# Le contenu n'est pas precise (voix, tonalites...) : "non_precise", que le
+# bilan ignore dans ses parts par type de contenu.
+GOOD_TAKE = {"contenu": "non_precise", "lisibilite": 5, "souffle": "aucun", "brouillage": "aucun",
+             "son": "naturel", "volume": "correct", "stabilite": "stable", "debut": "complet",
+             "fin": "correcte", "merite": "oui", "certitude": "sur"}
+
+
+def _record(info, path, stamp, reponses, rapide=False):
+    note = {
+        "fichier": os.path.basename(path),
+        "capture_le": stamp.isoformat(),
+        "note_le": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "freq_hz": info.get("freq_hz"), "label": info.get("label"),
+        "bande": info.get("target"), "source": info.get("source"), "mode": info.get("mode"),
+        "mesures": info.get("metrics") or {},
+        "empreinte": info.get("fingerprint"),
+        "reponses": reponses,
+    }
+    if rapide:
+        note["validation_rapide"] = True
+    total = _save_note(note)
+    try:  # "meritait : oui" pique la bande, "non" l'apaise
+        import attention
+        attention.stimulate(note["bande"], attention.NOTE_POINTS.get(reponses.get("merite"), 0))
+    except Exception:
+        pass
+    return total
+
+
+def validate(path, stamp):
+    """Bonne prise, en une touche : note maximale sur tous les criteres."""
+    if not os.path.ismount("/media/nas/nd1"):
+        return "Le disque server n'est pas accessible, validation impossible."
+    previous = next((n for n in load_notes() if n.get("fichier") == os.path.basename(path)), None)
+    if previous and previous.get("validation_rapide"):
+        return "Déjà validé."
+    if previous:
+        return "Déjà noté en détail : N pour modifier la note."
+    total = _record(ns.capture_info(path) or {}, path, stamp, dict(GOOD_TAKE), rapide=True)
+    return f"Validé, bonne prise. {total} note{'s' if total > 1 else ''} au total."
+
+
 def rate(key_source, say, out, path, stamp):
     """Dialogue de notation ; rend la phrase de sortie."""
     if not os.path.ismount("/media/nas/nd1"):
@@ -102,22 +145,8 @@ def rate(key_source, say, out, path, stamp):
             values[field] = (values[field] + (1 if key == "\x1b[C" else -1)) % n
             text = FIELDS[field][2][values[field]][1]
         elif key in ("\r", "\n") and field == OK_INDEX:
-            note = {
-                "fichier": os.path.basename(path),
-                "capture_le": stamp.isoformat(),
-                "note_le": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                "freq_hz": info.get("freq_hz"), "label": info.get("label"),
-                "bande": info.get("target"), "source": info.get("source"), "mode": info.get("mode"),
-                "mesures": info.get("metrics") or {},
-                "empreinte": info.get("fingerprint"),
-                "reponses": {code: FIELDS[i][2][values[i]][0] for i, (code, *_) in enumerate(FIELDS)},
-            }
-            total = _save_note(note)
-            try:  # "meritait : oui" pique la bande, "non" l'apaise
-                import attention
-                attention.stimulate(note["bande"], attention.NOTE_POINTS.get(note["reponses"]["merite"], 0))
-            except Exception:
-                pass
+            reponses = {code: FIELDS[i][2][values[i]][0] for i, (code, *_) in enumerate(FIELDS)}
+            total = _record(info, path, stamp, reponses)
             return f"Note enregistrée. {total} note{'s' if total > 1 else ''} au total."
         elif key in ("\r", "\n"):
             text = "Descends jusqu'à OK pour enregistrer."
