@@ -43,6 +43,11 @@ WX_KEEP_SEC = 3 * 3600
 LINE = re.compile(r"^APRS: (\S+>.*)$")
 
 _memory = vd.Memory(STATE_PATH)
+# Ecoute d'un relais en orbite (passage de l'ISS, satellites_watch) : les
+# stations sont alors lointaines (toute l'Europe), annoncees "via" le relais,
+# dans la limite de VIA_MAX_ANNOUNCES par passage.
+_via = {"nom": None, "annonces": 0}
+VIA_MAX_ANNOUNCES = 6
 
 
 def _weather_text(wx):
@@ -104,6 +109,14 @@ def _process(packet):
     if lat is None or lon is None:
         return False
     km = vd.distance_km(lat, lon)
+    if _via["nom"]:
+        if _via["annonces"] >= VIA_MAX_ANNOUNCES:
+            return False
+        name = (packet.get("object_name") or call).strip()
+        _via["annonces"] += 1
+        vd.announce(f"Via {_via['nom']} : station {vd.spell(name)}, {vd.where(lat, lon)}.", SOUND,
+                    f"APRS_via_{name}", "aprs_watch")
+        return True
     if km > MAX_DISTANCE_KM:
         return False
     name = (packet.get("object_name") or packet.get("item_name") or call).strip()
@@ -198,10 +211,12 @@ def _reader(proc, packets):
             vd.archive("aprs", {"raw": m.group(1), "erreur": str(exc)[:100]})
 
 
-def scan_window(dwell_sec=30):
-    """Une passe d'ecoute APRS. Rend True si au moins une annonce a eu lieu."""
+def scan_window(dwell_sec=30, freq_hz=APRS_FREQ_HZ, via=None):
+    """Une passe d'ecoute APRS. Rend True si au moins une annonce a eu lieu.
+    via : nom d'un relais en orbite ecoute sur freq_hz (passage de l'ISS)."""
+    _via.update(nom=via, annonces=0)
     try:
-        rtl = subprocess.Popen(["rtl_fm", "-f", str(APRS_FREQ_HZ), "-M", "fm", "-s", str(SAMPLE_RATE),
+        rtl = subprocess.Popen(["rtl_fm", "-f", str(freq_hz), "-M", "fm", "-s", str(SAMPLE_RATE),
                                 "-l", "0", "-E", "dc", "-"],
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
@@ -230,6 +245,7 @@ def scan_window(dwell_sec=30):
                 if _process(packets.pop(0)):
                     announced = True
     finally:
+        _via.update(nom=None)
         for p in (rtl, mm):
             if p.poll() is None:
                 p.terminate()

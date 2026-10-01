@@ -22,6 +22,8 @@ import radio_log
 import sound_player
 import audio_filters
 import acars_watch
+import satellites
+import satellites_watch
 import relais
 import meteo_locale
 import adsb_local_watch
@@ -1314,6 +1316,30 @@ DATA_SCANNERS = {
 }
 
 
+def _speech_detector():
+    """Detecteur de voix (RNNoise, comme les captations) pour les passages
+    de satellites radioamateurs : fonction (morceau PCM, frequence) -> voix ?"""
+    state = {"rn": _rnnoise_create(), "rs": None, "p": None}
+
+    def check(chunk, rate):
+        voice, _, state["rs"], state["p"] = _chunk_is_signal(chunk, rate, state["rn"], state["rs"], state["p"])
+        return voice
+    return check
+
+
+def _satellite_pass_if_due():
+    """Passage de satellite qui commence (lib/satellites.py) : il prend la
+    cle pour sa duree (satellites_watch)."""
+    try:
+        p = satellites.due()
+    except Exception as exc:  # orbites indisponibles : le scan continue
+        print(f"[radio_watch] satellites : {exc!r}")
+        return
+    if p:
+        print(f"[radio_watch] passage {p['nom']} ({p['famille']}, {p['elevation_max']} degres)")
+        satellites_watch.run_pass(p, _speech_detector)
+
+
 def _meteo_temp_limit():
     """(temperature maxi permise pour la veille meteo, niveau de menace)."""
     level = meteo_locale.published_level()
@@ -1846,6 +1872,7 @@ def main():
         # d'exploration pour les bandes balayees. Meme dongle, toujours en
         # sequence -- jamais deux ecoutes en parallele.
         _meteo_scan_if_requested()
+        _satellite_pass_if_due()
         try:
             plan = attention.plan_cycle(airband_bridge.AIRBAND_WINDOWS, sweep_bands)
         except Exception as exc:  # l'attention ne doit jamais arreter la veille
@@ -1858,6 +1885,7 @@ def main():
             if _lock_pending():
                 break
             _meteo_scan_if_requested()  # la console attend son bulletin : on n'attend pas la fin du cycle
+            _satellite_pass_if_due()
             if kind == "airband":
                 hit = airband_bridge.scan_window(obj, dwell_sec=dwell)
             elif kind == "data":

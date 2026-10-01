@@ -5451,3 +5451,26 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   orage ou cumulonimbus au METAR fait monter la menace au niveau 2.
 - Teleray (radioactivite IRSN) : pas d'acces ouvert trouve ; coupures
   d'electricite : pas d'API ouverte. Non branches.
+
+### Satellites (2026-10-01)
+
+- lib/satellites.py : orbites Celestrak (weather, stations, amateur) et
+  emetteurs actifs SatNOGS, rafraichis chaque jour ; passages pyephem
+  (python3-ephem) au-dessus de 25 degres pour Meteor, 20 pour l'ISS, 55 pour
+  les satellites radioamateurs FM (4 par jour au plus, les plus hauts).
+- Le scanner verifie entre chaque fenetre si un passage commence
+  (satellites.due, 90 s d'avance) ; watchers/satellites_watch.py le suit
+  jusqu'au bout (annonce de debut) :
+  - Meteor-M2 3 / M2 4 : I/Q 8 bits 1,024 MHz centre 137,5 MHz (couvre
+    137,1 et 137,9) sur stockage/radio/satellites ; tools/meteor_traitement.py
+    en arriere-plan (nice 19) : extraction des deux frequences (filtre
+    calcule aux seuls echantillons gardes, decimation 6), meteor_demod
+    72/80k, meteor_decode variantes, meilleure image gardee (PNG), decrite
+    par Gemini puis annoncee ; brut efface. ~1,2 s de traitement par seconde
+    enregistree.
+  - ISS : APRS 145,825 MHz, stations annoncees "via la station spatiale
+    internationale" (6 par passage au plus, distance ignoree).
+  - Satellites FM (SO-50, AO-27, AO-123, Diwata-2B, Fox-1B, Tevel...) :
+    rtl_fm 40 kHz (Doppler), detecteur de voix RNNoise du scanner ; au journal
+    seulement si au moins 4 s de voix.
+- Commande "satellites" : prochains passages.

@@ -42,7 +42,7 @@ export DEBIAN_FRONTEND=noninteractive
 echo "=== 1/6 : paquets systeme (apt) ==="
 apt-get update
 apt-get install -y \
-    espeak ffmpeg mpg123 sox multimon-ng rtl-433 dump1090-mutability libglib2.0-dev libairspy-dev libiio-dev rtl-sdr librtlsdr-dev libjansson-dev \
+    espeak ffmpeg mpg123 sox python3-ephem multimon-ng rtl-433 dump1090-mutability libglib2.0-dev libairspy-dev libiio-dev rtl-sdr librtlsdr-dev libjansson-dev \
     build-essential cmake git python3-pip pkg-config wget \
     libconfig++-dev libmp3lame-dev libshout3-dev libfftw3-dev libpulse-dev \
     libsndfile1-dev libitpp-dev libncurses-dev libcodec2-dev portaudio19-dev \
@@ -121,6 +121,18 @@ if [ ! -x /usr/local/bin/rs41mod ]; then
         && gcc m10m20mod.c demod_mod.o -lm -O2 -w -o m10m20mod \
         && gcc dfm09mod.c demod_mod.o -lm -O2 -w -o dfm09mod \
         && install -m 755 rs41mod m10m20mod dfm09mod /usr/local/bin/)
+fi
+
+# Satellites Meteor-M (watchers/satellites_watch.py, tools/meteor_traitement.py) :
+# demodulateur et decodeur LRPT libres de dbdexter-dev.
+if [ ! -x /usr/local/bin/meteor_decode ]; then
+    echo "-- meteor_demod / meteor_decode --"
+    for d in meteor_demod meteor_decode; do
+        rm -rf "$BUILD_DIR/$d"
+        git clone --depth 1 "https://github.com/dbdexter-dev/$d.git" "$BUILD_DIR/$d"
+        mkdir -p "$BUILD_DIR/$d/build"
+        (cd "$BUILD_DIR/$d/build" && cmake .. && make -j4 && install -m 755 "$d" /usr/local/bin/)
+    done
 fi
 
 # VDL2 (successeur de l'ACARS, watchers/vdl2_watch.py) : a compiler, comme

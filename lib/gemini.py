@@ -10,11 +10,16 @@ MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"]
 TIMEOUT = 30
 
 
-def ask(prompt, temperature=0.8):
+def ask(prompt, temperature=0.8, jpeg=None):
+    """jpeg : image (octets JPEG) jointe a la question, pour la description d'images."""
     key = reglages.cle("gemini")
     if not key:
         return None, "pas de clé Gemini"
-    body = {"contents": [{"parts": [{"text": prompt}]}], "generationConfig": {"temperature": temperature}}
+    parts = [{"text": prompt}]
+    if jpeg is not None:
+        import base64
+        parts.append({"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(jpeg).decode()}})
+    body = {"contents": [{"parts": parts}], "generationConfig": {"temperature": temperature}}
     reason = "Gemini ne répond pas"
     for model in MODELS:
         try:
