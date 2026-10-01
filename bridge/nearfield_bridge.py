@@ -48,6 +48,7 @@ BRIDGES = os.path.join(HOME, "ponts")
 STATS = os.path.join(HOME, "stats")
 PENDING = os.path.join(HOME, "appairage.json")
 BIN_DIR = os.path.join(HOME, "bin")
+GR_PYTHON = os.path.join(HOME, "gnuradio", "bin", "python")
 LABEL = "local.nearfield.bridge"
 PLIST = os.path.expanduser("~/Library/LaunchAgents/%s.plist" % LABEL)
 SHARE_GUESSES = ["/Volumes/server/server/nearfield-anchor-bridge",  # Mac
@@ -129,8 +130,22 @@ def update_stats(pi, **fields):
         return data
 
 
+_lora_ok = {}
+
+
+def _lora_ready():
+    """GNU Radio + gr-lora_sdr installes (verifie une fois par session)."""
+    if "ok" not in _lora_ok:
+        try:
+            _lora_ok["ok"] = subprocess.run([GR_PYTHON, "-c", "import gnuradio.lora_sdr"], capture_output=True,
+                                            timeout=60).returncode == 0
+        except (OSError, subprocess.TimeoutExpired):
+            _lora_ok["ok"] = False
+    return _lora_ok["ok"]
+
+
 def capabilities():
-    caps = []
+    caps = ["lora"] if _lora_ready() else []
     try:
         import numpy  # noqa: F401
         if all(os.access(os.path.join(BIN_DIR, b), os.X_OK) for b in ("meteor_demod", "meteor_decode")):
@@ -326,8 +341,16 @@ def forget(pi):
 
 # --- service ----------------------------------------------------------------------------
 
-_jobs = queue.Queue()
+# Deux files : les rafales LoRa (petites, a annoncer tout de suite) ne doivent
+# pas attendre derriere un passage Meteor de plusieurs minutes.
+FAST = ("lora",)
+_queues = {"rapide": queue.Queue(), "lourd": queue.Queue()}
 _links = {}  # pi -> Link
+
+
+def _wake_workers(pi):
+    for q in _queues.values():
+        q.put(pi)
 
 
 class Link(threading.Thread):
@@ -389,7 +412,7 @@ class Link(threading.Thread):
             self.channel = channel
         update_stats(self.pi, connecte=True, depuis=time.time(), erreur=None)
         log("connecte a %s" % self.pi)
-        _jobs.put(self.pi)  # ce qui attendait
+        _wake_workers(self.pi)  # ce qui attendait
         beat = threading.Thread(target=self._beat, daemon=True)
         beat.start()
         try:
@@ -399,7 +422,7 @@ class Link(threading.Thread):
                     break
                 if msg.get("type") == "travail":
                     log("%s : travail %s annonce" % (self.pi, msg.get("travail")))
-                    _jobs.put(self.pi)
+                    _wake_workers(self.pi)
         except (OSError, ValueError) as exc:
             log("%s : liaison coupee (%r)" % (self.pi, exc))
         finally:
@@ -434,8 +457,8 @@ class Link(threading.Thread):
             delay = min(delay * 2, RECONNECT_SEC[1])
 
 
-def _claim(share):
-    """Prend le plus ancien travail libre (renommage atomique) : (id, dossier, travail)."""
+def _claim(share, fast):
+    """Prend le plus ancien travail libre de sa file (renommage atomique) : (id, dossier, travail)."""
     folder = os.path.join(share, "travaux")
     try:
         names = sorted(os.listdir(folder))
@@ -445,7 +468,7 @@ def _claim(share):
     for job_id in names:
         src = os.path.join(folder, job_id, "travail.json")
         job = _read(src)
-        if not job or job.get("type") not in caps:
+        if not job or job.get("type") not in caps or (job.get("type") in FAST) != fast:
             continue
         dst = os.path.join(folder, job_id, "travail.pris.json")
         try:
@@ -456,21 +479,36 @@ def _claim(share):
     return None
 
 
+def _lora(job, folder):
+    """Rafale LoRa : tous les facteurs d'etalement, du plus probable au moins."""
+    p = job["params"]
+    out = subprocess.run([GR_PYTHON, os.path.join(HOME, "lora_decode.py"), os.path.join(folder, p["fichier"]),
+                          str(p["taux"]), str(p["largeur"]), str(p["sync"]), ",".join(str(s) for s in p["sfs"])],
+                         capture_output=True, text=True, timeout=300).stdout
+    lines = out.strip().splitlines()
+    frames = json.loads(lines[-1]) if lines else []
+    _write(os.path.join(folder, "trames.json"), frames)
+    good = sum(1 for f in frames if f.get("crc_ok"))
+    return "fait", ["trames.json"], "%d trame%s valide%s" % (good, "s" if good > 1 else "", "s" if good > 1 else "")
+
+
 def _process(job, folder):
+    if job.get("type") == "lora":
+        return _lora(job, folder)
     if job.get("type") == "meteor":
         import meteor
         return meteor.process(folder, job["params"], BIN_DIR, os.path.join(HOME, "calcul"))
     return "echec", [], "cette machine ne sait pas faire « %s »" % job.get("type")
 
 
-def _work(pi):
+def _work(pi, fast):
     card = bridges().get(pi)
     share = find_share(card) if card else None
     if not share:
         update_stats(pi, erreur="disque du NAS absent") if card else None
         return
     while True:
-        claimed = _claim(share)
+        claimed = _claim(share, fast)
         if not claimed:
             return
         job_id, folder, job = claimed
@@ -482,7 +520,7 @@ def _work(pi):
         started = time.time()
         # Empeche la veille pendant le calcul (sans toucher aux reglages du Mac).
         awake = None
-        if sys.platform == "darwin":
+        if sys.platform == "darwin" and not fast:
             awake = subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
         try:
             state, outputs, message = _process(job, folder)
@@ -498,12 +536,14 @@ def _work(pi):
             "type": "resultat", "travail": job_id, "compagnon": conf["id"], "etat": state, "message": message,
             "duree": duration, "sorties": {name: proto.file_digest(os.path.join(folder, name)) for name in outputs}})
         _write(os.path.join(folder, "resultat.json"), result)
-        data = stats(pi)
         ok = state == "fait"
-        update_stats(pi, faits=data.get("faits", 0) + ok, echecs=data.get("echecs", 0) + (not ok),
-                     secondes=data.get("secondes", 0) + duration, en_cours=None,
-                     dernier={"t": time.time(), "type": job.get("type"), "etat": state, "message": message,
-                              "duree": duration})
+        with _stats_lock:  # deux files peuvent finir en meme temps
+            data = stats(pi)
+            data.update(faits=data.get("faits", 0) + ok, echecs=data.get("echecs", 0) + (not ok),
+                        secondes=data.get("secondes", 0) + duration, en_cours=None,
+                        dernier={"t": time.time(), "type": job.get("type"), "etat": state, "message": message,
+                                 "duree": duration})
+            _write(os.path.join(STATS, pi + ".json"), data)
         log("%s : %s %s (%s), %d s" % (pi, job_id, state, message, duration))
         if link:
             link.send({"type": "fini", "travail": job_id})
@@ -514,15 +554,16 @@ def service():
     key()
     log("service demarre : %s (%s), sait faire : %s" % (conf["nom"], conf["id"], ", ".join(capabilities()) or "rien"))
 
-    def worker():
+    def worker(name):
         while True:
-            pi = _jobs.get()
+            pi = _queues[name].get()
             try:
-                _work(pi)
+                _work(pi, name == "rapide")
             except Exception:
                 traceback.print_exc()
 
-    threading.Thread(target=worker, daemon=True).start()
+    for name in _queues:
+        threading.Thread(target=worker, args=(name,), daemon=True).start()
     last_scan = 0
     while True:
         current = bridges()
@@ -536,7 +577,7 @@ def service():
         if time.time() - last_scan > SCAN_SEC:  # filet de securite si un avis s'est perdu
             last_scan = time.time()
             for pi in current:
-                _jobs.put(pi)
+                _wake_workers(pi)
         time.sleep(5)
 
 

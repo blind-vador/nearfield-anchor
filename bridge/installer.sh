@@ -4,6 +4,8 @@
 #   - numpy, cryptography (cles du pont) et cmake via pip --user ;
 #   - meteor_demod / meteor_decode (dbdexter-dev, libres) compiles dans
 #     ~/.nearfield-bridge/bin ;
+#   - GNU Radio (conda-forge, dans ~/.nearfield-bridge/gnuradio) et
+#     gr-lora_sdr compile dessus : decodage LoRa / Meshtastic des rafales ;
 #   - le service, lance a l'ouverture de session (LaunchAgent sur Mac,
 #     unite systemd utilisateur sur Linux), a basse priorite ;
 #   - sur Mac, l'application "Nearfield Bridge" (dialogues lus par
@@ -37,7 +39,7 @@ fi
 
 echo "-- module compagnon : fichiers --"
 mkdir -p "$DEST/bin" "$BUILD"
-cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$DEST/"
+cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/lora_decode.py" "$DEST/"
 
 echo "-- numpy, cryptography, cmake --"
 "$PY" -m pip install --user --quiet --upgrade numpy cryptography cmake
@@ -66,6 +68,33 @@ for d in meteor_demod meteor_decode; do
             && make -j4 >/dev/null && cp "$d" "$DEST/bin/")
     fi
 done
+
+echo "-- GNU Radio et gr-lora_sdr (decodage LoRa) --"
+GR="$DEST/gnuradio"
+if ! "$GR/bin/python" -c "import gnuradio.lora_sdr" 2>/dev/null; then
+    if [ ! -x "$DEST/conda/bin/conda" ]; then
+        case "$(uname)-$(uname -m)" in
+            Darwin-arm64) MF=Miniforge3-MacOSX-arm64.sh ;;
+            Darwin-x86_64) MF=Miniforge3-MacOSX-x86_64.sh ;;
+            Linux-aarch64) MF=Miniforge3-Linux-aarch64.sh ;;
+            *) MF=Miniforge3-Linux-x86_64.sh ;;
+        esac
+        curl -fsSL -o "$BUILD/miniforge.sh" "https://github.com/conda-forge/miniforge/releases/latest/download/$MF"
+        bash "$BUILD/miniforge.sh" -b -p "$DEST/conda" >/dev/null
+    fi
+    [ -d "$GR" ] || "$DEST/conda/bin/conda" create -y -q -p "$GR" >/dev/null
+    "$DEST/conda/bin/conda" install -y -q -p "$GR" -c conda-forge \
+        gnuradio-core volk pybind11 numpy cmake make pkg-config cxx-compiler libboost-devel >/dev/null
+    rm -rf "$BUILD/gr-lora_sdr"
+    git clone --quiet --depth 1 https://github.com/tapparelj/gr-lora_sdr.git "$BUILD/gr-lora_sdr"
+    mkdir -p "$BUILD/gr-lora_sdr/build"
+    GR_EXTRA=""
+    [ "$(uname)" = "Darwin" ] && GR_EXTRA="-DCMAKE_OSX_SYSROOT=$SDK"
+    (cd "$BUILD/gr-lora_sdr/build" && PATH="$GR/bin:$PATH" "$GR/bin/cmake" .. $GR_EXTRA \
+        -DCMAKE_BUILD_TYPE=Release -DCMAKE_PREFIX_PATH="$GR" -DCMAKE_INSTALL_PREFIX="$GR" \
+        -DPYTHON_EXECUTABLE="$GR/bin/python" >/dev/null && make -j4 >/dev/null && make install >/dev/null)
+fi
+"$GR/bin/python" -c "import gnuradio.lora_sdr; print('gr-lora_sdr : pret')"
 rm -rf "$BUILD"
 
 echo "-- service --"
