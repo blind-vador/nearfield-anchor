@@ -43,9 +43,9 @@ def _details(built, key_source, say, out):
                         children=groups[r], unit=("sujet", "sujets")) for r in order]
     index.sort(key=lambda p: p[0])
     nav = arbre.Navigator(lambda: roots, index)
-    intro = ("Sujets du jour par rubrique. Droite déplie, gauche replie, "
-             "tape des mots pour chercher un sujet, échap pour fermer.")
-    arbre.run(nav, key_source, say, out, intro)
+    arbre.run(nav, key_source, say, out, "Sujets du jour par rubrique.",
+              "Droite déplie, gauche replie, haut et bas pour parcourir, tape des mots pour chercher "
+              "un sujet, échap pour fermer. F1 redit ces touches.", "flash_details")
     return "Détails fermés."
 
 

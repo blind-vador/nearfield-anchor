@@ -16,6 +16,7 @@ Arborescence :
 Une fleche termine la recherche : les lettres tapees ensuite en commencent
 une nouvelle.
 """
+import conseils
 import matcher
 
 UP, DOWN, RIGHT, LEFT = "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D"
@@ -183,8 +184,11 @@ class Navigator:
         return text
 
 
-def run(nav, key_source, say, out, intro):
-    """Boucle du dialogue. Rend ce que select() a rendu, ou None (Echap)."""
+def run(nav, key_source, say, out, title, consigne="", feature=None):
+    """Boucle du dialogue. Rend ce que select() a rendu, ou None (Echap).
+    consigne : touches du dialogue, dite selon le niveau d'aide (conseils.py)
+    et a la demande par F1."""
+    intro = conseils.intro(feature, title, consigne)
     out(intro + "\n")
     say(f"{intro} {nav.current()}")
     for key in key_source:
@@ -207,6 +211,8 @@ def run(nav, key_source, say, out, intro):
             else:
                 step = PAGE if key in (PAGE_UP, PAGE_DOWN) else 1
                 text = nav.move(-step if key in (UP, PAGE_UP) else step)
+        elif conseils.is_help(key):
+            text = consigne or "Pas de consigne pour ce dialogue."
         elif key in BACKSPACE:
             text = nav.erase()
         elif key == FAVORITE:
@@ -220,10 +226,14 @@ def run(nav, key_source, say, out, intro):
     return None
 
 
-def run_list(labels, key_source, say, out, intro):
+LIST_CONSIGNE = "Flèches haut et bas pour parcourir, entrée pour choisir, échap pour annuler."
+
+
+def run_list(labels, key_source, say, out, title, consigne=LIST_CONSIGNE, feature="liste"):
     """Liste simple : haut / bas, Entree choisit, Echap annule. Rend
     l'indice choisi ou None."""
     index = 0
+    intro = conseils.intro(feature, title, consigne)
     out(intro + "\n")
     say(f"{intro} {labels[0]}")
     for key in key_source:
@@ -235,6 +245,8 @@ def run_list(labels, key_source, say, out, intro):
             wanted = index + (-1 if key == UP else 1)
             index = min(max(wanted, 0), len(labels) - 1)
             text = ("Début de liste, " if wanted < 0 else "Fin de liste, " if wanted != index else "") + labels[index]
+        elif conseils.is_help(key):
+            text = consigne
         else:
             text = "Flèches haut et bas, entrée pour choisir, échap pour annuler."
         out(f"[{text}]\n")

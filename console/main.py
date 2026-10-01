@@ -33,12 +33,15 @@ import reglages_cmd  # noqa: E402
 import tableaux  # noqa: E402
 import flash  # noqa: E402
 import voix_cmd  # noqa: E402
+import conseils  # noqa: E402
 import simulation  # noqa: E402
 import veilles  # noqa: E402
 import vision  # noqa: E402
 import voix  # noqa: E402
 
-WELCOME = "Console vocale du Pi prête. Tape aide pour la liste des commandes."
+WELCOME = "Console vocale du Pi prête."
+WELCOME_CONSIGNE = ("Tape aide pour la liste des commandes. Dans un dialogue, F1 redit ses touches. "
+                    "Tape conseils désactivés pour ne plus entendre ces consignes.")
 ESCAPE_TIMEOUT_SEC = 0.05
 KEYTEST_EXIT_ESCAPES = 3
 
@@ -95,8 +98,9 @@ def read_keys(fd=0):
 
 def keytest(key_source):
     """Mode reperage : annonce chaque touche sans rien executer."""
-    intro = (f"Mode repérage des touches. Chaque touche est annoncée, rien n'est exécuté. "
-             f"Appuie {KEYTEST_EXIT_ESCAPES} fois sur échap pour quitter.")
+    intro = conseils.intro("touches", "Mode repérage des touches.",
+                           f"Chaque touche est annoncée, rien n'est exécuté. "
+                           f"Appuie {KEYTEST_EXIT_ESCAPES} fois sur échap pour quitter.")
     out(intro + "\n")
     voix.say(intro)
     announcer = keys.ModifierAnnouncer(voix.say)
@@ -187,6 +191,8 @@ def run_command(line, key_source, last_response):
         return journal.run(key_source, voix.say, out)
     if cmd.name == "manuel":
         return manuel.run(key_source, voix.say, out)
+    if cmd.name == "conseils":
+        return conseils.command(line)
     if cmd.name == "voitures":
         return commands.voitures_cmd(line)
     if cmd.name == "voix":
@@ -224,12 +230,13 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     tty.setraw(fd)
     try:
-        out(f"\n{WELCOME}\n> ")
-        voix.say_and_wait(WELCOME)
+        welcome = conseils.intro("accueil", WELCOME, WELCOME_CONSIGNE)
+        out(f"\n{welcome}\n> ")
+        voix.say_and_wait(welcome)
         # Noms de touches dans la voix choisie, prepares en fond (espeak en attendant).
         voix.prune_cache()
         voix.prewarm(voix_cmd.echo_texts())
-        last_response = WELCOME
+        last_response = welcome
         key_source = read_keys(fd)
         while True:
             line = read_line(key_source)

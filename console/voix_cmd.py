@@ -12,6 +12,7 @@ import sys
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
+import conseils  # noqa: E402
 import keys  # noqa: E402
 import reglages  # noqa: E402
 import voix  # noqa: E402
@@ -49,8 +50,12 @@ def echo_texts():
     return texts
 
 
-def _choose(labels, start, speak, key_source, out, intro):
+CONSIGNE = "Flèches haut et bas pour écouter, entrée pour choisir, échap pour annuler. F1 redit ces touches."
+
+
+def _choose(labels, start, speak, key_source, out, title, feature):
     index = start
+    intro = conseils.intro(feature, title, CONSIGNE)
     out(intro + "\n")
     speak(index, f"{intro} {labels[index]}")
     for key in key_source:
@@ -63,8 +68,10 @@ def _choose(labels, start, speak, key_source, out, intro):
             index = min(max(wanted, 0), len(labels) - 1)
             edge = "" if wanted == index else ("Début de liste, " if key == UP else "Fin de liste, ")
             text = edge + labels[index]
+        elif conseils.is_help(key):
+            text = CONSIGNE
         else:
-            text = "Flèches haut et bas pour écouter, entrée pour choisir, échap pour annuler."
+            text = "Flèches haut et bas, entrée ou échap. F1 pour l'aide."
         out(f"[{text}]\n")
         speak(index, text)
     return None
@@ -77,7 +84,7 @@ def run(key_source, say, out):
     start = voices.index(current["voix"]) if current["voix"] in voices else 0
     rate = current.get("debit", "+20%")
     index = _choose(labels, start, lambda i, text: voix.preview(text, voices[i], rate), key_source, out,
-                    "Choix de la voix de la console. Chaque voix se présente elle-même.")
+                    "Choix de la voix de la console. Chaque voix se présente elle-même.", "voix")
     if index is None:
         return "Annulé, voix inchangée."
     voice = voices[index]
@@ -89,12 +96,13 @@ def run(key_source, say, out):
         start = rates.index(rate) if rate in rates else 0
         chosen = _choose(rate_labels, start,
                          lambda i, text: voix.preview(f"{text}. Voici comment je lirai les réponses.", voice, rates[i]),
-                         key_source, out, "Débit de lecture.")
+                         key_source, out, "Débit de lecture.", "voix_debit")
         if chosen is None:
             return "Annulé, voix inchangée."
         new_rate = rates[chosen]
     echo_rate = f"+{min(ECHO_MAX, _pct(new_rate) + ECHO_BOOST)}%"
-    if not reglages.save("console", {"voix": voice, "debit": new_rate, "debit_echo": echo_rate}):
+    settings = dict(reglages.get("console"), voix=voice, debit=new_rate, debit_echo=echo_rate)
+    if not reglages.save("console", settings):
         return "Le disque du NAS est inaccessible : voix non enregistrée."
     voix.reload()
     if voice == voix.ESPEAK:

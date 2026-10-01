@@ -436,6 +436,11 @@ COMMANDS = [
             keywords=["eteins", "eteindre", "extinction", "shutdown", "arrete le pi"],
             confirm="Confirmer l'extinction du Pi ? Il faudra couper et remettre le courant pour le rallumer. "
                     "Tape oui puis entrée. Toute autre réponse annule."),
+    # Avant "aide" : "aide pratique" doit regler les conseils, pas lister les commandes.
+    Command("conseils", "niveau d'aide : consignes à chaque fois, ou seulement à la première utilisation", None,
+            keywords=["conseils", "conseil", "consignes", "mode guide", "mode expert", "aide pratique",
+                      "niveau d aide"],
+            examples=["arrête de m'expliquer les touches", "explique moi toujours les touches"]),
     Command("aide", "liste des commandes", help_text,
             keywords=["aide", "help", "commandes"],
             examples=["aide", "qu'est-ce que tu sais faire", "liste des commandes"]),

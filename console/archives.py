@@ -21,6 +21,7 @@ import subprocess
 
 import journal
 import espeak_out  # noqa: E402  (chemin ajoute par journal)
+import conseils  # noqa: E402
 
 ARCHIVE_DIR = journal.KEEP_DIR
 AUDIO_EXT = (".mp3", ".wav", ".ogg", ".m4a", ".flac")
@@ -29,8 +30,9 @@ RE_DATED = re.compile(r"^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) (
 VOLUME_STEP = 0.2
 VOLUME_MIN, VOLUME_MAX = 0.2, 3.0
 
-INTRO = ("Archives radio, lecture seule. Tab et majuscule tab : changer de jour. Flèches haut et bas : "
-         "écouter. Gauche et droite : volume. Entrée : rejouer. Échap : fermer.")
+TITLE = "Archives radio, lecture seule."
+CONSIGNE = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : "
+            "écouter. Gauche et droite : volume. Entrée : rejouer. Échap : fermer. F1 redit ces touches.")
 
 
 def scan_archives():
@@ -71,8 +73,9 @@ def run(key_source, say, out):
         return f"{journal.spoken_day(order[day_i])}, {n} extrait{'s' if n > 1 else ''}."
 
     try:
-        out(INTRO + "\n")
-        say(INTRO + " " + announce_day())
+        intro = conseils.intro("archives", TITLE, CONSIGNE)
+        out(intro + "\n")
+        say(intro + " " + announce_day())
         for key in key_source:
             if key == "\x1b":
                 break
@@ -110,8 +113,10 @@ def run(key_source, say, out):
                     text = "Choisis d'abord un extrait avec la flèche bas."
                 else:
                     player.play(recs[rec_i][1])
+            elif conseils.is_help(key):
+                text = CONSIGNE
             else:
-                text = "Tab, flèches, entrée, ou échap pour fermer."
+                text = "Tab, flèches, entrée, ou échap pour fermer. F1 pour l'aide."
             if text:
                 out(f"[{text}]\n")
                 say(text)

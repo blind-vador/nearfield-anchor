@@ -18,11 +18,13 @@ import sys
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import noise_signatures as ns  # noqa: E402
+import conseils  # noqa: E402
 
 BIG_STEP = 10
-INTRO = ("Mode manuel, balayage suspendu. Flèches haut et bas : changer de plage. "
-         "Gauche et droite : ajuster la fréquence. Page haut et page bas : dix pas. "
-         "F : filtre et silencieux. Entrée : relire. Échap : fermer.")
+TITLE = "Mode manuel, balayage suspendu."
+CONSIGNE = ("Flèches haut et bas : changer de plage. "
+            "Gauche et droite : ajuster la fréquence. Page haut et page bas : dix pas. "
+            "F : filtre et silencieux. Entrée : relire. Échap : fermer. F1 redit ces touches.")
 
 
 def spoken_mhz(freq_hz):
@@ -114,8 +116,9 @@ def run(key_source, say, out):
         return "Le scanner radio n'a pas publié sa liste de plages. Vérifie qu'il tourne."
     tuner = Tuner(plages, ns.last_capture())
     ns.request_manual(tuner.target())
-    out(INTRO + "\n")
-    say(INTRO + " " + tuner.describe())
+    intro = conseils.intro("manuel", TITLE, CONSIGNE)
+    out(intro + "\n")
+    say(intro + " " + tuner.describe())
     for key in key_source:
         if key == "\x1b":
             break
@@ -128,8 +131,10 @@ def run(key_source, say, out):
             text = tuner.toggle_filter()
         elif key in ("\r", "\n"):
             text = tuner.describe() + (", filtre activé" if tuner.filtered else "")
+        elif conseils.is_help(key):
+            text = CONSIGNE
         else:
-            text = "Flèches, F, entrée, ou échap pour fermer."
+            text = "Flèches, F, entrée, ou échap pour fermer. F1 pour l'aide."
         ns.request_manual(tuner.target())
         out(f"[{text}]\n")
         say(text)

@@ -34,6 +34,7 @@ sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import noise_signatures as ns  # noqa: E402
 import notation  # noqa: E402
+import conseils  # noqa: E402
 
 LOG_DIR = "/media/nas/nd1/server/radio_log"
 KEEP_DIR = "/media/nas/nd2/storage/radio"
@@ -52,9 +53,10 @@ RE_ROOT_FILE = re.compile("_" + _DAY + "_" + _TIME)
 RE_DAY_DIR = re.compile("^" + _DAY + "$")
 RE_TIME_ONLY = re.compile("_" + _TIME)
 
-INTRO = ("Journal radio. Tab et majuscule tab : changer de jour. Flèches haut et bas : "
-         "écouter les enregistrements. Flèche droite : garder. Flèche gauche : rejeter comme "
-         "parasite. N : noter. Entrée : rejouer. Échap : fermer.")
+TITLE = "Journal radio."
+CONSIGNE = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : "
+            "écouter les enregistrements. Flèche droite : garder. Flèche gauche : rejeter comme "
+            "parasite. N : noter. Entrée : rejouer. Échap : fermer. F1 redit ces touches.")
 
 
 def _date(day, month_name, year):
@@ -209,8 +211,9 @@ def run(key_source, say, out):
         return f"{spoken_day(date)}, {n} enregistrement{'s' if n > 1 else ''}."
 
     try:
-        out(INTRO + "\n")
-        say(INTRO + " " + announce_day())
+        intro = conseils.intro("journal", TITLE, CONSIGNE)
+        out(intro + "\n")
+        say(intro + " " + announce_day())
         for key in key_source:
             if key == "\x1b":
                 break
@@ -260,8 +263,10 @@ def run(key_source, say, out):
                 player.stop()
                 stamp, path = recs[rec_i]
                 text = notation.rate(key_source, say, out, path, stamp)
+            elif conseils.is_help(key):
+                text = CONSIGNE
             else:
-                text = "Tab, flèches, N, entrée, ou échap pour fermer."
+                text = "Tab, flèches, N, entrée, ou échap pour fermer. F1 pour l'aide."
             if text:
                 out(f"[{text}]\n")
                 say(text)

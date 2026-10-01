@@ -5147,3 +5147,19 @@ Demande utilisateur : tout ecouter de ce qui est ouvert autour de chez lui
   au plus tous les quarts d'heure (DATA_MIN_INTERVAL), toute salve annoncee.
 - Ballons-sondes : non retenus pour l'instant (l'utilisateur ne voyait pas
   l'usage).
+
+## 2026-10-01 : niveau d'aide de la console (conseils)
+
+- console/conseils.py : chaque dialogue separe son titre (toujours dit) de
+  sa consigne (quelles touches font quoi). Mode "toujours" (defaut) : la
+  consigne a chaque ouverture ; mode "premiere_fois" : seulement a la
+  premiere utilisation de chaque fonction (console.json, conseils_vus).
+  F1 redit la consigne dans tous les dialogues, quel que soit le mode.
+  Rappels sur mauvaise touche et confirmations : toujours dits.
+- Dialogues convertis : accueil, journal, archives, manuel, notation,
+  reperage des touches, voix et debit, listes simples, arborescences
+  (gare, aeroport, tableau, flash details), saisie de la commune.
+- Commande "conseils" (aussi "mode expert", "aide pratique") : activer,
+  desactiver, remise a zero des consignes deja dites.
+- Piege corrige : voix_cmd reecrivait console.json avec ses seules cles
+  (perte du niveau d'aide) ; fusion avec l'existant desormais.

@@ -284,8 +284,8 @@ def airport_navigator(board, select=None):
                            toggle_favorite=lambda node: _toggle("aeroports", node))
 
 
-INTRO_KEYS = ("Droite déplie, gauche replie, tape des lettres pour chercher, "
-              "étoile pour les favoris, échap pour fermer.")
+BOARD_KEYS = ("Droite déplie, gauche replie, haut et bas pour parcourir, tape des lettres pour chercher, "
+              "étoile pour les favoris, échap pour fermer. F1 redit ces touches.")
 
 
 def run(line, key_source, say, out):
@@ -296,18 +296,18 @@ def run(line, key_source, say, out):
         kind = "aeroport"
     else:
         index = arbre.run_list(["Tableau des gares", "Tableau des aéroports"], key_source, say, out,
-                               "Quel tableau ? Flèches haut et bas, entrée, échap pour annuler.")
+                               "Quel tableau ?")
         if index is None:
             return "Tableau fermé."
         kind = ("gare", "aeroport")[index]
     say("Chargement de la liste.")
     if kind == "gare":
         nav = station_navigator(board=True)
-        intro = "Tableau des gares : départs et arrivées. " + INTRO_KEYS
+        title = "Tableau des gares : départs et arrivées."
     else:
         nav = airport_navigator(board=True)
-        intro = "Tableau des aéroports : départs et arrivées. " + INTRO_KEYS
+        title = "Tableau des aéroports : départs et arrivées."
     if nav is None:
         return "Liste indisponible : pas de réseau et pas de copie sur le NAS."
-    arbre.run(nav, key_source, say, out, intro)
+    arbre.run(nav, key_source, say, out, title, BOARD_KEYS, "tableau")
     return "Tableau fermé."

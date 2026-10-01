@@ -38,7 +38,9 @@ DEFAULTS = {
     },
     "favoris": {"gares": [], "aeroports": []},
     # debit : reponses ; debit_echo : touches et navigation (plus rapide).
-    "console": {"voix": "fr-FR-DeniseNeural", "debit": "+20%", "debit_echo": "+50%"},
+    # conseils : "toujours" ou "premiere_fois" (console/conseils.py).
+    "console": {"voix": "fr-FR-DeniseNeural", "debit": "+20%", "debit_echo": "+50%",
+                "conseils": "toujours", "conseils_vus": []},
 }
 
 # fichier cles/<nom>.txt -> (ancien nom dans credentials.py, usage dit a voix haute)

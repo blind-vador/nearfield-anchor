@@ -61,6 +61,7 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `reglages_cmd.py` | Commandes `réglages`, `ville`, `gare`, `aéroport` : choix écrits sur le NAS, veilles concernées relancées |
 | `arbre.py` | Arborescence au clavier (flèches, recherche en tapant, étoile = favori) et liste simple |
 | `voix.py` | Voix de la console : Microsoft (edge-tts) en cache ou au fil de l'eau, relais espeak automatique ; cache sur la carte SD (`voix_cache`) |
+| `conseils.py` | Niveau d'aide (commande `conseils`) : consignes des dialogues à chaque fois ou à la première utilisation ; F1 les redit toujours |
 | `voix_cmd.py` | Commande `voix` : choix de la voix (chacune se présente) et du débit, dans `console.json` |
 | (commande `voitures`) | Statistiques de la rue par les capteurs de pneus, véhicules habituels appris, « nomme la voiture 3 facteur » (`lib/voitures.py`) |
 | (commande `capteurs`) | Derniers relevés des capteurs sans fil (rtl_433) et des stations météo APRS |

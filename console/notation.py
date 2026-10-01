@@ -21,6 +21,7 @@ import time
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import noise_signatures as ns  # noqa: E402
+import conseils  # noqa: E402
 
 NOTES_PATH = "/media/nas/nd1/server/radio_notes.json"  # jamais purge (le journal, lui, l'est a 48 h)
 
@@ -44,8 +45,9 @@ FIELDS = [
     ("certitude", "Certitude", [("sur", "sûr"), ("hesitant", "hésitant")], 0),
 ]
 OK_INDEX = len(FIELDS)
-INTRO = ("Notation. Flèches haut et bas : champ. Gauche et droite : valeur. "
-         "Entrée sur OK pour enregistrer. Échap : annuler.")
+TITLE = "Notation."
+CONSIGNE = ("Flèches haut et bas : champ. Gauche et droite : valeur. "
+            "Entrée sur OK pour enregistrer. Échap : annuler. F1 redit ces touches.")
 
 
 def load_notes():
@@ -86,8 +88,9 @@ def rate(key_source, say, out, path, stamp):
             if previous["reponses"].get(code) in codes:
                 values[i] = codes.index(previous["reponses"][code])
     field = 0
-    out(INTRO + "\n")
-    say(INTRO + (" Déjà noté, tu modifies la note. " if previous else " ") + _field_text(field, values))
+    intro = conseils.intro("notation", TITLE, CONSIGNE)
+    out(intro + "\n")
+    say(intro + (" Déjà noté, tu modifies la note. " if previous else " ") + _field_text(field, values))
     for key in key_source:
         if key == "\x1b":
             return "Notation annulée."
@@ -118,8 +121,10 @@ def rate(key_source, say, out, path, stamp):
             return f"Note enregistrée. {total} note{'s' if total > 1 else ''} au total."
         elif key in ("\r", "\n"):
             text = "Descends jusqu'à OK pour enregistrer."
+        elif conseils.is_help(key):
+            text = CONSIGNE
         else:
-            text = "Flèches, entrée sur OK, ou échap."
+            text = "Flèches, entrée sur OK, ou échap. F1 pour l'aide."
         out(f"[{text}]\n")
         say(text)
     return "Notation annulée."

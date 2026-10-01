@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import arbre  # noqa: E402
+import conseils  # noqa: E402
 import matcher  # noqa: E402
 import reglages  # noqa: E402
 import sources  # noqa: E402
@@ -19,6 +20,8 @@ VILLE_WORDS = {"ville", "commune"}
 AIRPORT_ROLES = {"proche": "Aéroport proche", "grand": "Grand aéroport"}
 # Les frequences radio tour et approche restent celles de ces deux-la.
 RADIO_AIRPORTS = {"LFMH", "LFLL"}
+CHOOSE_KEYS = ("Droite déplie une lettre, gauche la replie, tape des lettres pour chercher, "
+               "étoile pour les favoris, entrée choisit, échap annule. F1 redit ces touches.")
 NO_NAS = "Le disque du NAS est inaccessible : rien n'a été enregistré."
 
 
@@ -61,7 +64,7 @@ def _commune_label(c):
 def ville(line, key_source, say, out, read_line):
     query = " ".join(w for w in line.split() if matcher.normalize(w) not in VILLE_WORDS).strip()
     if not query:
-        prompt = "Tape le nom de ta commune, puis entrée. Entrée seule pour annuler."
+        prompt = conseils.intro("ville", "Nom de ta commune ?", "Tape-le puis entrée ; entrée seule pour annuler.")
         out(prompt + "\n? ")
         say(prompt, lock=True)
         query = read_line(key_source).strip()
@@ -74,11 +77,10 @@ def ville(line, key_source, say, out, read_line):
     if not found:
         return f"Aucune commune trouvée pour {query}."
     if len(found) == 1:
-        intro = "Une commune trouvée, entrée pour la choisir, échap pour annuler."
+        title = "Une commune trouvée."
     else:
-        intro = (f"{len(found)} communes trouvées, les plus peuplées d'abord. "
-                 "Flèches haut et bas, entrée pour choisir, échap pour annuler.")
-    index = arbre.run_list([_commune_label(c) for c in found], key_source, say, out, intro)
+        title = f"{len(found)} communes trouvées, les plus peuplées d'abord."
+    index = arbre.run_list([_commune_label(c) for c in found], key_source, say, out, title)
     if index is None:
         return "Annulé, commune inchangée."
     c = found[index]
@@ -98,10 +100,8 @@ def gare(key_source, say, out):
     if nav is None:
         return "Liste des gares indisponible : pas de réseau et pas de copie sur le NAS."
     current = reglages.get("trains")["gare"]
-    intro = (f"Gares, favoris en tête puis par ordre alphabétique. Gare actuelle : {current}. "
-             "Droite déplie une lettre, gauche la replie, tape des lettres pour chercher, "
-             "étoile pour les favoris, entrée choisit, échap annule.")
-    chosen = arbre.run(nav, key_source, say, out, intro)
+    title = f"Gares, favoris en tête puis par ordre alphabétique. Gare actuelle : {current}."
+    chosen = arbre.run(nav, key_source, say, out, title, CHOOSE_KEYS, "choix_gare")
     if chosen is None:
         return "Annulé, gare inchangée."
     if not reglages.save("trains", {"gare": chosen["nom"], "uic": chosen["uic"]}):
@@ -119,8 +119,7 @@ def aeroport(line, key_source, say, out):
     else:
         roles = list(AIRPORT_ROLES)
         labels = [f"{AIRPORT_ROLES[r]}, actuellement {avions[r]['nom']}" for r in roles]
-        index = arbre.run_list(labels, key_source, say, out,
-                               "Quel aéroport changer ? Flèches haut et bas, entrée, échap pour annuler.")
+        index = arbre.run_list(labels, key_source, say, out, "Quel aéroport changer ?")
         if index is None:
             return "Annulé, aéroports inchangés."
         role = roles[index]
@@ -128,10 +127,9 @@ def aeroport(line, key_source, say, out):
     nav = tableaux.airport_navigator(board=False, select=lambda node: node.item)
     if nav is None:
         return "Liste des aérodromes indisponible : pas de réseau et pas de copie sur le NAS."
-    intro = (f"{AIRPORT_ROLES[role]}, actuellement {avions[role]['nom']}. Aérodromes français, "
-             "favoris en tête puis par ordre alphabétique. Droite déplie une lettre, gauche la replie, "
-             "tape des lettres pour chercher, étoile pour les favoris, entrée choisit, échap annule.")
-    chosen = arbre.run(nav, key_source, say, out, intro)
+    title = (f"{AIRPORT_ROLES[role]}, actuellement {avions[role]['nom']}. Aérodromes français, "
+             "favoris en tête puis par ordre alphabétique.")
+    chosen = arbre.run(nav, key_source, say, out, title, CHOOSE_KEYS, "choix_aeroport")
     if chosen is None:
         return "Annulé, aéroport inchangé."
     avions[role] = {"nom": chosen["nom"], "oaci": chosen["oaci"],
