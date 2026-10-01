@@ -1,10 +1,10 @@
-"""Captation LoRa (Meshtastic et APRS LoRa) pour decodage differe.
+"""Captation LoRa (Meshtastic et APRS LoRa).
 
-Le decodage LoRa en direct ferait trop chauffer le Pi : la fenetre d'ecoute
-ne fait que reperer les rafales (puissance au-dessus du bruit) et les
-enregistrer en I/Q brut sur le disque de stockage, avec leur fiche JSON.
-tools/lora_traitement.py les decode ensuite, au frais ou sur le Mac (choix
-utilisateur 2026-10-01 : "stocker de la data et l'analyser progressivement").
+La fenetre d'ecoute repere les rafales (puissance au-dessus du bruit), les
+garde en I/Q brut sur le disque de stockage avec leur fiche JSON, et confie
+chacune tout de suite au pont (lib/lora_messages.py) : la machine compagne
+la decode et le Pi annonce le message aussitot ; le Pi ne decode lui-meme
+que si aucune machine ne repond.
 
   meshtastic  869,525 MHz, largeur 250 kHz (preset europeen LongFast)
   lora_aprs   433,775 MHz, largeur 125 kHz (APRS LoRa des radioamateurs)
@@ -57,6 +57,11 @@ def _save(profile, blocks, start_t, peak_db, floor_db):
     with open(base + ".json", "w", encoding="utf-8") as f:
         json.dump(info, f)
     vd.archive("lora", info)
+    try:
+        import lora_messages
+        lora_messages.submit_burst(base + ".cu8", info)
+    except Exception as exc:  # le pont ne doit pas arreter l'ecoute
+        print(f"[lora_watch] rafale non confiee au pont : {exc!r}")
 
 
 def scan_window(dwell_sec=30):

@@ -18,10 +18,11 @@ import time
 
 import compagnon
 import compagnon_resultats
+import lora_messages
 import pont_protocole as proto
 
 NOTIFY_EVERY_SEC = 600
-TICK_SEC = 5
+TICK_SEC = 2
 POLL_SEC = 60
 READ_TIMEOUT_SEC = 120
 
@@ -114,15 +115,31 @@ def _dispatch():
         if channel:
             channel.close()  # la liaison tombe tout de suite
     for job in compagnon.open_jobs():
+        able = [c for c in compagnon.companions() if job["type"] in c.get("capacites", [])]
+        if job["type"] == "lora" and lora_messages.needs_local(job, any(c["presente"] for c in able)):
+            # Secours : aucune machine capable ne repond, le Pi decode lui-meme.
+            if job["id"] not in _local:
+                _local.add(job["id"])
+                threading.Thread(target=_decode_locally, args=(job,), daemon=True).start()
+            continue
         if time.time() - _notified.get(job["id"], 0) < NOTIFY_EVERY_SEC:
             continue
-        able = [c for c in compagnon.companions() if job["type"] in c.get("capacites", [])]
         if any(_notify(c["id"], job["id"]) for c in able if c["presente"]):
             continue
         for c in able:
             if proto.wake_on_lan(c.get("adresse_materielle"), c.get("ips", [])):
                 print(f"[compagnon] reveil de {c['nom']} pour {job['id']}")
         _notified[job["id"]] = time.time()
+
+
+_local = set()
+
+
+def _decode_locally(job):
+    try:
+        lora_messages.decode_locally(job)
+    except Exception as exc:
+        print(f"[compagnon] secours LoRa {job['id']} : {exc!r}")
 
 
 def run():

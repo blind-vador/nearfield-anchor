@@ -33,7 +33,18 @@ def _meteor(job, result, folder):
                 SOUND, "meteor", "compagnon")
 
 
-HANDLERS = {"meteor": _meteor}
+def _lora(job, result, folder):
+    import json
+    import lora_messages
+    frames = []
+    if result.get("etat") == "fait" and result.get("sorties"):
+        with open(os.path.join(folder, next(iter(result["sorties"]))), encoding="utf-8") as f:
+            frames = json.load(f)
+    card = compagnon.trusted().get(result.get("compagnon"), {})
+    lora_messages.handle(job, frames, card.get("nom", "la machine compagne"))
+
+
+HANDLERS = {"meteor": _meteor, "lora": _lora}
 
 
 def poll_once():

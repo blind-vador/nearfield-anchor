@@ -176,7 +176,7 @@ cp "$REPO_DIR"/watchers/*.py "$TARGET_DIR/"
 cp "$REPO_DIR"/lib/*.py "$TARGET_DIR/"
 cp "$REPO_DIR"/lib/rnnoise_lib/*.py "$TARGET_DIR/rnnoise_lib/"
 cp "$REPO_DIR"/tools/*.py "$TARGET_DIR/"
-cp "$REPO_DIR"/bridge/pont_protocole.py "$TARGET_DIR/"  # pont machine compagne (lib/compagnon.py)
+cp "$REPO_DIR"/bridge/pont_protocole.py "$REPO_DIR"/bridge/lora_decode.py "$TARGET_DIR/"  # pont machine compagne (lib/compagnon.py), decodage LoRa de secours
 install -D -o vador -g vador -m 755 "$REPO_DIR"/tools/python3-gnuradio /home/vador/autopilot/bin/python3-gnuradio
 cp "$REPO_DIR"/config/sound_paths.py "$TARGET_DIR/"
 # Jamais ecraser un credentials.py deja rempli sur le Pi : une reinstallation
