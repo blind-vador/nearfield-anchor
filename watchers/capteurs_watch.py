@@ -167,18 +167,53 @@ def _process(event, freq, tpms, at):
         vd.announce(f"Alarme d'un capteur sans fil proche : {_name(event)}." + (f" {values}." if values else ""),
                     SOUND, f"capteur_alarme_{key}", "capteurs_watch")
         return True
-    if kind == "bouton" and _memory.due(f"bouton|{key}", BUTTON_EVERY_SEC):
-        vd.announce(f"Appui sur une sonnette ou télécommande sans fil : {_name(event)}.", SOUND,
-                    f"capteur_bouton_{key}", "capteurs_watch")
-        return True
     if _memory.due(f"nouveau|{key}", NEW_EVERY_SEC):
         what = KIND_NAMES.get(kind, "capteur")
         freq_txt = "433" if freq.startswith("433") else "868"
         number = f", numéro {event['id']}" if event.get("id") is not None else ""
-        vd.announce(f"Nouveau {what} sans fil en {freq_txt} mégahertz : {_name(event)}{number}"
-                    + (f", {values}" if values else "") + ".", SOUND, f"capteur_nouveau_{key}", "capteurs_watch")
+        plain = (f"Nouveau {what} sans fil en {freq_txt} mégahertz : {_name(event)}{number}"
+                 + (f", {values}" if values else "") + ".")
+        text = plain if kind == "meteo" else (_fun_explanation(event, what, freq_txt) or plain)
+        _memory.due(f"bouton|{key}", BUTTON_EVERY_SEC)  # le premier appui est deja raconte
+        vd.announce(text, SOUND, f"capteur_nouveau_{key}", "capteurs_watch")
+        return True
+    if kind == "bouton" and _memory.due(f"bouton|{key}", BUTTON_EVERY_SEC):
+        vd.announce(f"Appui sur une sonnette ou télécommande sans fil : {_name(event)}.", SOUND,
+                    f"capteur_bouton_{key}", "capteurs_watch")
         return True
     return False
+
+
+# Appareil nouveau qui n'est pas une station meteo (cuisson, piscine,
+# sonnette, inconnu...) : Gemini explique ses donnees avec une petite
+# blague (demande utilisateur 2026-10-01 : "on veut rien manquer"). Jamais
+# pour les alarmes, qui restent sobres. Repli sur l'annonce simple.
+FUN_PROMPT = """Tu es la voix d'un récepteur radio domestique, au ton amusé et bienveillant.
+Il vient de capter, pour la première fois, un appareil sans fil chez un voisin. Explique en
+français, à une personne aveugle, ce qu'est cet appareil et ce que disent ses données, en
+2 ou 3 phrases courtes à lire à voix haute, avec une petite blague. N'invente aucune donnée,
+ne porte aucun jugement sur le voisin. Pas de markdown, pas d'emoji, pas de liste.
+Commence par : Nouveau {what} capté en {freq} mégahertz.
+
+Données décodées (format rtl_433) :
+{data}
+"""
+
+
+def _fun_explanation(event, what, freq_txt):
+    try:
+        import gemini
+        data = json.dumps({k: v for k, v in event.items() if k not in ("time", "rssi", "snr", "noise", "freq",
+                                                                    "freq1", "freq2", "mod")},
+                          ensure_ascii=False)
+        text, problem = gemini.ask(FUN_PROMPT.format(what=what, freq=freq_txt, data=data))
+    except Exception as exc:
+        text, problem = None, repr(exc)
+    if problem:
+        print(f"[capteurs_watch] explication Gemini indisponible : {problem}")
+    else:
+        vd.archive("capteurs_gemini", {"modele": event.get("model"), "texte": text})
+    return text
 
 
 def _reader(proc, events):

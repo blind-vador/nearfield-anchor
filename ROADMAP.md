@@ -5373,3 +5373,13 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   temperature au sol, -6,5 C/km : normal, plus froid -> instable, averses et
   orages favorises, plus doux -> stable ; au-dessus de 11 km : haute
   atmosphere, toujours tres froide).
+
+### Capteurs non meteo expliques par Gemini, avec humour (2026-10-01)
+
+- Nouvel appareil qui n'est pas une station meteo (cuisson, piscine,
+  frigo, sol, sonnette, inconnu) : ses donnees decodees (sans les champs
+  radio) sont envoyees a Gemini (lib/gemini.py, appel texte commun) qui les
+  explique en 2-3 phrases avec une petite blague, sans inventer ni juger le
+  voisin. Repli sur l'annonce simple. Jamais pour les alarmes (sobres).
+  Textes archives (donnees/capteurs_gemini_*.jsonl). Le premier appui d'une
+  sonnette nouvelle est raconte par cette annonce.
