@@ -227,8 +227,10 @@ projets n'est empaqueté Debian pour ce Pi).
 ## Machine compagne (calculs lourds)
 
 Le dossier `bridge/` est un module a installer sur un Mac ou un PC Linux qui
-monte le partage `server` du NAS : `bash bridge/installer.sh`, puis
-`python3 ~/.nearfield-bridge/nearfield_bridge.py appairage` en meme temps que
-la commande `appairage` de la console. Les images des satellites meteo ne sont
-ecoutees que si une machine compagne est appairee et presente. Details :
-ROADMAP.md, section du 2026-10-01 sur le pont.
+monte le partage `server` du NAS : `bash bridge/installer.sh`. Sur Mac,
+l'application "Nearfield Bridge" (raccourci sur le bureau, accessible avec
+VoiceOver) gere les ponts : appairage en meme temps que la commande
+`appairage` de la console (echange de cles, meme code dit des deux cotes),
+statistiques, suppression, pause. Les images des satellites meteo ne sont
+ecoutees que si une machine compagne est appairee. Details : ROADMAP.md,
+section du 2026-10-01 sur le pont.

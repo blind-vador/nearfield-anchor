@@ -5490,27 +5490,40 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
 ## 2026-10-01 : pont avec une machine compagne
 
 Les calculs lourds (image Meteor : ~45 min de CPU et 82 C sur le Pi) partent
-sur une machine plus puissante, sans ouvrir de reseau : tout passe par le
-disque nd1, dossier `server/nearfield-anchor-bridge` (lib/compagnon.py).
+sur une machine plus puissante. Donnees sur le disque nd1, dossier
+`server/nearfield-anchor-bridge` ; dialogue direct par le reseau local.
 
-- Module compagnon installable : `bridge/` (nearfield_bridge.py, meteor.py,
-  installer.sh). Python 3.9 suffit (celui d'Apple) ; installe numpy et cmake
-  par pip --user, compile meteor_demod/meteor_decode (sortie BMP, pas besoin
-  de libpng) dans ~/.nearfield-bridge/bin, service LaunchAgent (Mac) ou
-  systemd utilisateur (Linux), basse priorite. Partage cherche dans
-  /Volumes/server/server/... (Mac) ou /mnt/server/server/... (Linux).
-- Appairage : commande console "appairage" et `nearfield_bridge.py appairage`
-  en meme temps ; les deux disent le meme code a 4 chiffres, Entree sur le Pi
-  accepte et ecrit un secret (compagnons/<id>.accord.json). "compagnon" :
-  etat. `nearfield_bridge.py oublier` : retire la machine.
-- Travaux : travaux/<id>/travail.json (+ fichiers), pris par renommage en
-  travail.pris.json, resultat.json signe HMAC-SHA256(secret, "id|etat") ;
-  un resultat non signe est ignore. Le Pi (thread de meteo_watch,
-  lib/compagnon_resultats.py) relit chaque minute, fait decrire l'image par
-  Gemini, la range en PNG sur nd2/storage/radio/satellites, annonce, et
-  efface le travail. Travail sans resultat apres 12 h : efface.
-- Meteor n'est plus ecoute (ni annonce dans "satellites") que si une machine
-  appairee, presente (battement < 3 min) et capable de "meteor" est la.
+- Confiance : paires de cles Ed25519 des deux cotes (bridge/pont_protocole.py,
+  bibliotheque cryptography). A l'appairage, les cles publiques passent par
+  le NAS et chaque machine dit un code a 4 chiffres tire des DEUX cles :
+  une cle remplacee en route donnerait des codes differents. Le Pi garde ses
+  machines de confiance sur sa carte SD (~/autopilot/compagnon), pas sur le
+  NAS. Tous les messages, resultats et suppressions sont signes.
+- Liaison : la machine se connecte au Pi (port 47811, lib/compagnon_serveur.py,
+  thread de meteo_watch) : son pare-feu n'a rien a ouvrir. Presentation
+  signee dans les deux sens (nonce), battement toutes les 30 s. Le Pi pousse
+  "travail" ; la machine repond "pris" puis "fini". Machine absente : paquet
+  de reveil Wake-on-LAN toutes les 10 min (le Mac du 2026-10-01 ne se met
+  jamais en veille systeme et est en Wi-Fi : le reveil par le reseau n'y est
+  pas garanti, un cable Ethernet le serait).
+- Travaux : travaux/<id>/travail.json, pris par renommage en
+  travail.pris.json ; resultat.json signe, avec l'empreinte SHA-256 de chaque
+  fichier rendu. Le Pi fait decrire l'image par Gemini, la range en PNG sur
+  nd2/storage/radio/satellites, annonce, compte les statistiques, efface le
+  travail. Travail sans resultat apres 12 h : efface.
+- Machine compagne : dossier `bridge/` (nearfield_bridge.py, meteor.py,
+  pont_protocole.py, dialogue.applescript, installer.sh). Python 3.9 suffit.
+  L'installateur met numpy, cryptography et cmake par pip --user, compile
+  meteor_demod/meteor_decode (sortie BMP, sans libpng), installe le service
+  (LaunchAgent local.nearfield.bridge sur Mac, systemd utilisateur sous
+  Linux) et, sur Mac, l'application "Nearfield Bridge" (~/Applications,
+  raccourci sur le bureau) : dialogues standard lus par VoiceOver pour voir
+  les ponts et leurs statistiques, appairer, supprimer un pont (le Pi est
+  prevenu par message signe), mettre le service en pause. Pendant un calcul,
+  `caffeinate` empeche la veille sans toucher aux reglages.
+- Console du Pi : "appairage" (en meme temps que l'application), "compagnon".
+- Meteor n'est ecoute (et cite par "satellites") que si une machine de
+  confiance qui sait faire "meteor" est connectee ou a ete vue cette semaine.
   tools/meteor_traitement.py reste comme secours manuel sur le Pi.
 - A venir sur le meme pont : decodage LoRa/Meshtastic des rafales, SSTV ISS.
 
