@@ -237,13 +237,13 @@ def precursors(lieu, history=None):
             peak = max(window, key=lambda r: r["temp"]) if window else None
             if peak and peak["temp"] - last["temp"] >= TEMP_DROP_C:
                 minutes = max(1, round((last["t"] - peak["t"]) / 60))
-                signs.append({"t": last["t"], "gravite": 2, "direction": direction,
+                signs.append({"t": last["t"], "gravite": 2, "direction": direction, "type": "chute_temp",
                               "texte": f"chute de {_num(peak['temp'] - last['temp'])} degrés en {minutes} minutes "
                                        f"chez une {label}"})
         if last.get("pression") is not None:
             before = _value_at(rows, "pression", last["t"] - 3 * 3600 + 600)
             if before and before["t"] <= last["t"] - 2 * 3600 and before["pression"] - last["pression"] >= PRESSURE_FALL_HPA:
-                signs.append({"t": last["t"], "gravite": 1, "direction": direction,
+                signs.append({"t": last["t"], "gravite": 1, "direction": direction, "type": "pression",
                               "texte": f"pression en baisse de {_num(before['pression'] - last['pression'])} "
                                        f"hectopascals en 3 heures chez une {label}"})
         gust = last.get("rafale") if last.get("rafale") is not None else last.get("vent")
@@ -251,14 +251,32 @@ def precursors(lieu, history=None):
             field = "rafale" if last.get("rafale") is not None else "vent"
             before = _value_at(rows, field, last["t"] - 30 * 60)
             if before and gust - before[field] >= GUST_JUMP_KMH:
-                signs.append({"t": last["t"], "gravite": 2, "direction": direction,
+                signs.append({"t": last["t"], "gravite": 2, "direction": direction, "type": "vent",
                               "texte": f"vent passé de {round(before[field])} à {round(gust)} kilomètres heure "
                                        f"chez une {label}"})
         if last.get("pluie_1h"):
             before = _value_at(rows, "pluie_1h", last["t"] - 30 * 60)
             if before and not before["pluie_1h"] and last["pluie_1h"] >= 0.5:
-                signs.append({"t": last["t"], "gravite": 1, "direction": direction,
+                signs.append({"t": last["t"], "gravite": 1, "direction": direction, "type": "pluie",
                               "texte": f"la pluie vient de commencer chez une {label}"})
+    # Fiabilite apprise des observations de l'utilisateur (lib/meteo_obs.py) :
+    # un type de signe rarement suivi d'un orage ou d'une forte pluie ici
+    # perd du poids, un type souvent suivi en gagne.
+    try:
+        import meteo_obs
+        reliability = meteo_obs.sign_reliability()
+    except Exception:
+        reliability = {}
+    for s in signs:
+        hits, total = reliability.get(s["type"], (0, 0))
+        if total >= 5:
+            rate = hits / total
+            if rate < 0.2:
+                s["gravite"] = 1
+                s["texte"] += ", signe peu fiable ici"
+            elif rate >= 0.6:
+                s["gravite"] = 2
+                s["texte"] += f", signe souvent suivi d'orage ici, {hits} fois sur {total}"
     signs.sort(key=lambda s: -s["t"])
     return signs
 
@@ -329,6 +347,25 @@ def threat(lieu, fc=None, signs=None):
         if delta is not None and delta <= -PRESSURE_FALL_HPA:
             level = max(level, 1)
             reasons.append(f"pression en chute de {_num(-delta)} hectopascals en 3 heures")
+    try:
+        import meteo_obs
+        observed = meteo_obs.recent()
+    except Exception:
+        observed = None
+    if observed:
+        thunder = observed.get("orage")
+        if thunder in ("proche", "tout_pres"):
+            level = 3
+            reasons.append("tonnerre " + ("tout près" if thunder == "tout_pres" else "proche") + ", d'après ton observation")
+        elif thunder == "loin":
+            level = max(level, 2)
+            reasons.append("tonnerre entendu au loin, d'après ton observation")
+        if observed.get("precip") in ("violente", "grele"):
+            level = max(level, 2)
+            reasons.append(("grêle" if observed["precip"] == "grele" else "averse violente") + ", d'après ton observation")
+        elif observed.get("precip") == "forte":
+            level = max(level, 1)
+            reasons.append("forte pluie, d'après ton observation")
     signs = precursors(lieu) if signs is None else signs
     if any(s["gravite"] >= 2 for s in signs):
         level = max(level, 2)
@@ -357,14 +394,50 @@ def approach_direction(signs):
 # --- balayage meteo force (commande "meteo" de la console) ------------------
 
 SCAN_REQUEST_PATH = "/tmp/radio_watch_meteo.json"
+SCAN_DONE_PATH = "/tmp/radio_watch_meteo_fait.json"
 SCAN_REQUEST_MAX_AGE_SEC = 600
 # (fenetre du scanner, duree d'ecoute) : stations APRS, capteurs 433 puis 868 MHz
 FORCED_SCAN = [("aprs", 60), ("capteurs", 45), ("capteurs", 45)]
 
 
 def request_scan():
-    _write_json(SCAN_REQUEST_PATH, {"t": time.time()})
+    """Demande un balayage au scanner ; rend l'instant de la demande."""
+    asked = time.time()
+    try:
+        os.remove(SCAN_DONE_PATH)
+    except OSError:
+        pass
+    _write_json(SCAN_REQUEST_PATH, {"t": asked})
+    return asked
+
+
+def scan_duration():
     return sum(sec for _, sec in FORCED_SCAN)
+
+
+def scan_done(started, finished, stations, sensors):
+    """Pour le scanner : signale la fin du balayage a la console."""
+    _write_json(SCAN_DONE_PATH, {"debut": started, "fin": finished, "stations": stations, "capteurs": sensors})
+
+
+def wait_scan(asked, timeout):
+    """Attend la fin d'un balayage demande a l'instant asked. Rend le compte
+    rendu ({debut, fin, stations, capteurs}) ou None si le scanner n'a pas
+    repondu (pause thermique, mode manuel, scanner arrete...)."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        done = _read_json(SCAN_DONE_PATH)
+        if done and done.get("debut", 0) >= asked - 1:
+            return done
+        time.sleep(2)
+    return None
+
+
+def scan_counts(started):
+    aprs = _read_json(APRS_WX_PATH) or {}
+    sensors = _read_json(SENSORS_PATH) or {}
+    return (sum(1 for s in aprs.values() if s.get("t", 0) >= started),
+            sum(1 for s in sensors.values() if s.get("t", 0) >= started))
 
 
 def take_scan_request():
@@ -377,27 +450,6 @@ def take_scan_request():
     except OSError:
         pass
     return time.time() - req.get("t", 0) <= SCAN_REQUEST_MAX_AGE_SEC
-
-
-def scan_summary(started, lieu=None):
-    """Ce que le balayage force a capte depuis started."""
-    lieu = lieu or reglages.get("lieu")
-    aprs = _read_json(APRS_WX_PATH) or {}
-    sensors = _read_json(SENSORS_PATH) or {}
-    n_aprs = sum(1 for s in aprs.values() if s.get("t", 0) >= started)
-    n_sensors = sum(1 for s in sensors.values() if s.get("t", 0) >= started)
-    if not n_aprs and not n_sensors:
-        return "Balayage météo terminé : aucune station ni capteur reçu cette fois."
-    text = (f"Balayage météo terminé : {n_aprs} station{'s' if n_aprs > 1 else ''} radioamateur et "
-            f"{n_sensors} capteur{'s' if n_sensors > 1 else ''} reçus.")
-    neighbors = _neighbors_text(lieu)
-    if neighbors:
-        text += " " + neighbors
-    record_observations()
-    signs = precursors(lieu)
-    if signs:
-        text += " Signes avant-coureurs : " + " ; ".join(s["texte"] for s in signs[:2]) + "."
-    return text
 
 
 # --- bulletin -------------------------------------------------------------------
@@ -448,9 +500,11 @@ def _sondes_text(lieu, found):
     return text + "."
 
 
-def bulletin(lieu=None, with_sondes=True):
-    """Bulletin meteo local complet, en phrases."""
+def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=False):
+    """Bulletin meteo local complet, en phrases. scan : compte rendu du
+    balayage radio qui vient d'etre fait (wait_scan)."""
     lieu = lieu or reglages.get("lieu")
+    record_observations()  # les releves tout frais du balayage
     fc = forecast(lieu)
     signs = precursors(lieu)
     level, reasons = threat(lieu, fc, signs)
@@ -483,6 +537,17 @@ def bulletin(lieu=None, with_sondes=True):
                                                   else f"dans {out['pluie_des']} heure{'s' if out['pluie_des'] > 1 else ''}"))
         if out["cape"][0] >= 500:
             upcoming.append("atmosphère " + ("très instable" if out["cape"][0] >= 1500 else "instable"))
+        try:
+            import meteo_obs
+            threshold = meteo_obs.thunder_threshold()
+            hourly_prob = hourly.get("precipitation_probability") or []
+            i0 = _hourly_index(fc)
+            prob = max([p for p in hourly_prob[i0:i0 + 6] if p is not None], default=None)
+            calibrated = meteo_obs.calibrated_note(prob)
+        except Exception:
+            threshold, calibrated = None, ""
+        if threshold is not None and out["cape"][0] >= threshold:
+            upcoming.append("chez toi, le tonnerre a déjà grondé avec une telle instabilité")
         if out["rafales"][0] >= 50:
             upcoming.append(f"rafales jusqu'à {round(out['rafales'][0])} kilomètres heure")
         i = _hourly_index(fc)
@@ -490,6 +555,8 @@ def bulletin(lieu=None, with_sondes=True):
         if freezing is not None and freezing < 2500:
             upcoming.append(f"limite du gel vers {int(round(freezing, -2))} mètres")
         parts.append("Dans les 12 prochaines heures : " + (", ".join(upcoming) if upcoming else "rien de notable") + ".")
+        if calibrated:
+            parts.append(calibrated)
         daily = fc.get("daily") or {}
         days = []
         for k, label in enumerate(["Aujourd'hui", "Demain", "Après-demain"]):
@@ -514,9 +581,25 @@ def bulletin(lieu=None, with_sondes=True):
     crue = _read_json(CRUE_STATE) or {}
     if any(isinstance(l, int) and l >= 2 for l in crue.values()):
         parts.append("Vigilance crue en cours sur la rivière surveillée.")
+    if scan:
+        parts.append(f"Panel radio météo balayé : {scan.get('stations', 0)} station"
+                     f"{'s' if scan.get('stations', 0) > 1 else ''} radioamateur et {scan.get('capteurs', 0)} "
+                     f"capteur{'s' if scan.get('capteurs', 0) > 1 else ''} reçus à l'instant.")
+    elif scan_failed:
+        parts.append("Le scanner n'a pas pu balayer le panel radio météo (pause ou mode manuel) : "
+                     "relevés locaux des dernières heures.")
     neighbors = _neighbors_text(lieu)
     if neighbors:
         parts.append(neighbors)
+    try:
+        import meteo_obs
+        last_obs = (meteo_obs.load() or [None])[-1]
+    except Exception:
+        last_obs = None
+    if last_obs and time.time() - last_obs["t"] < 3 * 3600:
+        minutes = round((time.time() - last_obs["t"]) / 60)
+        when = "à l'instant" if minutes < 1 else f"il y a {minutes} minute{'s' if minutes > 1 else ''}"
+        parts.append(f"Ta dernière observation, {when} : {meteo_obs.spoken(last_obs['reponses'])}.")
     if signs:
         text = "Signes avant-coureurs : " + " ; ".join(s["texte"] for s in signs[:3])
         origin = approach_direction(signs)

@@ -430,6 +430,11 @@ def _precursor_watcher():
             elif level < last_level and last_level >= 2 and level <= 1:
                 _speak_lightly("La situation météo se calme. Écoute normale des stations voisines.")
             if fresh:
+                try:
+                    import meteo_obs
+                    meteo_obs.log_signs(fresh)  # pour juger leur fiabilite (bilan meteo)
+                except Exception as exc:
+                    print(f"[meteo_watch] journal des signes : {exc!r}")
                 text = "Signe avant-coureur : " + " ; ".join(s["texte"] for s in fresh[:3]) + "."
                 origin = meteo_locale.approach_direction(signs)
                 if origin and len({s["direction"] for s in signs if s["direction"]}) > 1:

@@ -64,6 +64,7 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `priorites.py` | Commande `priorités` : ordre des sources sur les haut-parleurs (Majuscule + flèche pour déplacer) et comportement de chacune ; arbitre dans `lib/audio_lock.py` |
 | `conseils.py` | Niveau d'aide (commande `conseils`) : consignes des dialogues à chaque fois ou à la première utilisation ; F1 les redit toujours |
 | `voix_cmd.py` | Commande `voix` : choix de la voix (chacune se présente) et du débit, dans `console.json` |
+| (commande `observation`) | Dire au Pi le temps qu'il fait (« il pleut fort », « tonnerre au loin », ou dialogue complet) ; effet immédiat sur la vigilance et apprentissage simple, `bilan météo` (`lib/meteo_obs.py`) |
 | (commande `météo`) | Bulletin local (Open-Meteo/AROME, vigilances, stations APRS et capteurs voisins, ballons-sondes SondeHub, signes avant-coureurs) et balayage météo forcé du scanner (`lib/meteo_locale.py`) |
 | (commande `voitures`) | Statistiques de la rue par les capteurs de pneus, véhicules habituels appris, « nomme la voiture 3 facteur » (`lib/voitures.py`) |
 | (commande `capteurs`) | Derniers relevés des capteurs sans fil (rtl_433) et des stations météo APRS |

@@ -550,6 +550,12 @@ COMMANDS = [
             keywords=["simulation", "simulations", "simule", "simuler"],
             examples=["simulation"]),
     # Apres "simulation" : "simulation meteo" reste une simulation.
+    # Avant "meteo" : "orage au loin" est une observation, "orage" seul une question.
+    Command("observation", "dire au Pi le temps qu'il fait : il pleut fort, tonnerre au loin, ou le dialogue complet", None,
+            keywords=["observation", "observer", "il pleut", "pleut fort", "tonnerre", "gronde", "il grele",
+                      "il neige", "orage au loin", "orage proche", "orage tout pres", "il fait beau", "bruine",
+                      "pleuviote", "vent fort", "tempete", "ca s arrete", "s est arrete de pleuvoir"],
+            examples=["j'entends le tonnerre", "il commence à pleuvoir", "ça tombe fort"]),
     Command("météo", "bulletin météo local, signes avant-coureurs, et balayage des stations météo voisines", None,
             keywords=["meteo", "quel temps", "temps qu il fait", "previsions", "prevision", "orage", "orages",
                       "pluie", "il va pleuvoir"],

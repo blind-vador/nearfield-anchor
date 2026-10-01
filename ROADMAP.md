@@ -5311,3 +5311,31 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
 - Decodeurs compiles (install.sh ; ici dans ~/autopilot/bin), sox installe.
   Test : chaine demarree et arretee proprement ; aucun ballon a portee a
   12 h 20 (lachers habituels vers 13 h et 1 h, heure de Paris).
+
+### Bulletin apres balayage ; observations meteo de l'utilisateur (2026-10-01)
+
+- Commande "meteo" : le bulletin n'est donne qu'APRES le balayage du panel
+  radio meteo (APRS 60 s, capteurs 433 et 868 MHz, ballon-sonde a portee),
+  pour etre complet, ultra-local compris (demande utilisateur). Le scanner
+  verifie la demande entre chaque fenetre, signale la fin
+  (/tmp/radio_watch_meteo_fait.json) ; la console attend en arriere-plan
+  (clavier libre), lit le bulletin, "repete" le relit. Sans reponse du
+  scanner (pause, manuel) : bulletin avec les releves des dernieres heures.
+- lib/meteo_obs.py + console/observation.py : observations percues sans la
+  vue (precipitations, tonnerre loin/proche/tout pres, vent d'apres
+  Beaufort au toucher et a l'oreille, evolution, ressenti, odeur,
+  direction si percue, certitude), inspirees de mPING (NOAA), CoCoRaHS et
+  des codes temps present de l'OMM. Phrases directes ("il pleut fort",
+  "tonnerre au loin", "orage tout pres", "il fait beau"...) ou dialogue
+  "observation". Instantane du modele et des signes a chaque observation.
+- Effet immediat : tonnerre au loin -> niveau 2, proche/tout pres -> 3 avec
+  conseils de securite, averse violente/grele -> 2 (45 min), renfort
+  d'attention publie aussitot.
+- Apprentissage par comptes : fiabilite du modele pour la pluie par tranche
+  de probabilite (5 cas minimum, phrase dans le bulletin si l'ecart depasse
+  20 points), seuil d'orage local (1er quartile de la CAPE quand le
+  tonnerre est entendu, 3 cas), fiabilite de chaque type de signe avant-
+  coureur (suivi d'orage ou forte pluie dans les 2 h, 5 cas : moins de 20 %
+  -> poids reduit, 60 % et plus -> poids fort). Signes annonces journalises
+  (meteo_signes.jsonl). "bilan meteo" dit tout ca et rappelle le biais
+  (on observe surtout quand il se passe quelque chose).

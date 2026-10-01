@@ -1287,6 +1287,24 @@ DATA_SCANNERS = {
 }
 
 
+def _meteo_scan_if_requested():
+    """Balayage du panel radio meteo demande par la console (commande
+    "meteo") : stations APRS, capteurs 433 et 868 MHz, ballon-sonde a portee.
+    La console attend la fin (meteo_locale.wait_scan) pour donner un
+    bulletin complet, ultra-local compris."""
+    try:
+        if not meteo_locale.take_scan_request():
+            return
+        started = time.time()
+        for name, dwell in meteo_locale.FORCED_SCAN:
+            DATA_SCANNERS[name](dwell_sec=dwell)
+        DATA_SCANNERS["sondes"](dwell_sec=45)  # rend la main aussitot sans ballon a portee
+        stations, sensors = meteo_locale.scan_counts(started)
+        meteo_locale.scan_done(started, time.time(), stations, sensors)
+    except Exception as exc:
+        print(f"[radio_watch] balayage meteo : {exc!r}")
+
+
 def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     # Verrou audio partage avec adsb_watch.py (processus separe) : garantit
     # qu'aucune annonce d'avion ne chevauche l'annonce/diffusion/son de fin
@@ -1743,21 +1761,7 @@ def main():
         # l'utilisateur, contexte aerien d'adsb_watch), avec un plancher
         # d'exploration pour les bandes balayees. Meme dongle, toujours en
         # sequence -- jamais deux ecoutes en parallele.
-        # Balayage meteo demande depuis la console (commande "meteo") : passe
-        # avant le reste du cycle, puis resume ce qui a ete capte.
-        try:
-            if meteo_locale.take_scan_request():
-                started = time.time()
-                for name, dwell in meteo_locale.FORCED_SCAN:
-                    DATA_SCANNERS[name](dwell_sec=dwell)
-                summary = meteo_locale.scan_summary(started)
-                lock = audio_lock.acquire("console", timeout=60)
-                try:
-                    speak_with_lead_sound(DECODING_NUMERIC_SOUND, summary, label="radio_watch")
-                finally:
-                    audio_lock.release(lock)
-        except Exception as exc:
-            print(f"[radio_watch] balayage meteo : {exc!r}")
+        _meteo_scan_if_requested()
         try:
             plan = attention.plan_cycle(airband_bridge.AIRBAND_WINDOWS, sweep_bands)
         except Exception as exc:  # l'attention ne doit jamais arreter la veille
@@ -1769,6 +1773,7 @@ def main():
         for kind, obj, target, dwell, air_boost in plan:
             if _lock_pending():
                 break
+            _meteo_scan_if_requested()  # la console attend son bulletin : on n'attend pas la fin du cycle
             if kind == "airband":
                 hit = airband_bridge.scan_window(obj, dwell_sec=dwell)
             elif kind == "data":

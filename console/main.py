@@ -17,6 +17,7 @@ import os
 import select
 import signal
 import sys
+import time
 import termios
 import tty
 
@@ -35,6 +36,7 @@ import flash  # noqa: E402
 import voix_cmd  # noqa: E402
 import conseils  # noqa: E402
 import priorites  # noqa: E402
+import observation  # noqa: E402
 import simulation  # noqa: E402
 import veilles  # noqa: E402
 import vision  # noqa: E402
@@ -155,18 +157,41 @@ def read_line(key_source):
     raise EOFError
 
 
+# Reponse donnee plus tard, en arriere-plan (bulletin meteo) : "repete" la
+# relit si elle est plus recente que la derniere reponse directe.
+_async_response = {"text": "", "t": 0.0}
+_last_direct = {"t": 0.0}
+
+
 def meteo_cmd(line):
-    """Bulletin local (lib/meteo_locale.py) et balayage meteo force du scanner."""
+    """Balayage du panel radio meteo local par le scanner, PUIS bulletin
+    complet (lib/meteo_locale.py), ultra-local compris (demande utilisateur
+    2026-10-01). L'attente se fait en arriere-plan : le clavier reste libre."""
+    import threading
     import meteo_locale
-    voix.say("Je prépare le bulletin météo.")
-    try:
-        text = meteo_locale.bulletin()
-    except Exception as exc:  # une source au format inattendu ne doit pas tuer la console
-        print(f"[console] meteo : {exc!r}", file=sys.stderr)
-        text = "Le bulletin météo a échoué sur une erreur inattendue."
-    seconds = meteo_locale.request_scan()
-    return (f"{text} Je lance aussi un balayage des stations météo voisines, "
-            f"résultat dans {max(1, round(seconds / 60))} minutes environ.")
+    asked = meteo_locale.request_scan()
+    seconds = meteo_locale.scan_duration()
+
+    def run():
+        scan = meteo_locale.wait_scan(asked, timeout=seconds + 180)
+        try:
+            text = meteo_locale.bulletin(scan=scan, scan_failed=scan is None)
+        except Exception as exc:  # une source au format inattendu ne doit pas tuer la console
+            print(f"[console] meteo : {exc!r}", file=sys.stderr)
+            text = "Le bulletin météo a échoué sur une erreur inattendue."
+        _async_response.update(text=text, t=time.time())
+        out(f"{text}\n> ")
+        voix.say_and_wait(text)
+
+    threading.Thread(target=run, daemon=True).start()
+    minutes = max(2, round(seconds / 60))
+    return (f"Je balaie d'abord le panel radio météo local, environ {minutes} minutes ; "
+            "le bulletin complet suivra. Le clavier reste libre en attendant.")
+
+
+def cmd_is_not_repeat(line):
+    cmd, _ = matcher.match(line, commands.COMMANDS)
+    return cmd is None or cmd.name != "répète"
 
 
 def run_command(line, key_source, last_response):
@@ -198,6 +223,9 @@ def run_command(line, key_source, last_response):
         return ""
     if cmd.name == "veilles":
         return veilles.status_text()
+    if cmd.name == "bilan" and "meteo" in matcher.normalize(line).split():
+        import meteo_obs
+        return meteo_obs.summary()
     if cmd.name == "bilan":
         return bilan.summary()
     if cmd.name == "archives":
@@ -214,6 +242,10 @@ def run_command(line, key_source, last_response):
         return commands.voitures_cmd(line)
     if cmd.name == "voix":
         return voix_cmd.run(key_source, voix.say, out)
+    if cmd.name == "observation":
+        if matcher.normalize(line) in ("observation", "observer", "observation meteo"):
+            return observation.run(line, key_source, voix.say, out)
+        return observation.quick(line) or observation.run(line, key_source, voix.say, out)
     if cmd.name == "météo":
         return meteo_cmd(line)
     if cmd.name == "flash":
@@ -233,6 +265,8 @@ def run_command(line, key_source, last_response):
     if cmd.name == "touches":
         return keytest(key_source)
     if cmd.name == "répète":
+        if _async_response["t"] > _last_direct["t"]:
+            return _async_response["text"]
         return last_response
     if cmd.name == "radio":
         voix.say_and_wait("Scan de la bande FM, environ dix secondes.")
@@ -266,8 +300,9 @@ def main():
             response = run_command(line, key_source, last_response)
             # Reponse vide = la commande parle elle-meme en arriere-plan
             # (description, mise a jour) : rien a memoriser pour "repete".
-            if response:
+            if response and cmd_is_not_repeat(line):
                 last_response = response
+                _last_direct["t"] = time.time()
             out(f"{response}\n> ")
             voix.say(response, lock=True)
     except EOFError:
