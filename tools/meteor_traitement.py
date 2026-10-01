@@ -30,12 +30,31 @@ CHUNK = 1 << 20
 BIN = "/usr/local/bin" if os.path.exists("/usr/local/bin/meteor_demod") else "/home/vador/autopilot/bin"
 TRIES = [(72000, []), (72000, ["-d"]), (80000, ["-i"]), (80000, ["-i", "-d"])]
 MIN_LINES = 80
+# Le Pi ne doit pas chauffer pour une image (2026-10-01 : 82 C pendant un
+# traitement lance en meme temps qu'une grosse installation) : pause des que
+# HOT_C est depasse, etapes lourdes (demodulation) seulement sous START_C.
+HOT_C = 70.0
+START_C = 65.0
 PROMPT = """Voici une image prise il y a quelques minutes par le satellite météo russe {sat}, en orbite
 basse, lors de son passage au-dessus de la France et de l'Europe de l'Ouest. La personne qui l'écoute est
 aveugle et habite à Saint-Étienne, dans le centre-est de la France. En 3 ou 4 phrases simples, à lire à voix
 haute, décris la couverture nuageuse, surtout au-dessus du centre-est de la France si tu peux le repérer :
 ciel dégagé, nuages épars, couche étendue, gros amas pouvant être orageux. Si l'image est partielle,
 bruitée ou difficile à situer, dis-le franchement. Pas de markdown, pas de liste."""
+
+
+def _temperature():
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            return int(f.read()) / 1000
+    except (OSError, ValueError):
+        return 0.0
+
+
+def cool_down(limit):
+    """Attend que le Pi soit sous limit degres."""
+    while _temperature() > limit:
+        time.sleep(30)
 
 
 def _lowpass(cutoff_hz):
@@ -54,6 +73,7 @@ def extract(path):
         power, total, n0, tail, phase = 0.0, 0, 0, np.zeros(TAPS - 1, np.complex64), 0
         with open(path, "rb") as src, open(out_path, "wb") as dst:
             while True:
+                cool_down(HOT_C)
                 raw = src.read(CHUNK * 2)
                 if len(raw) < 2:
                     break
@@ -85,6 +105,7 @@ def decode(raw_path, work):
     best = (None, 0)
     for symrate in sorted({s for s, _ in TRIES}):
         symbols = os.path.join(work, f"sym{symrate}.s")
+        cool_down(START_C)
         subprocess.run([f"{BIN}/meteor_demod", "-B", "-q", "-s", str(OUT_RATE), "--bps", "16",
                         "-r", str(symrate), "-o", symbols, raw_path],
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3600)
