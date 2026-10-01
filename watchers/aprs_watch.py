@@ -23,6 +23,7 @@ import time
 
 import aprslib
 
+import aprs_texte
 import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
 
@@ -116,12 +117,14 @@ def _process(packet):
         return False
     speed = packet.get("speed") or 0
     moving = speed >= 5
-    text = f"Station APRS {vd.spell(name)}, {vd.where(lat, lon)}"
+    kind = aprs_texte.station_type(packet)
+    text = f"{kind.capitalize() if kind else 'Station APRS'} {vd.spell(name)}, {vd.where(lat, lon)}"
     if moving:
         text += f", en mouvement à {round(speed)} kilomètres heure"
-    comment = (packet.get("comment") or packet.get("status") or "").strip()
-    if comment and len(comment) <= 60:
-        text += f". {comment}"
+    # Commentaire traduit (reglages de relais, tension, sigles...) : voir lib/aprs_texte.py.
+    comment = aprs_texte.comment(packet.get("comment") or packet.get("status") or "", name)
+    if comment:
+        text += f". {comment[0].upper()}{comment[1:]}"
     first = _memory.due(f"station|{name}", STATION_EVERY_SEC)
     near = km <= NEAR_KM and _memory.due(f"near|{name}", NEAR_EVERY_SEC)
     if first or near:

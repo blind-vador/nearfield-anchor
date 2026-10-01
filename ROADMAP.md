@@ -5184,3 +5184,16 @@ Demande utilisateur : tout ecouter de ce qui est ouvert autour de chez lui
   le bilan dans les parts par contenu) ; marquee validation_rapide. Pique la
   bande comme une note "oui". Une note detaillee existante n'est pas
   ecrasee (N pour la modifier) ; deja validee : rien de plus.
+
+### APRS : commentaires traduits en francais (2026-10-01)
+
+- lib/aprs_texte.py : type de station d'apres le symbole APRS (table
+  principale, secondaire, surimpression L = LoRa, I = internet, E =
+  EchoLink...), sinon le suffixe (-9 mobile, -7 portatif, -13 meteo ; pas
+  pour les objets). Commentaire : reglages de relais traduits (frequence,
+  decalage, tonalite d'acces, portee, lien entre deux bandes, mode D-Star,
+  DMR, C4FM), tension, temperature, altitude, sigles (Digi, iGate, WX, RX
+  ONLY, ADRASEC + departement, 73...) ; retires : telemetrie compressee et
+  Mic-E, adresses web, mail et IP, logiciels et versions, PHG, locator,
+  petits codes, indicatif de la station repete, nombres isoles.
+- Mis au point sur les 47 stations reellement recues (archive aprs_*.jsonl).
