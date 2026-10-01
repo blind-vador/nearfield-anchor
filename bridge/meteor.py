@@ -8,6 +8,7 @@
 Compatible Python 3.9 (Python d'Apple).
 """
 import os
+import shutil
 import subprocess
 
 import numpy as np
@@ -92,14 +93,22 @@ def decode(raw_path, work, out_rate, bin_dir):
     return best
 
 
-def process(job_dir, params, bin_dir):
-    """Rend (etat, sorties, message)."""
-    path = os.path.join(job_dir, params["fichier"])
+def process(job_dir, params, bin_dir, scratch):
+    """Rend (etat, sorties, message). L'enregistrement est d'abord copie sur
+    le disque de cette machine (scratch) en une seule lecture : lire et ecrire
+    les fichiers intermediaires a travers le reseau (Wi-Fi) prenait plus de
+    10 minutes pour 2 Go (2026-10-01). Seule l'image retourne sur le NAS."""
+    source = os.path.join(job_dir, params["fichier"])
     rate = int(params["taux"])
-    work = os.path.join(job_dir, "travail")
-    os.makedirs(work, exist_ok=True)
+    work = os.path.join(scratch, os.path.basename(job_dir.rstrip("/")))
+    shutil.rmtree(work, ignore_errors=True)
+    os.makedirs(work)
     try:
+        path = os.path.join(work, "iq.u8")
+        with open(source, "rb") as src, open(path, "wb") as dst:
+            shutil.copyfileobj(src, dst, 16 << 20)
         candidates = extract(path, int(params["centre"]), rate, [int(f) for f in params["frequences"]])
+        os.remove(path)
         best = (None, 0)
         for _, raw in candidates:
             best = decode(raw, work, rate // DECIM, bin_dir)
@@ -107,14 +116,11 @@ def process(job_dir, params, bin_dir):
                 break
         if best[0] is None or best[1] < MIN_LINES:
             return "echec", [], "signal trop faible, aucune image décodable"
-        os.replace(best[0], os.path.join(job_dir, "image.bmp"))
+        shutil.copyfile(best[0], os.path.join(job_dir, "image.bmp"))
         return "fait", ["image.bmp"], "%d lignes" % best[1]
     finally:
-        for name in os.listdir(work):
-            os.remove(os.path.join(work, name))
-        os.rmdir(work)
-        for f in [path] + ["%s.%d.raw" % (path, int(fr) // 1000) for fr in params["frequences"]]:
-            try:
-                os.remove(f)
-            except OSError:
-                pass
+        shutil.rmtree(work, ignore_errors=True)
+        try:
+            os.remove(source)  # 2 Go sur le NAS : inutiles une fois traites
+        except OSError:
+            pass

@@ -459,7 +459,7 @@ def _claim(share):
 def _process(job, folder):
     if job.get("type") == "meteor":
         import meteor
-        return meteor.process(folder, job["params"], BIN_DIR)
+        return meteor.process(folder, job["params"], BIN_DIR, os.path.join(HOME, "calcul"))
     return "echec", [], "cette machine ne sait pas faire « %s »" % job.get("type")
 
 
