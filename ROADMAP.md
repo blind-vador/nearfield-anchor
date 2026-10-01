@@ -5474,3 +5474,15 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
     rtl_fm 40 kHz (Doppler), detecteur de voix RNNoise du scanner ; au journal
     seulement si au moins 4 s de voix.
 - Commande "satellites" : prochains passages.
+
+### LoRa et Meshtastic : captation des rafales (2026-10-01)
+
+- watchers/lora_watch.py, fenetre "lora" (30 s), en alternance :
+  Meshtastic 869,525 MHz (250 kHz, preset europeen LongFast) et APRS LoRa
+  433,775 MHz (125 kHz). rtl_sdr 1 MS/s, puissance dans la largeur du canal
+  par blocs de 10 ms (sans la raie centrale), rafale = 6 dB au-dessus de la
+  mediane pendant au moins 50 ms ; enregistree en I/Q brut (cu8, 100 ms de
+  marge) avec sa fiche JSON dans stockage/radio/lora/<profil>/. Pas de
+  decodage en direct (chaleur) : decodage differe prevu avec gr-lora_sdr
+  (GNU Radio 3.10, paquets Debian) puis dechiffrement du canal public
+  Meshtastic (cle par defaut connue) et analyse APRS des paquets LoRa APRS.

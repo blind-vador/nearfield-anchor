@@ -30,6 +30,7 @@ import adsb_local_watch
 import aprs_watch
 import balises_watch
 import capteurs_watch
+import lora_watch
 import pagers_watch
 import sondes_watch
 import vdl2_watch
@@ -1313,6 +1314,7 @@ DATA_SCANNERS = {
     "adsb": adsb_local_watch.scan_window,
     "balises": balises_watch.scan_window,
     "sondes": sondes_watch.scan_window,
+    "lora": lora_watch.scan_window,
 }
 
 

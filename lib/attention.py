@@ -49,10 +49,10 @@ ACARS_BASE_DWELL = 30
 # Fenetres de donnees (une ecoute par cycle chacune, meme dongle, en
 # sequence) : cible -> duree d'ecoute de base. Voir radio_watch.DATA_SCANNERS.
 DATA_WINDOWS = {"acars": ACARS_BASE_DWELL, "vdl2": 25, "aprs": 30, "capteurs": 30,
-                "pagers": 30, "adsb": 30, "balises": 55, "sondes": 45}
+                "pagers": 30, "adsb": 30, "balises": 55, "sondes": 45, "lora": 30}
 DATA_LABELS = {"acars": "ACARS", "vdl2": "VDL2", "aprs": "APRS", "capteurs": "capteurs sans fil",
                "pagers": "pagers 466", "adsb": "avions en direct", "balises": "balises de détresse",
-               "sondes": "ballons-sondes"}
+               "sondes": "ballons-sondes", "lora": "LoRa et Meshtastic"}
 # Fenetres espacees : pas plus d'une visite par intervalle (sauf si ca pique).
 DATA_MIN_INTERVAL = {"balises": 900, "adsb": 240}
 
