@@ -5513,3 +5513,11 @@ disque nd1, dossier `server/nearfield-anchor-bridge` (lib/compagnon.py).
   appairee, presente (battement < 3 min) et capable de "meteor" est la.
   tools/meteor_traitement.py reste comme secours manuel sur le Pi.
 - A venir sur le meme pont : decodage LoRa/Meshtastic des rafales, SSTV ISS.
+
+### gr-lora_sdr compile (2026-10-01)
+
+Compile en 2 h environ (tools/build_lora.sh, a la reinstallation : installer
+d'abord python3-gnuradio puis lancer ce script comme tache utilisateur). Le
+lanceur tools/python3-gnuradio, copie dans ~/autopilot/bin, ajoute ses
+chemins (bibliotheque et module Python). Reste : tools/lora_traitement.py
+pour decoder les rafales enregistrees par lora_watch.

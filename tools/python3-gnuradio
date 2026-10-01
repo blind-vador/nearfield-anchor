@@ -1,0 +1,7 @@
+#!/bin/sh
+# Python pour GNU Radio : le numpy de Debian (1.x, celui avec lequel GNU Radio
+# est compile) et pas le numpy 2 installe par pip dans /usr/local ; plus
+# gr-lora_sdr compile dans ~/autopilot/gnuradio (tools/build_lora.sh).
+GR="$HOME/autopilot/gnuradio"
+export LD_LIBRARY_PATH="$GR/lib/arm-linux-gnueabihf:$GR/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+PYTHONPATH="$GR/lib/python3.11/site-packages:/usr/local/lib/python3/dist-packages:/usr/lib/python3/dist-packages${PYTHONPATH:+:$PYTHONPATH}" exec /usr/bin/python3 -S "$@"
