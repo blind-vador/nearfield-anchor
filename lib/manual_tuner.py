@@ -191,7 +191,8 @@ class ManualStream:
             if generation != self._generation or self._aplay is None:
                 return False  # un nouveau recepteur a pris le relais
             try:
-                self._aplay.stdin.write(data)
+                # Fil de relais : le ticket est passe explicitement (priorites).
+                self._aplay.stdin.write(audio_lock.scale(data, self._lock))
                 return True
             except (BrokenPipeError, ValueError, OSError):
                 return False

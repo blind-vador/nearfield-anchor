@@ -14,7 +14,6 @@ main, "belfort en approche.mp3") la date du fichier -- et dans ce cas le
 titre est lu avant l'ecoute, puisque c'est lui qui dit de quoi il s'agit.
 """
 import datetime
-import fcntl
 import os
 import re
 import subprocess
@@ -129,6 +128,5 @@ def run(key_source, say, out):
                 say(text)
     finally:
         player.close()
-        fcntl.flock(lock, fcntl.LOCK_UN)
-        lock.close()
+        journal._release_audio_lock(lock)
     return "Archives radio fermées."

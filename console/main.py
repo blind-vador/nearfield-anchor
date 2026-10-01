@@ -34,6 +34,7 @@ import tableaux  # noqa: E402
 import flash  # noqa: E402
 import voix_cmd  # noqa: E402
 import conseils  # noqa: E402
+import priorites  # noqa: E402
 import simulation  # noqa: E402
 import veilles  # noqa: E402
 import vision  # noqa: E402
@@ -191,6 +192,8 @@ def run_command(line, key_source, last_response):
         return journal.run(key_source, voix.say, out)
     if cmd.name == "manuel":
         return manuel.run(key_source, voix.say, out)
+    if cmd.name == "priorités":
+        return priorites.run(key_source, voix.say, out)
     if cmd.name == "conseils":
         return conseils.command(line)
     if cmd.name == "voitures":

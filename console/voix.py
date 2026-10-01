@@ -6,7 +6,7 @@ Deux usages distincts :
   verrou, coupe toute parole en cours -- taper une touche interrompt la
   voix, comme un lecteur d'ecran ;
 - reponses aux commandes (say(..., lock=True)) : prennent le verrou audio
-  partage avec les watchers (/tmp/radio_watch_audio.lock) pour ne pas
+  partage avec les watchers (arbitre lib/audio_lock.py, source "console") pour ne pas
   parler par-dessus une annonce. Attente bornee a LOCK_WAIT_SEC : au-dela,
   on parle quand meme.
 
@@ -23,7 +23,6 @@ Voix Microsoft (reglages console.json, commande "voix") :
   plus attendre personne pendant ce temps).
 """
 import asyncio
-import fcntl
 import hashlib
 import os
 import queue
@@ -36,6 +35,7 @@ import time
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import espeak_out  # noqa: E402  (espeak -> aplay, jamais de verrou JACK)
+import audio_lock  # noqa: E402  (priorites des haut-parleurs)
 import reglages  # noqa: E402
 
 try:
@@ -43,7 +43,6 @@ try:
 except ImportError:  # sans le module : espeak seul, la console reste utilisable
     edge_tts = None
 
-LOCK_PATH = "/tmp/radio_watch_audio.lock"
 LOCK_WAIT_SEC = 10
 RATE_ECHO = 220
 RATE_REPONSE = 170
@@ -394,31 +393,18 @@ def _spawn(text, echo):
     return _set_current(Cloud(text, voice, rate, espeak_rate, keep))
 
 
-def _acquire_lock():
-    f = open(LOCK_PATH, "w")
-    deadline = time.time() + LOCK_WAIT_SEC
-    while True:
-        try:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return f
-        except BlockingIOError:
-            if time.time() >= deadline:
-                return f
-            time.sleep(0.2)
-
-
 def _speak_locked(text, generation):
-    lock = _acquire_lock()
+    # Source "console" de l'arbitre (lib/audio_lock.py) ; on n'attend pas plus
+    # de LOCK_WAIT_SEC : l'utilisateur attend sa reponse.
+    lock = audio_lock.acquire("console", timeout=LOCK_WAIT_SEC)
     try:
-        # Une touche pressee pendant l'attente du verrou annule la reponse.
-        if generation != _generation:
+        # Une touche pressee pendant l'attente annule la reponse ; abandon
+        # (priorites) : on se tait.
+        if generation != _generation or lock.dropped:
             return
         _spawn(text, echo=False).wait()
     finally:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_UN)
-        finally:
-            lock.close()
+        audio_lock.release(lock)
 
 
 def say(text, lock=False):

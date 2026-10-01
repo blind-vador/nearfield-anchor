@@ -161,7 +161,7 @@ def _announce(text, label_for_log):
     print(f"[acars_watch] annonce : {text}")
     log_session = radio_log.RadioLogSession(label_for_log)
     sound_player.set_recording_session(log_session)
-    lock = audio_lock.acquire()
+    lock = audio_lock.acquire("donnees")
     try:
         speak_with_lead_sound(ACARS_SOUND, text, label="acars_watch")
     finally:

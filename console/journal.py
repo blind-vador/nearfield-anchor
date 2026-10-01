@@ -21,7 +21,6 @@ pilote du jack du Pi (voir lib/manual_tuner.py).
 """
 import audioop
 import datetime
-import fcntl
 import os
 import re
 import shutil
@@ -39,7 +38,6 @@ import voix  # noqa: E402
 
 LOG_DIR = "/media/nas/nd1/server/radio_log"
 KEEP_DIR = "/media/nas/nd2/storage/radio"
-AUDIO_LOCK_PATH = "/tmp/radio_watch_audio.lock"
 LOCK_WAIT_SEC = 10
 RATE = 48000
 
@@ -162,15 +160,13 @@ class Player:
 
 
 def _acquire_audio_lock():
-    f = open(AUDIO_LOCK_PATH, "w")
-    deadline = time.time() + LOCK_WAIT_SEC
-    while time.time() < deadline:
-        try:
-            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            break
-        except BlockingIOError:
-            time.sleep(0.2)
-    return f
+    import audio_lock
+    return audio_lock.acquire("console", timeout=LOCK_WAIT_SEC)
+
+
+def _release_audio_lock(lock):
+    import audio_lock
+    audio_lock.release(lock)
 
 
 def _keep(stamp, path):
@@ -296,6 +292,5 @@ def run(key_source, say, out):
                 say(text)
     finally:
         player.close()
-        fcntl.flock(lock, fcntl.LOCK_UN)
-        lock.close()
+        _release_audio_lock(lock)
     return "Journal radio fermé."

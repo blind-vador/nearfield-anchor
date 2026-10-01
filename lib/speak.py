@@ -5,6 +5,7 @@ import random
 import shutil
 import subprocess
 
+import audio_lock
 import espeak_out
 import tempfile
 import threading
@@ -68,7 +69,9 @@ def speak(text, voice="fr"):
         # (le vieux binaire, pas espeak-ng) devine l'encodage et se trompe
         # sur les caracteres accentues (ex: "inondee" -> "inondii",
         # "troncon" -> lit le c sans le son du cedille).
-        espeak_out.say(text, voice, timeout=30)
+        if audio_lock.dropped():
+            return  # source qui a abandonne (priorites) : on se tait
+        espeak_out.say(text, voice, timeout=30, scale=audio_lock.scale)
     except Exception as exc:
         print(f"[espeak indisponible: {exc}]")
 
@@ -234,7 +237,7 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
                 pass
     else:
         try:
-            espeak_out.say(text, "fr", timeout=30)
+            espeak_out.say(text, "fr", timeout=30, scale=audio_lock.scale)
         except Exception as exc:
             print(f"[espeak indisponible: {exc}]")
 
@@ -276,6 +279,6 @@ def speak_cloud(text, repetitive=False):
                 pass
     else:
         try:
-            espeak_out.say(text, "fr", timeout=30)
+            espeak_out.say(text, "fr", timeout=30, scale=audio_lock.scale)
         except Exception as exc:
             print(f"[espeak indisponible: {exc}]")

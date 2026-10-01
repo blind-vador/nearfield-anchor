@@ -122,19 +122,18 @@ def radio_scan():
 
 
 RADIONO_SCRIPT = "/home/vador/autopilot/radiono.py"
-AUDIO_LOCK_PATH = "/tmp/radio_watch_audio.lock"
 _radiono_thread = None
 
 
 def _play_radiono():
-    import fcntl
-    with open(AUDIO_LOCK_PATH, "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)  # attend la fin d'une annonce en cours
-        try:
+    import audio_lock
+    lock = audio_lock.acquire("console")  # attend la fin d'une annonce en cours (priorites)
+    try:
+        if not lock.dropped:
             subprocess.run(["python3", RADIONO_SCRIPT], cwd=os.path.dirname(RADIONO_SCRIPT),
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=600)
-        finally:
-            fcntl.flock(lock, fcntl.LOCK_UN)
+    finally:
+        audio_lock.release(lock)
 
 
 def rire():
@@ -437,6 +436,9 @@ COMMANDS = [
             confirm="Confirmer l'extinction du Pi ? Il faudra couper et remettre le courant pour le rallumer. "
                     "Tape oui puis entrée. Toute autre réponse annule."),
     # Avant "aide" : "aide pratique" doit regler les conseils, pas lister les commandes.
+    Command("priorités", "ordre des sources sur les haut-parleurs et ce qu'elles font quand une plus importante parle", None,
+            keywords=["priorites", "priorite", "simultane", "simultanes", "haut parleurs", "ordre des annonces"],
+            examples=["qui parle en premier", "règle les priorités"]),
     Command("conseils", "niveau d'aide : consignes à chaque fois, ou seulement à la première utilisation", None,
             keywords=["conseils", "conseil", "consignes", "mode guide", "mode expert", "aide pratique",
                       "niveau d aide"],

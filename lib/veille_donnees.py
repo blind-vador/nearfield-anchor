@@ -30,7 +30,7 @@ def announce(text, sound, label_for_log, tag):
     print(f"[{tag}] annonce : {text}")
     log_session = radio_log.RadioLogSession(label_for_log)
     sound_player.set_recording_session(log_session)
-    lock = audio_lock.acquire()
+    lock = audio_lock.acquire("donnees")
     try:
         speak_with_lead_sound(sound, text, label=tag)
     finally:

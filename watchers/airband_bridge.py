@@ -359,7 +359,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
                 captured_chunks.append(data)
                 total_bytes += len(data)
                 try:
-                    aplay.stdin.write(data)
+                    aplay.stdin.write(audio_lock.scale_float(data))
                 except Exception:
                     break
                 if total_bytes >= max_bytes:

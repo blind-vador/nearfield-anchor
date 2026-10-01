@@ -11,19 +11,49 @@ contente de fabriquer le WAV, sans aucun acces audio ni verrou JACK ; aplay
 le joue sur "default" (mixeur de l'adaptateur USB).
 """
 import subprocess
+import threading
+
+WAV_HEADER = 44
+ESPEAK_RATE = 22050
 
 
 class Speech:
     """Une phrase en cours : espeak (fabrique) | aplay (joue)."""
 
-    def __init__(self, text, voice="fr", rate=None):
+    def __init__(self, text, voice="fr", rate=None, scale=None):
+        """scale(pcm) -> pcm : volume applique au vol (priorites, audio_lock) ;
+        sans scale, espeak alimente aplay directement (console)."""
         args = ["espeak", "-v", voice, "-b", "1", "--stdout"]
         if rate:
             args += ["-s", str(rate)]
         self._espeak = subprocess.Popen(args + [text], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        self._aplay = subprocess.Popen(["aplay", "-q", "-D", "default"],
-                                       stdin=self._espeak.stdout, stderr=subprocess.DEVNULL)
-        self._espeak.stdout.close()  # aplay est le seul lecteur du tube
+        self._relay = None
+        if scale is None:
+            self._aplay = subprocess.Popen(["aplay", "-q", "-D", "default"],
+                                           stdin=self._espeak.stdout, stderr=subprocess.DEVNULL)
+            self._espeak.stdout.close()  # aplay est le seul lecteur du tube
+        else:
+            self._aplay = subprocess.Popen(["aplay", "-q", "-D", "default", "-r", str(ESPEAK_RATE),
+                                            "-f", "S16_LE", "-c", "1"],
+                                           stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            self._relay = threading.Thread(target=self._pump, args=(scale,), daemon=True)
+            self._relay.start()
+
+    def _pump(self, scale):
+        try:
+            self._espeak.stdout.read(WAV_HEADER)
+            while True:
+                data = self._espeak.stdout.read(ESPEAK_RATE // 5 * 2)
+                if not data:
+                    break
+                self._aplay.stdin.write(scale(data))
+        except (BrokenPipeError, ValueError, OSError):
+            pass
+        finally:
+            try:
+                self._aplay.stdin.close()
+            except OSError:
+                pass
 
     def poll(self):
         return self._aplay.poll()
@@ -49,6 +79,6 @@ class Speech:
                 pass
 
 
-def say(text, voice="fr", rate=None, timeout=30):
+def say(text, voice="fr", rate=None, timeout=30, scale=None):
     """Parle et attend la fin de la phrase (au plus timeout secondes)."""
-    return Speech(text, voice, rate).wait(timeout=timeout)
+    return Speech(text, voice, rate, scale).wait(timeout=timeout)

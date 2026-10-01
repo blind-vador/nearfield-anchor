@@ -5197,3 +5197,32 @@ Demande utilisateur : tout ecouter de ce qui est ouvert autour de chez lui
   Mic-E, adresses web, mail et IP, logiciels et versions, PHG, locator,
   petits codes, indicatif de la station repete, nombres isoles.
 - Mis au point sur les 47 stations reellement recues (archive aprs_*.jsonl).
+
+## 2026-10-01 : priorites des haut-parleurs (arbitre audio)
+
+- lib/audio_lock.py reecrit (interface acquire()/release() inchangee) :
+  registre commun /tmp/audio_arbitre.json sous verrou court, entrees des
+  processus morts purgees. Sources : alertes (meteo, crues), console,
+  trains, avions, radio (captures en direct), donnees (APRS, ACARS,
+  capteurs, pagers, planeurs), bus, disques ; source deduite du script si
+  non precisee. Reglages priorites.json (NAS + copie locale), relus toutes
+  les 10 s par chaque service.
+- Comportements face a une source plus prioritaire : attend (file triee par
+  priorite puis anciennete), attenue (joue a 30 % ; une source plus
+  prioritaire peut demarrer par-dessus), abandonne. Jamais de coupure en
+  cours (choix utilisateur). Defaut : tout "attend", sauf radio "attenue".
+- Volume dynamique : tous les sons passent par un relais PCM qui applique
+  audio_lock.scale() par morceaux de 100-200 ms : effets et voix Microsoft
+  (sound_player : ffmpeg -> s16le -> aplay), espeak de secours
+  (espeak_out, option scale), radio en direct (rtl_fm, RTLSDR-Airband en
+  flottant, dsd-fme), mode manuel (ticket passe au fil de relais). Source
+  qui abandonne : rien n'est joue.
+- Console : voix, journal, archives, rire passent par l'arbitre (source
+  console, attente bornee a 10 s pour les reponses). La voix de la console
+  elle-meme n'est pas attenuee (lecteurs directs) : en "attenue", elle
+  joue a plein volume.
+- Commande "priorites" (console/priorites.py) : haut/bas, Majuscule+fleche
+  (etat de Majuscule lu par evdev, la console ne le recoit pas) ou page
+  haut/bas pour deplacer, gauche/droite pour le comportement.
+- Simulation multi-processus validee : radio attenuee a 30 % sous un
+  train, bus abandonne, alerte arrivee apres les disques servie avant eux.

@@ -1,4 +1,10 @@
 import subprocess
+import time
+
+import audio_lock
+
+EFFECT_RATE = 44100
+EFFECT_CHANNELS = 2
 
 # Peripherique audio explicite -- "default" route vers PulseAudio, qui se
 # heurte a un bug connu du pilote audio embarque du Pi (snd_bcm2835) et
@@ -35,15 +41,39 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player"):
     de maniere bloquante. Module commun a radio_watch.py, adsb_watch.py et
     meteo_watch.py -- une seule implementation, evite la divergence entre
     copies."""
+    # Priorites (audio_lock, 2026-10-01) : decode en PCM puis relais par
+    # morceaux de 100 ms, pour appliquer le volume du moment (attenue si une
+    # source plus prioritaire parle par-dessus) ; rien si la source a abandonne.
+    if audio_lock.dropped():
+        return
+    decoder = player = None
     try:
-        result = subprocess.run(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin",
-             "-i", path, "-f", "alsa", AUDIO_DEVICE],
-            capture_output=True, timeout=timeout_sec,
-        )
-        if result.returncode != 0:
-            print(f"[{label}] effet sonore echoue ({path}): {result.stderr.decode(errors='replace').strip()[-300:]}")
+        decoder = subprocess.Popen(
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+             "-f", "s16le", "-ac", str(EFFECT_CHANNELS), "-ar", str(EFFECT_RATE), "-"],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        player = subprocess.Popen(
+            ["aplay", "-q", "-D", AUDIO_DEVICE, "-r", str(EFFECT_RATE), "-f", "S16_LE",
+             "-c", str(EFFECT_CHANNELS)], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        deadline = time.time() + timeout_sec
+        chunk = EFFECT_RATE * EFFECT_CHANNELS * 2 // 10
+        while time.time() < deadline:
+            data = decoder.stdout.read(chunk)
+            if not data:
+                break
+            player.stdin.write(audio_lock.scale(data))
+        player.stdin.close()
+        player.wait(timeout=max(1.0, deadline - time.time() + 1))
+        decoder.wait(timeout=2)
+        if decoder.returncode != 0:
+            err = decoder.stderr.read().decode(errors="replace").strip()[-300:]
+            print(f"[{label}] effet sonore echoue ({path}): {err}")
         elif _active_recording_session is not None:
             _active_recording_session.add_audio_file(path)
     except Exception as exc:
         print(f"[{label}] effet sonore indisponible ({path}): {exc}")
+    finally:
+        for proc in (decoder, player):
+            if proc is not None and proc.poll() is None:
+                proc.kill()
+                proc.wait()

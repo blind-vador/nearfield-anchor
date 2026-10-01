@@ -781,7 +781,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa"):
             deadline = min(time.time() + DSD_FME_IDLE_SEC, start + DSD_FME_MAX_SEC)
             captured_chunks.append(data)
             try:
-                aplay.stdin.write(data)
+                aplay.stdin.write(audio_lock.scale(data))
             except Exception:
                 break
 
@@ -1124,7 +1124,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
             if voice_filter is not None:
                 chunk = voice_filter.process_s16le(chunk)
             try:
-                aplay.stdin.write(chunk)
+                aplay.stdin.write(audio_lock.scale(chunk))
             except Exception:
                 # Le detail de l'erreur remonte via le fil aplay_stderr_thread
                 # (surveillance continue, voir _aplay_stderr_watcher) -- ne pas
