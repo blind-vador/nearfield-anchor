@@ -42,7 +42,7 @@ export DEBIAN_FRONTEND=noninteractive
 echo "=== 1/6 : paquets systeme (apt) ==="
 apt-get update
 apt-get install -y \
-    espeak ffmpeg mpg123 multimon-ng rtl-433 dump1090-mutability libglib2.0-dev libairspy-dev libiio-dev rtl-sdr librtlsdr-dev libjansson-dev \
+    espeak ffmpeg mpg123 sox multimon-ng rtl-433 dump1090-mutability libglib2.0-dev libairspy-dev libiio-dev rtl-sdr librtlsdr-dev libjansson-dev \
     build-essential cmake git python3-pip pkg-config wget \
     libconfig++-dev libmp3lame-dev libshout3-dev libfftw3-dev libpulse-dev \
     libsndfile1-dev libitpp-dev libncurses-dev libcodec2-dev portaudio19-dev \
@@ -108,6 +108,19 @@ if [ ! -x /usr/local/bin/dec406_scan ]; then
     rm -rf "$BUILD_DIR/dec406"
     git clone https://github.com/Yverr0y/Decode_sarsat_406_v1g_v2g.git "$BUILD_DIR/dec406"
     (cd "$BUILD_DIR/dec406" && make build/dec406_scan && install -m 755 build/dec406_scan /usr/local/bin/)
+fi
+
+# Ballons-sondes (watchers/sondes_watch.py) : decodeurs libres rs1729/RS
+# (RS41, M10/M20, DFM), alimentes par rtl_fm puis sox.
+if [ ! -x /usr/local/bin/rs41mod ]; then
+    echo "-- decodeurs de ballons-sondes --"
+    rm -rf "$BUILD_DIR/RS"
+    git clone --depth 1 https://github.com/rs1729/RS.git "$BUILD_DIR/RS"
+    (cd "$BUILD_DIR/RS/demod/mod" && gcc -c demod_mod.c -O2 -w && gcc -c bch_ecc_mod.c -O2 -w \
+        && gcc rs41mod.c demod_mod.o bch_ecc_mod.o -lm -O2 -w -o rs41mod \
+        && gcc m10m20mod.c demod_mod.o -lm -O2 -w -o m10m20mod \
+        && gcc dfm09mod.c demod_mod.o -lm -O2 -w -o dfm09mod \
+        && install -m 755 rs41mod m10m20mod dfm09mod /usr/local/bin/)
 fi
 
 # VDL2 (successeur de l'ACARS, watchers/vdl2_watch.py) : a compiler, comme

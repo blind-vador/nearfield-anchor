@@ -47,7 +47,8 @@ GUST_JUMP_KMH = 25.0        # hausse du vent en moins de 30 min
 PRECURSOR_MAX_AGE_SEC = 90 * 60
 
 # Niveau de menace -> renfort d'attention des fenetres meteo du scanner
-ATTENTION_BOOST = {"aprs": 0.6, "capteurs": 0.6}
+ATTENTION_BOOST = {"aprs": 0.6, "capteurs": 0.6, "sondes": 0.3}
+SONDE_PROFILE_PATH = "/tmp/sondes_profil.json"   # ecrit par watchers/sondes_watch.py
 
 WMO = {0: "ciel dégagé", 1: "ciel peu nuageux", 2: "éclaircies", 3: "ciel couvert",
        45: "brouillard", 48: "brouillard givrant", 51: "bruine légère", 53: "bruine",
@@ -160,7 +161,7 @@ def sondes(lieu):
             continue
         if time.time() - when > SONDE_MAX_AGE_SEC or s.get("lat") is None:
             continue
-        found.append({"serie": serial, "lat": s["lat"], "lon": s["lon"], "alt": s.get("alt"),
+        found.append({"serie": serial, "type": s.get("type"), "lat": s["lat"], "lon": s["lon"], "alt": s.get("alt"),
                       "temp": s.get("temp"), "humidite": s.get("humidity"), "vitesse_v": s.get("vel_v"),
                       "frequence": s.get("frequency"), "t": when})
     return found
@@ -522,6 +523,10 @@ def bulletin(lieu=None, with_sondes=True):
         if origin and len({s["direction"] for s in signs if s["direction"]}) > 1:
             text += f". Les premiers signes sont venus {origin}"
         parts.append(text + ".")
+    profiles = _read_json(SONDE_PROFILE_PATH) or {}
+    measured = [p for p in profiles.values() if p.get("gel") and time.time() - p["points"][-1]["t"] < 6 * 3600]
+    if measured:
+        parts.append(f"Limite du gel mesurée par un ballon-sonde capté ici : vers {int(round(measured[-1]['gel'], -2))} mètres.")
     if with_sondes:
         sondes_text = _sondes_text(lieu, sondes(lieu))
         if sondes_text:

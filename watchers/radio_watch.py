@@ -28,6 +28,7 @@ import aprs_watch
 import balises_watch
 import capteurs_watch
 import pagers_watch
+import sondes_watch
 import vdl2_watch
 import spectral_diagnostic
 import noise_signatures
@@ -1282,6 +1283,7 @@ DATA_SCANNERS = {
     "pagers": pagers_watch.scan_window,
     "adsb": adsb_local_watch.scan_window,
     "balises": balises_watch.scan_window,
+    "sondes": sondes_watch.scan_window,
 }
 
 

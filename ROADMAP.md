@@ -5296,3 +5296,18 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   tete du cycle suivant du scanner, resume parle a la fin.
 - Ballons-sondes : donnees ouvertes SondeHub (position, altitude,
   temperature, frequence) ; pas encore de decodage local par la cle.
+
+### Ballons-sondes captes en direct (2026-10-01)
+
+- watchers/sondes_watch.py, fenetre "sondes" (45 s) : SondeHub dit quel
+  ballon est en vol a moins de 250 km, au-dessus de 500 m, et sa frequence ;
+  sinon la fenetre rend la main aussitot. Chaine : rtl_fm (-M fm -F9 -s 15k)
+  -> sox (48 kHz, 8 bits, passe-haut 20 Hz) -> decodeur rs1729/RS selon le
+  modele (rs41mod, m10m20mod pour Meteo-France, dfm09mod), --ptu --json.
+- Annonces : premiere reception (puis toutes les 20 min), eclatement
+  (vitesse verticale <= -8 m/s), limite du gel mesuree (passage par 0 C en
+  montee, interpole) ; profil publie dans /tmp/sondes_profil.json et repris
+  par le bulletin meteo. Renfort d'attention meteo : +0,3 x niveau.
+- Decodeurs compiles (install.sh ; ici dans ~/autopilot/bin), sox installe.
+  Test : chaine demarree et arretee proprement ; aucun ballon a portee a
+  12 h 20 (lachers habituels vers 13 h et 1 h, heure de Paris).
