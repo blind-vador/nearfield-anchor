@@ -30,6 +30,8 @@ STATE_LOCAL = "/home/vador/autopilot/pi_console/attention.json"
 LOCK_PATH = "/tmp/attention.lock"
 AIR_CONTEXT_PATH = "/tmp/contexte_aerien.json"
 AIR_CONTEXT_MAX_AGE_SEC = 300
+METEO_CONTEXT_PATH = "/tmp/contexte_meteo.json"
+METEO_CONTEXT_MAX_AGE_SEC = 900
 
 HALF_LIFE_SEC = 1800            # la piqure perd la moitie de sa force en 30 min
 CAPTURE_POINTS = 1.0
@@ -135,7 +137,19 @@ def air_context(now=None):
     except (OSError, ValueError):
         return {}
     if now - ctx.get("updated", 0) > AIR_CONTEXT_MAX_AGE_SEC:
-        return {}
+        ctx = {}
+    # Contexte meteo (lib/meteo_locale.py) : a l'approche d'une perturbation,
+    # les fenetres meteo (stations APRS, capteurs) piquent davantage.
+    try:
+        with open(METEO_CONTEXT_PATH) as f:
+            meteo = json.load(f)
+    except (OSError, ValueError):
+        meteo = None
+    if meteo and now - meteo.get("updated", 0) <= METEO_CONTEXT_MAX_AGE_SEC and meteo.get("niveau"):
+        targets = dict(ctx.get("cibles") or {})
+        for target, boost in (meteo.get("cibles") or {}).items():
+            targets[target] = targets.get(target, 0.0) + boost
+        ctx = dict(ctx, cibles=targets, meteo=meteo["niveau"])
     return ctx
 
 
@@ -222,6 +236,8 @@ def describe(labels):
     planes = ctx.get("avions")
     head = (f"{planes} avion{'s' if planes and planes > 1 else ''} dans la zone. " if planes is not None
             else "Pas de données avions récentes. ")
+    if ctx.get("meteo"):
+        head += f"Vigilance météo renforcée, niveau {ctx['meteo']} sur 3 : écoute accrue des stations voisines. "
     if not rows:
         return head + "Aucune piqûre en ce moment : le scanner explore tout à égalité."
     return head + " ; ".join(text for _, text in rows[:6]) + ". Le reste est exploré à égalité."

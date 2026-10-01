@@ -5270,3 +5270,29 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   ignore (archive marque "doublon") ; heure de reception prise dans le champ
   "time" de rtl_433. Il y avait bien deux thermometres (id 25 et 164) : le
   numero est maintenant dit dans l'annonce.
+
+## 2026-10-01 : suivi meteo renforce
+
+- lib/meteo_locale.py : bulletin parle (temps present, ressenti, vent,
+  pression et tendance 3 h, 12 prochaines heures : orage, pluie,
+  instabilite CAPE, rafales, limite du gel ; 3 jours ; vigilances ; releves
+  des stations APRS a moins de 60 km et des capteurs voisins ; ballons-
+  sondes en vol via SondeHub ; signes avant-coureurs ; niveau du Pi).
+- Historique des releves voisins (meteo_historique.json, 24 h) alimente
+  toutes les 5 min par meteo_watch ; signes avant-coureurs : chute de 4 C en
+  45 min, pression -3 hPa en 3 h, vent +25 km/h en 30 min, debut de pluie ;
+  direction d'arrivee = station qui a reagi la premiere.
+- Niveau de menace 0-3 (vigilance, orage prevu, CAPE, rafales, pression,
+  signes) publie dans /tmp/contexte_meteo.json ; attention.air_context y
+  ajoute un renfort des fenetres aprs et capteurs (0,6 x niveau) : le
+  scanner les ecoute davantage a l'approche d'une perturbation, sans
+  quitter les autres frequences. "attention" le dit.
+- meteo_watch annonce la montee (niveau 2 : "Une perturbation approche :
+  ... Je renforce l'ecoute des stations meteo voisines", niveau 3 : danger
+  imminent), la retombee, et chaque nouveau signe avant-coureur avec la
+  direction d'arrivee -- en plus des alarmes existantes.
+- Commande "meteo" (quel temps, previsions, orage, pluie...) : bulletin,
+  puis balayage meteo force (APRS 60 s, capteurs 433 puis 868 MHz) passe en
+  tete du cycle suivant du scanner, resume parle a la fin.
+- Ballons-sondes : donnees ouvertes SondeHub (position, altitude,
+  temperature, frequence) ; pas encore de decodage local par la cle.

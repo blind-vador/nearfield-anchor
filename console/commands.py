@@ -549,6 +549,11 @@ COMMANDS = [
     Command("simulation", "simule les annonces : train, avion, météo, crue, bus, radio, disque, ou tout", None,
             keywords=["simulation", "simulations", "simule", "simuler"],
             examples=["simulation"]),
+    # Apres "simulation" : "simulation meteo" reste une simulation.
+    Command("météo", "bulletin météo local, signes avant-coureurs, et balayage des stations météo voisines", None,
+            keywords=["meteo", "quel temps", "temps qu il fait", "previsions", "prevision", "orage", "orages",
+                      "pluie", "il va pleuvoir"],
+            examples=["quel temps fait il", "va-t-il pleuvoir", "quelle météo demain"]),
     Command("touches", "repérage des touches du clavier", None,
             keywords=["touches", "touche", "clavier", "reperage"],
             examples=["test du clavier", "trouver les touches"]),

@@ -394,9 +394,58 @@ def _nowcast_watcher():
         time.sleep(NOWCAST_POLL_INTERVAL_SEC)
 
 
+# --- Suivi des voisins et niveau de menace (lib/meteo_locale.py, 2026-10-01) ---
+# Toutes les PRECURSOR_POLL_SEC : historique des releves voisins (stations
+# APRS, capteurs), signes avant-coureurs, niveau de menace publie pour
+# l'attention du scanner (qui ecoute alors davantage les stations meteo).
+# Annonce les changements de niveau et chaque nouveau signe, avec la
+# direction d'arrivee quand plusieurs stations ont reagi.
+PRECURSOR_POLL_SEC = 300
+FORECAST_REFRESH_SEC = 900
+SIGN_REPEAT_SEC = 1800
+
+
+def _precursor_watcher():
+    import meteo_locale
+    lieu = reglages.get("lieu")
+    last_level, fc, fc_at = 0, None, 0.0
+    announced = {}
+    while True:
+        try:
+            history = meteo_locale.record_observations()
+            if time.time() - fc_at >= FORECAST_REFRESH_SEC:
+                fc = meteo_locale.forecast(lieu) or fc
+                fc_at = time.time()
+            signs = meteo_locale.precursors(lieu, history)
+            level, reasons = meteo_locale.threat(lieu, fc, signs)
+            meteo_locale.publish_context(level, reasons)
+            now = time.time()
+            fresh = [s for s in signs if now - announced.get(s["texte"], 0) > SIGN_REPEAT_SEC]
+            for s in fresh:
+                announced[s["texte"]] = now
+            if level > last_level and level >= 2:
+                text = ("Danger météo imminent : " if level == 3 else "Une perturbation approche : ")
+                text += ", ".join(reasons) + ". Je renforce l'écoute des stations météo voisines."
+                _speak_lightly(text)
+            elif level < last_level and last_level >= 2 and level <= 1:
+                _speak_lightly("La situation météo se calme. Écoute normale des stations voisines.")
+            if fresh:
+                text = "Signe avant-coureur : " + " ; ".join(s["texte"] for s in fresh[:3]) + "."
+                origin = meteo_locale.approach_direction(signs)
+                if origin and len({s["direction"] for s in signs if s["direction"]}) > 1:
+                    text += f" La perturbation semble arriver {origin}."
+                _speak_lightly(text)
+            announced = {k: t for k, t in announced.items() if now - t < 6 * 3600}
+            last_level = level
+        except Exception as exc:  # la veille principale ne doit jamais tomber pour ca
+            print(f"[meteo_watch] suivi des voisins : {exc!r}")
+        time.sleep(PRECURSOR_POLL_SEC)
+
+
 def main():
     nowcast_thread = threading.Thread(target=_nowcast_watcher, daemon=True)
     nowcast_thread.start()
+    threading.Thread(target=_precursor_watcher, daemon=True).start()
     _vigilance_watcher()
 
 

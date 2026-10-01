@@ -155,6 +155,20 @@ def read_line(key_source):
     raise EOFError
 
 
+def meteo_cmd(line):
+    """Bulletin local (lib/meteo_locale.py) et balayage meteo force du scanner."""
+    import meteo_locale
+    voix.say("Je prépare le bulletin météo.")
+    try:
+        text = meteo_locale.bulletin()
+    except Exception as exc:  # une source au format inattendu ne doit pas tuer la console
+        print(f"[console] meteo : {exc!r}", file=sys.stderr)
+        text = "Le bulletin météo a échoué sur une erreur inattendue."
+    seconds = meteo_locale.request_scan()
+    return (f"{text} Je lance aussi un balayage des stations météo voisines, "
+            f"résultat dans {max(1, round(seconds / 60))} minutes environ.")
+
+
 def run_command(line, key_source, last_response):
     # Veilles d'abord : "arrete radio", "redemarre radio"... (voir veilles.py).
     request = veilles.parse(line)
@@ -200,6 +214,8 @@ def run_command(line, key_source, last_response):
         return commands.voitures_cmd(line)
     if cmd.name == "voix":
         return voix_cmd.run(key_source, voix.say, out)
+    if cmd.name == "météo":
+        return meteo_cmd(line)
     if cmd.name == "flash":
         return flash.run(line, key_source, voix.say, out)
     if cmd.name == "tableau":

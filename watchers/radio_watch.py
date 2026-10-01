@@ -22,6 +22,7 @@ import radio_log
 import sound_player
 import audio_filters
 import acars_watch
+import meteo_locale
 import adsb_local_watch
 import aprs_watch
 import balises_watch
@@ -1740,6 +1741,21 @@ def main():
         # l'utilisateur, contexte aerien d'adsb_watch), avec un plancher
         # d'exploration pour les bandes balayees. Meme dongle, toujours en
         # sequence -- jamais deux ecoutes en parallele.
+        # Balayage meteo demande depuis la console (commande "meteo") : passe
+        # avant le reste du cycle, puis resume ce qui a ete capte.
+        try:
+            if meteo_locale.take_scan_request():
+                started = time.time()
+                for name, dwell in meteo_locale.FORCED_SCAN:
+                    DATA_SCANNERS[name](dwell_sec=dwell)
+                summary = meteo_locale.scan_summary(started)
+                lock = audio_lock.acquire("console", timeout=60)
+                try:
+                    speak_with_lead_sound(DECODING_NUMERIC_SOUND, summary, label="radio_watch")
+                finally:
+                    audio_lock.release(lock)
+        except Exception as exc:
+            print(f"[radio_watch] balayage meteo : {exc!r}")
         try:
             plan = attention.plan_cycle(airband_bridge.AIRBAND_WINDOWS, sweep_bands)
         except Exception as exc:  # l'attention ne doit jamais arreter la veille
