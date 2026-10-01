@@ -176,6 +176,8 @@ cp "$REPO_DIR"/watchers/*.py "$TARGET_DIR/"
 cp "$REPO_DIR"/lib/*.py "$TARGET_DIR/"
 cp "$REPO_DIR"/lib/rnnoise_lib/*.py "$TARGET_DIR/rnnoise_lib/"
 cp "$REPO_DIR"/tools/*.py "$TARGET_DIR/"
+cp "$REPO_DIR"/bridge/pont_protocole.py "$TARGET_DIR/"  # pont machine compagne (lib/compagnon.py)
+install -D -o vador -g vador -m 755 "$REPO_DIR"/tools/python3-gnuradio /home/vador/autopilot/bin/python3-gnuradio
 cp "$REPO_DIR"/config/sound_paths.py "$TARGET_DIR/"
 # Jamais ecraser un credentials.py deja rempli sur le Pi : une reinstallation
 # le remplacerait sinon par le modele vide.

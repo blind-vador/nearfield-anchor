@@ -469,8 +469,8 @@ def main():
     nowcast_thread = threading.Thread(target=_nowcast_watcher, daemon=True)
     nowcast_thread.start()
     threading.Thread(target=_precursor_watcher, daemon=True).start()
-    import compagnon_resultats  # images calculees par la machine compagne
-    threading.Thread(target=compagnon_resultats.watch, daemon=True).start()
+    import compagnon_serveur  # liaison avec les machines compagnes (calculs lourds)
+    threading.Thread(target=compagnon_serveur.run, daemon=True).start()
     _vigilance_watcher()
 
 

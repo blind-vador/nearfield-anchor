@@ -1,12 +1,15 @@
 #!/bin/bash
 # Installe le module compagnon de nearfield anchor sur une machine plus
 # puissante que le Pi (Mac ou Linux), sans droits administrateur :
-#   - numpy (et cmake pour compiler) via pip --user ;
+#   - numpy, cryptography (cles du pont) et cmake via pip --user ;
 #   - meteor_demod / meteor_decode (dbdexter-dev, libres) compiles dans
 #     ~/.nearfield-bridge/bin ;
 #   - le service, lance a l'ouverture de session (LaunchAgent sur Mac,
-#     unite systemd utilisateur sur Linux), a basse priorite.
-# Ensuite : python3 ~/.nearfield-bridge/nearfield_bridge.py appairage, en
+#     unite systemd utilisateur sur Linux), a basse priorite ;
+#   - sur Mac, l'application "Nearfield Bridge" (dialogues lus par
+#     VoiceOver) dans ~/Applications, avec un raccourci sur le bureau :
+#     ponts, statistiques, appairage, suppression, pause du service.
+# Ailleurs : python3 ~/.nearfield-bridge/nearfield_bridge.py appairage, en
 # meme temps que la commande "appairage" sur la console du Pi.
 # Desinstaller : bash installer.sh --retirer
 set -e
@@ -24,18 +27,20 @@ if [ "$1" = "--retirer" ]; then
         systemctl --user disable --now nearfield-bridge.service 2>/dev/null || true
         rm -f "$HOME/.config/systemd/user/nearfield-bridge.service"
     fi
-    "$PY" "$DEST/nearfield_bridge.py" oublier 2>/dev/null || true
-    rm -rf "$DEST"
+    for pi in $("$PY" "$DEST/nearfield_bridge.py" ponts 2>/dev/null | cut -f1); do
+        "$PY" "$DEST/nearfield_bridge.py" oublier "$pi" || true
+    done
+    rm -rf "$DEST" "$HOME/Applications/Nearfield Bridge.app" "$HOME/Desktop/Nearfield Bridge"
     echo "Module compagnon retiré."
     exit 0
 fi
 
 echo "-- module compagnon : fichiers --"
 mkdir -p "$DEST/bin" "$BUILD"
-cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$DEST/"
+cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$DEST/"
 
-echo "-- numpy, cmake --"
-"$PY" -m pip install --user --quiet --upgrade numpy cmake
+echo "-- numpy, cryptography, cmake --"
+"$PY" -m pip install --user --quiet --upgrade numpy cryptography cmake
 CMAKE="$(command -v cmake || true)"
 [ -z "$CMAKE" ] && CMAKE="$("$PY" -c 'import site,os;print(os.path.join(site.USER_BASE,"bin","cmake"))')"
 
@@ -94,5 +99,14 @@ UNIT
     systemctl --user enable --now nearfield-bridge.service
 fi
 
+if [ "$(uname)" = "Darwin" ]; then
+    echo "-- application Nearfield Bridge --"
+    mkdir -p "$HOME/Applications"
+    rm -rf "$HOME/Applications/Nearfield Bridge.app"
+    osacompile -o "$HOME/Applications/Nearfield Bridge.app" "$HERE/dialogue.applescript"
+    ln -sfn "$HOME/Applications/Nearfield Bridge.app" "$HOME/Desktop/Nearfield Bridge"
+    echo "Ouvre « Nearfield Bridge » sur le bureau pour créer un pont."
+else
+    echo "Pour l'appairage : python3 $DEST/nearfield_bridge.py appairage"
+fi
 "$PY" "$DEST/nearfield_bridge.py" etat
-echo "Pour l'appairage : python3 $DEST/nearfield_bridge.py appairage"

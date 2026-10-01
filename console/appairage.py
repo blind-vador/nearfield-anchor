@@ -1,10 +1,10 @@
 """Commande "appairage" : relie une machine compagne (lib/compagnon.py) qui
 fera les calculs lourds (images de satellites meteo...) a la place du Pi.
 
-Lancer en meme temps, sur la machine compagne :
-  python3 ~/.nearfield-bridge/nearfield_bridge.py appairage
-Les deux machines disent le meme code a 4 chiffres ; Entree l'accepte,
-Echap annule.
+En meme temps, sur la machine : Nearfield Bridge, "Appairer avec un Pi".
+Les deux machines echangent leurs cles et disent le meme code a 4 chiffres
+(tire des deux cles) ; Entree l'accepte ici, Echap annule. La machine
+demande aussi de confirmer le code de son cote.
 """
 import sys
 import threading
@@ -16,7 +16,7 @@ import compagnon  # noqa: E402
 import conseils  # noqa: E402
 
 TITLE = "Appairage d'une machine compagne."
-CONSIGNE = ("Lance maintenant le mode appairage du module compagnon sur l'autre machine. "
+CONSIGNE = ("Sur l'autre machine, ouvre Nearfield Bridge et choisis appairer avec un Pi. "
             "Quand elle répond, vérifie qu'elle dit le même code, puis Entrée pour accepter. Échap : annuler. "
             "F1 redit ces consignes.")
 
@@ -26,33 +26,30 @@ def _spoken_code(code):
 
 
 def run(key_source, say, out):
-    code = compagnon.start_pairing()
+    compagnon.start_pairing()
     found = {}
     stop = threading.Event()
+
+    def tell(text):
+        out(f"[{text}]\n")
+        say(text)
 
     def wait_answer():
         deadline = time.time() + compagnon.PAIRING_SEC
         while not stop.is_set() and time.time() < deadline:
-            answer = compagnon.pairing_answer(code)
+            answer = compagnon.pairing_answer()
             if answer:
                 found["answer"] = answer
                 caps = ", ".join(answer.get("capacites") or []) or "rien pour l'instant"
-                text = (f"La machine {answer.get('nom', 'inconnue')} répond avec le code {_spoken_code(code)}. "
-                        f"Elle sait faire : {caps}. Entrée pour accepter, Échap pour refuser.")
-                out(f"[{text}]\n")
-                say(text)
+                tell(f"La machine {answer.get('nom', 'inconnue')} répond. Code : {_spoken_code(answer['code'])}. "
+                     f"Elle sait faire : {caps}. Si elle dit le même code, Entrée pour accepter ; sinon Échap.")
                 return
             stop.wait(2)
         if not stop.is_set():
             found["timeout"] = True
-            text = "Aucune machine n'a répondu en trois minutes. Échap pour fermer."
-            out(f"[{text}]\n")
-            say(text)
+            tell("Aucune machine n'a répondu en trois minutes. Échap pour fermer.")
 
-    intro = conseils.intro("appairage", TITLE, CONSIGNE)
-    text = f"{intro} Code : {_spoken_code(code)}."
-    out(text + "\n")
-    say(text)
+    tell(conseils.intro("appairage", TITLE, CONSIGNE) + " J'attends la machine.")
     threading.Thread(target=wait_answer, daemon=True).start()
     try:
         for key in key_source:
@@ -60,17 +57,18 @@ def run(key_source, say, out):
                 return "Appairage annulé."
             if key in ("\r", "\n"):
                 answer = found.get("answer")
+                if answer and compagnon.refused(answer["id"]):
+                    return "La machine a refusé : les codes ne correspondaient pas. Rien n'est enregistré."
                 if answer:
                     compagnon.accept(answer)
-                    return (f"Machine {answer.get('nom')} appairée. Elle calculera pour le Pi tant que son "
-                            "service tourne ; dis compagnon pour son état.")
+                    return (f"Machine {answer.get('nom')} appairée : nos clés sont échangées. Elle se connectera "
+                            "au Pi et calculera pour lui ; dis compagnon pour son état.")
                 text = "Pas encore de réponse." if not found.get("timeout") else "Personne n'a répondu. Échap."
             elif conseils.is_help(key):
-                text = f"{CONSIGNE} Code : {_spoken_code(code)}."
+                text = CONSIGNE
             else:
                 text = "Entrée pour accepter quand la machine a répondu, Échap pour annuler."
-            out(f"[{text}]\n")
-            say(text)
+            tell(text)
         return "Appairage fermé."
     finally:
         stop.set()
