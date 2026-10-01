@@ -223,3 +223,12 @@ projets n'est empaqueté Debian pour ce Pi).
   son propre contenu — organise juste `RADIONO_DIR` (voir
   `config/sound_paths.py`) en sous-dossiers thématiques, un fichier son
   aléatoire est choisi à chaque exécution.
+
+## Machine compagne (calculs lourds)
+
+Le dossier `bridge/` est un module a installer sur un Mac ou un PC Linux qui
+monte le partage `server` du NAS : `bash bridge/installer.sh`, puis
+`python3 ~/.nearfield-bridge/nearfield_bridge.py appairage` en meme temps que
+la commande `appairage` de la console. Les images des satellites meteo ne sont
+ecoutees que si une machine compagne est appairee et presente. Details :
+ROADMAP.md, section du 2026-10-01 sur le pont.

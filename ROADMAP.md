@@ -5486,3 +5486,30 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   decodage en direct (chaleur) : decodage differe prevu avec gr-lora_sdr
   (GNU Radio 3.10, paquets Debian) puis dechiffrement du canal public
   Meshtastic (cle par defaut connue) et analyse APRS des paquets LoRa APRS.
+
+## 2026-10-01 : pont avec une machine compagne
+
+Les calculs lourds (image Meteor : ~45 min de CPU et 82 C sur le Pi) partent
+sur une machine plus puissante, sans ouvrir de reseau : tout passe par le
+disque nd1, dossier `server/nearfield-anchor-bridge` (lib/compagnon.py).
+
+- Module compagnon installable : `bridge/` (nearfield_bridge.py, meteor.py,
+  installer.sh). Python 3.9 suffit (celui d'Apple) ; installe numpy et cmake
+  par pip --user, compile meteor_demod/meteor_decode (sortie BMP, pas besoin
+  de libpng) dans ~/.nearfield-bridge/bin, service LaunchAgent (Mac) ou
+  systemd utilisateur (Linux), basse priorite. Partage cherche dans
+  /Volumes/server/server/... (Mac) ou /mnt/server/server/... (Linux).
+- Appairage : commande console "appairage" et `nearfield_bridge.py appairage`
+  en meme temps ; les deux disent le meme code a 4 chiffres, Entree sur le Pi
+  accepte et ecrit un secret (compagnons/<id>.accord.json). "compagnon" :
+  etat. `nearfield_bridge.py oublier` : retire la machine.
+- Travaux : travaux/<id>/travail.json (+ fichiers), pris par renommage en
+  travail.pris.json, resultat.json signe HMAC-SHA256(secret, "id|etat") ;
+  un resultat non signe est ignore. Le Pi (thread de meteo_watch,
+  lib/compagnon_resultats.py) relit chaque minute, fait decrire l'image par
+  Gemini, la range en PNG sur nd2/storage/radio/satellites, annonce, et
+  efface le travail. Travail sans resultat apres 12 h : efface.
+- Meteor n'est plus ecoute (ni annonce dans "satellites") que si une machine
+  appairee, presente (battement < 3 min) et capable de "meteor" est la.
+  tools/meteor_traitement.py reste comme secours manuel sur le Pi.
+- A venir sur le meme pont : decodage LoRa/Meshtastic des rafales, SSTV ISS.
