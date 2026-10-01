@@ -6,6 +6,7 @@ n'envoient rien au tty (Maj, Ctrl, Alt, AltGr, Windows, verrouillages...)
 ne sont visibles qu'au niveau materiel : evdev, utilise seulement en mode
 reperage.
 """
+import os
 import select
 import threading
 
@@ -63,6 +64,21 @@ EVDEV_NAMES = {
     "KEY_CALC": "calculatrice", "KEY_SEARCH": "recherche", "KEY_POWER": "alimentation",
     "KEY_SLEEP": "veille", "KEY_WAKEUP": "réveil",
 }
+
+
+# Reveil de la lecture clavier sans touche : un dialogue que l'autre machine
+# a termine (appairage valide sur la machine compagne) se ferme tout seul.
+WAKE = "\x00reveil"
+WAKE_R, WAKE_W = os.pipe()
+
+
+def wake():
+    os.write(WAKE_W, b"x")
+
+
+def drain_wake():
+    while select.select([WAKE_R], [], [], 0)[0]:
+        os.read(WAKE_R, 64)
 
 
 def char_name(ch):

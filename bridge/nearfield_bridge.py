@@ -15,8 +15,8 @@ Commandes (utilisees par l'application Nearfield Bridge, ou a la main) :
   etat                    ponts, connexions, statistiques
   appairage               appairage complet dans le terminal
   appairage-attendre      etape 1 : attend la demande du Pi, rend le code
-  appairage-confirmer     etape 2 : code confirme, attend l'accord du Pi
-  appairage-refuser       les codes different : refus
+  appairage-code          etape 2 : dialogue du code ; valider d'un seul cote
+                          suffit (Oui ici, ou Entree sur le Pi), l'autre suit
   ponts                   liste des ponts (id, tabulation, description)
   oublier <pi>            supprime le pont avec ce Pi (le Pi est prevenu)
   service-pause / service-reprise / service-etat
@@ -60,16 +60,6 @@ RECONNECT_SEC = (10, 120)
 
 
 # --- outils -------------------------------------------------------------------------
-
-def say(text):
-    """Dit le texte (en plus de VoiceOver, qui lit les dialogues)."""
-    for cmd in (["say", text], ["espeak-ng", "-v", "fr", text], ["spd-say", "-l", "fr", text]):
-        try:
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return
-        except OSError:
-            continue
-
 
 def log(text):
     print("[%s] %s" % (time.strftime("%Y-%m-%d %H:%M:%S"), text), flush=True)
@@ -211,7 +201,6 @@ def pairing_wait():
     share = find_share()
     if not share:
         return "ERREUR", "Je ne trouve pas le disque partagé du NAS. Monte le partage server, puis recommence."
-    say("J'attends le Pi. Dis appairage sur sa console.")
     request_path = os.path.join(share, "appairage", "demande.json")
     deadline = time.time() + PAIRING_WAIT_SEC
     while time.time() < deadline:
@@ -231,45 +220,82 @@ def pairing_wait():
     return "OK", request.get("pi", "inconnu"), " ".join(code)
 
 
-def pairing_confirm():
-    """Etape 2 (code identique des deux cotes) : attend l'accord signe du Pi."""
+def _accord(pending):
+    """Accord du Pi : "ok" (valide et enregistre), "faux", ou None (pas encore)."""
+    conf = config()
+    request, share = pending["demande"], pending["partage"]
+    accord_path = os.path.join(share, "appairage", "accord-%s.json" % conf["id"])
+    accord = _read(accord_path)
+    if not accord:
+        return None
+    if not (accord.get("compagnon") == conf["id"] and accord.get("cle_compagnon") == proto.public_b64(key())
+            and proto.verify(request["cle"], accord, max_age=None)):
+        return "faux"
+    pi = request["pi"]
+    _write(os.path.join(BRIDGES, pi + ".json"),
+           {"pi": pi, "cle": request["cle"], "hote": request.get("hote"), "ip": request.get("ip"),
+            "port": request.get("port", proto.PORT), "partage": share, "montage": _mount_url(share),
+            "appaire": time.time()})
+    _remove(accord_path)
+    return "ok"
+
+
+def _ask(question, wait_while):
+    """Question Oui / Non dans un dialogue systeme (langue du systeme, lu par
+    VoiceOver). Le dialogue est ferme tout seul si wait_while() rend False
+    (l'autre machine a deja tranche) : rend "Oui", "Non" ou None."""
+    script = ('activate\ndisplay dialog %s with title "Appairage" buttons {"Non", "Oui"} default button "Oui"'
+              % json.dumps(question, ensure_ascii=False))
+    proc = subprocess.Popen(["osascript", "-e", script], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                            text=True)
+    while proc.poll() is None:
+        if not wait_while():
+            proc.terminate()
+            return None
+        time.sleep(0.5)
+    out = proc.stdout.read()
+    return "Oui" if "Oui" in out else "Non"
+
+
+def pairing_decide():
+    """Etape 2 : dialogue du code. Valider d'un seul cote suffit : Oui ici
+    (le Pi suit tout seul), ou Entree sur le Pi (ce dialogue se ferme)."""
     conf = config()
     pending = _read(PENDING)
     if not pending:
         return "ERREUR", "Aucun appairage en cours."
     request, share = pending["demande"], pending["partage"]
-    accord_path = os.path.join(share, "appairage", "accord-%s.json" % conf["id"])
-    my_pub = proto.public_b64(key())
-    say("Appuie maintenant sur Entrée sur la console du Pi.")
-    deadline = time.time() + PAIRING_WAIT_SEC
-    while time.time() < deadline:
-        accord = _read(accord_path)
-        if accord:
-            if (accord.get("compagnon") == conf["id"] and accord.get("cle_compagnon") == my_pub
-                    and proto.verify(request["cle"], accord, max_age=None)):
-                pi = request["pi"]
-                _write(os.path.join(BRIDGES, pi + ".json"),
-                       {"pi": pi, "cle": request["cle"], "hote": request.get("hote"), "ip": request.get("ip"),
-                        "port": request.get("port", proto.PORT), "partage": share, "montage": _mount_url(share),
-                        "appaire": time.time()})
-                _remove(accord_path)
-                _remove(PENDING)
-                return "OK", ("Pont créé avec %s : nos clés sont échangées. Le service s'y connecte dans "
-                              "quelques secondes et calculera quand le Pi en aura besoin." % pi)
-            _remove(PENDING)
+    pi = request.get("pi", "inconnu")
+    done = "Pont créé avec %s : nos clés sont échangées. Le service s'y connecte dans quelques secondes." % pi
+    state = {}
+
+    def still_waiting():
+        state["accord"] = _accord(pending)
+        return state["accord"] is None
+
+    try:
+        answer = _ask("Pi trouvé : %s.\nCode : %s.\n\nSi le Pi affiche le même code, valide ici ou sur la console "
+                      "du Pi : l'autre suivra tout seul." % (pi, " ".join(pending["code"])), still_waiting)
+        if answer is None:  # le Pi a tranche pendant que le dialogue etait ouvert
+            if state.get("accord") == "ok":
+                return "OK", "Le Pi a validé le code. " + done
             return "ERREUR", "L'accord reçu n'est pas signé par ce Pi. Rien n'est enregistré."
-        time.sleep(2)
-    _remove(PENDING)
-    return "ERREUR", "Le Pi n'a pas validé en trois minutes. Appairage abandonné."
-
-
-def pairing_refuse():
-    conf = config()
-    pending = _read(PENDING)
-    if pending:
-        _write(os.path.join(pending["partage"], "appairage", "refus-%s.json" % conf["id"]), {"t": time.time()})
-    _remove(PENDING)
-    return "OK", "Appairage refusé, rien n'est enregistré. Appuie sur Échap sur la console du Pi."
+        if answer == "Non":
+            _write(os.path.join(share, "appairage", "refus-%s.json" % conf["id"]), {"t": time.time()})
+            return "OK", "Appairage refusé, rien n'est enregistré. Le Pi ferme son dialogue tout seul."
+        _write(os.path.join(share, "appairage", "confirme-%s.json" % conf["id"]),
+               proto.sign(key(), {"type": "confirme", "pi": pi, "compagnon": conf["id"], "cle_pi": request["cle"]}))
+        deadline = time.time() + 60
+        while time.time() < deadline:
+            result = _accord(pending)
+            if result == "ok":
+                return "OK", done
+            if result == "faux":
+                return "ERREUR", "L'accord reçu n'est pas signé par ce Pi. Rien n'est enregistré."
+            time.sleep(0.5)
+        return "ERREUR", "Le Pi n'a pas répondu. Est-il toujours en mode appairage ?"
+    finally:
+        _remove(PENDING)
 
 
 def pairing_terminal():
@@ -277,14 +303,8 @@ def pairing_terminal():
     if result[0] != "OK":
         print(result[1])
         return 1
-    print("Pi %s, code : %s" % (result[1], result[2]))
-    say("Code : %s. Le Pi dit-il le même ?" % result[2])
-    if input("Le Pi dit-il le même code ? (o/n) ").strip().lower() not in ("o", "oui", "y"):
-        print(pairing_refuse()[1])
-        return 1
-    result = pairing_confirm()
+    result = pairing_decide()
     print(result[1])
-    say(result[1])
     return 0 if result[0] == "OK" else 1
 
 
@@ -623,10 +643,8 @@ if __name__ == "__main__":
         sys.exit(pairing_terminal())
     elif command == "appairage-attendre":
         sys.exit(_print(pairing_wait()))
-    elif command == "appairage-confirmer":
-        sys.exit(_print(pairing_confirm()))
-    elif command == "appairage-refuser":
-        sys.exit(_print(pairing_refuse()))
+    elif command == "appairage-code":
+        sys.exit(_print(pairing_decide()))
     elif command == "oublier" and len(sys.argv) > 2:
         sys.exit(_print(forget(sys.argv[2])))
     elif command in ("service-pause", "service-reprise"):

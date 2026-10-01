@@ -41,20 +41,13 @@ on appairer()
 		return
 	end try
 	set reponse to my commande("appairage-attendre")
-	set morceaux to my champs(reponse)
-	if item 1 of morceaux is not "OK" then
+	if item 1 of my champs(reponse) is not "OK" then
 		my resultat(reponse, "Appairage")
 		return
 	end if
-	set pi_ to item 2 of morceaux
-	set code_ to item 3 of morceaux
-	set choix to button returned of (display dialog "Pi trouvé : " & pi_ & "." & return & "Code : " & code_ & "." & return & return & "Le Pi dit-il le même code ?" with title "Appairage" buttons {"Non", "Oui"} default button "Oui")
-	if choix is "Non" then
-		my resultat(my commande("appairage-refuser"), "Appairage")
-		return
-	end if
-	display dialog "Appuie maintenant sur Entrée sur la console du Pi pour accepter, puis clique sur Continuer. J'attends son accord jusqu'à trois minutes." with title "Appairage" buttons {"Continuer"} default button "Continuer"
-	my resultat(my commande("appairage-confirmer"), "Appairage")
+	-- Dialogue du code ouvert par le module : il se ferme tout seul si le
+	-- code est valide sur le Pi ; valider ici fait suivre le Pi.
+	my resultat(my commande("appairage-code"), "Appairage")
 end appairer
 
 on supprimer()

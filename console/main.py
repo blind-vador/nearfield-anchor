@@ -62,6 +62,11 @@ def read_keys(fd=0):
     buf = ""
     while True:
         if not buf:
+            ready, _, _ = select.select([fd, keys.WAKE_R], [], [])
+            if keys.WAKE_R in ready:
+                os.read(keys.WAKE_R, 64)
+                yield keys.WAKE
+                continue
             data = os.read(fd, 64)
             if not data:
                 return

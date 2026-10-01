@@ -70,6 +70,17 @@ rm -rf "$BUILD"
 
 echo "-- service --"
 if [ "$(uname)" = "Darwin" ]; then
+    # Le service tourne dans une application invisible : macOS n'autorise le
+    # disque reseau qu'a une application (une fois, par la fenetre systeme
+    # "souhaite acceder aux fichiers d'un volume reseau"), pas a un Python
+    # lance directement par launchd (constate le 2026-10-01).
+    SERVICE_APP="$DEST/Nearfield Bridge Service.app"
+    rm -rf "$SERVICE_APP"
+    osacompile -o "$SERVICE_APP" "$HERE/service.applescript"
+    /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$SERVICE_APP/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier local.nearfield.bridge.service" "$SERVICE_APP/Contents/Info.plist" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string local.nearfield.bridge.service" "$SERVICE_APP/Contents/Info.plist"
+    codesign --force --deep -s - "$SERVICE_APP" 2>/dev/null || true
     PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
     mkdir -p "$HOME/Library/LaunchAgents"
     cat > "$PLIST" <<PLIST
@@ -79,14 +90,12 @@ if [ "$(uname)" = "Darwin" ]; then
 <dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>$PY</string><string>$DEST/nearfield_bridge.py</string><string>service</string></array>
+  <array><string>$SERVICE_APP/Contents/MacOS/applet</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Background</string>
   <key>LowPriorityIO</key><true/>
   <key>Nice</key><integer>10</integer>
-  <key>StandardOutPath</key><string>$DEST/service.log</string>
-  <key>StandardErrorPath</key><string>$DEST/service.log</string>
 </dict>
 </plist>
 PLIST
@@ -115,7 +124,20 @@ if [ "$(uname)" = "Darwin" ]; then
     echo "-- application Nearfield Bridge --"
     mkdir -p "$HOME/Applications"
     rm -rf "$HOME/Applications/Nearfield Bridge.app"
-    osacompile -o "$HOME/Applications/Nearfield Bridge.app" "$HERE/dialogue.applescript"
+    APP="$HOME/Applications/Nearfield Bridge.app"
+    osacompile -o "$APP" "$HERE/dialogue.applescript"
+    # Langue de l'application = langue du systeme : sinon l'applet est
+    # "anglaise" et VoiceOver lit le francais avec une voix anglaise.
+    LANG_SYS="$(defaults read -g AppleLanguages 2>/dev/null | sed -n 2p | tr -d ' ",' | cut -d- -f1)"
+    LANG_SYS="${LANG_SYS:-fr}"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleDevelopmentRegion $LANG_SYS" "$APP/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Delete :CFBundleLocalizations" "$APP/Contents/Info.plist" 2>/dev/null || true
+    /usr/libexec/PlistBuddy -c "Add :CFBundleLocalizations array" -c "Add :CFBundleLocalizations:0 string $LANG_SYS" \
+        "$APP/Contents/Info.plist"
+    mkdir -p "$APP/Contents/Resources/$LANG_SYS.lproj"
+    /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string local.nearfield.bridge.app" "$APP/Contents/Info.plist" 2>/dev/null \
+        || /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier local.nearfield.bridge.app" "$APP/Contents/Info.plist"
+    codesign --force --deep -s - "$APP" 2>/dev/null || true  # signature locale refaite apres modification
     ln -sfn "$HOME/Applications/Nearfield Bridge.app" "$HOME/Desktop/Nearfield Bridge"
     echo "Ouvre « Nearfield Bridge » sur le bureau pour créer un pont."
 else

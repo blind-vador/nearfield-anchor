@@ -11,6 +11,8 @@ Donnees : le disque partage du NAS (BRIDGE_DIR, partage "server").
   appairage/demande.json        demande du Pi (sa cle publique)
   appairage/reponse-<id>.json   reponse de la machine (sa cle publique)
   appairage/accord-<id>.json    accord signe par le Pi
+  appairage/confirme-<id>.json  la personne a valide le code sur la machine
+                                (signe par elle) : le Pi accepte tout seul
   appairage/refus-<id>.json     la personne a dit non sur la machine
   revocations/<id>.json         la machine retire le pont (message signe)
   travaux/<id>/travail.json     travail depose par le Pi (+ ses fichiers)
@@ -139,7 +141,7 @@ def _local_ip():
 def start_pairing():
     stop_pairing()
     for name in _list("appairage"):  # repart d'un dossier propre
-        if name.startswith(("reponse-", "refus-")):
+        if name.startswith(("reponse-", "refus-", "confirme-")):
             _remove(_path("appairage", name))
     _write(_path("appairage", "demande.json"),
            {"pi": pi_id(), "cle": proto.public_b64(key()), "hote": f"{pi_id()}.local", "ip": _local_ip(),
@@ -170,6 +172,14 @@ def pairing_answer():
     answer = max(answers, key=lambda a: a.get("t", 0))
     answer["code"] = proto.pairing_code(proto.public_b64(key()), answer["cle"])
     return answer
+
+
+def confirmed_by_companion(answer):
+    """La personne a valide le code sur la machine compagne (message signe
+    par sa cle, pour la cle de ce Pi) : le Pi suit sans attendre Entree."""
+    msg = _read(_path("appairage", f"confirme-{answer['id']}.json"))
+    return bool(msg and msg.get("pi") == pi_id() and msg.get("compagnon") == answer["id"]
+                and msg.get("cle_pi") == proto.public_b64(key()) and proto.verify(answer["cle"], msg))
 
 
 def refused(cid):
