@@ -189,9 +189,11 @@ def meteo_cmd(line):
     threading.Thread(target=run, daemon=True).start()
     if busy:
         return f"Je prépare le bulletin météo ; pas de balayage radio, {busy}."
-    minutes = max(2, round(seconds / 60))
-    return (f"Je balaie d'abord le panel radio météo local, environ {minutes} minutes ; "
-            "le bulletin complet suivra. Le clavier reste libre en attendant.")
+    # Le scanner finit d'abord son etape en cours (balayage d'une bande large,
+    # captation) : mesure reelle 2026-10-01, 3 min d'attente + 2 min 30 de balayage.
+    low, high = max(3, round(seconds / 60) + 1), max(5, round(seconds / 60) + 3)
+    return (f"Je balaie d'abord le panel radio météo local, {low} à {high} minutes selon ce que fait "
+            "le scanner ; le bulletin complet suivra. Le clavier reste libre en attendant.")
 
 
 def cmd_is_not_repeat(line):
