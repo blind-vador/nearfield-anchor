@@ -44,9 +44,14 @@ def _meteo(p, seconds):
         print(f"[satellites_watch] enregistrement Meteor echoue ({proc.returncode})")
         return
     # Traitement au ralenti, hors du scanner (CPU, chaleur) : demodulation,
-    # decodage, image decrite par Gemini puis annoncee.
-    subprocess.Popen(["nice", "-n", "19", sys.executable, METEOR_SCRIPT, path, p["nom"]],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    # decodage, image decrite par Gemini puis annoncee. Lance comme tache
+    # utilisateur systemd a part : un simple processus detache est tue avec
+    # le service quand le scanner redemarre (constate le 2026-10-01).
+    env = dict(os.environ, XDG_RUNTIME_DIR=f"/run/user/{os.getuid()}")
+    unit = f"meteor-{time.strftime('%Y%m%d-%H%M')}"
+    subprocess.Popen(["systemd-run", "--user", f"--unit={unit}", "--quiet", "nice", "-n", "19",
+                      sys.executable, METEOR_SCRIPT, path, p["nom"]],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env)
     print(f"[satellites_watch] passage Meteor enregistre : {path}")
 
 
