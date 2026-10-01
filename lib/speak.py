@@ -57,6 +57,22 @@ EDGE_TTS_TIMEOUT_SEC = 8  # borne dure sur l'appel reseau lui-meme (thread de fo
 EDGE_TTS_EXTRA_WAIT_SEC = 2.0
 
 
+# Les voix Microsoft sortent en MP3 a 48 kbit/s : la duree se deduit de la
+# taille. Avant (2026-10-01) : 15 s fixes, et les annonces longues (APRS avec
+# indicatif epele et commentaire) etaient coupees en plein milieu.
+SPEECH_BITRATE_BPS = 48000
+SPEECH_TIMEOUT_MIN_SEC = 15
+SPEECH_TIMEOUT_MARGIN_SEC = 5
+
+
+def _speech_timeout(path):
+    try:
+        seconds = os.path.getsize(path) * 8 / SPEECH_BITRATE_BPS
+    except OSError:
+        return SPEECH_TIMEOUT_MIN_SEC
+    return max(SPEECH_TIMEOUT_MIN_SEC, seconds + SPEECH_TIMEOUT_MARGIN_SEC)
+
+
 def speak(text, voice="fr"):
     """Repli local garanti (espeak) -- zero dependance reseau, toujours
     disponible. Utilisable directement pour un texte sans son
@@ -209,7 +225,7 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
         if cached_path:
             print(text)
             play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label)
-            play_sound_effect(cached_path, timeout_sec=15, label=label)
+            play_sound_effect(cached_path, timeout_sec=_speech_timeout(cached_path), label=label)
             return
         candidate_voices = _missing_voices_for(text)
     else:
@@ -229,7 +245,7 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
         if repetitive:
             _save_repetitive_sample(text, voice, audio_path)
         try:
-            play_sound_effect(audio_path, timeout_sec=15, label=label)
+            play_sound_effect(audio_path, timeout_sec=_speech_timeout(audio_path), label=label)
         finally:
             try:
                 os.remove(audio_path)
@@ -256,7 +272,7 @@ def speak_cloud(text, repetitive=False):
         cached_path = _cached_repetitive_sample(text)
         if cached_path:
             print(text)
-            play_sound_effect(cached_path, timeout_sec=15, label="speak")
+            play_sound_effect(cached_path, timeout_sec=_speech_timeout(cached_path), label="speak")
             return
         candidate_voices = _missing_voices_for(text)
     else:
@@ -271,7 +287,7 @@ def speak_cloud(text, repetitive=False):
         if repetitive:
             _save_repetitive_sample(text, voice, audio_path)
         try:
-            play_sound_effect(audio_path, timeout_sec=15, label="speak")
+            play_sound_effect(audio_path, timeout_sec=_speech_timeout(audio_path), label="speak")
         finally:
             try:
                 os.remove(audio_path)

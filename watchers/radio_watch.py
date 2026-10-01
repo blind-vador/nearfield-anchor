@@ -486,7 +486,23 @@ DSD_FME_MONO_MODES = {"-fm", "-fz", "-fi", "-fn"}
 # de retomber sur l'ecoute analogique. Volontairement court (le scanner est
 # "nerveux", pas question de s'attarder sur chaque candidat) -- a ajuster si
 # le decodage reel met plus de temps a accrocher en pratique.
-DSD_FME_PROBE_SEC = 4
+DSD_FME_PROBE_SEC = 6
+# Validation d'un vrai decodage (2026-10-01) : dsd-fme peut sortir du son
+# synthetise a partir de bruit (NXDN sans aucune synchro, M17 avec erreurs
+# de controle sur 9 trames sur 10 : voix deformee, carillon sans message).
+# Le son n'est joue -- et le carillon, l'annonce de la bande -- qu'apres
+# au moins DSD_FME_MIN_CLEAN_SYNC synchros sans erreur, representant au
+# moins DSD_FME_MIN_CLEAN_RATIO des synchros vues.
+DSD_FME_MIN_CLEAN_SYNC = 2
+DSD_FME_MIN_CLEAN_RATIO = 0.25
+DSD_FME_PROTOCOLS = {"DMR": "DMR", "P25p1": "P25", "P25p2": "P25", "YSF": "YSF", "DSTAR": "D-Star",
+                     "M17": "M17", "NXDN48": "NXDN", "NXDN96": "NXDN", "NXDN": "NXDN", "dPMR": "dPMR",
+                     "X2-TDMA": "X2-TDMA"}
+# Taille des datagrammes UDP de dsd-fme (dsd_audio2.c) : 640 octets = stereo
+# 16 bits (deux slots TDMA), 320 = mono. Plus fiable que de deviner d'apres
+# l'option de mode, certains protocoles du -fa sortant en mono.
+DSD_FME_STEREO_DATAGRAM = 640
+DSD_FME_MONO_DATAGRAM = 320
 # Une fois la voix accrochee, on continue tant que des paquets arrivent :
 # fin apres DSD_FME_IDLE_SEC sans paquet, plafond DSD_FME_MAX_SEC.
 DSD_FME_IDLE_SEC = 3.0
@@ -705,17 +721,32 @@ def _chunk_is_signal(chunk_bytes, sample_rate, rnnoise_state, resample_state, sm
     return is_signal, rms, resample_state, smoothed_prob
 
 
-def _dsdfme_stdout_watcher(proc):
+def _dsdfme_stdout_watcher(proc, stats=None):
     """Affiche en continu la sortie texte de dsd-fme (statut de synchro,
     identifiants, etc.) dans les logs -- utile pour comprendre en pratique ce
-    qui accroche ou pas, sans avoir a rejouer manuellement."""
+    qui accroche ou pas, sans avoir a rejouer manuellement. stats (dict) :
+    compte les synchros propres ou en erreur et retient le protocole."""
     try:
         for raw_line in proc.stdout:
             text = raw_line.decode(errors="replace").strip()
-            if text:
-                print(f"[radio_watch] dsd-fme: {text}")
+            if not text:
+                continue
+            print(f"[radio_watch] dsd-fme: {text}")
+            if stats is None:
+                continue
+            m = re.search(r"Sync: [+-]([\w-]+)", text)
+            if m:
+                stats["total"] += 1
+                if "ERR" not in text:
+                    stats["clean"] += 1
+                    stats["protocol"] = DSD_FME_PROTOCOLS.get(m.group(1), m.group(1))
     except Exception:
         pass
+
+
+def _dsdfme_validated(stats):
+    return (stats["clean"] >= DSD_FME_MIN_CLEAN_SYNC
+            and stats["clean"] >= DSD_FME_MIN_CLEAN_RATIO * stats["total"])
 
 
 def _extra_digital_mode(freq_hz):
@@ -725,7 +756,7 @@ def _extra_digital_mode(freq_hz):
     return None
 
 
-def try_digital_voice_decode(freq_hz, mode_flag="-fa"):
+def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label=""):
     """Tente un decodage vocal numerique (DMR/P25/NXDN/D-STAR/YSF/dPMR/X2-TDMA)
     directement depuis le dongle RTL-SDR via dsd-fme. dsd-fme n'a pas de
     sortie ALSA directe -- on le fait sortir en UDP local (PCM brut, voix
@@ -734,7 +765,10 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa"):
     ce qui avait bloque tout le scanner plus tot dans la session). Retourne
     True des qu'un premier paquet audio decode est recu (heuristique directe
     : si dsd-fme envoie de l'audio synthetise, c'est qu'il a reellement
-    accroche quelque chose -- pas de decode = pas d'envoi)."""
+    accroche quelque chose -- pas de decode = pas d'envoi). Depuis le
+    2026-10-01 : rien n'est joue ni annonce tant que des synchros propres
+    n'ont pas confirme le decodage (voir DSD_FME_MIN_CLEAN_SYNC) ; rend alors
+    le nom du protocole (vrai), sinon None."""
     if not DSD_FME_AVAILABLE:
         return False
     sock = None
@@ -750,22 +784,15 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa"):
              "-o", f"udp:{DSD_FME_UDP_HOST}:{DSD_FME_UDP_PORT}"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
-        stdout_thread = threading.Thread(target=_dsdfme_stdout_watcher, args=(proc,), daemon=True)
+        stats = {"clean": 0, "total": 0, "protocol": None}
+        stdout_thread = threading.Thread(target=_dsdfme_stdout_watcher, args=(proc, stats), daemon=True)
         stdout_thread.start()
 
-        # Tampon audible pendant la sonde dsd-fme (jusqu'a DSD_FME_PROBE_SEC
-        # de silence sinon) -- comble le delai entre la detection du
-        # candidat et la confirmation d'un decodage reel.
-        play_sound_effect(DECODING_NUMERIC_SOUND, timeout_sec=DSD_FME_PROBE_SEC, label="radio_watch")
-
+        # Sonde silencieuse : on garde le son recu en attente, sans rien jouer,
+        # tant que les synchros n'ont pas confirme un vrai decodage.
+        pending = []
         channels = 1 if mode_flag in DSD_FME_MONO_MODES else DSD_FME_VOICE_CHANNELS
-        aplay = subprocess.Popen(
-            ["aplay", "-D", AUDIO_DEVICE, "-r", str(DSD_FME_VOICE_SAMPLE_RATE),
-             "-f", "S16_LE", "-c", str(channels), "-q"],
-            stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
-        )
-
-        got_audio = False
+        validated = False
         captured_chunks = []
         start = time.time()
         deadline = start + DSD_FME_PROBE_SEC
@@ -773,11 +800,33 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa"):
             try:
                 data, _ = sock.recvfrom(65536)
             except socket.timeout:
+                data = None
+            if data and not validated:
+                pending.append(data)
+            if not validated and pending and _dsdfme_validated(stats):
+                validated = True
+                size = len(pending[0])
+                if size == DSD_FME_STEREO_DATAGRAM:
+                    channels = 2
+                elif size == DSD_FME_MONO_DATAGRAM:
+                    channels = 1
+                protocol = stats["protocol"] or "numérique"
+                print(f"[radio_watch] dsd-fme : decodage {protocol} confirme "
+                      f"({stats['clean']} synchros propres sur {stats['total']}), {channels} voie(s)")
+                # Carillon et annonce seulement maintenant ; le son continue
+                # d'arriver dans le tampon de la socket pendant ce temps.
+                speak_with_lead_sound(DECODING_NUMERIC_SOUND,
+                                      f"Réception {protocol}" + (f", {band_label}" if band_label else "") + ".",
+                                      label="radio_watch")
+                aplay = subprocess.Popen(
+                    ["aplay", "-D", AUDIO_DEVICE, "-r", str(DSD_FME_VOICE_SAMPLE_RATE),
+                     "-f", "S16_LE", "-c", str(channels), "-q"],
+                    stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                )
+                data = b"".join(pending)
+                pending = []
+            if not data or not validated:
                 continue
-            if not data:
-                continue
-            if not got_audio:
-                got_audio = True
             deadline = min(time.time() + DSD_FME_IDLE_SEC, start + DSD_FME_MAX_SEC)
             captured_chunks.append(data)
             try:
@@ -785,14 +834,18 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa"):
             except Exception:
                 break
 
+        if not validated:
+            if pending:
+                print(f"[radio_watch] dsd-fme : son ecarte, synchro non confirmee "
+                      f"({stats['clean']} propres sur {stats['total']})")
+            return None
+
         log_session = sound_player.get_recording_session()
         if log_session is not None and captured_chunks:
             log_session.add_raw_pcm(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, "s16le",
                                     channels=channels)
-
-        if got_audio:
-            print(f"[radio_watch] dsd-fme a decode de l'audio numerique sur {freq_hz/1e6:.4f} MHz")
-        return got_audio
+        print(f"[radio_watch] dsd-fme a decode de l'audio numerique sur {freq_hz/1e6:.4f} MHz")
+        return stats["protocol"] or "numérique"
     except Exception as exc:
         print(f"[radio_watch] dsd-fme indisponible: {exc}")
         return False
@@ -1247,8 +1300,9 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     log_session = radio_log.RadioLogSession(band_label)
     sound_player.set_recording_session(log_session)
     try:
-        if mode == "nfm" and try_digital_voice_decode(freq):
-            speak(f"Réception numérique terminée, {band_label}.")
+        protocol = try_digital_voice_decode(freq, band_label=band_label) if mode == "nfm" else None
+        if protocol:
+            speak(f"Réception {protocol} terminée.")
             path = log_session.finalize()
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
                                             {"niveau_db": level_db, "numerique": True})
@@ -1266,8 +1320,8 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             # Ecarte comme voix : peut-etre un mode numerique que -fa ne tente pas.
             log_session = radio_log.RadioLogSession(band_label)
             sound_player.set_recording_session(log_session)
-            if try_digital_voice_decode(freq, extra[0]):
-                speak(f"Réception {extra[1]} terminée, {band_label}.")
+            if try_digital_voice_decode(freq, extra[0], band_label):
+                speak(f"Réception {extra[1]} terminée.")
                 path = log_session.finalize()
                 noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
                                                 {"niveau_db": level_db, "numerique": True, "mode_numerique": extra[1]})

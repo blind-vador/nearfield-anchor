@@ -5226,3 +5226,25 @@ Demande utilisateur : tout ecouter de ce qui est ouvert autour de chez lui
   haut/bas pour deplacer, gauche/droite pour le comportement.
 - Simulation multi-processus validee : radio attenuee a 30 % sous un
   train, bus abandonne, alerte arrivee apres les disques servie avant eux.
+
+### Decodage numerique valide par la synchro, annonces longues entieres (2026-10-01)
+
+Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
+- Carillon "decodage numerique" sans rien derriere : il etait joue au debut
+  de CHAQUE sonde dsd-fme (34 sondes dans la journee, 2 decodages). Sonde
+  desormais silencieuse ; carillon + "Reception <protocole>, <bande>"
+  seulement une fois le decodage confirme.
+- Voix deformee sans annonce de bande : en second essai NXDN, dsd-fme a
+  sorti du son sans aucune synchro (voix synthetisee a partir de bruit),
+  joue directement. Nouveau : le son est garde en attente et jete tant
+  qu'il n'y a pas DSD_FME_MIN_CLEAN_SYNC (2) synchros sans erreur, formant
+  au moins 25 % des synchros. Rejoue sur les sorties reelles : DMR du
+  30/09 valide (149/150), faux M17 du 01/10 rejete (7/84), NXDN rejete.
+  Nombre de voies deduit de la taille des datagrammes (640 = stereo, 320 =
+  mono) plutot que de l'option de mode. Sonde portee a 6 s (le demarrage de
+  dsd-fme en prend ~3).
+- "Balise" annoncee sans son message : la lecture de la voix etait bornee
+  a 15 s fixes (speak.py) ; les annonces APRS longues (indicatif epele +
+  commentaire) etaient coupees. Borne = duree reelle du MP3 (48 kbit/s) + 5 s.
+- Vu au passage : des annonces ont attendu 300 s le verrou pendant que le
+  journal etait ouvert (le dialogue tient la sortie son tout du long).
