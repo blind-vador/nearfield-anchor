@@ -32,6 +32,20 @@ ALARM_EVERY_SEC = 120
 BUTTON_EVERY_SEC = 60
 READINGS_KEEP_SEC = 6 * 3600
 
+# Thermometres qui ne mesurent PAS l'air exterieur (2026-10-01 : un
+# thermometre de barbecue voisin, "GT-TMBBQ05", a 75 degres, s'etait glisse
+# dans le bulletin meteo). Reconnus par le nom de modele rtl_433.
+NOT_WEATHER = [
+    ("cuisson", ("bbq", "meat", "maverick", "grill", "burnhard", "01185m", "thermopro-tp08", "thermopro-tp11",
+                 "thermopro-tp12", "thermopro-tp20", "smoker")),
+    ("piscine", ("pool", "marbella")),
+    ("frigo", ("refrigerator", "freezer", "acurite-986")),
+    ("sol", ("soil", "wh51", "springfield", "rainpoint", "xt300")),
+]
+KIND_NAMES = {"meteo": "thermomètre ou station météo", "alarme": "détecteur", "bouton": "bouton",
+              "cuisson": "thermomètre de cuisson ou de barbecue", "piscine": "thermomètre de piscine",
+              "frigo": "thermomètre de réfrigérateur ou congélateur", "sol": "sonde de sol"}
+
 ALARM_WORDS = ("smoke", "fumee", "alarm", "water", "leak", "flood", "tamper", "intrusion", "gas", "co_")
 BUTTON_WORDS = ("doorbell", "bell", "button", "remote", "switch", "keyfob")
 IGNORED_KEYS = {"time", "model", "id", "channel", "mic", "mod", "freq", "freq1", "freq2", "rssi",
@@ -68,6 +82,10 @@ def _values(event):
 
 
 def _kind(event):
+    model = str(event.get("model", "")).lower()
+    for kind, words in NOT_WEATHER:
+        if any(w in model for w in words):
+            return kind
     blob = json.dumps(event).lower()
     if "tpms" in blob or "pressure_kpa" in blob or "pressure_psi" in blob:
         return "pneu"
@@ -84,15 +102,15 @@ def _name(event):
     return str(event.get("model", "capteur")).replace("-", " ").replace("_", " ")
 
 
-def _publish(key, event):
+def _publish(key, event, kind="meteo"):
     try:
         with open(READINGS_PATH, encoding="utf-8") as f:
             readings = json.load(f)
     except (OSError, ValueError):
         readings = {}
     now = time.time()
-    readings[key] = {"nom": _name(event), "valeurs": {k: v for k, v in event.items() if k not in IGNORED_KEYS},
-                     "t": now}
+    readings[key] = {"nom": _name(event), "type": kind,
+                     "valeurs": {k: v for k, v in event.items() if k not in IGNORED_KEYS}, "t": now}
     readings = {k: v for k, v in readings.items() if now - v.get("t", 0) < READINGS_KEEP_SEC}
     try:
         tmp = READINGS_PATH + ".tmp"
@@ -143,7 +161,7 @@ def _process(event, freq, tpms, at):
         # Pas d'annonce directe : apprentissage des vehicules (lib/voitures.py).
         tpms.append((at, key, _pressure_kpa(event)))
         return False
-    _publish(key, event)
+    _publish(key, event, kind)
     values = _values(event)
     if kind == "alarme" and _memory.due(f"alarme|{key}", ALARM_EVERY_SEC):
         vd.announce(f"Alarme d'un capteur sans fil proche : {_name(event)}." + (f" {values}." if values else ""),
@@ -154,7 +172,7 @@ def _process(event, freq, tpms, at):
                     f"capteur_bouton_{key}", "capteurs_watch")
         return True
     if _memory.due(f"nouveau|{key}", NEW_EVERY_SEC):
-        what = {"meteo": "thermomètre ou station météo", "alarme": "détecteur", "bouton": "bouton"}.get(kind, "capteur")
+        what = KIND_NAMES.get(kind, "capteur")
         freq_txt = "433" if freq.startswith("433") else "868"
         number = f", numéro {event['id']}" if event.get("id") is not None else ""
         vd.announce(f"Nouveau {what} sans fil en {freq_txt} mégahertz : {_name(event)}{number}"

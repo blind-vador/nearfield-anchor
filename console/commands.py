@@ -355,7 +355,9 @@ def capteurs():
         if v.get("humidity") is not None:
             values.append(f"humidité {v['humidity']} pour cent")
         age = int((time.time() - r["t"]) // 60)
-        parts.append(f"{r['nom']}" + (f" : {', '.join(values)}" if values else "") + f", il y a {age} minutes.")
+        kinds = {"cuisson": "cuisson ou barbecue", "piscine": "piscine", "frigo": "réfrigérateur", "sol": "sonde de sol"}
+        kind = f", {kinds[r['type']]}" if r.get("type") in kinds else ""
+        parts.append(f"{r['nom']}{kind}" + (f" : {', '.join(values)}" if values else "") + f", il y a {age} minutes.")
     if not parts:
         return "Aucun capteur ni station météo capté ces dernières heures."
     return f"{len(parts)} source{'s' if len(parts) > 1 else ''}. " + " ".join(parts[:12])

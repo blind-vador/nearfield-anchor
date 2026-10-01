@@ -5353,3 +5353,23 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   aussitot, avec la raison. Annonce une fois par pause : "Malgre la chaleur,
   je garde l'ecoute meteo seule, jusqu'a 78 degres."
 - Simulation des 6 cas (77/79/81 C, niveaux 0/2/3, bulletin ou non) conforme.
+
+### Bulletin vulgarise, capteurs non meteo ecartes (2026-10-01)
+
+- Les "75,5 degres" du bulletin venaient d'un thermometre de barbecue voisin
+  (rtl_433 "GT-TMBBQ05"), pas d'une station mal reglee : rtl_433 sort deja
+  en Celsius (-C si) et l'APRS impose le Fahrenheit, converti par aprslib.
+- capteurs_watch classe par nom de modele : cuisson (BBQ, Meat, Maverick,
+  ThermoPro TP08/11/12/20, Burnhard, Acurite 01185M), piscine, frigo, sol ;
+  annonces adaptees ("thermometre de cuisson ou de barbecue") ; type publie.
+- meteo_locale.outdoor_sensors : seuls les thermometres de type meteo a
+  moins de 8 C du modele (sinon de la mediane) servent au bulletin, a
+  l'historique et aux signes avant-coureurs ; stations APRS a plus de 12 C du
+  modele non citees ; le bulletin dit combien d'appareils ont ete ecartes.
+- Vulgarisation : pression (stable / degradation / amelioration / haute ou
+  basse), air instable ou tres instable explique, "il gele au-dessus de X
+  metres", air presque sature ; ballon-sonde explique (ce que c'est,
+  altitude en km, et comparaison a l'atmosphere standard partant de la
+  temperature au sol, -6,5 C/km : normal, plus froid -> instable, averses et
+  orages favorises, plus doux -> stable ; au-dessus de 11 km : haute
+  atmosphere, toujours tres froide).

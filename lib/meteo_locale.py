@@ -186,22 +186,50 @@ def record_observations():
                                                      "releves": []})
         if not entry["releves"] or entry["releves"][-1]["t"] != row["t"]:
             entry["releves"].append(row)
-    sensors = _read_json(SENSORS_PATH) or {}
+    sensors, _ = outdoor_sensors(max_age_sec=HISTORY_KEEP_SEC)
     for key, r in sensors.items():
         v = r.get("valeurs") or {}
-        if v.get("temperature_C") is None:
-            continue
         row = {"t": r.get("t"), "temp": v.get("temperature_C"), "humidite": v.get("humidity"),
                "rafale": v.get("wind_max_km_h"), "vent": v.get("wind_avg_km_h"), "pluie_cumul": v.get("rain_mm")}
         entry = history.setdefault(f"capteur:{key}", {"nom": r.get("nom"), "releves": []})
         if not entry["releves"] or entry["releves"][-1]["t"] != row["t"]:
             entry["releves"].append(row)
     for key in list(history):
+        if key.startswith("capteur:") and key[len("capteur:"):] not in sensors:
+            del history[key]  # n'est plus (ou n'a jamais ete) un thermometre exterieur vraisemblable
+            continue
         history[key]["releves"] = [r for r in history[key]["releves"] if r.get("t") and now - r["t"] < HISTORY_KEEP_SEC]
         if not history[key]["releves"]:
             del history[key]
     _write_json(HISTORY_PATH, history)
     return history
+
+
+PLAUSIBLE_SENSOR_C = 8      # ecart maxi a la reference pour un capteur "air exterieur"
+PLAUSIBLE_STATION_C = 12    # stations radioamateur : plus de tolerance (relief, exposition)
+
+
+def _median(values):
+    values = sorted(values)
+    return values[len(values) // 2] if values else None
+
+
+def outdoor_sensors(reference=None, max_age_sec=2 * 3600):
+    """Capteurs sans fil qui mesurent vraisemblablement l'air dehors :
+    type meteo (pas cuisson, piscine, frigo, sol -- capteurs_watch) et
+    temperature proche de la reference (modele, sinon mediane des capteurs).
+    Rend (gardes {cle: lecture}, nombre d'ecartes)."""
+    sensors = _read_json(SENSORS_PATH) or {}
+    now = time.time()
+    weather = {k: r for k, r in sensors.items()
+               if r.get("type", "meteo") == "meteo" and now - r.get("t", 0) < max_age_sec
+               and (r.get("valeurs") or {}).get("temperature_C") is not None}
+    others = sum(1 for k, r in sensors.items() if k not in weather and now - r.get("t", 0) < max_age_sec
+                 and (r.get("valeurs") or {}).get("temperature_C") is not None)
+    ref = reference if reference is not None else _median(r["valeurs"]["temperature_C"] for r in weather.values())
+    kept = {k: r for k, r in weather.items()
+            if ref is None or abs(r["valeurs"]["temperature_C"] - ref) <= PLAUSIBLE_SENSOR_C}
+    return kept, others + len(weather) - len(kept)
 
 
 def _value_at(rows, field, before):
@@ -490,49 +518,86 @@ def take_scan_request():
 
 # --- bulletin -------------------------------------------------------------------
 
-def _neighbors_text(lieu):
+def _neighbors_text(lieu, reference=None):
     parts = []
     aprs = _read_json(APRS_WX_PATH) or {}
     lat0, lon0 = _home(lieu)
     near = sorted(((_distance_km(lat0, lon0, s["lat"], s["lon"]), c, s) for c, s in aprs.items()
                    if s.get("lat") is not None and (s.get("meteo") or {}).get("temperature") is not None
                    and time.time() - s.get("t", 0) < 3 * 3600), key=lambda p: p[0])
-    for km, call, st in near[:2]:
-        if km > STATION_MAX_KM:
+    odd = 0
+    shown = 0
+    for km, call, st in near:
+        if km > STATION_MAX_KM or shown >= 2:
             break
         wx = st["meteo"]
+        if reference is not None and abs(wx["temperature"] - reference) > PLAUSIBLE_STATION_C:
+            odd += 1  # station sans doute mal reglee ou au soleil : pas citee
+            continue
+        shown += 1
         text = f"station radioamateur {_where(lieu, st['lat'], st['lon'])} : {_num(wx['temperature'])} degrés"
         if wx.get("pressure"):
             text += f", pression {round(wx['pressure'])}"
         parts.append(text)
-    sensors = _read_json(SENSORS_PATH) or {}
-    temps = sorted(r["valeurs"]["temperature_C"] for r in sensors.values()
-                   if (r.get("valeurs") or {}).get("temperature_C") is not None and time.time() - r.get("t", 0) < 2 * 3600)
+    kept, excluded = outdoor_sensors(reference)
+    temps = sorted(r["valeurs"]["temperature_C"] for r in kept.values())
     if temps:
         span = (f"{_num(temps[0], 1)} degrés" if len(temps) == 1 or temps[0] == temps[-1]
                 else f"entre {_num(temps[0], 1)} et {_num(temps[-1], 1)} degrés")
-        parts.append(f"capteurs sans fil des voisins : {span}")
+        parts.append(f"thermomètres extérieurs des voisins : {span}")
     if not parts:
         return ""
-    return "Relevés autour de toi : " + " ; ".join(parts) + "."
+    text = "Relevés autour de toi : " + " ; ".join(parts) + "."
+    if excluded or odd:
+        n = excluded + odd
+        text += (f" J'ai écarté {n} appareil{'s' if n > 1 else ''} qui ne mesure{'nt' if n > 1 else ''} "
+                 "pas l'air dehors : intérieur, cuisson, piscine, ou station mal réglée.")
+    return text
 
 
-def _sondes_text(lieu, found):
+LAPSE_C_PER_KM = 6.5        # refroidissement moyen de l'air avec l'altitude (atmosphere standard)
+TROPOPAUSE_M = 11000         # au-dela : haute atmosphere, toujours tres froide
+ALOFT_ANOMALY_C = 4
+
+
+def aloft_meaning(alt_m, temp_c, fc):
+    """Ce que veut dire une temperature mesuree en altitude, en clair.
+    Compare a ce qu'on attend en partant de la temperature au sol (6,5
+    degres de moins par kilometre en moyenne)."""
+    if alt_m >= TROPOPAUSE_M:
+        return "c'est la haute atmosphère, au-dessus des nuages, où il fait toujours très froid : rien d'anormal"
+    current = (fc or {}).get("current") or {}
+    ground = current.get("temperature_2m")
+    if ground is None:
+        return ""
+    elevation = (fc or {}).get("elevation") or 0
+    expected = ground - LAPSE_C_PER_KM * (alt_m - elevation) / 1000
+    gap = temp_c - expected
+    if gap <= -ALOFT_ANOMALY_C:
+        return ("c'est plus froid que d'habitude à cette hauteur : de l'air froid en altitude au-dessus "
+                "d'un sol plus doux rend l'atmosphère instable, ce qui favorise averses et orages")
+    if gap >= ALOFT_ANOMALY_C:
+        return "c'est plus doux que d'habitude là-haut : l'atmosphère est stable, peu propice aux orages"
+    return "c'est normal à cette altitude, l'air se refroidit d'environ 6 degrés et demi par kilomètre"
+
+
+def _sondes_text(lieu, found, fc=None):
     if not found:
         return ""
     lat0, lon0 = _home(lieu)
     s = min(found, key=lambda s: _distance_km(lat0, lon0, s["lat"], s["lon"]))
-    km = _distance_km(lat0, lon0, s["lat"], s["lon"])
-    text = (f"{len(found)} ballon{'s' if len(found) > 1 else ''}-sonde{'s' if len(found) > 1 else ''} en vol "
-            f"dans un rayon de {SONDE_RADIUS_KM} kilomètres ; le plus proche, {_where(lieu, s['lat'], s['lon'])}")
+    text = (f"Un ballon-sonde, un ballon météo qui mesure l'air en montant, est {_where(lieu, s['lat'], s['lon'])}")
     if s.get("alt"):
-        text += f", à {round(s['alt'])} mètres d'altitude"
+        text += f", à {round(s['alt'] / 100) / 10:.1f} kilomètres d'altitude".replace(".", ",")
         if s.get("temp") is not None:
-            text += f", il y mesure {_num(s['temp'])} degrés"
+            text += f" : il y fait {_num(s['temp'])} degrés"
+            meaning = aloft_meaning(s["alt"], s["temp"], fc)
+            if meaning:
+                text += f" ; {meaning}"
         if (s.get("vitesse_v") or 0) < -2:
-            text += ", en descente"
-    if km < 150 and s.get("frequence"):
-        text += f", émet sur {_num(s['frequence'], 3)} mégahertz"
+            text += ". Il redescend en parachute"
+    if len(found) > 1:
+        text += f". {len(found)} ballons en vol en tout dans un rayon de {SONDE_RADIUS_KM} kilomètres"
     return text + "."
 
 
@@ -550,7 +615,8 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
         text = f"En ce moment, {WMO.get(c.get('weather_code'), 'temps indéterminé')}, {_num(c['temperature_2m'])} degrés"
         if c.get("apparent_temperature") is not None and abs(c["apparent_temperature"] - c["temperature_2m"]) >= 2:
             text += f", ressenti {_num(c['apparent_temperature'])}"
-        text += f", humidité {c.get('relative_humidity_2m')} pour cent."
+        humidity = c.get("relative_humidity_2m")
+        text += f", humidité {humidity} pour cent" + (", l'air est presque saturé d'eau." if (humidity or 0) >= 95 else ".")
         if c.get("wind_speed_10m") is not None:
             text += f" Vent {_wind_from(c.get('wind_direction_10m'))} à {round(c['wind_speed_10m'])} kilomètres heure"
             if (c.get("wind_gusts_10m") or 0) >= 30:
@@ -561,7 +627,17 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
         if pressure is not None:
             trend = ("stable" if abs(delta) < 1 else
                      f"en {'hausse' if delta > 0 else 'baisse'} de {_num(abs(delta))} en 3 heures")
-            parts.append(f"Pression {round(pressure)} hectopascals, {trend}.")
+            if delta <= -2:
+                meaning = "une baisse comme celle-ci annonce souvent une dégradation"
+            elif delta >= 2:
+                meaning = "la hausse annonce plutôt une amélioration"
+            elif pressure >= 1020:
+                meaning = "haute pression, temps plutôt stable"
+            elif pressure <= 1005:
+                meaning = "basse pression, temps souvent agité"
+            else:
+                meaning = "pression moyenne"
+            parts.append(f"Pression {round(pressure)} hectopascals, {trend} : {meaning}.")
         out = storm_outlook(fc, hours=12)
         hourly = fc["hourly"]
         upcoming = []
@@ -571,8 +647,10 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
         if out["pluie_des"] is not None:
             upcoming.append("pluie probable " + ("dès maintenant" if out["pluie_des"] == 0
                                                   else f"dans {out['pluie_des']} heure{'s' if out['pluie_des'] > 1 else ''}"))
-        if out["cape"][0] >= 500:
-            upcoming.append("atmosphère " + ("très instable" if out["cape"][0] >= 1500 else "instable"))
+        if out["cape"][0] >= 1500:
+            upcoming.append("air très instable, orages possibles, parfois forts")
+        elif out["cape"][0] >= 500:
+            upcoming.append("air instable, des averses peuvent éclater rapidement")
         try:
             import meteo_obs
             threshold = meteo_obs.thunder_threshold()
@@ -589,7 +667,7 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
         i = _hourly_index(fc)
         freezing = (hourly.get("freezing_level_height") or [None] * (i + 1))[i]
         if freezing is not None and freezing < 2500:
-            upcoming.append(f"limite du gel vers {int(round(freezing, -2))} mètres")
+            upcoming.append(f"il gèle au-dessus de {int(round(freezing, -2))} mètres d'altitude")
         parts.append("Dans les 12 prochaines heures : " + (", ".join(upcoming) if upcoming else "rien de notable") + ".")
         if calibrated:
             parts.append(calibrated)
@@ -624,7 +702,8 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
     elif scan_failed:
         reason = scan_failed if isinstance(scan_failed, str) else "le scanner n'a pas répondu"
         parts.append(f"Pas de balayage radio cette fois, {reason} : relevés locaux des dernières heures.")
-    neighbors = _neighbors_text(lieu)
+    reference = ((fc or {}).get("current") or {}).get("temperature_2m")
+    neighbors = _neighbors_text(lieu, reference)
     if neighbors:
         parts.append(neighbors)
     try:
@@ -645,9 +724,10 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
     profiles = _read_json(SONDE_PROFILE_PATH) or {}
     measured = [p for p in profiles.values() if p.get("gel") and time.time() - p["points"][-1]["t"] < 6 * 3600]
     if measured:
-        parts.append(f"Limite du gel mesurée par un ballon-sonde capté ici : vers {int(round(measured[-1]['gel'], -2))} mètres.")
+        parts.append(f"Un ballon-sonde capté ici a mesuré qu'il gèle au-dessus de "
+                     f"{int(round(measured[-1]['gel'], -2))} mètres d'altitude.")
     if with_sondes:
-        sondes_text = _sondes_text(lieu, sondes(lieu))
+        sondes_text = _sondes_text(lieu, sondes(lieu), fc)
         if sondes_text:
             parts.append(sondes_text)
     if level >= 1:
