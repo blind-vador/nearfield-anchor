@@ -45,12 +45,24 @@ CMAKE="$(command -v cmake || true)"
 [ -z "$CMAKE" ] && CMAKE="$("$PY" -c 'import site,os;print(os.path.join(site.USER_BASE,"bin","cmake"))')"
 
 echo "-- meteor_demod / meteor_decode --"
+EXTRA="-DCMAKE_BUILD_TYPE=Release"
+# Sur Mac, le kit systeme par defaut (celui du macOS installe) : cmake prend
+# sinon le plus recent present, parfois trop neuf pour l'editeur de liens
+# des outils de developpement (constate avec le kit macOS 27, 2026-10-01).
+if [ "$(uname)" = "Darwin" ]; then
+    SDK="$(xcode-select -p)/SDKs/MacOSX$(sw_vers -productVersion | cut -d. -f1).sdk"
+    [ -d "$SDK" ] || SDK="$(xcode-select -p)/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+    [ -d "$SDK" ] || SDK="$(xcrun --show-sdk-path)"
+    # Pas le mode Release : ses options visent les processeurs ARM du Pi
+    # (-mfpu), refusees par clang sur Apple Silicon.
+    EXTRA="-DCMAKE_OSX_SYSROOT=$SDK -DCMAKE_BUILD_TYPE=Mac -DCMAKE_C_FLAGS=-O3"
+fi
 for d in meteor_demod meteor_decode; do
     if [ ! -x "$DEST/bin/$d" ]; then
         rm -rf "$BUILD/$d"
         git clone --quiet --depth 1 "https://github.com/dbdexter-dev/$d.git" "$BUILD/$d"
         mkdir -p "$BUILD/$d/build"
-        (cd "$BUILD/$d/build" && "$CMAKE" .. -DCMAKE_BUILD_TYPE=Release -DENABLE_TUI=OFF -DUSE_PNG=OFF >/dev/null \
+        (cd "$BUILD/$d/build" && "$CMAKE" .. $EXTRA -DENABLE_TUI=OFF -DUSE_PNG=OFF >/dev/null \
             && make -j4 >/dev/null && cp "$d" "$DEST/bin/")
     fi
 done
