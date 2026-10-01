@@ -123,15 +123,60 @@ def _process(packet):
         text += f", en mouvement à {round(speed)} kilomètres heure"
     # Commentaire traduit (reglages de relais, tension, sigles...) : voir lib/aprs_texte.py.
     comment = aprs_texte.comment(packet.get("comment") or packet.get("status") or "", name)
+    header = text
     if comment:
         text += f". {comment[0].upper()}{comment[1:]}"
     first = _memory.due(f"station|{name}", STATION_EVERY_SEC)
     near = km <= NEAR_KM and _memory.due(f"near|{name}", NEAR_EVERY_SEC)
     if first or near:
         prefix = "Tout près : " if near and not first else ""
+        raw_comment = (packet.get("comment") or packet.get("status") or "").strip()
+        explained = _explain(name, packet, raw_comment) if aprs_texte.is_weird(raw_comment, comment) else None
+        if explained:  # l'explication remplace la traduction
+            text = f"{header}. {explained.rstrip('.')}"
         vd.announce(prefix + text + ".", SOUND, f"APRS_{name}", "aprs_watch")
         return True
     return False
+
+
+# Commentaire APRS reste obscur apres traduction (demande utilisateur
+# 2026-10-01) : Gemini l'explique simplement, avec une touche d'humour.
+# Explication gardee par (station, commentaire) : pas de nouvel appel tant
+# que la station repete le meme texte.
+EXPLAIN_PROMPT = """Tu es la voix d'un récepteur radio domestique, au ton amusé et bienveillant.
+Une station radioamateur APRS vient de diffuser ce paquet. Son indicatif et sa position ont déjà
+été annoncés : ne les répète pas. Explique en français, à une personne aveugle, en 1 à 3 phrases
+courtes à lire à voix haute, ce que son commentaire veut sans doute dire, avec une petite blague.
+Si c'est de la télémétrie codée ou incompréhensible, dis-le simplement, avec humour. N'invente
+aucun fait, aucun nom. Pas de markdown, pas d'emoji, pas de liste.
+
+Paquet brut : {raw}
+Format : {fmt} ; symbole APRS : {table}{symbol}
+Commentaire : {comment}
+"""
+EXPLAIN_CACHE_MAX = 300
+
+
+def _explain(name, packet, raw_comment):
+    cache = _memory.data.setdefault("explications", {})
+    key = f"{name}|{raw_comment}"[:300]
+    if key in cache:
+        return cache[key]
+    try:
+        import gemini
+        text, problem = gemini.ask(EXPLAIN_PROMPT.format(
+            raw=packet.get("raw", ""), fmt=packet.get("format", ""), table=packet.get("symbol_table", ""),
+            symbol=packet.get("symbol", ""), comment=raw_comment))
+    except Exception as exc:
+        text, problem = None, repr(exc)
+    if problem:
+        print(f"[aprs_watch] explication Gemini indisponible : {problem}")
+        return None
+    cache[key] = text
+    while len(cache) > EXPLAIN_CACHE_MAX:
+        cache.pop(next(iter(cache)))
+    vd.archive("aprs_gemini", {"station": name, "commentaire": raw_comment, "texte": text})
+    return text
 
 
 def _reader(proc, packets):

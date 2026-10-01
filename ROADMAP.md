@@ -5383,3 +5383,15 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   voisin. Repli sur l'annonce simple. Jamais pour les alarmes (sobres).
   Textes archives (donnees/capteurs_gemini_*.jsonl). Le premier appui d'une
   sonnette nouvelle est raconte par cette annonce.
+
+### APRS : commentaires obscurs expliques par Gemini (2026-10-01)
+
+- aprs_texte.is_weird : apres traduction, sigle inconnu de 2 a 4 lettres,
+  code melant lettres et chiffres, ou commentaire non vide entierement vide
+  par la traduction (telemetrie Mic-E pure exclue). Sur 45 stations reelles :
+  EDF OK EurakMon, "ANYTONE AT-D878UV-1.26", TU2k, ".4b10224".
+- Dans ce cas seulement, au moment d'annoncer : paquet brut + format +
+  symbole a Gemini (lib/gemini.py), 1 a 3 phrases, ton amuse, sans repeter
+  indicatif ni position, sans inventer ; l'explication remplace la
+  traduction. Cache par (station, commentaire), 300 entrees ; archive
+  donnees/aprs_gemini_*.jsonl. Repli : traduction habituelle.

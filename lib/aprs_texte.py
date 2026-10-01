@@ -158,6 +158,31 @@ def comment(raw, callsign=""):
     return ", ".join(parts)
 
 
+# Sigles compris tels quels a l'oral (ne rendent pas un commentaire "bizarre").
+KNOWN_TOKENS = {"APRS", "LORA", "VHF", "UHF", "HF", "DMR", "YSF", "C4FM", "SNCF", "OK", "GPS", "FM", "AM",
+                "RX", "TX", "WX", "SMS", "USB", "PC", "QRZ"}
+CALLSIGN = re.compile(r"^[A-Z0-9]{1,2}\d[A-Z]{1,4}(-\w+)?$")
+
+
+def is_weird(raw, translated):
+    """Vrai si le commentaire reste obscur apres traduction : sigle inconnu,
+    code melant lettres et chiffres, ou commentaire non vide entierement
+    vide par la traduction (on n'a rien su en tirer)."""
+    raw = (raw or "").strip()
+    if sum(c.isalnum() for c in raw) < 3:
+        return False  # telemetrie Mic-E pure : rien a expliquer
+    if not translated:
+        return True
+    for token in re.findall(r"[A-Za-z0-9][\w-]*", translated):
+        if token.upper() in KNOWN_TOKENS or CALLSIGN.match(token):
+            continue
+        if re.fullmatch(r"[A-Z]{2,4}", token):  # sigle court ; MORVAN, ALLIER sont des lieux
+            return True
+        if re.search(r"[A-Za-z]", token) and re.search(r"\d", token):
+            return True
+    return False
+
+
 def station_type(packet):
     """ "relais numérique LoRa", "voiture", "mobile"... ou ""."""
     table, symbol = packet.get("symbol_table"), packet.get("symbol")
