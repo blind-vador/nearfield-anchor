@@ -5416,3 +5416,17 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   images SSTV 145,800) ; 869,2 MHz (teleassistance) ; compteurs wM-Bus
   868,95 / 169 MHz (souvent chiffres) ; avec un fil HF : NAVTEX 518 kHz,
   VOLMET, HFDL (dumphfdl), meteo-fax (DWD), FT8.
+
+### Plages manquantes et relais appris par l'APRS (2026-10-01)
+
+- Nouvelles bandes balayees : vhf_80 (52-85 MHz : ancienne bande 80 MHz,
+  ancienne bande TV I) et uhf_410 (406,1-430 MHz : reseaux professionnels).
+- lib/relais.py : un relais qui annonce sa frequence de sortie en APRS
+  (symbole r, & ou 0, ou indices T123, R17k, tone, Voice, MMDVM...), a moins
+  de 60 km, est appris (frequence, mode fm/dmr/dstar/c4fm, tonalite) dans
+  radio_log/relais.json ; passerelles LoRa et iGates exclues. Le scanner
+  ajoute a chaque cycle une bande "fm_channels" par groupe (6 m, 2 m, 70 cm),
+  un rtl_power par groupe ; decodage numerique habituel (dsd-fme -fa).
+  Amorce depuis les archives : F5ZBR 145,612 (2 km), F6ZCD DMR 145,2875,
+  F1ZEV 51,95, F1ZCK D-Star 438,2. L'annonce APRS dit "Je l'ajoute a mon
+  ecoute des relais" quand un relais est appris.

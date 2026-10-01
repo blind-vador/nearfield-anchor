@@ -22,6 +22,7 @@ import radio_log
 import sound_player
 import audio_filters
 import acars_watch
+import relais
 import meteo_locale
 import adsb_local_watch
 import aprs_watch
@@ -366,6 +367,19 @@ BANDS = [
      # temps reel (spectacle en cours a proximite), pas de la diffusion.
      "low_hz": 470_000_000, "high_hz": 694_000_000, "step_hz": 25_000, "mode": "nfm",
      "margin_db": 12.0},
+    {"name": "vhf_80", "name_spoken": "VHF 52 à 85 mégahertz", "type": "sweep",
+     # Trou entre le radioamateur 6 m (51 MHz) et la radio FM (85 MHz), non
+     # balaye jusqu'ici (2026-10-01) : ancienne "bande 80 MHz" des services
+     # publics, restes possibles de reseaux locaux analogiques (taxis,
+     # entretien, reseaux forestiers), ancienne bande TV I.
+     "low_hz": 52_000_000, "high_hz": 85_000_000, "step_hz": 12_500, "mode": "nfm",
+     "margin_db": 10.0},
+    {"name": "uhf_410", "name_spoken": "UHF 406 à 430 mégahertz", "type": "sweep",
+     # Trou entre les ballons-sondes / balises (406 MHz) et le radioamateur
+     # 70 cm (430 MHz), non balaye jusqu'ici (2026-10-01) : reseaux
+     # professionnels, anciens reseaux analogiques.
+     "low_hz": 406_100_000, "high_hz": 430_000_000, "step_hz": 12_500, "mode": "nfm",
+     "margin_db": 10.0},
     {"name": "vhf_low", "name_spoken": "VHF basse", "type": "sweep",
      # Trou entre la CB (jusqu'a 27.41 MHz) et le radioamateur 6m (50 MHz).
      # Historiquement dispatch taxi/forestier, en declin mais possibles
@@ -1818,7 +1832,7 @@ def main():
 
         activity = False
 
-        for band in fm_bands:
+        for band in fm_bands + relais.bands():  # relais appris par l'APRS (lib/relais.py)
             if _lock_pending():
                 break
             if scan_fm_band(band):

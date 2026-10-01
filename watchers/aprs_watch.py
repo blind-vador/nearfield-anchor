@@ -24,6 +24,7 @@ import time
 import aprslib
 
 import aprs_texte
+import relais
 import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
 
@@ -121,6 +122,10 @@ def _process(packet):
     text = f"{kind.capitalize() if kind else 'Station APRS'} {vd.spell(name)}, {vd.where(lat, lon)}"
     if moving:
         text += f", en mouvement à {round(speed)} kilomètres heure"
+    # Relais qui annonce sa frequence : appris et ajoute a l'ecoute du scanner (lib/relais.py).
+    learned = relais.learn(name, packet.get("comment") or "", packet.get("symbol"), km)
+    if learned:
+        print(f"[aprs_watch] relais appris : {name} sur {learned / 1e6:.4f} MHz")
     # Commentaire traduit (reglages de relais, tension, sigles...) : voir lib/aprs_texte.py.
     comment = aprs_texte.comment(packet.get("comment") or packet.get("status") or "", name)
     header = text
@@ -134,6 +139,8 @@ def _process(packet):
         explained = _explain(name, packet, raw_comment) if aprs_texte.is_weird(raw_comment, comment) else None
         if explained:  # l'explication remplace la traduction
             text = f"{header}. {explained.rstrip('.')}"
+        if learned:
+            text += ". Je l'ajoute à mon écoute des relais"
         vd.announce(prefix + text + ".", SOUND, f"APRS_{name}", "aprs_watch")
         return True
     return False
