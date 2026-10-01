@@ -87,6 +87,19 @@ TEMP_PAUSE_C_BASE = 72.0
 # web en session, article framboise314 sur le decodage APRS). Aucune
 # logique d'adaptation ci-dessous ne peut faire depasser ce seuil.
 TEMP_CRITICAL_C = 80.0
+
+# Veille meteo sous chaleur (demande utilisateur 2026-10-01) : pendant une
+# pause thermique, si un bulletin est demande ou qu'une perturbation
+# approche (niveau publie >= 2), on garde UNIQUEMENT les fenetres meteo
+# (stations APRS, capteurs, ballon-sonde) -- tout le reste du scan reste
+# suspendu -- tant que le Pi ne depasse pas METEO_PAUSE_MAX_C ; jusqu'a
+# METEO_PAUSE_CRITICAL_MAX_C (exclu, c'est la coupure dure) si la menace
+# est critique (niveau 3 : perturbation dangereuse toute proche).
+METEO_PAUSE_MAX_C = 78.0
+METEO_PAUSE_CRITICAL_MAX_C = TEMP_CRITICAL_C
+METEO_PAUSE_TICK_SEC = 5
+METEO_PAUSE_WATCH_EVERY_SEC = 300
+METEO_PAUSE_WATCH = [("aprs", 30), ("capteurs", 30), ("sondes", 45)]
 # Baisse de 65.0 a 60.0 (2026-08-30, demande explicite de l'utilisateur) :
 # une pause de plus de 70 minutes suivie d'une re-pause au bout de
 # seulement 2.5 minutes a ete observee en usage reel -- plus de marge de
@@ -1287,22 +1300,66 @@ DATA_SCANNERS = {
 }
 
 
-def _meteo_scan_if_requested():
+def _meteo_temp_limit():
+    """(temperature maxi permise pour la veille meteo, niveau de menace)."""
+    level = meteo_locale.published_level()
+    return (METEO_PAUSE_CRITICAL_MAX_C if level >= 3 else METEO_PAUSE_MAX_C), level
+
+
+def _too_hot(limit):
+    temp = _get_cpu_temp_c()
+    if temp is None:
+        return False
+    return temp >= limit if limit >= TEMP_CRITICAL_C else temp > limit
+
+
+def _meteo_scan_if_requested(max_temp=None):
     """Balayage du panel radio meteo demande par la console (commande
     "meteo") : stations APRS, capteurs 433 et 868 MHz, ballon-sonde a portee.
     La console attend la fin (meteo_locale.wait_scan) pour donner un
-    bulletin complet, ultra-local compris."""
+    bulletin complet, ultra-local compris. max_temp : pendant une pause
+    thermique, on s'arrete si le Pi depasse ce seuil."""
     try:
         if not meteo_locale.take_scan_request():
             return
         started = time.time()
-        for name, dwell in meteo_locale.FORCED_SCAN:
+        for name, dwell in meteo_locale.FORCED_SCAN + [("sondes", 45)]:  # sondes : rend la main sans ballon
+            if max_temp is not None and _too_hot(max_temp):
+                print(f"[radio_watch] balayage meteo ecourte : plus de {max_temp:.0f}C")
+                break
             DATA_SCANNERS[name](dwell_sec=dwell)
-        DATA_SCANNERS["sondes"](dwell_sec=45)  # rend la main aussitot sans ballon a portee
         stations, sensors = meteo_locale.scan_counts(started)
         meteo_locale.scan_done(started, time.time(), stations, sensors)
     except Exception as exc:
         print(f"[radio_watch] balayage meteo : {exc!r}")
+
+
+_meteo_pause = {"last_watch": 0.0, "announced": False}
+
+
+def _thermal_pause_wait(duration):
+    """Attente pendant la pause thermique, avec la veille meteo sous chaleur
+    (voir METEO_PAUSE_MAX_C) : rien d'autre que les fenetres meteo."""
+    end = time.time() + duration
+    while time.time() < end:
+        limit, level = _meteo_temp_limit()
+        allowed = not _too_hot(limit)
+        meteo_locale.set_scanner_state("pause_thermique_meteo" if allowed else "pause_thermique")
+        wanted = meteo_locale.scan_requested() or level >= 2
+        if allowed and wanted:
+            if not _meteo_pause["announced"]:
+                _meteo_pause["announced"] = True
+                _speak_pause(f"Malgré la chaleur, je garde l'écoute météo seule, jusqu'à {limit:.0f} degrés.")
+            if meteo_locale.scan_requested():
+                _meteo_scan_if_requested(max_temp=limit)
+            elif level >= 2 and time.time() - _meteo_pause["last_watch"] >= METEO_PAUSE_WATCH_EVERY_SEC:
+                _meteo_pause["last_watch"] = time.time()
+                print(f"[radio_watch] veille meteo sous chaleur (menace niveau {level})")
+                for name, dwell in METEO_PAUSE_WATCH:
+                    if _too_hot(limit):
+                        break
+                    DATA_SCANNERS[name](dwell_sec=dwell)
+        time.sleep(METEO_PAUSE_TICK_SEC)
 
 
 def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
@@ -1641,12 +1698,13 @@ def main():
                     sound=SCANER_ERROR_SOUND,
                 )
                 meteo_locale.set_scanner_state("pause_thermique")
+                _meteo_pause["announced"] = False
                 pause_actual_start = time.time()
                 recent_temps = collections.deque()  # (horodatage, temperature) sur PLATEAU_WINDOW_SEC
                 plateau_resume = False
                 plateau_warned = False
                 while True:
-                    time.sleep(TEMP_CHECK_INTERVAL_SEC)
+                    _thermal_pause_wait(TEMP_CHECK_INTERVAL_SEC)
                     temp = _get_cpu_temp_c()
                     if temp is None or temp <= effective_resume_c:
                         break

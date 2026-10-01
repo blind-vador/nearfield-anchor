@@ -375,6 +375,14 @@ def threat(lieu, fc=None, signs=None):
     return level, reasons
 
 
+def published_level(max_age_sec=900):
+    """Niveau de menace publie (0 si absent ou trop vieux)."""
+    ctx = _read_json(CONTEXT_PATH) or {}
+    if time.time() - ctx.get("updated", 0) > max_age_sec:
+        return 0
+    return int(ctx.get("niveau") or 0)
+
+
 def publish_context(level, reasons):
     """Contexte pour l'attention du scanner (lib/attention.py)."""
     _write_json(CONTEXT_PATH, {"niveau": level, "raisons": reasons, "updated": time.time(),
@@ -444,7 +452,7 @@ def scan_counts(started):
 
 SCANNER_STATE_PATH = "/tmp/radio_watch_etat.json"
 # Etats ou le scanner ne peut pas faire le balayage (la console n'attend pas)
-SCANNER_BUSY = {"pause_thermique": "le scanner est en pause pour refroidir le Pi",
+SCANNER_BUSY = {"pause_thermique": "le Pi est trop chaud, même pour l'écoute météo seule",
                 "manuel": "le scanner est en mode manuel",
                 "accroche": "le scanner est accroché sur une fréquence"}
 

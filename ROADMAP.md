@@ -5339,3 +5339,17 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   -> poids reduit, 60 % et plus -> poids fort). Signes annonces journalises
   (meteo_signes.jsonl). "bilan meteo" dit tout ca et rappelle le biais
   (on observe surtout quand il se passe quelque chose).
+
+### Veille meteo sous chaleur (2026-10-01)
+
+- Pendant une pause thermique, si un bulletin est demande ou si la menace
+  publiee est >= 2, le scanner garde UNIQUEMENT les fenetres meteo
+  (bulletin : APRS 60 s, capteurs 433 et 868, ballon-sonde ; sinon toutes
+  les 5 min : APRS 30 s, capteurs 30 s, ballon-sonde), tout le reste reste
+  suspendu. Plafond 78 C, et jusqu'a 80 C exclu (coupure dure inchangee) si
+  la menace est critique (niveau 3). Verifie entre chaque fenetre.
+- Etat publie "pause_thermique_meteo" : la console attend alors le
+  balayage ; "pause_thermique" (trop chaud meme pour la meteo) : bulletin
+  aussitot, avec la raison. Annonce une fois par pause : "Malgre la chaleur,
+  je garde l'ecoute meteo seule, jusqu'a 78 degres."
+- Simulation des 6 cas (77/79/81 C, niveaux 0/2/3, bulletin ou non) conforme.
