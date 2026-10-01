@@ -74,11 +74,12 @@ def decode_meshtastic(frame):
         info["lisible"] = False
         return info
     info.update(lisible=True, type=PORTS[port])
+    if port == 1:  # texte brut, pas un protobuf
+        info["texte"] = bytes(body).decode("utf-8", errors="replace")
+        return info
     try:
         sub = _fields(body)
-        if port == 1:
-            info["texte"] = bytes(body).decode("utf-8", errors="replace")
-        elif port == 3:
+        if port == 3:
             lat = struct.unpack("<i", sub[1][0])[0] / 1e7 if 1 in sub else None
             lon = struct.unpack("<i", sub[2][0])[0] / 1e7 if 2 in sub else None
             info.update(lat=lat, lon=lon, altitude=sub.get(3, [None])[0])
