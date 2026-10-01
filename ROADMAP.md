@@ -5395,3 +5395,24 @@ Trois phenomenes signales par l'utilisateur, causes trouvees dans les logs :
   indicatif ni position, sans inventer ; l'explication remplace la
   traduction. Cache par (station, commentaire), 300 entrees ; archive
   donnees/aprs_gemini_*.jsonl. Repli : traduction habituelle.
+
+## 2026-10-01 : ondes courtes avec la nouvelle cle, et pistes de captation
+
+- La Nooelec NESDR SMArt v5 recoit bien 0,1-25 MHz par echantillonnage
+  direct, voie Q (rtl_fm -E direct2 ; pyrtlsdr==0.2.93, set_direct_sampling(2) ;
+  la version recente de pyrtlsdr exige une librtlsdr plus recente). Le
+  rtl_power de Debian (-D) utilise la voie I : spectre plat, trompeur.
+  Mesure avec l'antenne de talkie 446 : pics jusqu'a +22 dB, mais les plus
+  forts (7,89 et 8,70 MHz) hors bandes de diffusion et sans modulation :
+  parasites locaux probables ; rien sur 4625 kHz (UVB-76). Extraits dans
+  stockage/radio/ondes_courtes. Il faut un long fil (10-20 m, unun 9:1).
+- En attente de decision utilisateur : fenetre HF du scanner (UVB-76 :
+  voix qui interrompt le bourdonnement ; bandes de diffusion et
+  radioamateur, BLU via rtl_fm usb/lsb) ; ecoute de recepteurs KiwiSDR
+  publics par internet en attendant l'antenne.
+- Pistes listees a l'utilisateur (antenne Sirio 1,20 m attendue) : bande
+  68-87,5 MHz et 406,1-430 MHz non couvertes ; satellites meteo Meteor-M
+  (LRPT 137 MHz, images de nuages decrites par Gemini) ; ISS (APRS 145,825,
+  images SSTV 145,800) ; 869,2 MHz (teleassistance) ; compteurs wM-Bus
+  868,95 / 169 MHz (souvent chiffres) ; avec un fil HF : NAVTEX 518 kHz,
+  VOLMET, HFDL (dumphfdl), meteo-fax (DWD), FT8.
