@@ -330,6 +330,13 @@ class Link(threading.Thread):
                     self.channel.close()
         return False
 
+    def shutdown(self):
+        """Pont supprime : coupe la liaison tout de suite."""
+        self.stop.set()
+        with self.lock:
+            if self.channel:
+                self.channel.close()
+
     def _connect(self, card):
         for host in (card.get("hote"), card.get("ip")):
             if not host:
@@ -505,7 +512,7 @@ def service():
                 _links[pi].start()
         for pi in list(_links):
             if pi not in current:
-                _links.pop(pi).stop.set()
+                _links.pop(pi).shutdown()
         if time.time() - last_scan > SCAN_SEC:  # filet de securite si un avis s'est perdu
             last_scan = time.time()
             for pi in current:
@@ -526,10 +533,14 @@ def _when(t):
     return "%s à %s" % (prefix, time.strftime("%H h %M", time.localtime(t)))
 
 
+def _plural(n, word):
+    return "%d %s%s" % (n, word, "s" if n > 1 else "")
+
+
 def _duration(sec):
     sec = int(sec or 0)
     if sec < 90:
-        return "%d secondes" % sec
+        return _plural(sec, "seconde")
     if sec < 5400:
         return "%d minutes" % round(sec / 60)
     return "%d heures %02d" % (sec // 3600, (sec % 3600) // 60)
@@ -557,8 +568,10 @@ def status_text():
         else:
             link = "pas connecté" + (" (%s)" % data["erreur"] if data.get("erreur") else "")
         lines.append("Pont avec %s : %s." % (pi, link))
-        lines.append("  %d travaux réussis, %d sans résultat, %s de calcul au total." % (
-            data.get("faits", 0), data.get("echecs", 0), _duration(data.get("secondes"))))
+        done = data.get("faits", 0)
+        lines.append("  %s %s, %d sans résultat, %s de calcul au total." % (
+            _plural(done, "travail").replace("travails", "travaux"), "réussi" + ("s" if done > 1 else ""),
+            data.get("echecs", 0), _duration(data.get("secondes"))))
         if data.get("en_cours"):
             lines.append("  Travail en cours : %s." % data["en_cours"])
         last = data.get("dernier")
@@ -575,8 +588,7 @@ def bridges_list():
     out = []
     for pi in sorted(bridges()):
         data = stats(pi)
-        out.append("%s\tPont avec %s, %s, %d travaux réussis" % (
-            pi, pi, "connecté" if data.get("connecte") else "pas connecté", data.get("faits", 0)))
+        out.append("%s\tPont avec %s, %s" % (pi, pi, "connecté" if data.get("connecte") else "pas connecté"))
     return "\n".join(out)
 
 

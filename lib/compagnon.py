@@ -200,7 +200,7 @@ def stop_pairing():
 
 
 def read_revocations():
-    """Ponts retires depuis la machine compagne (message signe par elle) : [noms]."""
+    """Ponts retires depuis la machine compagne (message signe par elle) : [(id, nom)]."""
     cards = trusted()
     gone = []
     for name in _list("revocations"):
@@ -209,7 +209,7 @@ def read_revocations():
         cid = msg.get("compagnon")
         if cid in cards and msg.get("pi") == pi_id() and proto.verify(cards[cid]["cle"], msg, max_age=None):
             forget(cid)
-            gone.append(cards[cid].get("nom", cid))
+            gone.append((cid, cards[cid].get("nom", cid)))
             _remove(path)
         elif time.time() - os.path.getmtime(path) > 86400:
             _remove(path)
@@ -294,8 +294,10 @@ def status():
         stats = c.get("stats", {})
         text = (f"{c['nom']}, {'connectée' if c['presente'] else 'pas connectée, je la réveillerai au besoin'}, "
                 f"sait faire : {caps}")
-        if stats.get("faits") or stats.get("echecs"):
-            text += f", {stats.get('faits', 0)} travaux réussis, {stats.get('echecs', 0)} sans résultat"
+        done, failed = stats.get("faits", 0), stats.get("echecs", 0)
+        if done or failed:
+            text += (f", {done} {'travaux réussis' if done > 1 else 'travail réussi'}, "
+                     f"{failed} sans résultat")
         parts.append(text)
     pending = pending_count()
     return ("Machines compagnes : " + " ; ".join(parts) + "."

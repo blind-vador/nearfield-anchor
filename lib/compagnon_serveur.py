@@ -108,8 +108,11 @@ def _notify(cid, job_id):
 
 def _dispatch():
     """Previent une machine capable de chaque travail en attente, ou la reveille."""
-    for name in compagnon.read_revocations():
+    for cid, name in compagnon.read_revocations():
         print(f"[compagnon] pont retire par {name}")
+        channel = _channels.get(cid)
+        if channel:
+            channel.close()  # la liaison tombe tout de suite
     for job in compagnon.open_jobs():
         if time.time() - _notified.get(job["id"], 0) < NOTIFY_EVERY_SEC:
             continue

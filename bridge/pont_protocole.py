@@ -110,6 +110,10 @@ class Channel:
         return msg
 
     def close(self):
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)  # debloque une lecture en cours dans un autre fil
+        except OSError:
+            pass
         for thing in (self.reader, self.sock):
             try:
                 thing.close()
