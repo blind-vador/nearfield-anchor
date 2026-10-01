@@ -22,6 +22,7 @@ import subprocess
 import journal
 import espeak_out  # noqa: E402  (chemin ajoute par journal)
 import conseils  # noqa: E402
+import voix  # noqa: E402
 
 ARCHIVE_DIR = journal.KEEP_DIR
 AUDIO_EXT = (".mp3", ".wav", ".ogg", ".m4a", ".flac")
@@ -102,8 +103,14 @@ def run(key_source, say, out):
                     player.play(path)
                     out(f"[{os.path.basename(path)}]\n")
                 else:
-                    player.stop()
-                    text = "Début de la journée." if new_i < 0 else "Fin de la journée."
+                    bound = "Début de la journée." if new_i < 0 else "Fin de la journée."
+                    if player.playing() or rec_i < 0:
+                        player.stop()
+                        text = bound
+                    else:
+                        # Rien en lecture contre la borne : on rejoue l'extrait selectionne.
+                        voix.say_blocking(bound)
+                        player.play(recs[rec_i][1])
             elif key in ("\x1b[C", "\x1b[D"):
                 step = VOLUME_STEP if key == "\x1b[C" else -VOLUME_STEP
                 player.gain = round(min(max(player.gain + step, VOLUME_MIN), VOLUME_MAX), 1)

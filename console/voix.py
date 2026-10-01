@@ -439,6 +439,15 @@ def say_and_wait(text):
     _speak_locked(text, _generation)
 
 
+def say_blocking(text):
+    """Parle et attend la fin, SANS le verrou audio : pour les dialogues qui
+    le tiennent deja (journal, archives) et doivent enchainer une phrase
+    puis un enregistrement sans chevauchement."""
+    stop()
+    if text:
+        _spawn(text, echo=False).wait(timeout=30)
+
+
 def preview(text, voice, rate):
     """Fait entendre `text` avec une voix et un debit donnes (choix de la
     voix) : son en cache s'il existe, sinon Microsoft en direct, garde."""

@@ -35,6 +35,7 @@ sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import noise_signatures as ns  # noqa: E402
 import notation  # noqa: E402
 import conseils  # noqa: E402
+import voix  # noqa: E402
 
 LOG_DIR = "/media/nas/nd1/server/radio_log"
 KEEP_DIR = "/media/nas/nd2/storage/radio"
@@ -107,6 +108,7 @@ class Player:
             ["aplay", "-q", "-D", "default", "-r", str(RATE), "-f", "S16_LE", "-c", "1", "-B", "500000"],
             stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self._ffmpeg = None
+        self._thread = None
         self.gain = 1.0  # volume de lecture (dialogue "archives" : fleches gauche/droite)
         self._generation = 0
         self._guard = threading.Lock()
@@ -116,7 +118,12 @@ class Player:
         self._ffmpeg = subprocess.Popen(
             ["ffmpeg", "-v", "quiet", "-nostdin", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(RATE), "-"],
             stdout=subprocess.PIPE)
-        threading.Thread(target=self._relay, args=(self._ffmpeg, self._generation), daemon=True).start()
+        self._thread = threading.Thread(target=self._relay, args=(self._ffmpeg, self._generation), daemon=True)
+        self._thread.start()
+
+    def playing(self):
+        """Vrai tant que l'enregistrement est en cours de lecture."""
+        return self._thread is not None and self._thread.is_alive()
 
     def _relay(self, proc, generation):
         while True:
@@ -233,8 +240,15 @@ def run(key_source, say, out):
                     player.play(recs[rec_i][1])
                     out(f"[{os.path.basename(recs[rec_i][1])}]\n")
                 else:
-                    player.stop()
-                    text = "Début de la journée." if new_i < 0 else "Fin de la journée."
+                    bound = "Début de la journée." if new_i < 0 else "Fin de la journée."
+                    if player.playing() or rec_i < 0:
+                        player.stop()
+                        text = bound
+                    else:
+                        # Rien en lecture contre la borne : on relance l'enregistrement
+                        # selectionne (sinon on croit l'avoir ecoute alors que non).
+                        voix.say_blocking(bound)
+                        player.play(recs[rec_i][1])
             elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N"):
                 text = "Choisis d'abord un enregistrement avec la flèche bas."
             elif key in ("\r", "\n"):
@@ -258,7 +272,13 @@ def run(key_source, say, out):
                         rec_i = -1
                         text += " Journée vide. " + announce_day()
                     else:
+                        # Le suivant prend la place du rejete : on le joue tout de
+                        # suite, sinon fleche bas le sauterait.
                         rec_i = min(rec_i, len(recs) - 1)
+                        voix.say_blocking(text)
+                        text = None
+                        player.play(recs[rec_i][1])
+                        out(f"[{os.path.basename(recs[rec_i][1])}]\n")
             elif key in ("n", "N"):
                 player.stop()
                 stamp, path = recs[rec_i]

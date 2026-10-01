@@ -5163,3 +5163,14 @@ Demande utilisateur : tout ecouter de ce qui est ouvert autour de chez lui
   desactiver, remise a zero des consignes deja dites.
 - Piege corrige : voix_cmd reecrivait console.json avec ses seules cles
   (perte du niveau d'aide) ; fusion avec l'existant desormais.
+
+### Journal et archives : plus d'enregistrement saute (2026-10-01)
+
+- Rejet (fleche gauche) : le suivant, qui prend la place du rejete, est
+  joue aussitot apres "Rejete" (avant : il etait seulement selectionne, et
+  la fleche bas suivante le sautait -- reg2, reg4... jamais entendus).
+- Borne debut/fin de journee : si rien n'est en lecture, l'enregistrement
+  selectionne est relance apres l'annonce de la borne ; s'il est en
+  lecture, on l'arrete comme avant. Player.playing() (fil de relais vivant).
+- voix.say_blocking : phrase puis enregistrement sans chevauchement, sans
+  reprendre le verrou audio deja tenu par le dialogue.
