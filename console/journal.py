@@ -328,7 +328,7 @@ def run(key_source, say, out, category="radio"):
             elif key in ("\x1b[A", "\x1b[B") and ctrl_held():
                 # Ctrl + fleche : premier ou dernier du jour, joue aussitot.
                 rec_i = 0 if key == "\x1b[A" else len(recs) - 1
-                say("Premier du jour." if key == "\x1b[A" else "Dernier du jour.")
+                voix.say_blocking("Premier du jour." if key == "\x1b[A" else "Dernier du jour.")
                 play(rec_i)
             elif key in ("\x1b[A", "\x1b[B"):
                 new_i = rec_i + (1 if key == "\x1b[B" else -1)

@@ -5584,3 +5584,26 @@ tant que le Mac repond.
   Mesure : 2,8 s, Mac en pause.
 - Les deux rafales APRS LoRa du 2026-10-01 (0,38 s) ne contiennent pas de
   trame : trop courtes pour un paquet SF12 (plus de 1,5 s).
+
+## 2026-10-02 : journaux separes, Ctrl+fleches
+
+- lib/journaux.py : chaque enregistrement du journal est range d'apres
+  l'etiquette au debut de son nom : radio (par defaut), donnees (APRS,
+  ACARS, bipeurs, OGN, balises, LoRa), capteurs (capteurs, sondes,
+  voitures), satellites. "journal capteurs", "journal satellites",
+  "journal donnees", "archives capteurs"... ; "journal" seul = radio. Une
+  phrase qui commence par journal ou archives passe avant les autres
+  commandes (console/main.py, _match).
+- Archives par journal : radio garde storage/radio/ ; les autres
+  storage/radio/archives/<journal>/.
+- Journal capteurs (console/journal_capteurs.py) : un releve lu par capteur
+  et par jour, depuis l'archive de toutes les trames (donnees/capteurs_*),
+  y compris les capteurs ecartes du bulletin (raison dite) et l'explication
+  amusante Gemini ; voitures resumees en un element (passages, vehicules).
+  Les annonces "nouveau capteur" et "voiture" n'y sont plus en double.
+  Un releve garde (fleche droite) devient un .txt relu par les archives.
+- Ctrl + fleche haut / bas : premier / dernier element du jour (journal et
+  archives). Ctrl lu par evdev (keys.modifier_held) : la console envoie la
+  meme sequence qu'une fleche seule.
+- Constat : les 35 passages de voitures de la nuit du 1er au 2 octobre sont
+  UN seul vehicule (numero 3), sans doute gare tout pres.
