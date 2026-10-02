@@ -12,6 +12,7 @@ import audio_lock
 import radio_log
 import noise_signatures
 import audio_filters
+import chaine_audio
 from sound_paths import RADIO_SCANER_DIR
 
 # --- RTLSDR-Airband : chemin de detection pour les bandes a canaux fixes ---
@@ -372,13 +373,10 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         # fois. Applique AVANT l'ecriture vers aplay ET avant l'archivage
         # (radio_log) : le journal reflete ce qui a ete reellement entendu.
         window = next((w for w in AIRBAND_WINDOWS if w["name"] == window_name), {})
-        settings = _settings(window_name)
-        voice_filter = audio_filters.VoiceBandpassFilter(AIRBAND_SAMPLE_RATE_HZ, lowpass_hz=settings["passe_bas_hz"])
-        debounce = settings["attente_fin_s"] or window.get("silence_debounce_sec", SILENCE_DEBOUNCE_SEC)
-        # Nettoyage doux (gresillements, compresseur leger, voir
-        # audio_filters.GentleCleaner) selon les reglages de la fenetre ; son
-        # brut garde pour la touche B.
-        cleaner = audio_filters.cleaner_for(AIRBAND_SAMPLE_RATE_HZ, None, settings)
+        # Chaine de filtres commune (lib/chaine_audio.py : la meme que le
+        # balayage et que la touche F du mode manuel) ; son brut garde pour B.
+        chain = chaine_audio.nouvelle(window_name, freq_hz, AIRBAND_SAMPLE_RATE_HZ, window.get("mode", "am"))
+        debounce = chain.settings["attente_fin_s"] or window.get("silence_debounce_sec", SILENCE_DEBOUNCE_SEC)
         raw_chunks = []
         try:
             while True:
@@ -399,14 +397,8 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
                     gaps += 1
                 last_packet_time = time.time()
                 raw_chunks.append(data)
-                data = voice_filter.process_f32le(data)
-                fingerprint_chunks.append(data)
-                if cleaner is not None:
-                    try:
-                        data = cleaner.process_f32le(data)
-                    except Exception as exc:
-                        print(f"[airband_bridge] nettoyage abandonne : {exc!r}")
-                        cleaner = None
+                filtered, data = chain.process_f32le(data)
+                fingerprint_chunks.append(filtered)
                 captured_chunks.append(data)
                 total_bytes += len(data)
                 try:

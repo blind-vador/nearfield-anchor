@@ -45,6 +45,7 @@ import threading
 import time
 
 import audio_lock
+import chaine_audio
 import decodeurs
 from sound_paths import RADIO_SCANER_DIR
 
@@ -99,18 +100,26 @@ def _stop_process(proc):
         print(f"[manual_tuner] ATTENTION : processus {proc.pid} toujours vivant apres SIGKILL")
 
 
-def _airband_window(freq_hz, mode):
+def _airband_window(freq_hz, mode, target=None):
     """Reglages de la fenetre airband_bridge qui contient cette frequence
     (centre compris), sinon de la premiere fenetre du meme mode (volume
-    calibre avec l'utilisateur), sur ce seul canal."""
+    calibre avec l'utilisateur), sur ce seul canal. Nom de la fenetre, ou de
+    la bande ecoutee : le seuil appris des notes s'y applique comme au balayage."""
     import airband_bridge
     windows = airband_bridge.AIRBAND_WINDOWS
     own = next((w for w in windows if any(f == freq_hz for f, _ in w["channels"])), None)
     ref = own or next((w for w in windows if w["mode"] == mode), {})
     window = {k: ref[k] for k in ("gain", "ampfactor", "squelch_snr_threshold") if k in ref}
     center = own["centerfreq_hz"] if own else int(freq_hz) + AIRBAND_CENTER_OFFSET_HZ
-    window.update(centerfreq_hz=center, mode=mode, channels=[(int(freq_hz), AIRBAND_UDP_PORT)])
+    window.update(name=own["name"] if own else (target or ref.get("name")), centerfreq_hz=center, mode=mode,
+                  channels=[(int(freq_hz), AIRBAND_UDP_PORT)])
     return airband_bridge._build_config(window), airband_bridge.AIRBAND_BIN
+
+
+def _airband_window_name(freq_hz, target):
+    import airband_bridge
+    own = next((w for w in airband_bridge.AIRBAND_WINDOWS if any(f == freq_hz for f, _ in w["channels"])), None)
+    return own["name"] if own else target
 
 
 class ManualStream:
@@ -122,6 +131,8 @@ class ManualStream:
         self._lock = None
         self._generation = 0
         self._write_guard = threading.Lock()
+        self._target = self._chain_name = self._mode = None
+        self._freq = 0
         self._helpers = []        # dsd-fme, multimon-ng
         self._sockets = []
         self._dsd_clients = []
@@ -129,10 +140,12 @@ class ManualStream:
         self._digital_until = 0.0
         self._chime = None
 
-    def tune(self, freq_hz, mode, filtered=False):
-        """Ecoute freq_hz ; ne fait rien si rien n'a change."""
+    def tune(self, freq_hz, mode, filtered=False, target=None):
+        """Ecoute freq_hz ; ne fait rien si rien n'a change. target : la bande
+        (reglages appris et filtres de la chaine commune, touche F)."""
         airband = bool(filtered and mode in ("am", "nfm"))
-        key = (int(freq_hz), mode, airband)
+        key = (int(freq_hz), mode, airband, target)
+        self._target, self._mode = target, mode
         if key == self._key and self._rx is not None and self._rx.poll() is None:
             return
         self._stop_receiver()
@@ -330,7 +343,9 @@ class ManualStream:
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # rebind immediat apres un changement
         self._sock.bind(("127.0.0.1", AIRBAND_UDP_PORT))
         self._sock.settimeout(0.3)
-        config, binary = _airband_window(freq_hz, mode)
+        config, binary = _airband_window(freq_hz, mode, self._target)
+        self._chain_name = _airband_window_name(freq_hz, self._target)
+        self._freq = freq_hz
         with open(AIRBAND_CONFIG, "w") as f:
             f.write(config)
         self._rx = subprocess.Popen([binary, "-F", "-e", "-c", AIRBAND_CONFIG],
@@ -347,9 +362,10 @@ class ManualStream:
                 print(f"[manual_tuner] rtl_airband : {line[:160]}")
 
     def _relay_airband(self, sock, generation):
-        import audio_filters
         import numpy as np
-        voice_filter = audio_filters.VoiceBandpassFilter(AIRBAND_RATE)  # comme _relay_channel()
+        # Touche F : EXACTEMENT la chaine du balayage et des canaux Airband
+        # (lib/chaine_audio.py : filtre vocal, reglages appris, nettoyage).
+        chain = chaine_audio.nouvelle(self._chain_name, self._freq, AIRBAND_RATE, self._mode)
         state = None
         packets = written = 0
         last_report = time.time()
@@ -365,7 +381,7 @@ class ManualStream:
             except OSError:
                 return
             packets += 1
-            data = voice_filter.process_f32le(data)
+            _, data = chain.process_f32le(data)
             samples = np.frombuffer(data[: len(data) - len(data) % 4], dtype=np.float32)
             pcm = np.clip(samples * 32767.0, -32768, 32767).astype(np.int16).tobytes()
             pcm, state = audioop.ratecv(pcm, 2, 1, AIRBAND_RATE, OUT_RATE, state)

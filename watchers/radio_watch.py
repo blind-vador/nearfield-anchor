@@ -26,6 +26,7 @@ import satellites
 import satellites_watch
 import decodeurs
 import stations
+import chaine_audio
 import profils_bruit
 import reglages_audio
 import relais
@@ -1166,20 +1167,11 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     # applique en WFM (diffusion FM commerciale/pirate : musique/parole a
     # pleine bande, un filtrage vocal etroit degraderait le contenu sans
     # raison, ce n'est pas la bande visee par cette demande).
-    voice_filter = (audio_filters.VoiceBandpassFilter(sample_rate, lowpass_hz=settings["passe_bas_hz"])
-                    if mode != "wfm" else None)
-    # Nettoyage doux (2026-10-02) : empreinte du bruit de cette frequence,
-    # gresillements, compresseur leger ; en FM, retrait du pilote a 19 kHz.
-    # RNNoise continue de juger le son NON nettoye (detection inchangee), et
-    # le son brut est garde a cote pour la touche B du journal.
-    if mode == "wfm":
-        cleaner = audio_filters.FmPilotFilter(sample_rate)
-    else:
-        try:
-            cleaner = audio_filters.cleaner_for(sample_rate, profils_bruit.get(target, freq_hz, sample_rate), settings)
-        except Exception as exc:
-            print(f"[radio_watch] nettoyage indisponible : {exc!r}")
-            cleaner = None
+    # Chaine de filtres commune (lib/chaine_audio.py : la meme que la touche F
+    # du mode manuel et les canaux RTLSDR-Airband). RNNoise juge le son
+    # filtre NON nettoye (detection inchangee) ; le son brut est garde a cote
+    # pour la touche B du journal.
+    chain = chaine_audio.nouvelle(target, freq_hz, sample_rate, mode)
     raw_chunks, filtered_chunks = [], []
 
     probs_seen, trigger_prob, early_cut = [], None, False
@@ -1212,16 +1204,8 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
                 except Exception:
                     pass
             raw_chunks.append(chunk)
-            if voice_filter is not None:
-                chunk = voice_filter.process_s16le(chunk)
-            filtered = chunk
+            filtered, chunk = chain.process_s16le(chunk)
             filtered_chunks.append(filtered)
-            if cleaner is not None:
-                try:
-                    chunk = cleaner.process_s16le(chunk)
-                except Exception as exc:
-                    print(f"[radio_watch] nettoyage abandonne : {exc!r}")
-                    cleaner = None
             try:
                 aplay.stdin.write(audio_lock.scale(chunk))
             except Exception:
@@ -1533,12 +1517,9 @@ def _station_capture(freq, mode):
 
 
 def _settings(target):
-    """Reglages audio de la bande (lib/reglages_audio.py, ajustes par le bilan des notes)."""
-    try:
-        return reglages_audio.get(target)
-    except Exception as exc:
-        print(f"[radio_watch] reglages audio illisibles : {exc!r}")
-        return dict(reglages_audio.DEFAULTS)
+    """Reglages audio de la bande (lib/reglages_audio.py, ajustes par le bilan
+    des notes), lus par la chaine commune (lib/chaine_audio.py)."""
+    return chaine_audio.settings(target)
 
 
 def scan_fm_band(band):
@@ -1895,7 +1876,7 @@ def main():
                 current_lock_key = "manuel"
             # Defilement rapide aux fleches : on attend que la frequence ne
             # bouge plus depuis MANUAL_SETTLE_SEC avant de relancer rtl_fm.
-            wanted = (manual["freq_hz"], manual["mode"], manual.get("filter", False))
+            wanted = (manual["freq_hz"], manual["mode"], manual.get("filter", False), manual.get("target"))
             if wanted != manual_pending[0]:
                 manual_pending = (wanted, time.time())
             elif time.time() - manual_pending[1] >= MANUAL_SETTLE_SEC:
