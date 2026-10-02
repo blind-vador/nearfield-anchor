@@ -10,7 +10,18 @@ automatiques, tout reste sur le Pi et le NAS.
 - Statistiques ramenees au temps d'ecoute reel en 433 MHz (la cle n'y est
   qu'une partie du temps) : passages par heure d'ecoute, heures chargees.
 - Annonces : vehicule habituel appris ; vehicule inconnu la nuit ;
-  vehicule nomme qui passe ; pneu sous-gonfle d'un vehicule nomme.
+  vehicule nomme qui passe ; pneu sous-gonfle d'un vehicule nomme ; voiture
+  garee tout pres (une fois). Toujours en langage humain : marque probable
+  (d'apres le capteur), nombre de pneus, pression en bars.
+- Voiture garee (2026-10-02 : 35 "passages" en une nuit etaient UNE Toyota
+  garee pres de chez l'utilisateur) : trames qui se suivent a moins de
+  PARKED_GAP_SEC forment une serie ; une serie de plus de PARKED_MIN_SEC
+  est une voiture garee. Une serie ne compte que pour un passage et n'est
+  annoncee qu'au debut, puis une fois "garee".
+- Deux marques differentes ne sont jamais le meme vehicule (un pneu Renault
+  avait ete rattache a une Toyota passee a la meme seconde).
+- Etat sur la carte SD du Pi (statistiques locales, demande utilisateur
+  2026-10-02) ; l'ancien fichier du NAS est repris s'il est seul.
 Les capteurs de pneus emettent surtout en roulant : une voiture garee est
 en general invisible.
 """
@@ -28,6 +39,18 @@ HABITUAL_DAYS = 3
 KEEP_DAYS = 30
 NIGHT_HOURS = {23, 0, 1, 2, 3, 4, 5}
 LOW_PRESSURE_KPA = 160
+PARKED_GAP_SEC = 20 * 60
+PARKED_MIN_SEC = 3600
+# Modeles rtl_433 qui donnent la marque de la voiture ; les autres sont des
+# fabricants de capteurs montes sur beaucoup de marques, ou des capteurs
+# ajoutes apres coup.
+CAR_BRANDS = {"toyota": "Toyota ou Lexus", "lexus": "Lexus", "ford": "Ford", "renault": "Renault ou Dacia",
+              "citroen": "Citroën ou Peugeot", "peugeot": "Peugeot", "hyundai": "Hyundai", "elantra": "Hyundai",
+              "kia": "Kia", "abarth": "Fiat ou Abarth", "fiat": "Fiat", "porsche": "Porsche", "bmw": "BMW",
+              "nissan": "Nissan", "mazda": "Mazda", "honda": "Honda", "volkswagen": "Volkswagen", "audi": "Audi",
+              "mercedes": "Mercedes", "pmv": "Toyota ou Lexus"}
+SENSOR_MAKERS = {"schrader": "Schrader", "jansite": "Jansite", "steelmate": "Steelmate", "eeztire": "EezTire",
+                 "tyreguard": "TyreGuard", "ave": "AVE", "truck": "poids lourd", "trw": "TRW"}
 
 
 def _hour(h):
@@ -35,7 +58,7 @@ def _hour(h):
 
 
 def _path():
-    return NAS_PATH if os.path.isdir(os.path.dirname(NAS_PATH)) else LOCAL_PATH
+    return LOCAL_PATH
 
 
 def _empty():
@@ -43,12 +66,43 @@ def _empty():
 
 
 def load():
-    try:
-        with open(_path(), encoding="utf-8") as f:
-            data = json.load(f)
-        return {**_empty(), **data}
-    except (OSError, ValueError):
-        return _empty()
+    for path in (LOCAL_PATH, NAS_PATH):  # le NAS seulement pour reprendre l'ancien etat
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            return {**_empty(), **data}
+        except (OSError, ValueError):
+            continue
+    return _empty()
+
+
+def brand_text(model):
+    """Modele rtl_433 du capteur -> marque en clair, prudente."""
+    low = str(model).lower()
+    for key, name in CAR_BRANDS.items():
+        if key in low:
+            return f"probablement une {name}"
+    for key, name in SENSOR_MAKERS.items():
+        if key in low:
+            if name == "poids lourd":
+                return "probablement un poids lourd"
+            return f"capteur {name}, monté sur beaucoup de marques"
+    return f"capteur {model}"
+
+
+def bars(kpa):
+    return f"{kpa / 100:.1f}".replace(".", ",") + " bars"
+
+
+def describe(model, n_tyres, pressures):
+    """'probablement une Toyota ou Lexus, 4 pneus, environ 2,2 bars'."""
+    parts = [brand_text(model)]
+    if n_tyres:
+        parts.append(f"{n_tyres} pneu{'s' if n_tyres > 1 else ''} entendu{'s' if n_tyres > 1 else ''}")
+    if pressures:
+        lo, hi = min(pressures), max(pressures)
+        parts.append(f"environ {bars(lo)}" if hi - lo < 15 else f"de {bars(lo)} à {bars(hi)}")
+    return ", ".join(parts)
 
 
 def _save(data):
@@ -93,7 +147,9 @@ def record_listening(seconds, when=None):
 
 def label(data, vid):
     v = data["vehicules"].get(vid, {})
-    return v.get("nom") or f"véhicule numéro {vid}"
+    if v.get("nom"):
+        return v["nom"]
+    return f"véhicule numéro {vid}" + (f", {brand_text(v['marque'])}" if v.get("marque") else "")
 
 
 def learn(events):
@@ -102,20 +158,27 @@ def learn(events):
     if not events:
         return []
     events = sorted(events)
-    clusters, current = [], [events[0]]
-    for ev in events[1:]:
-        if ev[0] - current[-1][0] <= PASSAGE_GAP_SEC:
-            current.append(ev)
-        else:
-            clusters.append(current)
-            current = [ev]
-    clusters.append(current)
+    clusters = []
+    for model in {ev[1].split("|")[0] for ev in events}:  # une marque = un vehicule a part
+        same = [ev for ev in events if ev[1].split("|")[0] == model]
+        current = [same[0]]
+        for ev in same[1:]:
+            if ev[0] - current[-1][0] <= PASSAGE_GAP_SEC:
+                current.append(ev)
+            else:
+                clusters.append(current)
+                current = [ev]
+        clusters.append(current)
+    clusters.sort(key=lambda c: c[0][0])
     sentences = []
     with _Locked() as data:
         for cluster in clusters:
             t = cluster[0][0]
             ids = {ev[1] for ev in cluster}
-            known = [data["ids"][i] for i in ids if i in data["ids"]]
+            model = cluster[0][1].split("|")[0]
+            # Vehicule d'une autre marque (ancienne fusion a tort) : pas le meme.
+            known = [data["ids"][i] for i in ids if i in data["ids"]
+                     and data["vehicules"].get(data["ids"][i], {}).get("marque", model) == model]
             if known:
                 vid = max(set(known), key=known.count)
             else:
@@ -125,27 +188,45 @@ def learn(events):
                 data["ids"][i] = vid
             v = data["vehicules"].setdefault(vid, {"premier": t, "passages": 0, "jours": [], "heures": {},
                                                    "nom": None, "habituel": False})
+            v["marque"] = model
+            v["pneus"] = sorted(set(v.get("pneus", [])) | ids)[-6:]
+            pressures = [ev[2] for ev in cluster if ev[2]]
+            desc = describe(model, len(v["pneus"]), pressures)
             day = datetime.fromtimestamp(t).strftime("%Y-%m-%d")
             hour = datetime.fromtimestamp(t).hour
-            v["passages"] += 1
-            v["dernier"] = t
+            continuing = t - v.get("dernier", 0) <= PARKED_GAP_SEC
+            v["dernier"] = cluster[-1][0]
             if day not in v["jours"]:
                 v["jours"] = (v["jours"] + [day])[-KEEP_DAYS:]
+            if continuing:
+                # Meme serie : la voiture n'est pas repartie (garee tout pres).
+                if not v.get("garee_dite") and v["dernier"] - v.get("serie_debut", t) >= PARKED_MIN_SEC:
+                    v["garee_dite"] = True
+                    since = datetime.fromtimestamp(v["serie_debut"])
+                    sentences.append(f"Une voiture semble garée tout près : {desc}. Ses pneus émettent depuis "
+                                     f"{_hour(since.hour)} {since.minute:02d}.")
+                if v.get("nom") and pressures and min(pressures) < LOW_PRESSURE_KPA and not v.get("pression_dite"):
+                    v["pression_dite"] = True
+                    sentences.append(f"Un pneu de {v['nom']} semble sous-gonflé : {bars(min(pressures))}.")
+                continue
+            v["serie_debut"], v["garee_dite"], v["pression_dite"] = t, False, False
+            v["passages"] += 1
             v["heures"][str(hour)] = v["heures"].get(str(hour), 0) + 1
             data["passages"].append([t, vid])
             if not v["habituel"] and len(v["jours"]) >= HABITUAL_DAYS:
                 v["habituel"] = True
                 usual = max(v["heures"], key=v["heures"].get)
-                sentences.append(f"Véhicule habituel appris : {label(data, vid)}, vu {len(v['jours'])} jours "
-                                 f"différents, surtout vers {_hour(int(usual))}.")
+                sentences.append(f"Véhicule habituel appris : {label(data, vid)}, {desc}, vu {len(v['jours'])} "
+                                 f"jours différents, surtout vers {_hour(int(usual))}.")
             elif v.get("nom"):
                 sentences.append(f"{v['nom'].capitalize()} passe.")
             elif not v["habituel"] and hour in NIGHT_HOURS:
                 minute = datetime.fromtimestamp(t).minute
-                sentences.append(f"Passage d'un véhicule inconnu, à {_hour(hour)}" + (f" {minute}." if minute else "."))
-            pressures = [ev[2] for ev in cluster if ev[2]]
+                sentences.append(f"Passage d'une voiture inconnue à {_hour(hour)}" + (f" {minute:02d}" if minute else "")
+                                 + f" : {desc}.")
             if v.get("nom") and pressures and min(pressures) < LOW_PRESSURE_KPA:
-                sentences.append(f"Un pneu de {v['nom']} semble sous-gonflé : {round(min(pressures))} kilopascals.")
+                v["pression_dite"] = True
+                sentences.append(f"Un pneu de {v['nom']} semble sous-gonflé : {bars(min(pressures))}.")
         _prune(data, time.time())
     return sentences
 

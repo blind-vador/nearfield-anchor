@@ -469,6 +469,8 @@ def main():
     nowcast_thread = threading.Thread(target=_nowcast_watcher, daemon=True)
     nowcast_thread.start()
     threading.Thread(target=_precursor_watcher, daemon=True).start()
+    import stats_locales  # releves de capteurs resumes sur la carte SD, bruts effaces apres 48 h
+    threading.Thread(target=stats_locales.watch, daemon=True).start()
     import compagnon_serveur  # liaison avec les machines compagnes (calculs lourds)
     threading.Thread(target=compagnon_serveur.run, daemon=True).start()
     _vigilance_watcher()

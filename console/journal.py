@@ -74,12 +74,6 @@ def _date(day, month_name, year):
     return datetime.date(int(year), month, int(day)) if month else None
 
 
-# Journal capteurs : les nouveaux capteurs et les voitures sont deja dans
-# les releves du jour (console/journal_capteurs.py), leurs annonces seraient
-# des doublons a parcourir.
-CAPTEURS_SKIP = ("voiture", "capteur_nouveau_")
-
-
 def scan_recordings(category="radio"):
     """{date: [(datetime, chemin ou None, texte ou None), ...] tries} : les
     enregistrements de ce journal ; pour les capteurs, plus les releves lus
@@ -89,8 +83,6 @@ def scan_recordings(category="radio"):
     def add(date, hh, mm, ss, path):
         name = os.path.basename(path)
         if not date or journaux.category_of(name) != category:
-            return
-        if category == "capteurs" and name.startswith(CAPTEURS_SKIP):
             return
         stamp = datetime.datetime.combine(date, datetime.time(int(hh), int(mm), int(ss)))
         days.setdefault(date, []).append((stamp, path, None))

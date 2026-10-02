@@ -72,40 +72,40 @@ def _tpms_key(row):
 
 
 def _cars_text(tpms):
-    """Pneus du jour -> passages (trames a moins de 10 s) et vehicules."""
-    try:
-        import voitures
-        data = voitures.load()
-        label = lambda vid: voitures.label(data, vid)
-    except Exception:
-        data = {"ids": {}, "vehicules": {}}
-        label = lambda vid: f"véhicule numéro {vid}"
+    """Pneus du jour -> une phrase par vehicule : marque probable, garee ou
+    passages (meme regle que lib/voitures.py), pression."""
+    import voitures
+    data = voitures.load()
     tpms.sort(key=lambda r: r["t"])
-    passages, current = [], [tpms[0]]
-    for r in tpms[1:]:
-        if r["t"] - current[-1]["t"] <= PASSAGE_GAP_SEC:
-            current.append(r)
-        else:
-            passages.append(current)
-            current = [r]
-    passages.append(current)
     by_vehicle = {}
-    for p in passages:
-        ids = {_tpms_key(r) for r in p}
-        vids = [data["ids"].get(i) for i in ids if data["ids"].get(i)]
-        vid = max(set(vids), key=vids.count) if vids else "inconnu"
-        by_vehicle[vid] = by_vehicle.get(vid, 0) + 1
-    text = (f"Voitures : {len(passages)} passage{'s' if len(passages) > 1 else ''} capté"
-            f"{'s' if len(passages) > 1 else ''}, de {_hour(tpms[0]['t'])} à {_hour(tpms[-1]['t'])}, "
-            f"{len(by_vehicle)} véhicule{'s' if len(by_vehicle) > 1 else ''} différent{'s' if len(by_vehicle) > 1 else ''}.")
-    top = sorted(by_vehicle.items(), key=lambda kv: -kv[1])[:3]
-    if top and top[0][1] > 1:
-        names = []
-        for vid, n in top:
-            names.append(f"{label(vid) if vid != 'inconnu' else 'véhicule pas encore appris'}, "
-                         f"{n} passage{'s' if n > 1 else ''}")
-        text += " Les plus fréquents : " + " ; ".join(names) + "."
-    return text
+    for r in tpms:
+        vid = data["ids"].get(_tpms_key(r)) or f"?{r.get('model')}"
+        by_vehicle.setdefault(vid, []).append(r)
+    lines = []
+    for vid, rows in sorted(by_vehicle.items(), key=lambda kv: kv[1][0]["t"]):
+        model = rows[0].get("model")
+        desc = voitures.describe(model, len({r.get("id") for r in rows}),
+                                 [r["pressure_kPa"] for r in rows if isinstance(r.get("pressure_kPa"), (int, float))])
+        series, current = [], [rows[0]]
+        for r in rows[1:]:
+            if r["t"] - current[-1]["t"] <= voitures.PARKED_GAP_SEC:
+                current.append(r)
+            else:
+                series.append(current)
+                current = [r]
+        series.append(current)
+        parked = [s_ for s_ in series if s_[-1]["t"] - s_[0]["t"] >= voitures.PARKED_MIN_SEC]
+        passing = len(series) - len(parked)
+        name = data["vehicules"].get(vid, {}).get("nom") if not vid.startswith("?") else None
+        text = (name.capitalize() + ", " if name else "") + desc
+        facts = [f"garée tout près de {_hour(s_[0]['t'])} à {_hour(s_[-1]['t'])}" for s_ in parked]
+        if passing:
+            facts.append(f"{passing} passage{'s' if passing > 1 else ''}"
+                         + (f" à {_hour(series[0][0]['t'])}" if passing == 1 and not parked else ""))
+        lines.append(f"{text} : {', '.join(facts)}")
+    n = len(lines)
+    return (f"Voitures : {n} véhicule{'s' if n > 1 else ''} entendu{'s' if n > 1 else ''}. "
+            + ". ".join(lines) + ".")
 
 
 def day_items():
