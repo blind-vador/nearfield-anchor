@@ -39,7 +39,8 @@ HABITUAL_DAYS = 3
 KEEP_DAYS = 30
 NIGHT_HOURS = {23, 0, 1, 2, 3, 4, 5}
 LOW_PRESSURE_KPA = 160
-PARKED_GAP_SEC = 20 * 60
+PARKED_GAP_SEC = 90 * 60   # une voiture garee emet parfois a une heure d'intervalle
+MAX_TYRES = 5              # 4 roues + la roue de secours : au-dela, c'est une autre voiture
 PARKED_MIN_SEC = 3600
 # Modeles rtl_433 qui donnent la marque de la voiture ; les autres sont des
 # fabricants de capteurs montes sur beaucoup de marques, ou des capteurs
@@ -152,6 +153,36 @@ def label(data, vid):
     return f"véhicule numéro {vid}" + (f", {brand_text(v['marque'])}" if v.get("marque") else "")
 
 
+def _assign(data, clusters):
+    """Rattache les trames de chaque groupe a des vehicules : [(trames, vehicule)].
+    Deux vehicules deja connus ne sont jamais fusionnes (deux voitures garees
+    cote a cote emettent en meme temps) ; un pneu inconnu rejoint le vehicule
+    du groupe s'il a encore de la place (MAX_TYRES), sinon un nouveau."""
+    out = []
+    for cluster in clusters:
+        model = cluster[0][1].split("|")[0]
+        groups, unknown = {}, []
+        for ev in cluster:
+            vid = data["ids"].get(ev[1])
+            if vid and data["vehicules"].get(vid, {}).get("marque", model) == model:
+                groups.setdefault(vid, []).append(ev)
+            else:
+                unknown.append(ev)
+        if unknown:
+            new_ids = {ev[1] for ev in unknown}
+            target = max(groups, key=lambda g: len(groups[g])) if groups else None
+            if target is not None:
+                tyres = set(data["vehicules"].get(target, {}).get("pneus", [])) | {ev[1] for ev in groups[target]}
+                if len(tyres | new_ids) > MAX_TYRES:
+                    target = None
+            if target is None:
+                target = str(data["suivant"])
+                data["suivant"] += 1
+            groups.setdefault(target, []).extend(unknown)
+        out += [(sorted(evs), vid) for vid, evs in groups.items()]
+    return sorted(out, key=lambda pair: pair[0][0][0])
+
+
 def learn(events):
     """events : trames TPMS [(instant, identifiant, pression kPa ou None)].
     Rend la liste des phrases a annoncer."""
@@ -172,18 +203,10 @@ def learn(events):
     clusters.sort(key=lambda c: c[0][0])
     sentences = []
     with _Locked() as data:
-        for cluster in clusters:
+        for cluster, vid in _assign(data, clusters):
             t = cluster[0][0]
             ids = {ev[1] for ev in cluster}
             model = cluster[0][1].split("|")[0]
-            # Vehicule d'une autre marque (ancienne fusion a tort) : pas le meme.
-            known = [data["ids"][i] for i in ids if i in data["ids"]
-                     and data["vehicules"].get(data["ids"][i], {}).get("marque", model) == model]
-            if known:
-                vid = max(set(known), key=known.count)
-            else:
-                vid = str(data["suivant"])
-                data["suivant"] += 1
             for i in ids:
                 data["ids"][i] = vid
             v = data["vehicules"].setdefault(vid, {"premier": t, "passages": 0, "jours": [], "heures": {},

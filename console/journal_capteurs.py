@@ -41,7 +41,8 @@ def _range(values, unit):
 
 def _hour(t):
     d = datetime.datetime.fromtimestamp(t)
-    return f"{d.hour} heures {d.minute:02d}"
+    hour = "minuit" if d.hour == 0 else "midi" if d.hour == 12 else f"{d.hour} heures"
+    return f"{hour} {d.minute:02d}"
 
 
 def _sensor_text(name, rows, kind, kinds_spoken, joke):
@@ -102,7 +103,7 @@ def _cars_text(tpms):
         if passing:
             facts.append(f"{passing} passage{'s' if passing > 1 else ''}"
                          + (f" à {_hour(series[0][0]['t'])}" if passing == 1 and not parked else ""))
-        lines.append(f"{text} : {', '.join(facts)}")
+        lines.append(f"{text[0].upper()}{text[1:]} : {', '.join(facts)}")
     n = len(lines)
     return (f"Voitures : {n} véhicule{'s' if n > 1 else ''} entendu{'s' if n > 1 else ''}. "
             + ". ".join(lines) + ".")
