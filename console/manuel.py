@@ -23,6 +23,9 @@ import sys
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import datetime  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import threading  # noqa: E402
 
 import noise_signatures as ns  # noqa: E402
 import conseils  # noqa: E402
@@ -171,6 +174,34 @@ KEYS = {
 }
 
 
+EVENTS_PATH = "/tmp/manuel_evenements.jsonl"  # ecrit par lib/manual_tuner.py (scanner)
+
+
+def _relay_events(say, out, stop):
+    """Annonces des decodeurs de l'ecoute manuelle ("Reception DMR", messages
+    decodes) : le scanner ne peut pas parler, il tient la sortie son."""
+    try:
+        pos = os.path.getsize(EVENTS_PATH)
+    except OSError:
+        pos = 0
+    while not stop.is_set():
+        try:
+            with open(EVENTS_PATH, encoding="utf-8") as f:
+                f.seek(pos)
+                lines = f.readlines()
+                pos = f.tell()
+        except OSError:
+            lines = []
+        for line in lines:
+            try:
+                text = json.loads(line)["texte"]
+            except (ValueError, KeyError):
+                continue
+            out(f"[{text}]\n")
+            say(text)
+        stop.wait(0.3)
+
+
 def run(key_source, say, out):
     """Boucle du dialogue ; rend la phrase de sortie a dire par la console."""
     plages = ns.read_plages()
@@ -180,6 +211,8 @@ def run(key_source, say, out):
     if probable:
         plages = [probable] + plages
     tuner = Tuner(plages, ns.last_capture())
+    stop_events = threading.Event()
+    threading.Thread(target=_relay_events, args=(say, out, stop_events), daemon=True).start()
     ns.request_manual(tuner.target())
     intro = conseils.intro("manuel", TITLE, CONSIGNE)
     out(intro + "\n")
@@ -205,6 +238,7 @@ def run(key_source, say, out):
         ns.request_manual(tuner.target())
         out(f"[{text}]\n")
         say(text)
+    stop_events.set()
     ns.request_lock(tuner.target())
     return (f"Mode manuel fermé. Le scanner reste fixé sur {tuner.describe()}. "
             "Tape décroche pour reprendre le balayage.")

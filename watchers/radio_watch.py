@@ -24,6 +24,7 @@ import audio_filters
 import acars_watch
 import satellites
 import satellites_watch
+import decodeurs
 import stations
 import profils_bruit
 import reglages_audio
@@ -225,17 +226,7 @@ ENV_BONUS_MAX_C = 5.0
 # Ecartes : EAS (specifique USA), UFSK1200/CLIPFSK/FMSFSK/HAPN4800/AFSK2400_*
 # (rares/obscurs dans ce contexte), X10 (domotique/alarme -- rabbit hole
 # potentiellement invasif, pas ajoute sans demande explicite).
-MULTIMON_ARGS = [
-    "-a", "AFSK1200",
-    "-a", "POCSAG512", "-a", "POCSAG1200", "-a", "POCSAG2400",
-    "-a", "FLEX",
-    "-a", "FSK9600",
-    "-a", "MORSE_CW",
-    "-a", "DTMF",
-    "-a", "EEA", "-a", "EIA", "-a", "CCIR",
-    "-a", "ZVEI1", "-a", "ZVEI2", "-a", "ZVEI3", "-a", "DZVEI", "-a", "PZVEI",
-    "-t", "raw", "-",
-]
+MULTIMON_ARGS = decodeurs.MULTIMON_ARGS  # regles communes (lib/decodeurs.py)
 
 from sound_player import AUDIO_DEVICE, play_sound_effect
 from sound_paths import RADIO_SCANER_DIR
@@ -509,14 +500,8 @@ DSD_FME_VOICE_CHANNELS = 2
 # (un signal numerique passe pour du bruit aux yeux du detecteur de voix) :
 # (plage basse, plage haute, option dsd-fme, nom dit). dPMR, NXDN et M17
 # sortent en MONO (verifie dans dsd_main.c : pulse_digi_out_channels = 1).
-DSD_FME_EXTRA_MODES = [
-    (446_000_000, 446_200_000, "-fm", "dPMR"),
-    (144_000_000, 146_000_000, "-fz", "M17"),
-    (430_000_000, 440_000_000, "-fz", "M17"),
-    (148_000_000, 174_000_000, "-fi", "NXDN"),
-    (440_000_000, 470_000_000, "-fi", "NXDN"),
-]
-DSD_FME_MONO_MODES = {"-fm", "-fz", "-fi", "-fn"}
+DSD_FME_EXTRA_MODES = decodeurs.DSD_EXTRA_MODES
+DSD_FME_MONO_MODES = decodeurs.DSD_MONO_MODES
 # Duree max d'attente d'un premier paquet audio decode avant d'abandonner et
 # de retomber sur l'ecoute analogique. Volontairement court (le scanner est
 # "nerveux", pas question de s'attarder sur chaque candidat) -- a ajuster si
@@ -528,11 +513,9 @@ DSD_FME_PROBE_SEC = 6
 # Le son n'est joue -- et le carillon, l'annonce de la bande -- qu'apres
 # au moins DSD_FME_MIN_CLEAN_SYNC synchros sans erreur, representant au
 # moins DSD_FME_MIN_CLEAN_RATIO des synchros vues.
-DSD_FME_MIN_CLEAN_SYNC = 2
-DSD_FME_MIN_CLEAN_RATIO = 0.25
-DSD_FME_PROTOCOLS = {"DMR": "DMR", "P25p1": "P25", "P25p2": "P25", "YSF": "YSF", "DSTAR": "D-Star",
-                     "M17": "M17", "NXDN48": "NXDN", "NXDN96": "NXDN", "NXDN": "NXDN", "dPMR": "dPMR",
-                     "X2-TDMA": "X2-TDMA"}
+DSD_FME_MIN_CLEAN_SYNC = decodeurs.DSD_MIN_CLEAN_SYNC
+DSD_FME_MIN_CLEAN_RATIO = decodeurs.DSD_MIN_CLEAN_RATIO
+DSD_FME_PROTOCOLS = decodeurs.DSD_PROTOCOLS
 # Taille des datagrammes UDP de dsd-fme (dsd_audio2.c) : 640 octets = stereo
 # 16 bits (deux slots TDMA), 320 = mono. Plus fiable que de deviner d'apres
 # l'option de mode, certains protocoles du -fa sortant en mono.
