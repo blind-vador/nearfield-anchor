@@ -29,6 +29,7 @@ import matcher  # noqa: E402
 import archives  # noqa: E402
 import bilan  # noqa: E402
 import journal  # noqa: E402
+import journaux  # noqa: E402
 import manuel  # noqa: E402
 import reglages_cmd  # noqa: E402
 import tableaux  # noqa: E402
@@ -202,8 +203,19 @@ def meteo_cmd(line):
             "le scanner ; le bulletin complet suivra. Le clavier reste libre en attendant.")
 
 
+def _match(line):
+    """Commande tapee. "journal ..." et "archives ..." passent avant tout :
+    "journal capteurs" ou "archives satellites" ne doivent pas ouvrir la
+    commande capteurs ou satellites (lib/journaux.py)."""
+    first = (matcher.normalize(line).split() or [""])[0]
+    if first in ("journal", "journaux", "archives", "archive"):
+        name = "journal" if first.startswith("journ") else "archives"
+        return next(c for c in commands.COMMANDS if c.name == name), 100
+    return matcher.match(line, commands.COMMANDS)
+
+
 def cmd_is_not_repeat(line):
-    cmd, _ = matcher.match(line, commands.COMMANDS)
+    cmd, _ = _match(line)
     return cmd is None or cmd.name != "répète"
 
 
@@ -212,7 +224,7 @@ def run_command(line, key_source, last_response):
     request = veilles.parse(line)
     if request:
         return veilles.handle(*request)
-    cmd, score = matcher.match(line, commands.COMMANDS)
+    cmd, score = _match(line)
     if cmd is None:
         return f"Commande non reconnue : {line}."
     if cmd.busy:
@@ -242,9 +254,9 @@ def run_command(line, key_source, last_response):
     if cmd.name == "bilan":
         return bilan.summary()
     if cmd.name == "archives":
-        return archives.run(key_source, voix.say, out)
+        return archives.run(key_source, voix.say, out, journaux.from_words(matcher.normalize(line)))
     if cmd.name == "journal":
-        return journal.run(key_source, voix.say, out)
+        return journal.run(key_source, voix.say, out, journaux.from_words(matcher.normalize(line)))
     if cmd.name == "manuel":
         return manuel.run(key_source, voix.say, out)
     if cmd.name == "priorités":

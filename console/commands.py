@@ -542,10 +542,11 @@ COMMANDS = [
     Command("bilan", "bilan des notes radio par bande, avec propositions de réglages", None,
             keywords=["bilan", "bilan des notes", "notes radio", "statistiques radio"],
             examples=["qu'est-ce que donnent mes notes", "résumé des notes"]),
-    Command("archives", "écouter les extraits radio gardés, sans rien supprimer", None,
+    Command("archives", "écouter les extraits gardés, sans rien supprimer ; archives capteurs, satellites, données", None,
             keywords=["archives", "archive", "extraits", "extraits interessants", "mes extraits"],
             examples=["écouter les archives", "les extraits gardés", "ce que j'ai gardé"]),
-    Command("journal", "écouter et trier les enregistrements radio : garder ou rejeter", None,
+    Command("journal", "écouter et trier les enregistrements radio : garder ou rejeter ; journal capteurs, "
+            "satellites ou données pour les autres", None,
             keywords=["journal", "journal radio", "enregistrements", "enregistrement", "captures",
                       "log", "logs radio"],
             examples=["écouter les enregistrements", "ce que la radio a capté", "les réceptions de la nuit"]),

@@ -1,9 +1,14 @@
-"""Ecoute et tri des enregistrements du scanner radio (dialogue "journal").
+"""Ecoute et tri des enregistrements (dialogue "journal"), un journal par
+famille (lib/journaux.py) : radio (par defaut), donnees, capteurs,
+satellites -- "journal capteurs", "journal satellites"...
 
   Tab / Maj+Tab            jour suivant / precedent (annonce le jour)
   fleches haut / bas       enregistrement precedent / suivant, joue aussitot
                            (pas d'annonce : l'enregistrement commence par
                            l'annonce de la bande, enregistree avec)
+  Ctrl + fleche haut / bas premier / dernier enregistrement du jour
+                           (Ctrl lu sur le clavier par evdev : la console
+                           envoie la meme sequence qu'une fleche seule)
   fleche droite            garde : copie dans les extraits interessants
                            (storage/radio), nommee par sa date de capture
   fleche gauche            rejette : meme procedure que "parasite"
@@ -31,6 +36,8 @@ import time
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
+import journaux  # noqa: E402
+import keys  # noqa: E402
 import noise_signatures as ns  # noqa: E402
 import notation  # noqa: E402
 import conseils  # noqa: E402
@@ -53,10 +60,13 @@ RE_ROOT_FILE = re.compile("_" + _DAY + "_" + _TIME)
 RE_DAY_DIR = re.compile("^" + _DAY + "$")
 RE_TIME_ONLY = re.compile("_" + _TIME)
 
-TITLE = "Journal radio."
 CONSIGNE = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : "
-            "écouter les enregistrements. Flèche droite : garder. Flèche gauche : rejeter comme "
+            "écouter les enregistrements. Contrôle flèche haut ou bas : premier ou dernier du jour. "
+            "Flèche droite : garder. Flèche gauche : rejeter comme "
             "parasite. V : valider, bonne prise. N : noter en détail. Entrée : rejouer. Échap : fermer. F1 redit ces touches.")
+CONSIGNE_CAPTEURS = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : un relevé par capteur, "
+                     "et les annonces. Contrôle flèche haut ou bas : premier ou dernier du jour. Flèche droite : "
+                     "garder. Entrée : relire. Échap : fermer. F1 redit ces touches.")
 
 
 def _date(day, month_name, year):
@@ -64,14 +74,26 @@ def _date(day, month_name, year):
     return datetime.date(int(year), month, int(day)) if month else None
 
 
-def scan_recordings():
-    """{date: [(datetime, chemin), ...] tries}."""
+# Journal capteurs : les nouveaux capteurs et les voitures sont deja dans
+# les releves du jour (console/journal_capteurs.py), leurs annonces seraient
+# des doublons a parcourir.
+CAPTEURS_SKIP = ("voiture", "capteur_nouveau_")
+
+
+def scan_recordings(category="radio"):
+    """{date: [(datetime, chemin ou None, texte ou None), ...] tries} : les
+    enregistrements de ce journal ; pour les capteurs, plus les releves lus
+    a voix haute (chemin None)."""
     days = {}
 
     def add(date, hh, mm, ss, path):
-        if date:
-            stamp = datetime.datetime.combine(date, datetime.time(int(hh), int(mm), int(ss)))
-            days.setdefault(date, []).append((stamp, path))
+        name = os.path.basename(path)
+        if not date or journaux.category_of(name) != category:
+            return
+        if category == "capteurs" and name.startswith(CAPTEURS_SKIP):
+            return
+        stamp = datetime.datetime.combine(date, datetime.time(int(hh), int(mm), int(ss)))
+        days.setdefault(date, []).append((stamp, path, None))
 
     for entry in os.scandir(LOG_DIR):
         if entry.is_file():
@@ -85,8 +107,15 @@ def scan_recordings():
                     t = RE_TIME_ONLY.search(f.name)
                     if t and f.is_file():
                         add(_date(d[2], d[3], d[4]), t[1], t[2], t[3], f.path)
+    if category == "capteurs":
+        try:
+            import journal_capteurs
+            for date, items in journal_capteurs.day_items().items():
+                days.setdefault(date, []).extend(items)
+        except Exception as exc:
+            print(f"[journal] releves capteurs : {exc!r}")
     for recs in days.values():
-        recs.sort()
+        recs.sort(key=lambda r: r[0])
     return days
 
 
@@ -191,12 +220,21 @@ def _update_stamp():
         return 0.0
 
 
-def _keep(stamp, path):
-    os.makedirs(KEEP_DIR, exist_ok=True)
-    dest = os.path.join(KEEP_DIR, keep_name(stamp))
+def _keep(stamp, path, text, category):
+    """Copie dans les archives de ce journal ; un releve lu (capteurs) y est
+    garde en texte, relu par "archives capteurs"."""
+    folder = journaux.archive_dir(category)
+    os.makedirs(folder, exist_ok=True)
+    dest = os.path.join(folder, keep_name(stamp))
+    if text is not None:
+        dest = dest[:-4] + ".txt"
     if os.path.exists(dest):
         return "Déjà gardé."
-    shutil.copy2(path, dest)
+    if text is not None:
+        with open(dest, "w", encoding="utf-8") as f:
+            f.write(text)
+    else:
+        shutil.copy2(path, dest)
     return "Gardé."
 
 
@@ -218,12 +256,19 @@ def _reject(path):
     return "Rejeté et supprimé. Pas d'empreinte sonore pour celui-ci, je ne peux pas l'apprendre."
 
 
-def run(key_source, say, out):
+def ctrl_held():
+    return keys.modifier_held("ctrl")
+
+
+def run(key_source, say, out, category="radio"):
+    name = journaux.NAMES[category]
     if not os.path.ismount("/media/nas/nd1"):
-        return "Le disque server n'est pas accessible, pas de journal radio."
-    days = scan_recordings()
+        return f"Le disque server n'est pas accessible, pas de journal {name}."
+    days = scan_recordings(category)
     if not days:
-        return "Aucun enregistrement radio dans le journal."
+        return f"Le journal {name} est vide."
+    title = f"Journal {name}."
+    consigne = CONSIGNE_CAPTEURS if category == "capteurs" else CONSIGNE
     order = sorted(days, reverse=True)  # du plus recent au plus ancien
     # rec_i = -1 : "avant le premier" -- la premiere fleche bas joue le 1er enregistrement.
     day_i, rec_i = 0, -1
@@ -236,22 +281,34 @@ def run(key_source, say, out):
         on la reprend dans la liste, sans perdre la position courante."""
         nonlocal days, order, day_i, rec_i
         current_day = order[day_i] if order else None
-        current = days[current_day][rec_i][1] if current_day and rec_i >= 0 else None
-        fresh = scan_recordings()
+        current = days[current_day][rec_i][:2] if current_day and rec_i >= 0 else None
+        fresh = scan_recordings(category)
         if not fresh:
             return
         days, order = fresh, sorted(fresh, reverse=True)
         day_i = order.index(current_day) if current_day in order else 0
-        paths = [p for _, p in days[order[day_i]]]
-        rec_i = paths.index(current) if current in paths else min(rec_i, len(paths) - 1)
+        keys_ = [r[:2] for r in days[order[day_i]]]
+        rec_i = keys_.index(current) if current in keys_ else min(rec_i, len(keys_) - 1)
 
     def announce_day():
         date = order[day_i]
         n = len(days[date])
-        return f"{spoken_day(date)}, {n} enregistrement{'s' if n > 1 else ''}."
+        what = "élément" if category == "capteurs" else "enregistrement"
+        return f"{spoken_day(date)}, {n} {what}{'s' if n > 1 else ''}."
+
+    def play(i):
+        """Joue l'enregistrement, ou lit le releve (journal capteurs)."""
+        _, path, text = days[order[day_i]][i]
+        player.stop()
+        if text is not None:
+            say(text)
+            out(f"[{text}]\n")
+        else:
+            player.play(path)
+            out(f"[{os.path.basename(path)}]\n")
 
     try:
-        intro = conseils.intro("journal", TITLE, CONSIGNE)
+        intro = conseils.intro("journal", title, consigne)
         out(intro + "\n")
         say(intro + " " + announce_day())
         for key in key_source:
@@ -268,33 +325,39 @@ def run(key_source, say, out):
                 day_i = (day_i + (1 if key == "\t" else -1)) % len(order)
                 rec_i = -1
                 text = announce_day()
+            elif key in ("\x1b[A", "\x1b[B") and ctrl_held():
+                # Ctrl + fleche : premier ou dernier du jour, joue aussitot.
+                rec_i = 0 if key == "\x1b[A" else len(recs) - 1
+                say("Premier du jour." if key == "\x1b[A" else "Dernier du jour.")
+                play(rec_i)
             elif key in ("\x1b[A", "\x1b[B"):
                 new_i = rec_i + (1 if key == "\x1b[B" else -1)
                 if key == "\x1b[A" and rec_i < 0:
                     new_i = -1  # deja avant le premier
                 if 0 <= new_i < len(recs):
                     rec_i = new_i
-                    player.play(recs[rec_i][1])
-                    out(f"[{os.path.basename(recs[rec_i][1])}]\n")
+                    play(rec_i)
                 else:
                     bound = "Début de la journée." if new_i < 0 else "Fin de la journée."
-                    if player.playing() or rec_i < 0:
+                    if player.playing() or rec_i < 0 or recs[rec_i][2] is not None:
                         player.stop()
                         text = bound
                     else:
                         # Rien en lecture contre la borne : on relance l'enregistrement
                         # selectionne (sinon on croit l'avoir ecoute alors que non).
                         voix.say_blocking(bound)
-                        player.play(recs[rec_i][1])
+                        play(rec_i)
             elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V"):
                 text = "Choisis d'abord un enregistrement avec la flèche bas."
             elif key in ("\r", "\n"):
-                player.play(recs[rec_i][1])
+                play(rec_i)
+            elif recs[rec_i][2] is not None and key in ("\x1b[D", "n", "N", "v", "V"):
+                text = "Un relevé de capteurs ne se rejette pas et ne se note pas : flèche droite pour le garder."
             elif key in ("\x1b[C", "\x1b[D"):
                 player.stop()
-                stamp, path = recs[rec_i]
+                stamp, path, spoken = recs[rec_i]
                 if key == "\x1b[C":
-                    text = _keep(stamp, path)
+                    text = _keep(stamp, path, spoken, category)
                 else:
                     text = _reject(path)
                     del recs[rec_i]
@@ -314,18 +377,17 @@ def run(key_source, say, out):
                         rec_i = min(rec_i, len(recs) - 1)
                         voix.say_blocking(text)
                         text = None
-                        player.play(recs[rec_i][1])
-                        out(f"[{os.path.basename(recs[rec_i][1])}]\n")
+                        play(rec_i)
             elif key in ("v", "V"):
                 # La lecture continue : on valide sans interrompre l'ecoute.
-                stamp, path = recs[rec_i]
+                stamp, path, _ = recs[rec_i]
                 text = notation.validate(path, stamp)
             elif key in ("n", "N"):
                 player.stop()
-                stamp, path = recs[rec_i]
+                stamp, path, _ = recs[rec_i]
                 text = notation.rate(key_source, say, out, path, stamp)
             elif conseils.is_help(key):
-                text = CONSIGNE
+                text = consigne
             else:
                 text = "Tab, flèches, V, N, entrée, ou échap pour fermer. F1 pour l'aide."
             if text:
@@ -334,4 +396,4 @@ def run(key_source, say, out):
     finally:
         player.close()
         _journal_opened(False)
-    return "Journal radio fermé."
+    return f"Journal {name} fermé."

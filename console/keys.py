@@ -81,6 +81,30 @@ def drain_wake():
         os.read(WAKE_R, 64)
 
 
+_MODIFIERS = {"ctrl": ("KEY_LEFTCTRL", "KEY_RIGHTCTRL"), "shift": ("KEY_LEFTSHIFT", "KEY_RIGHTSHIFT"),
+              "alt": ("KEY_LEFTALT", "KEY_RIGHTALT")}
+
+
+def modifier_held(name):
+    """Vrai si ce modificateur ("ctrl", "shift", "alt") est enfonce sur un
+    clavier : la console envoie la meme sequence pour une fleche seule ou
+    avec Ctrl, son etat se lit donc sur le materiel (evdev)."""
+    try:
+        codes = {evdev.ecodes.ecodes[c] for c in _MODIFIERS[name]}
+        for path in evdev.list_devices():
+            dev = evdev.InputDevice(path)
+            try:
+                if codes & set(dev.active_keys()):
+                    return True
+            except OSError:
+                continue
+            finally:
+                dev.close()
+    except Exception:
+        return False
+    return False
+
+
 def char_name(ch):
     if ch in CHAR_NAMES:
         return CHAR_NAMES[ch]
