@@ -110,9 +110,11 @@ class Tuner:
             wanted = self.freq + count * plage["step_hz"]
             self.freq = min(max(wanted, plage["low_hz"]), plage["high_hz"])
             edge = self.freq != wanted
+        now = self.describe() if plage.get("stations") else spoken_mhz(self.freq)
         if edge:
-            return ("Début de plage, " if count < 0 else "Fin de plage, ") + spoken_mhz(self.freq)
-        return spoken_mhz(self.freq)
+            return ("Début de la liste, " if count < 0 else "Fin de la liste, ") + now if plage.get("stations") \
+                else ("Début de plage, " if count < 0 else "Fin de plage, ") + now
+        return now
 
     def toggle_filter(self):
         self.filtered = not self.filtered
