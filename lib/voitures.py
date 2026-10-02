@@ -223,7 +223,8 @@ def learn(events):
                 v["jours"] = (v["jours"] + [day])[-KEEP_DAYS:]
             if continuing:
                 # Meme serie : la voiture n'est pas repartie (garee tout pres).
-                if not v.get("garee_dite") and v["dernier"] - v.get("serie_debut", t) >= PARKED_MIN_SEC:
+                if (not v.get("garee_dite") and not v.get("habituel")
+                        and v["dernier"] - v.get("serie_debut", t) >= PARKED_MIN_SEC):
                     v["garee_dite"] = True
                     since = datetime.fromtimestamp(v["serie_debut"])
                     sentences.append(f"Une voiture semble garée tout près : {desc}. Ses pneus émettent depuis "
