@@ -13,6 +13,8 @@ satellites -- "journal capteurs", "journal satellites"...
                            (storage/radio), nommee par sa date de capture
   fleche gauche            rejette : meme procedure que "parasite"
                            (supprime + apprend l'empreinte si elle existe)
+  B                        ecoute le son brut, avant nettoyage (journal
+                           radio : <nom>.brut.mp3, garde 48 h comme le reste)
   Entree                   rejoue          Echap : ferme
 
 Sources : server/radio_log/ (48 dernieres heures, date dans le nom) et
@@ -63,7 +65,8 @@ RE_TIME_ONLY = re.compile("_" + _TIME)
 CONSIGNE = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : "
             "écouter les enregistrements. Contrôle flèche haut ou bas : premier ou dernier du jour. "
             "Flèche droite : garder. Flèche gauche : rejeter comme "
-            "parasite. V : valider, bonne prise. N : noter en détail. Entrée : rejouer. Échap : fermer. F1 redit ces touches.")
+            "parasite. V : valider, bonne prise. N : noter en détail. B : écouter le son brut, avant nettoyage. "
+            "Entrée : rejouer. Échap : fermer. F1 redit ces touches.")
 CONSIGNE_CAPTEURS = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : un relevé par capteur, "
                      "et les annonces. Contrôle flèche haut ou bas : premier ou dernier du jour. Flèche droite : "
                      "garder. Entrée : relire. Échap : fermer. F1 redit ces touches.")
@@ -230,9 +233,17 @@ def _keep(stamp, path, text, category):
     return "Gardé."
 
 
+def raw_path(path):
+    """Son brut garde a cote d'un enregistrement radio, s'il existe."""
+    candidate = path[:-4] + ".brut.mp3" if path else None
+    return candidate if candidate and os.path.exists(candidate) else None
+
+
 def _reject(path):
     info = ns.capture_info(path)
     os.remove(path)
+    if raw_path(path):
+        os.remove(raw_path(path))
     ns.forget_capture(path)
     last = ns.last_capture()
     if last and last.get("log_path") == path:
@@ -339,10 +350,18 @@ def run(key_source, say, out, category="radio"):
                         # selectionne (sinon on croit l'avoir ecoute alors que non).
                         voix.say_blocking(bound)
                         play(rec_i)
-            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V"):
+            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "b", "B"):
                 text = "Choisis d'abord un enregistrement avec la flèche bas."
             elif key in ("\r", "\n"):
                 play(rec_i)
+            elif key in ("b", "B"):
+                brut = raw_path(recs[rec_i][1])
+                if brut:
+                    player.stop()
+                    voix.say_blocking("Son brut.")
+                    player.play(brut)
+                else:
+                    text = "Pas de son brut pour celui-ci : seules les nouvelles écoutes du scanner en ont un."
             elif recs[rec_i][2] is not None and key in ("\x1b[D", "n", "N", "v", "V"):
                 text = "Un relevé de capteurs ne se rejette pas et ne se note pas : flèche droite pour le garder."
             elif key in ("\x1b[C", "\x1b[D"):

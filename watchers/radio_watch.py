@@ -25,6 +25,7 @@ import acars_watch
 import satellites
 import satellites_watch
 import stations
+import profils_bruit
 import relais
 import meteo_locale
 import adsb_local_watch
@@ -1025,14 +1026,14 @@ def _rtl_fm_reader(stream, out_queue, chunk_size):
         out_queue.put(None)
 
 
-def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
+def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None):
     """Diffuse en direct sur les haut-parleurs tant qu'il y a un vrai signal
     (pas juste du bruit), coupe des que le canal redevient silencieux/bruite
     (avec un court debounce), plafonne a MAX_HOLD_SEC. Pour les canaux FM, tente
     en parallele un decodage numerique (APRS, pageurs) via multimon-ng et lit au
     TTS tout texte decode. Retourne True si un signal reel a ete entendu ou si du
     texte a ete decode."""
-    global _last_stream_fingerprint, _last_stream_metrics
+    global _last_stream_fingerprint, _last_stream_metrics, _last_stream_raw, _last_stream_filtered
     _last_stream_fingerprint, _last_stream_metrics = None, {}
     mhz = freq_hz / 1_000_000
     rtl_fm_mode = "wbfm" if mode == "wfm" else mode
@@ -1177,6 +1178,19 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
     # pleine bande, un filtrage vocal etroit degraderait le contenu sans
     # raison, ce n'est pas la bande visee par cette demande).
     voice_filter = audio_filters.VoiceBandpassFilter(sample_rate) if mode != "wfm" else None
+    # Nettoyage doux (2026-10-02) : empreinte du bruit de cette frequence,
+    # gresillements, compresseur leger ; en FM, retrait du pilote a 19 kHz.
+    # RNNoise continue de juger le son NON nettoye (detection inchangee), et
+    # le son brut est garde a cote pour la touche B du journal.
+    if mode == "wfm":
+        cleaner = audio_filters.FmPilotFilter(sample_rate)
+    else:
+        try:
+            cleaner = audio_filters.GentleCleaner(sample_rate, profils_bruit.get(target, freq_hz, sample_rate))
+        except Exception as exc:
+            print(f"[radio_watch] nettoyage indisponible : {exc!r}")
+            cleaner = None
+    raw_chunks, filtered_chunks = [], []
 
     probs_seen, trigger_prob, early_cut = [], None, False
     start = time.time()
@@ -1207,8 +1221,17 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
                     multimon.stdin.write(chunk)
                 except Exception:
                     pass
+            raw_chunks.append(chunk)
             if voice_filter is not None:
                 chunk = voice_filter.process_s16le(chunk)
+            filtered = chunk
+            filtered_chunks.append(filtered)
+            if cleaner is not None:
+                try:
+                    chunk = cleaner.process_s16le(chunk)
+                except Exception as exc:
+                    print(f"[radio_watch] nettoyage abandonne : {exc!r}")
+                    cleaner = None
             try:
                 aplay.stdin.write(audio_lock.scale(chunk))
             except Exception:
@@ -1221,7 +1244,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
             total_bytes += len(chunk)
 
             is_signal, rms, resample_state, smoothed_prob = _chunk_is_signal(
-                chunk, sample_rate, rnnoise_state, resample_state, smoothed_prob
+                filtered, sample_rate, rnnoise_state, resample_state, smoothed_prob
             )
             if smoothed_prob is not None:
                 probs_seen.append(smoothed_prob)
@@ -1271,8 +1294,10 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
     # Empreinte de l'audio radio seul (sans annonces) : memorisee avec la
     # derniere capture, pour la commande console "parasite".
     # (variables globales declarees en tete de fonction)
-    _last_stream_fingerprint = (noise_signatures.fingerprint(b"".join(captured_chunks), sample_rate, "s16le")
-                                if captured_chunks else None)
+    _last_stream_fingerprint = (noise_signatures.fingerprint(b"".join(filtered_chunks), sample_rate, "s16le")
+                                if filtered_chunks else None)
+    _last_stream_raw = (b"".join(raw_chunks), sample_rate)
+    _last_stream_filtered = (b"".join(filtered_chunks), sample_rate)
     # Mesures du systeme, confrontees plus tard aux notes de l'utilisateur.
     _last_stream_metrics = {
         "prob_declenchement": round(trigger_prob, 3) if trigger_prob is not None else None,
@@ -1300,6 +1325,24 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050):
 
 _last_stream_fingerprint = None
 _last_stream_metrics = {}
+_last_stream_raw = (b"", 22050)       # son brut de la derniere ecoute (touche B du journal)
+_last_stream_filtered = (b"", 22050)  # filtre vocal seul : empreinte du bruit si ecarte
+
+
+def _save_raw(path):
+    """Son brut a cote de l'enregistrement : <nom>.brut.mp3 (meme purge a 48 h)."""
+    pcm, rate = _last_stream_raw
+    if not path or not pcm:
+        return
+
+    def work():
+        try:
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "s16le", "-ar", str(rate),
+                            "-ac", "1", "-i", "-", path[:-4] + ".brut.mp3"], input=pcm, timeout=60)
+        except Exception as exc:
+            print(f"[radio_watch] son brut non garde : {exc!r}")
+
+    threading.Thread(target=work, daemon=True).start()
 
 
 # Fenetres de donnees du cycle (lib/attention.py, DATA_WINDOWS) : ACARS,
@@ -1430,9 +1473,10 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
                                             {"niveau_db": level_db, "numerique": True})
             saved = True
             return True
-        if stream_until_quiet(freq, mode, band_label):
+        if stream_until_quiet(freq, mode, band_label, target=target):
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
             path = log_session.finalize()
+            _save_raw(path)
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path,
                                             _last_stream_fingerprint,
                                             dict(_last_stream_metrics, niveau_db=level_db))
@@ -1455,6 +1499,10 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
         print("[radio_watch] candidat ecarte (bruit, pas de signal reel)")
         # Un candidat ecarte EST un echantillon du bruit de fond de sa bande.
         noise_signatures.add_background(target, freq, _last_stream_fingerprint)
+        try:  # et son empreinte de bruit, pour le nettoyage doux
+            profils_bruit.learn(target, freq, *_last_stream_filtered)
+        except Exception as exc:
+            print(f"[radio_watch] empreinte de bruit non apprise : {exc!r}")
         return False
     finally:
         sound_player.set_recording_session(None)
