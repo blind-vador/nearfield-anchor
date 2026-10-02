@@ -61,6 +61,14 @@ AIRBAND_WINDOWS = [
         # "je pense qu'on est bon", niveau egalise avec le volume principal
         # du systeme).
         "ampfactor": 5.5,
+        # Coupe trop tot (notes de l'utilisateur 2026-10-01/02 : on entend le
+        # "a" d'ouverture puis plus rien ; mesure : 0,2 s de son sur 6,3 s) :
+        # avec le seuil par defaut (9,54 dB) le silencieux se referme des que
+        # le talkie faiblit. Premier reglage plus tolerant, a ajuster avec
+        # les notes ; et 5 s de silence avant de clore, pour garder les
+        # reponses d'une conversation dans le meme enregistrement.
+        "squelch_snr_threshold": 5,
+        "silence_debounce_sec": 5.0,
         "dwell_sec": 15,  # usage personnel (talky) le plus probable des 6 fenetres
         "channels": [
             (446_006_250, 9100), (446_018_750, 9101), (446_031_250, 9102), (446_043_750, 9103),
@@ -244,6 +252,18 @@ def _udp_reader(sock, out_queue, stop_event):
     out_queue.put(None)
 
 
+def _save_raw(path, pcm_f32):
+    """Son brut a cote de l'enregistrement : <nom>.brut.mp3 (touche B du journal)."""
+    def work():
+        try:
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "f32le",
+                            "-ar", str(AIRBAND_SAMPLE_RATE_HZ), "-ac", "1", "-i", "-", path[:-4] + ".brut.mp3"],
+                           input=pcm_f32, timeout=60)
+        except Exception as exc:
+            print(f"[airband_bridge] son brut non garde : {exc!r}")
+    threading.Thread(target=work, daemon=True).start()
+
+
 def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window_name=None):
     """Diffuse en direct l'audio UDP recu tant qu'il arrive, coupe apres
     SILENCE_DEBOUNCE_SEC sans paquet (le squelch de RTLSDR-Airband a alors
@@ -330,6 +350,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         total_bytes = 0
         max_bytes = int(AIRBAND_SAMPLE_RATE_HZ * 4 * max_hold_sec)
         captured_chunks = []
+        fingerprint_chunks = []  # filtre vocal seul : empreintes comparables aux anciennes
         gaps = 0
         # Filtre passe-bande vocal (300-3000Hz, 2026-08-31, demande
         # explicite de l'utilisateur suite a l'analyse spectrale de
@@ -337,11 +358,17 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         # fois. Applique AVANT l'ecriture vers aplay ET avant l'archivage
         # (radio_log) : le journal reflete ce qui a ete reellement entendu.
         voice_filter = audio_filters.VoiceBandpassFilter(AIRBAND_SAMPLE_RATE_HZ)
+        window = next((w for w in AIRBAND_WINDOWS if w["name"] == window_name), {})
+        debounce = window.get("silence_debounce_sec", SILENCE_DEBOUNCE_SEC)
+        # Nettoyage doux (gresillements, compresseur leger, voir
+        # audio_filters.GentleCleaner) ; son brut garde pour la touche B.
+        cleaner = audio_filters.GentleCleaner(AIRBAND_SAMPLE_RATE_HZ)
+        raw_chunks = []
         try:
             while True:
                 if time.time() - start > max_hold_sec + 5:
                     break
-                if time.time() - last_packet_time > SILENCE_DEBOUNCE_SEC:
+                if time.time() - last_packet_time > debounce:
                     break
                 if prebuffer:
                     data = prebuffer.pop(0)
@@ -355,7 +382,15 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
                 if time.time() - last_packet_time > GAP_SEC:
                     gaps += 1
                 last_packet_time = time.time()
+                raw_chunks.append(data)
                 data = voice_filter.process_f32le(data)
+                fingerprint_chunks.append(data)
+                if cleaner is not None:
+                    try:
+                        data = cleaner.process_f32le(data)
+                    except Exception as exc:
+                        print(f"[airband_bridge] nettoyage abandonne : {exc!r}")
+                        cleaner = None
                 captured_chunks.append(data)
                 total_bytes += len(data)
                 try:
@@ -385,9 +420,12 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         print(f"[airband_bridge] canal termine : {total_bytes} octets relayes")
         play_sound_effect(FREQ_OVER_SOUND, label="airband_bridge")
         path = log_session.finalize()
-        fp = (noise_signatures.fingerprint(b"".join(captured_chunks), AIRBAND_SAMPLE_RATE_HZ, "f32le")
-              if captured_chunks else None)
-        noise_signatures.record_capture("airband", freq_hz, "am", name_spoken, window_name, path, fp, {
+        if path and raw_chunks:
+            _save_raw(path, b"".join(raw_chunks))
+        fp = (noise_signatures.fingerprint(b"".join(fingerprint_chunks), AIRBAND_SAMPLE_RATE_HZ, "f32le")
+              if fingerprint_chunks else None)
+        mode = window.get("mode", "am")  # le 446 est en FM etroite (etait note "am" a tort)
+        noise_signatures.record_capture("airband", freq_hz, mode, name_spoken, window_name, path, fp, {
             "duree_audio_s": round(total_bytes / (AIRBAND_SAMPLE_RATE_HZ * 4), 1),
             "duree_totale_s": round(time.time() - start, 1),
             "trous_silencieux": gaps,

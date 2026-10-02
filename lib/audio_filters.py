@@ -219,6 +219,15 @@ class GentleCleaner:
         x = self.compressor.process(x)
         return np.clip(x, -32768, 32767).astype(np.int16).tobytes()
 
+    def process_f32le(self, chunk_bytes):
+        """Meme traitement pour un son flottant (RTLSDR-Airband, -1..1)."""
+        x = np.frombuffer(chunk_bytes, dtype=np.float32).astype(np.float64) * 32768
+        x = _declick(x)
+        if self.noise_pow is not None:
+            x = self._denoise(x)
+        x = self.compressor.process(x)
+        return (np.clip(x, -32768, 32767) / 32768).astype(np.float32).tobytes()
+
 
 class FmPilotFilter:
     """Radio FM : passe-bas a 15 kHz (largeur audio de la radio FM) qui
