@@ -23,7 +23,7 @@ import pont_protocole as proto
 
 NOTIFY_EVERY_SEC = 600
 TICK_SEC = 2
-POLL_SEC = 60
+POLL_SEC = 5  # resultats relus souvent : sans liaison directe, pas d'avis "fini"
 READ_TIMEOUT_SEC = 120
 
 _lock = threading.Lock()
@@ -125,6 +125,9 @@ def _dispatch():
         if time.time() - _notified.get(job["id"], 0) < NOTIFY_EVERY_SEC:
             continue
         if any(_notify(c["id"], job["id"]) for c in able if c["presente"]):
+            continue
+        if any(c["presente"] for c in able):
+            _notified[job["id"]] = time.time()  # presente par le NAS : elle releve d'elle-meme
             continue
         for c in able:
             if proto.wake_on_lan(c.get("adresse_materielle"), c.get("ips", [])):

@@ -100,14 +100,32 @@ def update_card(cid, **fields):
 
 
 def connected():
-    """{id: {depuis, vu}} des machines connectees en ce moment."""
+    """{id: {depuis, vu}} des machines presentes en ce moment : liaison directe
+    (compagnon_serveur), ou signe de vie signe recent sur le NAS (quand macOS
+    refuse le reseau local a l'application, le disque partage, lui, passe)."""
     presence = _read(PRESENCE) or {}
-    return {cid: p for cid, p in presence.items() if time.time() - p.get("vu", 0) < 90}
+    found = {cid: p for cid, p in presence.items() if time.time() - p.get("vu", 0) < 90}
+    cards = trusted()
+    for cid, card in cards.items():
+        if cid in found:
+            continue
+        beat = _read(_path("compagnons", f"{cid}.battement.json"))
+        if (beat and beat.get("compagnon") == cid and beat.get("pi") == pi_id()
+                and proto.verify(card["cle"], beat, max_age=90)):
+            found[cid] = {"vu": beat["t"], "par": "nas", "capacites": beat.get("capacites", [])}
+    return found
 
 
 def companions():
     online = connected()
-    return [dict(card, id=cid, presente=cid in online) for cid, card in trusted().items()]
+    out = []
+    for cid, card in trusted().items():
+        c = dict(card, id=cid, presente=cid in online)
+        if cid in online and online[cid].get("capacites"):
+            c["capacites"] = online[cid]["capacites"]
+            c["vu"] = online[cid]["vu"]
+        out.append(c)
+    return out
 
 
 def available(capability):

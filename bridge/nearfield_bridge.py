@@ -56,6 +56,8 @@ SHARE_GUESSES = ["/Volumes/server/server/nearfield-anchor-bridge",  # Mac
                  "/media/nas/nd1/server/nearfield-anchor-bridge"]   # le Pi lui-meme (essais)
 BEAT_SEC = 30
 SCAN_SEC = 300
+NAS_POLL_SEC = 5      # sans liaison directe : travaux releves sur le NAS
+NAS_BEAT_SEC = 30     # et signe de vie signe depose sur le NAS
 PAIRING_WAIT_SEC = 180
 RECONNECT_SEC = (10, 120)
 
@@ -350,7 +352,22 @@ _links = {}  # pi -> Link
 
 def _wake_workers(pi):
     for q in _queues.values():
-        q.put(pi)
+        if q.empty():  # inutile d'empiler les reveils pendant un long calcul
+            q.put(pi)
+
+
+def _nas_beat(pi, card):
+    """Signe de vie signe sur le NAS : le Pi sait que la machine est la meme
+    sans liaison directe (macOS peut refuser le reseau local a l'application,
+    jamais le disque partage)."""
+    share = find_share(card)
+    if not share:
+        return
+    conf = config()
+    mac, ips = network_identity()
+    _write(os.path.join(share, "compagnons", "%s.battement.json" % conf["id"]),
+           proto.sign(key(), {"type": "battement", "compagnon": conf["id"], "pi": pi, "nom": conf["nom"],
+                              "capacites": capabilities(), "adresse_materielle": mac, "ips": ips}))
 
 
 class Link(threading.Thread):
@@ -570,7 +587,7 @@ def service():
 
     for name in _queues:
         threading.Thread(target=worker, args=(name,), daemon=True).start()
-    last_scan = 0
+    last_scan = last_beat = 0
     while True:
         current = bridges()
         for pi in current:
@@ -580,11 +597,22 @@ def service():
         for pi in list(_links):
             if pi not in current:
                 _links.pop(pi).shutdown()
-        if time.time() - last_scan > SCAN_SEC:  # filet de securite si un avis s'est perdu
+        direct = {pi for pi in current if _links.get(pi) and _links[pi].channel is not None}
+        # Sans liaison directe : on releve le NAS souvent (5 s) ; sinon toutes
+        # les 5 min seulement, en filet de securite si un avis s'est perdu.
+        every = SCAN_SEC if len(direct) == len(current) else NAS_POLL_SEC
+        if time.time() - last_scan > every:
             last_scan = time.time()
             for pi in current:
                 _wake_workers(pi)
-        time.sleep(5)
+        if time.time() - last_beat > NAS_BEAT_SEC:
+            last_beat = time.time()
+            for pi, card in current.items():
+                try:
+                    _nas_beat(pi, card)
+                except Exception as exc:
+                    log("%s : signe de vie sur le NAS impossible (%r)" % (pi, exc))
+        time.sleep(NAS_POLL_SEC)
 
 
 # --- etat --------------------------------------------------------------------------------
