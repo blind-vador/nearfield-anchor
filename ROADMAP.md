@@ -5659,3 +5659,21 @@ tant que le Mac repond.
   (/tmp/manuel_evenements.jsonl) ; chiffres DTMF regroupes. Regles communes
   scanner / manuel dans lib/decodeurs.py. Teste : DTMF reel decode, deux
   dsd-fme connectes au flux ; voix DMR en manuel pas encore entendue.
+
+## 2026-10-03 : phrases de l'interface centralisees, personnalite du Pi
+
+- lib/phrases.py : dire(cle, **variables) ; phrases/<langue>.ini = version
+  NEUTRE de reference (une section par phrase : texte, contexte, garder,
+  fixe), jamais modifiee par le Pi ; autre langue = autre fichier, memes
+  cles (reglage "langue" de console.json). Nombres passes deja accordes
+  (phrases.nombre). Passes par le module : journal, archives, notation,
+  mode manuel, appairage, commande personnalite (le reste suivra).
+- lib/personnalite.py : chaque nuit a minuit (thread de meteo_watch), Gemini
+  reecrit les phrases non fixes selon la personnalite choisie (commande
+  "personnalite" : texte libre, neutre, surprise) : fiche de style d'abord
+  (resume + regles de ton, partagee par tous les blocs), puis blocs de 20 en
+  JSON strict (mode JSON de Gemini), chaque phrase verifiee (variables, mots
+  proteges sans tenir compte de la casse, longueur 1,8x, pas de symboles),
+  bloc illisible retente une fois, sinon phrase neutre. Sortie :
+  ~/autopilot/phrases/personnalite_fr.ini (+ _hier). Essai reel : 3 min,
+  79 phrases reecrites ("un vieux loup de mer bourru mais attachant").

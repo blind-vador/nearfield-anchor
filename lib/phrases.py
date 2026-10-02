@@ -97,7 +97,7 @@ def valid(entry, new_text):
     if variables(new_text) != variables(entry["texte"]):
         return "variables differentes"
     for word in entry["garder"]:
-        if word not in new_text:
+        if word.lower() not in new_text.lower():  # "Flèche droite" vaut "flèche droite"
             return f"mot protege absent : {word}"
     if len(new_text) > max(len(entry["texte"]) * MAX_GROWTH, len(entry["texte"]) + MAX_EXTRA_CHARS):
         return "trop longue"
