@@ -11,6 +11,8 @@ cette capture : la commande "bilan" confronte les deux, bande par bande.
 
   fleches haut / bas       champ precedent / suivant
   fleches gauche / droite  valeur precedente / suivante
+  E ou F2                  ecoute l'exemple de reference de la valeur choisie
+                           (referentiel fixe, tools/build_exemples_notation.py)
   Entree sur OK            enregistre       Echap : annule
 """
 import json
@@ -46,8 +48,11 @@ FIELDS = [
 ]
 OK_INDEX = len(FIELDS)
 TITLE = "Notation."
-CONSIGNE = ("Flèches haut et bas : champ. Gauche et droite : valeur. "
-            "Entrée sur OK pour enregistrer. Échap : annuler. F1 redit ces touches.")
+CONSIGNE = ("Flèches haut et bas : champ. Gauche et droite : valeur. E ou F2 : écouter l'exemple de "
+            "référence de la valeur choisie. Entrée sur OK pour enregistrer. Échap : annuler. F1 redit ces touches.")
+EXAMPLES_DIR = "/home/vador/autopilot/exemples_notation"
+F2 = ("\x1b[[B", "\x1bOQ", "\x1b[12~")
+NO_EXAMPLE = ("merite", "certitude")  # c'est l'avis de la personne, pas un son
 
 
 def load_notes():
@@ -66,6 +71,30 @@ def _save_note(note):
         json.dump(notes, f, ensure_ascii=False)
     os.replace(tmp, NOTES_PATH)
     return len(notes)
+
+
+def play_example(field, values):
+    """Touche E / F2 : exemple sonore fixe de la valeur sous le curseur ; rend
+    le texte a dire ensuite, ou None."""
+    if field >= OK_INDEX:
+        return "Choisis d'abord un champ."
+    code, question, options, _ = FIELDS[field]
+    value_code, value_spoken = options[values[field]]
+    if code in NO_EXAMPLE:
+        return f"Pas d'exemple pour {question.lower()} : c'est ton avis."
+    path = os.path.join(EXAMPLES_DIR, f"{code}_{value_code}.mp3")
+    if not os.path.exists(path):
+        return f"Pas d'exemple pour {question.lower()} {value_spoken}."
+    import audio_lock
+    import sound_player
+    import voix
+    voix.say_blocking(f"Exemple : {question.lower()}, {value_spoken}.")
+    ticket = audio_lock.acquire("console", timeout=10)
+    try:
+        sound_player.play_sound_effect(path, timeout_sec=20, label="notation")
+    finally:
+        audio_lock.release(ticket)
+    return f"{question} : {value_spoken}."
 
 
 def _field_text(i, values):
@@ -160,10 +189,14 @@ def rate(key_source, say, out, path, stamp):
             return f"Note enregistrée. {total} note{'s' if total > 1 else ''} au total." + _station_text(station)
         elif key in ("\r", "\n"):
             text = "Descends jusqu'à OK pour enregistrer."
+        elif key in ("e", "E") or key in F2:
+            text = play_example(field, values)
+            if text is None:
+                continue
         elif conseils.is_help(key):
             text = CONSIGNE
         else:
-            text = "Flèches, entrée sur OK, ou échap. F1 pour l'aide."
+            text = "Flèches, E pour l'exemple, entrée sur OK, ou échap. F1 pour l'aide."
         out(f"[{text}]\n")
         say(text)
     return "Notation annulée."

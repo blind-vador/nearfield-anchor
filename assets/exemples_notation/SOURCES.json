@@ -1,0 +1,142 @@
+{
+ "lisibilite/1": {
+  "fichier": "lisibilite_1.mp3",
+  "source": "P.835 condition c1, voix notee 1.85 sur 5 par les auditeurs"
+ },
+ "lisibilite/2": {
+  "fichier": "lisibilite_2.mp3",
+  "source": "P.835 condition c2, voix notee 2.78 sur 5 par les auditeurs"
+ },
+ "lisibilite/3": {
+  "fichier": "lisibilite_3.mp3",
+  "source": "P.835 condition c3, voix notee 3.54 sur 5 par les auditeurs"
+ },
+ "lisibilite/4": {
+  "fichier": "lisibilite_4.mp3",
+  "source": "P.835 condition c4, voix notee 4.32 sur 5 par les auditeurs"
+ },
+ "lisibilite/5": {
+  "fichier": "lisibilite_5.mp3",
+  "source": "P.835 condition c0, voix notee 4.69 sur 5 par les auditeurs"
+ },
+ "souffle/aucun": {
+  "fichier": "souffle_aucun.mp3",
+  "source": "P.835 condition c0, reference, fond note 4,69"
+ },
+ "souffle/discret": {
+  "fichier": "souffle_discret.mp3",
+  "source": "P.835 condition c9, SNR 30 dB, fond note 3,33"
+ },
+ "souffle/moyen": {
+  "fichier": "souffle_moyen.mp3",
+  "source": "P.835 condition c8, SNR 20 dB, fond note 2,5"
+ },
+ "souffle/fort": {
+  "fichier": "souffle_fort.mp3",
+  "source": "P.835 condition c7, SNR 10 dB, fond note 2,03"
+ },
+ "souffle/envahissant": {
+  "fichier": "souffle_envahissant.mp3",
+  "source": "P.835 condition c6, SNR 0 dB, fond note 1,4"
+ },
+ "son/naturel": {
+  "fichier": "son_naturel.mp3",
+  "source": "NISQA c02447_book_04113_chp_0027_reader_00129_2_seg.wav (notes : globale 5.0, coloration 4.76, coupures 4.74)"
+ },
+ "son/etouffe": {
+  "fichier": "son_etouffe.mp3",
+  "source": "NISQA c00162_book_08456_chp_0016_reader_01540_28_seg.wav (notes : globale 1.6, coloration 1.29, coupures 4.01)"
+ },
+ "son/metallique": {
+  "fichier": "son_metallique.mp3",
+  "source": "NISQA c06588_book_06150_chp_0012_reader_03751_18_seg.wav (notes : globale 2.8, coloration 1.44, coupures 3.97)"
+ },
+ "son/sature": {
+  "fichier": "son_sature.mp3",
+  "source": "NISQA c00274_book_00362_chp_0009_reader_06188_15_seg.wav (notes : globale 2.2, coloration 1.54, coupures 3.02)"
+ },
+ "stabilite/stable": {
+  "fichier": "stabilite_stable.mp3",
+  "source": "NISQA c02447_book_04113_chp_0027_reader_00129_2_seg.wav (notes : globale 5.0, coloration 4.76, coupures 4.74)"
+ },
+ "stabilite/coupures": {
+  "fichier": "stabilite_coupures.mp3",
+  "source": "NISQA c01988_book_02285_chp_0004_reader_01108_34_seg.wav (notes : globale 3.8, coloration 4.53, coupures 2.93)"
+ },
+ "stabilite/hache": {
+  "fichier": "stabilite_hache.mp3",
+  "source": "NISQA c09586_book_06223_chp_0009_reader_10687_31_seg.wav (notes : globale 1.8, coloration 3.57, coupures 1.24)"
+ },
+ "volume/faible": {
+  "fichier": "volume_faible.mp3",
+  "source": "NISQA c09464_book_09618_chp_0013_reader_05954_1_seg.wav, niveau -47 dBov (normal : -26)"
+ },
+ "volume/correct": {
+  "fichier": "volume_correct.mp3",
+  "source": "NISQA c02447_book_04113_chp_0027_reader_00129_2_seg.wav, niveau -26 dBov (normal : -26)"
+ },
+ "volume/fort": {
+  "fichier": "volume_fort.mp3",
+  "source": "NISQA c00503_book_00233_chp_0014_reader_11826_20_seg.wav, niveau -11 dBov (normal : -26)"
+ },
+ "debut/complet": {
+  "fichier": "debut_complet.mp3",
+  "source": "NISQA naturel"
+ },
+ "debut/coupe": {
+  "fichier": "debut_coupe.mp3",
+  "source": "NISQA naturel, coupe 0,35 s apres le debut de la parole"
+ },
+ "fin/correcte": {
+  "fichier": "fin_correcte.mp3",
+  "source": "NISQA naturel"
+ },
+ "fin/coupee": {
+  "fichier": "fin_coupee.mp3",
+  "source": "NISQA naturel, coupe 0,4 s avant la fin de la parole"
+ },
+ "fin/longue": {
+  "fichier": "fin_longue.mp3",
+  "source": "NISQA naturel suivi de 3 s de bruit d'ondes courtes"
+ },
+ "brouillage/aucun": {
+  "fichier": "brouillage_aucun.mp3",
+  "source": "NISQA naturel"
+ },
+ "brouillage/sifflement": {
+  "fichier": "brouillage_sifflement.mp3",
+  "source": "reception sur 10 MHz (Commons, Pracchia-78), passage a 954 s, tonalite vers 992 Hz"
+ },
+ "brouillage/bourdonnement": {
+  "fichier": "brouillage_bourdonnement.mp3",
+  "source": "ronflement 50 Hz du secteur (Commons, domaine public)"
+ },
+ "brouillage/autre_station": {
+  "fichier": "brouillage_autre_station.mp3",
+  "source": "deuxieme voix Librivox (NISQA) sous la premiere"
+ },
+ "brouillage/crachotements": {
+  "fichier": "brouillage_crachotements.mp3",
+  "source": "crepitements radio d'eclairs, Cassini (NASA, domaine public)"
+ },
+ "contenu/voix": {
+  "fichier": "contenu_voix.mp3",
+  "source": "NISQA naturel (Librivox)"
+ },
+ "contenu/musique": {
+  "fichier": "contenu_musique.mp3",
+  "source": "Satie, Gymnopedie no 1 (Commons, domaine public)"
+ },
+ "contenu/tonalites": {
+  "fichier": "contenu_tonalites.mp3",
+  "source": "numerotation DTMF (Commons, domaine public)"
+ },
+ "contenu/donnees": {
+  "fichier": "contenu_donnees.mp3",
+  "source": "packet radio AFSK 1200 bauds (Commons, Denis Apel, CC BY-SA 2.0 de)"
+ },
+ "contenu/rien": {
+  "fichier": "contenu_rien.mp3",
+  "source": "bruit d'ondes courtes (Commons, domaine public)"
+ }
+}

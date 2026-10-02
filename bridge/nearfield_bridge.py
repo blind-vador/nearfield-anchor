@@ -381,12 +381,14 @@ class Link(threading.Thread):
                 self.channel.close()
 
     def _connect(self, card):
+        self.last_error = None
         for host in (card.get("hote"), card.get("ip")):
             if not host:
                 continue
             try:
                 sock = socket.create_connection((host, card.get("port", proto.PORT)), timeout=10)
-            except OSError:
+            except OSError as exc:
+                self.last_error = "%s : %s" % (host, exc)
                 continue
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
             return sock
@@ -396,6 +398,10 @@ class Link(threading.Thread):
         conf = config()
         sock = self._connect(card)
         if not sock:
+            error = "Pi injoignable (%s)" % self.last_error
+            if stats(self.pi).get("erreur") != error:
+                log("%s : %s" % (self.pi, error))
+            update_stats(self.pi, connecte=False, erreur=error)
             return False
         channel = proto.Channel(sock, key())
         mac, ips = network_identity()

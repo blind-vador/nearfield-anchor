@@ -1,0 +1,31 @@
+Exemples de reference de la grille de notation (touches E et F2 du dialogue
+de notation, console/notation.py). Referentiel FIXE : jamais remplace par des
+captures notees. Refait par tools/build_exemples_notation.py ; detail de
+chaque fichier (source exacte, notes des auditeurs) dans SOURCES.json.
+
+Sources et licences
+- Conditions de reference P.835, depot microsoft/P.808 (licence MIT) :
+  https://github.com/microsoft/P.808/tree/master/p835_reference_conditions
+  Les voix viennent de la norme ITU-T P.501 : licence de l'UIT reservee aux
+  essais de qualite de la parole. Usage ici : calibrer des notes d'ecoute,
+  sur cette installation uniquement ; ne pas rediffuser.
+  -> lisibilite_1..5, souffle_*
+- Corpus NISQA (TU Berlin, G. Mittag et al., 2021), extraits a une seule
+  degradation ; voix Librivox (domaine public) :
+  https://github.com/gabrielmittag/NISQA/wiki/NISQA-Corpus
+  -> son_*, stabilite_*, volume_*, debut_*, fin_*, contenu_voix,
+     brouillage_aucun, brouillage_autre_station
+- Wikimedia Commons :
+  MainsBrum50Hz.ogg (domaine public)            -> brouillage_bourdonnement
+  DTMF_dialing.ogg (domaine public, Jahoe)      -> contenu_tonalites
+  Packet-radio-simple-stardado.ogg (Denis Apel, CC BY-SA 2.0 de) -> contenu_donnees
+  Satie, Gymnopedie no 1 (Robin Alciatore, domaine public) -> contenu_musique
+  Radio_short_wave_frequency.ogg (stephan, domaine public) -> contenu_rien, fin_longue
+  Radio interferenza illecita su 10 MHz (Pracchia-78, CC BY-SA 4.0)
+                                                -> brouillage_sifflement
+- NASA/JPL-Caltech/University of Iowa, Cassini, eclairs sur Saturne
+  (PIA14310, domaine public)                    -> brouillage_crachotements
+
+Volumes : tous les exemples sont a -26 dBov (niveau nominal de la parole),
+sauf volume_faible et volume_fort qui gardent leur niveau d'origine.
+Brouillages : le bruit seul pendant 2 s, puis sous une voix propre.
