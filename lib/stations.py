@@ -228,9 +228,11 @@ def analyse(freq_hz):
         lo -= 1
     while hi < len(db) - 1 and above[hi + 1]:
         hi += 1
-    width_khz = round((bins[hi] - bins[lo]) / 1000, 1)
+    width_khz = round(float(bins[hi] - bins[lo]) / 1000, 1)
     drop = round(float(peak - low[1][peak_i]), 1)
-    if width_khz > 60 or drop >= 2 * GAIN_STEP_DB:
+    if width_khz > 400:
+        verdict = "bruit large, pas une émission : parasite local probable (ordinateur, alimentation, câble USB)"
+    elif width_khz > 60 or drop >= 2 * GAIN_STEP_DB:
         verdict = "artefact probable : une émission forte qui sature la clé, pas une station sur cette fréquence"
     elif width_khz <= 20 and drop <= 1.5 * GAIN_STEP_DB:
         verdict = "vraie émission probable sur cette fréquence"
