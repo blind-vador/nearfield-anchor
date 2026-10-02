@@ -61,8 +61,8 @@ DSD_TCP_PORT = 7360                 # serveur local qui nourrit dsd-fme (hors 73
 DSD_UDP_PORTS = (23460, 23461)      # voix decodee (le scanner utilise 23456)
 EVENTS_PATH = "/tmp/manuel_evenements.jsonl"
 DECODING_SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
-DIGITAL_HOLD_SEC = 1.0
-DTMF_GAP_SEC = 1.5              # analogique coupe tant que la voix numerique arrive
+DIGITAL_HOLD_SEC = 1.0              # analogique coupe tant que la voix numerique arrive
+DTMF_GAP_SEC = 1.5                  # chiffres DTMF plus rapproches : une seule annonce
 AIRBAND_UDP_PORT = 9290            # hors de la plage des fenetres (9100-9204)
 AIRBAND_CONFIG = "/tmp/airband_manuel.conf"
 # Centre du tuner : jamais sur le canal (pic DC). Celui de la fenetre airband
@@ -323,6 +323,67 @@ class ManualStream:
         except (OSError, ValueError):
             pass
         flush()
+
+    # --- RTLSDR-Airband, avec silencieux (touche F) ---
+    def _start_airband(self, freq_hz, mode, generation):
+        self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # rebind immediat apres un changement
+        self._sock.bind(("127.0.0.1", AIRBAND_UDP_PORT))
+        self._sock.settimeout(0.3)
+        config, binary = _airband_window(freq_hz, mode)
+        with open(AIRBAND_CONFIG, "w") as f:
+            f.write(config)
+        self._rx = subprocess.Popen([binary, "-F", "-e", "-c", AIRBAND_CONFIG],
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, errors="replace")
+        threading.Thread(target=self._log_stderr, args=(self._rx,), daemon=True).start()
+        threading.Thread(target=self._relay_airband, args=(self._sock, generation), daemon=True).start()
+
+    @staticmethod
+    def _log_stderr(rx):
+        # Messages de rtl_airband dans le journal (diagnostic de la touche F).
+        for line in rx.stderr:
+            line = line.strip()
+            if line:
+                print(f"[manual_tuner] rtl_airband : {line[:160]}")
+
+    def _relay_airband(self, sock, generation):
+        import audio_filters
+        import numpy as np
+        voice_filter = audio_filters.VoiceBandpassFilter(AIRBAND_RATE)  # comme _relay_channel()
+        state = None
+        packets = written = 0
+        last_report = time.time()
+        while generation == self._generation:
+            if time.time() - last_report >= 5:
+                print(f"[manual_tuner] airband 5 s : {packets} paquets recus, {written} octets joues")
+                packets = written = 0
+                last_report = time.time()
+            try:
+                data, _ = sock.recvfrom(65536)
+            except socket.timeout:
+                continue  # silencieux ferme : rien a jouer
+            except OSError:
+                return
+            packets += 1
+            data = voice_filter.process_f32le(data)
+            samples = np.frombuffer(data[: len(data) - len(data) % 4], dtype=np.float32)
+            pcm = np.clip(samples * 32767.0, -32768, 32767).astype(np.int16).tobytes()
+            pcm, state = audioop.ratecv(pcm, 2, 1, AIRBAND_RATE, OUT_RATE, state)
+            if not self._write(pcm, generation):
+                print("[manual_tuner] airband : ecriture vers la sortie son refusee, relais arrete")
+                return
+            written += len(pcm)
+
+    def _write(self, data, generation):
+        with self._write_guard:
+            if generation != self._generation or self._aplay is None:
+                return False  # un nouveau recepteur a pris le relais
+            try:
+                # Fil de relais : le ticket est passe explicitement (priorites).
+                self._aplay.stdin.write(audio_lock.scale(data, self._lock))
+                return True
+            except (BrokenPipeError, ValueError, OSError):
+                return False
 
     def _stop_receiver(self):
         with self._write_guard:

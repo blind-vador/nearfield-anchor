@@ -139,8 +139,11 @@ def noise_spectrum(pcm_s16, sample_rate):
     x = np.frombuffer(pcm_s16, dtype=np.int16).astype(np.float64)
     if len(x) < sample_rate // 2:
         return None
+    # 10 s suffisent pour un fond ; trames decoupees directement (une vue
+    # glissante sur 45 s depasse ce qu'un systeme 32 bits sait adresser).
+    x = x[-10 * sample_rate:]
     n = (len(x) - FRAME) // HOP + 1
-    frames = np.lib.stride_tricks.sliding_window_view(x, FRAME)[::HOP][:n]
+    frames = x[np.arange(n)[:, None] * HOP + np.arange(FRAME)]
     window = np.sqrt(np.hanning(FRAME + 1)[:-1])
     return np.abs(np.fft.rfft(frames * window, axis=1)).mean(axis=0)
 
