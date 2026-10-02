@@ -53,7 +53,7 @@ def _save(profile, blocks, start_t, peak_db, floor_db):
             f.write(b.tobytes())
     info = {"profil": profile["nom"], "freq": profile["freq"], "largeur": profile["largeur"], "taux": RATE,
             "format": "cu8", "t": start_t, "duree_s": round(len(blocks) * BLOCK / RATE, 2),
-            "crete_db": round(peak_db, 1), "bruit_db": round(floor_db, 1), "decode": None}
+            "crete_db": round(float(peak_db), 1), "bruit_db": round(float(floor_db), 1), "decode": None}
     with open(base + ".json", "w", encoding="utf-8") as f:
         json.dump(info, f)
     vd.archive("lora", info)
