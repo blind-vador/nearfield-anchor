@@ -24,6 +24,7 @@ import audio_filters
 import acars_watch
 import satellites
 import satellites_watch
+import stations
 import relais
 import meteo_locale
 import adsb_local_watch
@@ -1463,13 +1464,32 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             journal_notice()
 
 
+def _centered(freq, mode):
+    """Recentrage sur une station probable proche (lib/stations.py) ; jamais bloquant."""
+    try:
+        return stations.center(freq, mode)
+    except Exception as exc:
+        print(f"[radio_watch] recentrage impossible : {exc!r}")
+        return freq
+
+
+def _station_capture(freq, mode):
+    try:
+        stations.record_capture(freq, mode)
+    except Exception as exc:
+        print(f"[radio_watch] station probable non mise a jour : {exc!r}")
+
+
 def scan_fm_band(band):
     margin_db = band.get("margin_db", NOISE_MARGIN_DB)
     span_hz = band.get("span_hz", 25_000)
     candidates = check_channels_relative(band["channels"], span_hz=span_hz, margin_db=margin_db)
     for freq, db in candidates:
         print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.5f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")
+        if band["name"].startswith("stations_"):
+            freq = _centered(freq, band["mode"])
         if _handle_candidate(freq, band["mode"], f"canal {band['name_spoken']}", band["name"], level_db=db):
+            _station_capture(freq, band["mode"])
             return True
     return False
 
@@ -1486,7 +1506,11 @@ def scan_sweep_band(band):
         # retarde son demarrage de ~1-2s tant que le mode reste arme,
         # accepte car opt-in et sert justement a etudier la bande armee.
         spectral_diagnostic.maybe_diagnose(band, freq, db)
+        # Pres d'une station probable : on se cale sur son vrai centre
+        # (plus d'ecoute en bord de canal, demande utilisateur 2026-10-02).
+        freq = _centered(freq, band["mode"])
         if _handle_candidate(freq, band["mode"], f"bande {band['name_spoken']}", band["name"], level_db=db):
+            _station_capture(freq, band["mode"])
             return True
     return False
 
@@ -1860,7 +1884,14 @@ def main():
 
         activity = False
 
-        for band in fm_bands + relais.bands():  # relais appris par l'APRS (lib/relais.py)
+        # Relais appris par l'APRS (lib/relais.py) ; stations probables a
+        # revisiter selon leur interet et leurs habitudes (lib/stations.py).
+        try:
+            probable = stations.bands()
+        except Exception as exc:
+            print(f"[radio_watch] stations probables : {exc!r}")
+            probable = []
+        for band in fm_bands + relais.bands() + probable:
             if _lock_pending():
                 break
             if scan_fm_band(band):

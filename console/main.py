@@ -272,6 +272,9 @@ def run_command(line, key_source, last_response):
     if cmd.name == "compagnon":
         import compagnon
         return compagnon.status()
+    if cmd.name == "stations":
+        import stations
+        return stations.spoken_list()
     if cmd.name == "satellites":
         import satellites
         return satellites.spoken_list()

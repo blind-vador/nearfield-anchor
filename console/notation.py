@@ -102,7 +102,17 @@ def _record(info, path, stamp, reponses, rapide=False):
         attention.stimulate(note["bande"], attention.NOTE_POINTS.get(reponses.get("merite"), 0))
     except Exception:
         pass
-    return total
+    station = False
+    try:  # prise parfaite : station probable, recentree et revisitee (lib/stations.py)
+        import stations
+        station = stations.register_from_note(note)
+    except Exception as exc:
+        print(f"[notation] station probable : {exc!r}")
+    return total, station
+
+
+def _station_text(station):
+    return " Station probable notée : le scanner s'y recentrera et y reviendra." if station else ""
 
 
 def validate(path, stamp):
@@ -114,8 +124,8 @@ def validate(path, stamp):
         return "Déjà validé."
     if previous:
         return "Déjà noté en détail : N pour modifier la note."
-    total = _record(ns.capture_info(path) or {}, path, stamp, dict(GOOD_TAKE), rapide=True)
-    return f"Validé, bonne prise. {total} note{'s' if total > 1 else ''} au total."
+    total, station = _record(ns.capture_info(path) or {}, path, stamp, dict(GOOD_TAKE), rapide=True)
+    return f"Validé, bonne prise. {total} note{'s' if total > 1 else ''} au total." + _station_text(station)
 
 
 def rate(key_source, say, out, path, stamp):
@@ -146,8 +156,8 @@ def rate(key_source, say, out, path, stamp):
             text = FIELDS[field][2][values[field]][1]
         elif key in ("\r", "\n") and field == OK_INDEX:
             reponses = {code: FIELDS[i][2][values[i]][0] for i, (code, *_) in enumerate(FIELDS)}
-            total = _record(info, path, stamp, reponses)
-            return f"Note enregistrée. {total} note{'s' if total > 1 else ''} au total."
+            total, station = _record(info, path, stamp, reponses)
+            return f"Note enregistrée. {total} note{'s' if total > 1 else ''} au total." + _station_text(station)
         elif key in ("\r", "\n"):
             text = "Descends jusqu'à OK pour enregistrer."
         elif conseils.is_help(key):
