@@ -23,7 +23,9 @@ import pont_protocole as proto
 
 NOTIFY_EVERY_SEC = 600
 TICK_SEC = 2
-POLL_SEC = 5  # resultats relus souvent : sans liaison directe, pas d'avis "fini"
+# Resultats : relus aussitot sur l'avis "fini" de la liaison directe ; sinon
+# (mode differe par le NAS) toutes les 12 h, pour ne pas solliciter les disques.
+POLL_SEC = 12 * 3600
 READ_TIMEOUT_SEC = 120
 
 _lock = threading.Lock()
@@ -116,7 +118,8 @@ def _dispatch():
             channel.close()  # la liaison tombe tout de suite
     for job in compagnon.open_jobs():
         able = [c for c in compagnon.companions() if job["type"] in c.get("capacites", [])]
-        if job["type"] == "lora" and lora_messages.needs_local(job, any(c["presente"] for c in able)):
+        # LoRa : seule une liaison DIRECTE repond assez vite ; en differe, le Pi decode.
+        if job["type"] == "lora" and lora_messages.needs_local(job, any(c.get("directe") for c in able)):
             # Secours : aucune machine capable ne repond, le Pi decode lui-meme.
             if job["id"] not in _local:
                 _local.add(job["id"])

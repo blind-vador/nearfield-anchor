@@ -37,6 +37,7 @@ KEY_PATH = os.path.join(LOCAL_DIR, "cle.pem")
 TRUST_DIR = os.path.join(LOCAL_DIR, "confiance")
 PRESENCE = "/tmp/compagnons_connectes.json"  # tenu par compagnon_serveur
 PAIRING_SEC = 180
+NAS_BEAT_MAX_SEC = 13 * 3600  # signe de vie du mode differe : toutes les 12 h
 WAKEABLE_SEC = 7 * 86400  # machine vue depuis : on compte sur elle (reveil possible)
 
 
@@ -100,9 +101,10 @@ def update_card(cid, **fields):
 
 
 def connected():
-    """{id: {depuis, vu}} des machines presentes en ce moment : liaison directe
-    (compagnon_serveur), ou signe de vie signe recent sur le NAS (quand macOS
-    refuse le reseau local a l'application, le disque partage, lui, passe)."""
+    """{id: {depuis, vu}} des machines presentes : liaison directe
+    (compagnon_serveur), ou signe de vie signe depose sur le NAS depuis moins
+    de NAS_BEAT_MAX_SEC (quand macOS refuse le reseau local a l'application :
+    elle travaille alors en differe, deux fois par jour, "par" : "nas")."""
     presence = _read(PRESENCE) or {}
     found = {cid: p for cid, p in presence.items() if time.time() - p.get("vu", 0) < 90}
     cards = trusted()
@@ -111,7 +113,7 @@ def connected():
             continue
         beat = _read(_path("compagnons", f"{cid}.battement.json"))
         if (beat and beat.get("compagnon") == cid and beat.get("pi") == pi_id()
-                and proto.verify(card["cle"], beat, max_age=90)):
+                and proto.verify(card["cle"], beat, max_age=NAS_BEAT_MAX_SEC)):
             found[cid] = {"vu": beat["t"], "par": "nas", "capacites": beat.get("capacites", [])}
     return found
 
@@ -120,7 +122,8 @@ def companions():
     online = connected()
     out = []
     for cid, card in trusted().items():
-        c = dict(card, id=cid, presente=cid in online)
+        c = dict(card, id=cid, presente=cid in online,
+                 directe=cid in online and online[cid].get("par") != "nas")  # sinon : differe
         if cid in online and online[cid].get("capacites"):
             c["capacites"] = online[cid]["capacites"]
             c["vu"] = online[cid]["vu"]
@@ -320,7 +323,9 @@ def status():
     for c in found:
         caps = ", ".join(c.get("capacites", [])) or "rien de déclaré"
         stats = c.get("stats", {})
-        text = (f"{c['nom']}, {'connectée' if c['presente'] else 'pas connectée, je la réveillerai au besoin'}, "
+        state = ("connectée" if c.get("directe") else "en différé par le NAS, deux fois par jour" if c["presente"]
+                 else "pas connectée, je la réveillerai au besoin")
+        text = (f"{c['nom']}, {state}, "
                 f"sait faire : {caps}")
         done, failed = stats.get("faits", 0), stats.get("echecs", 0)
         if done or failed:

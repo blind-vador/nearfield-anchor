@@ -56,8 +56,11 @@ SHARE_GUESSES = ["/Volumes/server/server/nearfield-anchor-bridge",  # Mac
                  "/media/nas/nd1/server/nearfield-anchor-bridge"]   # le Pi lui-meme (essais)
 BEAT_SEC = 30
 SCAN_SEC = 300
-NAS_POLL_SEC = 5      # sans liaison directe : travaux releves sur le NAS
-NAS_BEAT_SEC = 30     # et signe de vie signe depose sur le NAS
+# Sans liaison directe : fonctionnement en DIFFERE par le NAS (decision
+# utilisateur 2026-10-02 : pas d'ecritures ni de lectures frequentes, les
+# disques s'useraient) -> travaux releves et signe de vie depose toutes les 12 h.
+NAS_FALLBACK_SEC = 12 * 3600
+LOOP_SEC = 5
 PAIRING_WAIT_SEC = 180
 RECONNECT_SEC = (10, 120)
 
@@ -598,21 +601,21 @@ def service():
             if pi not in current:
                 _links.pop(pi).shutdown()
         direct = {pi for pi in current if _links.get(pi) and _links[pi].channel is not None}
-        # Sans liaison directe : on releve le NAS souvent (5 s) ; sinon toutes
-        # les 5 min seulement, en filet de securite si un avis s'est perdu.
-        every = SCAN_SEC if len(direct) == len(current) else NAS_POLL_SEC
+        # Liaison directe : NAS releve toutes les 5 min, en filet de securite
+        # si un avis s'est perdu ; sans elle, en differe toutes les 12 h.
+        every = SCAN_SEC if len(direct) == len(current) else NAS_FALLBACK_SEC
         if time.time() - last_scan > every:
             last_scan = time.time()
             for pi in current:
                 _wake_workers(pi)
-        if time.time() - last_beat > NAS_BEAT_SEC:
+        if len(direct) < len(current) and time.time() - last_beat > NAS_FALLBACK_SEC:
             last_beat = time.time()
             for pi, card in current.items():
                 try:
                     _nas_beat(pi, card)
                 except Exception as exc:
                     log("%s : signe de vie sur le NAS impossible (%r)" % (pi, exc))
-        time.sleep(NAS_POLL_SEC)
+        time.sleep(LOOP_SEC)
 
 
 # --- etat --------------------------------------------------------------------------------

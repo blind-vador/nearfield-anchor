@@ -11,7 +11,7 @@ import veille_donnees as vd
 
 SOUND = "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3"
 METEOR_DIR = "/media/nas/nd2/storage/radio/satellites"
-STALE_SEC = 12 * 3600  # travail jamais pris : la machine n'est pas revenue
+STALE_SEC = 36 * 3600  # travail jamais pris : la machine n'est pas revenue (mode differe : 12 h)
 
 
 def _meteor(job, result, folder):
