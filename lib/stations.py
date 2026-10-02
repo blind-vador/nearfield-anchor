@@ -147,12 +147,31 @@ def measure_center(freq_hz, mode):
     I/Q decale de CENTER_OFFSET_HZ, spectre moyenne, puis centre de gravite
     de l'energie au-dessus du bruit (porteuse la plus forte en AM)."""
     tune = int(freq_hz + CENTER_OFFSET_HZ)
+    # Flux lu comme lora_watch (rtl_sdr sans -n) : on prend ce qu'il faut puis
+    # on coupe ; jamais plus de 5 s, le scanner ne doit pas rester bloque.
     try:
-        raw = subprocess.run(["rtl_sdr", "-f", str(tune), "-s", str(CENTER_RATE), "-g", "30",
-                              "-n", str(CENTER_SAMPLES), "-"], capture_output=True, timeout=10).stdout
-    except (OSError, subprocess.TimeoutExpired):
+        proc = subprocess.Popen(["rtl_sdr", "-f", str(tune), "-s", str(CENTER_RATE), "-g", "30", "-"],
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except OSError:
         return None
-    if len(raw) < CENTER_SAMPLES:
+    raw, deadline = b"", time.time() + 5
+    try:
+        os.set_blocking(proc.stdout.fileno(), False)
+        skip = CENTER_RATE  # la premiere demi-seconde (reglage du tuner) est jetee
+        while len(raw) < skip + 2 * CENTER_SAMPLES and time.time() < deadline and proc.poll() is None:
+            chunk = proc.stdout.read(65536)
+            if chunk:
+                raw += chunk
+            else:
+                time.sleep(0.02)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+    raw = raw[skip:]
+    if len(raw) < 2 * CENTER_SAMPLES:
         return None
     iq = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 127.5
     x = (iq[0::2] + 1j * iq[1::2])[: (len(iq) // 2 // 4096) * 4096].reshape(-1, 4096)
