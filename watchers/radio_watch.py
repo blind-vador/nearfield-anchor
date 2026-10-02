@@ -853,6 +853,9 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label=""):
                 speak_with_lead_sound(DECODING_NUMERIC_SOUND,
                                       f"Réception {protocol}" + (f", {band_label}" if band_label else "") + ".",
                                       label="radio_watch")
+                # Meme encadrement que la voix analogique (2026-10-02) : son
+                # d'ouverture avant la voix, son de fin apres (_handle_candidate).
+                play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
                 aplay = subprocess.Popen(
                     ["aplay", "-D", AUDIO_DEVICE, "-r", str(DSD_FME_VOICE_SAMPLE_RATE),
                      "-f", "S16_LE", "-c", str(channels), "-q"],
@@ -1472,6 +1475,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     try:
         protocol = try_digital_voice_decode(freq, band_label=band_label) if mode == "nfm" else None
         if protocol:
+            play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
             speak(f"Réception {protocol} terminée.")
             path = log_session.finalize()
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
@@ -1505,6 +1509,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             log_session = radio_log.RadioLogSession(band_label)
             sound_player.set_recording_session(log_session)
             if try_digital_voice_decode(freq, extra[0], band_label):
+                play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
                 speak(f"Réception {extra[1]} terminée.")
                 path = log_session.finalize()
                 noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,

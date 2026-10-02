@@ -18,6 +18,10 @@ import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
 
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
+# Encadrement de toute diffusion dans le journal, comme le scanner (2026-10-02).
+INCOMING_SOUND = os.path.join(RADIO_SCANER_DIR, "incoming.mp3")
+FREQ_OPEN_SOUND = os.path.join(RADIO_SCANER_DIR, "freq_open.mp3")
+FREQ_OVER_SOUND = os.path.join(RADIO_SCANER_DIR, "freq_over.mp3")
 METEOR_CENTER_HZ = 137_500_000
 METEOR_RATE = 1_024_000
 FM_RATE = 22050
@@ -86,7 +90,10 @@ def _fm(p, seconds, speech_detector):
         print(f"[satellites_watch] {p['nom']} : pas de voix ({voice_sec:.0f} s)")
         return
     session = radio_log.RadioLogSession(f"satellite {p['nom']}")
+    session.add_audio_file(INCOMING_SOUND)
+    session.add_audio_file(FREQ_OPEN_SOUND)
     session.add_raw_pcm(b"".join(kept), FM_RATE, "s16le")
+    session.add_audio_file(FREQ_OVER_SOUND)
     session.finalize()
     _announce(f"Passage du satellite {p['nom']} : {round(voice_sec)} secondes de voix enregistrées dans le journal.",
               f"satellite_{p['nom']}")
