@@ -28,15 +28,21 @@ import conseils  # noqa: E402
 NOTES_PATH = "/media/nas/nd1/server/radio_notes.json"  # jamais purge (le journal, lui, l'est a 48 h)
 
 # (code, question parlee, [(code, valeur parlee), ...], valeur par defaut)
+INTERFERENCES = [("sifflement", "Sifflement"), ("bourdonnement", "Bourdonnement"),
+                 ("autre_station", "Autre station"), ("crachotements", "Crachotements")]
+
 FIELDS = [
     ("contenu", "Contenu", [("voix", "voix"), ("musique", "musique"), ("tonalites", "tonalités, bips ou DTMF"),
                             ("donnees", "données numériques"), ("rien", "rien d'identifiable")], 0),
     ("lisibilite", "Lisibilité", [(n, f"{n} sur 5") for n in range(1, 6)], 2),
     ("souffle", "Souffle", [("aucun", "aucun"), ("discret", "discret"), ("moyen", "moyen"),
                             ("fort", "fort"), ("envahissant", "envahissant")], 1),
-    ("brouillage", "Brouillage", [("aucun", "aucun"), ("sifflement", "sifflement"),
-                                  ("bourdonnement", "bourdonnement"), ("autre_station", "autre station"),
-                                  ("crachotements", "crachotements")], 0),
+    # Un champ par brouillage (2026-10-02) : on peut avoir sifflement ET
+    # bourdonnement, comme les corpus (P.835, NISQA) notent chaque dimension
+    # sur sa propre echelle. Les anciennes notes gardent leur champ
+    # "brouillage" unique (lu par interferences()).
+    *[(code, name, [("aucun", "aucun"), ("un_peu", "un peu"), ("beaucoup", "beaucoup")], 0)
+      for code, name in INTERFERENCES],
     ("son", "Son déformé", [("naturel", "naturel"), ("etouffe", "étouffé"), ("metallique", "métallique"),
                             ("sature", "saturé")], 0),
     ("volume", "Volume", [("faible", "trop faible"), ("correct", "correct"), ("fort", "trop fort")], 1),
@@ -73,6 +79,15 @@ def _save_note(note):
     return len(notes)
 
 
+def interferences(reponses):
+    """{type: aucun / un_peu / beaucoup} pour une note, nouvelle ou ancienne
+    (ancien champ unique "brouillage" : le type nomme compte pour present)."""
+    if "brouillage" in reponses and not any(code in reponses for code, _ in INTERFERENCES):
+        old = reponses["brouillage"]
+        return {code: ("un_peu" if code == old else "aucun") for code, _ in INTERFERENCES}
+    return {code: reponses.get(code, "aucun") for code, _ in INTERFERENCES}
+
+
 def play_example(field, values):
     """Touche E / F2 : exemple sonore fixe de la valeur sous le curseur ; rend
     le texte a dire ensuite, ou None."""
@@ -82,13 +97,16 @@ def play_example(field, values):
     value_code, value_spoken = options[values[field]]
     if code in NO_EXAMPLE:
         return f"Pas d'exemple pour {question.lower()} : c'est ton avis."
-    path = os.path.join(EXAMPLES_DIR, f"{code}_{value_code}.mp3")
+    # Brouillages : l'exemple montre le type, quel que soit le niveau choisi.
+    name = f"brouillage_{code}" if code in dict(INTERFERENCES) else f"{code}_{value_code}"
+    path = os.path.join(EXAMPLES_DIR, name + ".mp3")
     if not os.path.exists(path):
         return f"Pas d'exemple pour {question.lower()} {value_spoken}."
     import audio_lock
     import sound_player
     import voix
-    voix.say_blocking(f"Exemple : {question.lower()}, {value_spoken}.")
+    voix.say_blocking(f"Exemple : {question.lower()}." if code in dict(INTERFERENCES)
+                      else f"Exemple : {question.lower()}, {value_spoken}.")
     ticket = audio_lock.acquire("console", timeout=10)
     try:
         sound_player.play_sound_effect(path, timeout_sec=20, label="notation")
@@ -107,8 +125,8 @@ def _field_text(i, values):
 # Validation rapide (touche V du journal) : "bonne prise", sans dialogue.
 # Le contenu n'est pas precise (voix, tonalites...) : "non_precise", que le
 # bilan ignore dans ses parts par type de contenu.
-GOOD_TAKE = {"contenu": "non_precise", "lisibilite": 5, "souffle": "aucun", "brouillage": "aucun",
-             "son": "naturel", "volume": "correct", "stabilite": "stable", "debut": "complet",
+GOOD_TAKE = {"contenu": "non_precise", "lisibilite": 5, "souffle": "aucun",
+             **{code: "aucun" for code, _ in INTERFERENCES}, "son": "naturel", "volume": "correct", "stabilite": "stable", "debut": "complet",
              "fin": "correcte", "merite": "oui", "certitude": "sur"}
 
 
@@ -164,11 +182,12 @@ def rate(key_source, say, out, path, stamp):
     info = ns.capture_info(path) or {}
     previous = next((n for n in load_notes() if n.get("fichier") == os.path.basename(path)), None)
     values = [f[3] for f in FIELDS]
-    if previous:  # reprendre la note deja donnee
+    if previous:  # reprendre la note deja donnee (ancien champ brouillage compris)
+        known = dict(previous["reponses"], **interferences(previous["reponses"]))
         for i, (code, _, options, _) in enumerate(FIELDS):
             codes = [c for c, _ in options]
-            if previous["reponses"].get(code) in codes:
-                values[i] = codes.index(previous["reponses"][code])
+            if known.get(code) in codes:
+                values[i] = codes.index(known[code])
     field = 0
     intro = conseils.intro("notation", TITLE, CONSIGNE)
     out(intro + "\n")

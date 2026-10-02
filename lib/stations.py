@@ -100,13 +100,20 @@ def habits(station):
 
 # --- creation et captures -------------------------------------------------------------
 
+def _no_interference(r):
+    """Aucun brouillage : ancien champ unique, ou les quatre champs du 2026-10-02."""
+    if "brouillage" in r:
+        return r["brouillage"] == "aucun"
+    return all(r.get(k, "aucun") == "aucun" for k in ("sifflement", "bourdonnement", "autre_station", "crachotements"))
+
+
 def is_all_green(note):
     """Note "tout au vert" : validation rapide, ou note detaillee sans defaut."""
     if note.get("validation_rapide"):
         return True
     r = note.get("reponses", {})
     return (r.get("lisibilite", 0) >= 4 and r.get("souffle") in ("aucun", "discret")
-            and r.get("brouillage") == "aucun" and r.get("son") == "naturel" and r.get("stabilite") == "stable"
+            and _no_interference(r) and r.get("son") == "naturel" and r.get("stabilite") == "stable"
             and r.get("debut") == "complet" and r.get("fin") == "correcte" and r.get("merite") == "oui")
 
 
