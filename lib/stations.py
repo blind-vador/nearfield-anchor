@@ -142,22 +142,20 @@ def record_capture(freq_hz, mode):
 
 # --- recentrage -------------------------------------------------------------------------
 
-def measure_center(freq_hz, mode):
-    """Centre reel de l'emission pres de freq_hz (Hz), ou None : court releve
-    I/Q decale de CENTER_OFFSET_HZ, spectre moyenne, puis centre de gravite
-    de l'energie au-dessus du bruit (porteuse la plus forte en AM)."""
+def _snapshot(freq_hz, gain=30):
+    """Spectre moyen (dB) autour de freq_hz : (frequences, niveaux, plancher)
+    ou None. Releve I/Q en flux, decale de CENTER_OFFSET_HZ (loin de la raie
+    parasite au centre du tuner), jamais plus de 5 s."""
     tune = int(freq_hz + CENTER_OFFSET_HZ)
-    # Flux lu comme lora_watch (rtl_sdr sans -n) : on prend ce qu'il faut puis
-    # on coupe ; jamais plus de 5 s, le scanner ne doit pas rester bloque.
     try:
-        proc = subprocess.Popen(["rtl_sdr", "-f", str(tune), "-s", str(CENTER_RATE), "-g", "30", "-"],
+        proc = subprocess.Popen(["rtl_sdr", "-f", str(tune), "-s", str(CENTER_RATE), "-g", str(gain), "-"],
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except OSError:
         return None
     raw, deadline = b"", time.time() + 5
+    skip = CENTER_RATE  # la premiere demi-seconde (reglage du tuner) est jetee
     try:
         os.set_blocking(proc.stdout.fileno(), False)
-        skip = CENTER_RATE  # la premiere demi-seconde (reglage du tuner) est jetee
         while len(raw) < skip + 2 * CENTER_SAMPLES and time.time() < deadline and proc.poll() is None:
             chunk = proc.stdout.read(65536)
             if chunk:
@@ -176,13 +174,22 @@ def measure_center(freq_hz, mode):
     iq = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 127.5
     x = (iq[0::2] + 1j * iq[1::2])[: (len(iq) // 2 // 4096) * 4096].reshape(-1, 4096)
     spec = np.fft.fftshift((np.abs(np.fft.fft(x * np.hanning(4096), axis=1)) ** 2).mean(axis=0))
-    bins = (np.arange(4096) - 2048) * CENTER_RATE / 4096 + tune  # frequence de chaque case
-    search = SEARCH_HZ.get(mode, 15_000)
-    window = np.abs(bins - freq_hz) <= search
+    bins = (np.arange(4096) - 2048) * CENTER_RATE / 4096 + tune
+    db = 10 * np.log10(spec + 1e-9)
+    return bins, db, float(np.median(db))
+
+
+def measure_center(freq_hz, mode):
+    """Centre reel de l'emission pres de freq_hz (Hz), ou None : centre de
+    gravite de l'energie au-dessus du bruit (porteuse la plus forte en AM)."""
+    snap = _snapshot(freq_hz)
+    if snap is None:
+        return None
+    bins, db, floor = snap
+    window = np.abs(bins - freq_hz) <= SEARCH_HZ.get(mode, 15_000)
     if window.sum() < 3:
         return None
-    power_db = 10 * np.log10(spec[window] + 1e-9)
-    floor = np.median(10 * np.log10(spec + 1e-9))
+    power_db = db[window]
     above = power_db > floor + 6
     if not above.any():
         return None
@@ -190,6 +197,56 @@ def measure_center(freq_hz, mode):
         return int(bins[window][np.argmax(power_db)])
     weights = 10 ** (power_db[above] / 10)
     return int((bins[window][above] * weights).sum() / weights.sum())
+
+
+# --- vraie station ou artefact de la cle ? -----------------------------------------------
+
+GAIN_STEP_DB = 10
+
+
+def analyse(freq_hz):
+    """Juste apres une capture en ondes courtes (CB, 10 m) : largeur du
+    signal et baisse quand on retire GAIN_STEP_DB de gain.
+    - une emission AM fait environ 10 kHz de large, une radio FM qui deborde
+      sur ces frequences (cle saturee) 150 a 200 kHz ;
+    - un vrai signal baisse d'autant que le gain ; un produit de saturation
+      (intermodulation) baisse environ trois fois plus.
+    Rend {largeur_khz, baisse_db, verdict} ou None (signal deja parti)."""
+    high = _snapshot(freq_hz, gain=30)
+    low = _snapshot(freq_hz, gain=30 - GAIN_STEP_DB)
+    if high is None or low is None:
+        return None
+    bins, db, floor = high
+    near = np.abs(bins - freq_hz) <= 120_000
+    peak_i = np.flatnonzero(near)[np.argmax(db[near])]
+    peak = db[peak_i]
+    if peak < floor + 10:
+        return None  # plus rien a mesurer
+    above = db > peak - 20  # largeur a -20 dB de la crete, d'un seul tenant
+    lo = hi = peak_i
+    while lo > 0 and above[lo - 1]:
+        lo -= 1
+    while hi < len(db) - 1 and above[hi + 1]:
+        hi += 1
+    width_khz = round((bins[hi] - bins[lo]) / 1000, 1)
+    drop = round(float(peak - low[1][peak_i]), 1)
+    if width_khz > 60 or drop >= 2 * GAIN_STEP_DB:
+        verdict = "artefact probable : une émission forte qui sature la clé, pas une station sur cette fréquence"
+    elif width_khz <= 20 and drop <= 1.5 * GAIN_STEP_DB:
+        verdict = "vraie émission probable sur cette fréquence"
+    else:
+        verdict = "indécis"
+    return {"largeur_khz": width_khz, "baisse_db": drop, "verdict": verdict}
+
+
+def note_analysis(freq_hz, mode, result):
+    """Garde le verdict sur la station probable proche, s'il y en a une."""
+    if not result:
+        return
+    with _Locked() as data:
+        s = _near(data, freq_hz, mode)
+        if s:
+            s["analyse"] = dict(result, t=time.time())
 
 
 def center(freq_hz, mode):
@@ -252,5 +309,7 @@ def spoken_list():
             text += f", souvent le {JOURS[wd]} vers {hour} heures"
         if not s.get("centree"):
             text += ", pas encore recentrée"
+        if s.get("analyse", {}).get("verdict", "").startswith("artefact"):
+            text += ", sans doute un artefact de la clé"
         parts.append(text)
     return f"{len(stations)} station{'s' if len(stations) > 1 else ''} probable{'s' if len(stations) > 1 else ''} : " + " ; ".join(parts) + "."

@@ -13,6 +13,8 @@ satellites -- "journal capteurs", "journal satellites"...
                            (storage/radio), nommee par sa date de capture
   fleche gauche            rejette : meme procedure que "parasite"
                            (supprime + apprend l'empreinte si elle existe)
+  I                        informations : frequence, mode, et pour la CB et
+                           le 10 m le verdict "vraie emission ou artefact"
   B                        ecoute le son brut, avant nettoyage (journal
                            radio : <nom>.brut.mp3, garde 48 h comme le reste)
   Entree                   rejoue          Echap : ferme
@@ -65,7 +67,7 @@ RE_TIME_ONLY = re.compile("_" + _TIME)
 CONSIGNE = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : "
             "écouter les enregistrements. Contrôle flèche haut ou bas : premier ou dernier du jour. "
             "Flèche droite : garder. Flèche gauche : rejeter comme "
-            "parasite. V : valider, bonne prise. N : noter en détail. B : écouter le son brut, avant nettoyage. "
+            "parasite. V : valider, bonne prise. N : noter en détail. B : écouter le son brut, avant nettoyage. I : informations. "
             "Entrée : rejouer. Échap : fermer. F1 redit ces touches.")
 CONSIGNE_CAPTEURS = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : un relevé par capteur, "
                      "et les annonces. Contrôle flèche haut ou bas : premier ou dernier du jour. Flèche droite : "
@@ -233,6 +235,24 @@ def _keep(stamp, path, text, category):
     return "Gardé."
 
 
+def info_text(path):
+    """Touche I : ce que le systeme sait de cet enregistrement."""
+    info = ns.capture_info(path) or {}
+    if not info.get("freq_hz"):
+        return "Pas d'informations radio pour celui-ci."
+    mhz = f"{info['freq_hz'] / 1e6:.4f}".rstrip("0").replace(".", ",")
+    modes = {"nfm": "FM étroite", "wfm": "FM large", "am": "AM", "usb": "BLU haute", "lsb": "BLU basse"}
+    text = f"{mhz} mégahertz, {modes.get(info.get('mode'), info.get('mode') or 'mode inconnu')}"
+    if info.get("label"):
+        text += f", {info['label']}"
+    analysis = (info.get("metrics") or {}).get("analyse")
+    if analysis:
+        text += (f". Signal de {str(analysis['largeur_khz']).replace('.', ',')} kilohertz de large, "
+                 f"baisse de {str(analysis['baisse_db']).replace('.', ',')} décibels pour 10 de gain en moins : "
+                 f"{analysis['verdict']}")
+    return text + "."
+
+
 def raw_path(path):
     """Son brut garde a cote d'un enregistrement radio, s'il existe."""
     candidate = path[:-4] + ".brut.mp3" if path else None
@@ -350,10 +370,12 @@ def run(key_source, say, out, category="radio"):
                         # selectionne (sinon on croit l'avoir ecoute alors que non).
                         voix.say_blocking(bound)
                         play(rec_i)
-            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "b", "B"):
+            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "b", "B", "i", "I"):
                 text = "Choisis d'abord un enregistrement avec la flèche bas."
             elif key in ("\r", "\n"):
                 play(rec_i)
+            elif key in ("i", "I"):
+                text = info_text(recs[rec_i][1]) if recs[rec_i][1] else "C'est un relevé de capteurs."
             elif key in ("b", "B"):
                 brut = raw_path(recs[rec_i][1])
                 if brut:

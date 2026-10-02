@@ -1323,6 +1323,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     return heard_signal or bool(meaningful_messages)
 
 
+HF_ANALYSIS_MAX_HZ = 30_000_000  # analyse "vraie station ou artefact" sous 30 MHz
 _last_stream_fingerprint = None
 _last_stream_metrics = {}
 _last_stream_raw = (b"", 22050)       # son brut de la derniere ecoute (touche B du journal)
@@ -1477,9 +1478,20 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
             path = log_session.finalize()
             _save_raw(path)
+            metrics = dict(_last_stream_metrics, niveau_db=level_db)
+            if freq < HF_ANALYSIS_MAX_HZ:
+                # CB, 10 m : vraie emission ou artefact de la cle saturee ?
+                # (largeur du signal, baisse avec le gain ; lib/stations.py)
+                try:
+                    result = stations.analyse(freq)
+                    if result:
+                        metrics["analyse"] = result
+                        stations.note_analysis(freq, mode, result)
+                        print(f"[radio_watch] analyse {freq / 1e6:.4f} MHz : {result}")
+                except Exception as exc:
+                    print(f"[radio_watch] analyse impossible : {exc!r}")
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path,
-                                            _last_stream_fingerprint,
-                                            dict(_last_stream_metrics, niveau_db=level_db))
+                                            _last_stream_fingerprint, metrics)
             saved = True
             return True
         log_session.discard()
