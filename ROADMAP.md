@@ -5607,3 +5607,30 @@ tant que le Mac repond.
   meme sequence qu'une fleche seule.
 - Constat : les 35 passages de voitures de la nuit du 1er au 2 octobre sont
   UN seul vehicule (numero 3), sans doute gare tout pres.
+
+## 2026-10-02 : bilan complet et reglages audio appris des notes
+
+- Anciennes notes mises de cote (server/radio_notes_archive_2026-10-02_*.json,
+  demande utilisateur : repartir sur la nouvelle grille).
+- Grille : un champ par brouillage (sifflement, bourdonnement, autre
+  station, crachotements : aucun / un peu / beaucoup), comme les corpus
+  notent chaque dimension a part ; exemples sonores fixes (E / F2).
+- lib/reglages_audio.py : reglages par bande (attente avant de clore, marge
+  de detection, aigus gardes, retrait du souffle, seuil anti-crachotements,
+  anti-sifflement, anti-bourdonnement, volume), versions successives sur la
+  carte SD ; lus a chaque ecoute par radio_watch et airband_bridge (marge ->
+  seuil du silencieux RTLSDR-Airband).
+- console/bilan.py : qualite 0-1 par note ; propositions chiffrees par bande
+  sur les notes arrivees DEPUIS le dernier changement (8 au moins) ; reglage
+  contre-productif = qualite en baisse de 0,08 apres lui (5 notes) -> dit,
+  et annule tout seul en mode automatique. Commandes : bilan, applique les
+  reglages, reglage precedent, reglages automatiques oui / non, reglages
+  audio, reapprendre de zero (confirmation ; tout est archive, les parasites
+  et stations probables restent).
+- Filtres (audio_filters.GentleCleaner) mesures sur une vraie voix (NISQA) :
+  anti-sifflement = pic stable dans le temps (la voix varie) : -10 dB de
+  sifflement, voix intacte ; anti-bourdonnement = plancher persistant sur
+  les harmoniques de 50 Hz en analyse fine (cases de 5 Hz, tolere la derive
+  du reseau) : -11 dB, voix intacte. Premiers essais ecartes : masque
+  spectral simple (abimait la voix de 4 a 7 dB), moyenne synchrone de
+  periode (parfaite a 50,00 Hz, inutilisable a 50,02 Hz).

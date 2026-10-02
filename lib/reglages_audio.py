@@ -138,7 +138,7 @@ def spoken_value(param, value):
     if isinstance(value, bool):
         return "activé" if value else "désactivé"
     if value is None:
-        return "valeur d'origine"
+        return "3 secondes" if param == "attente_fin_s" else "valeur d'origine"
     unit = {"attente_fin_s": " secondes", "marge_detection_db": " décibels", "passe_bas_hz": " hertz",
             "reduction_bruit_db": " décibels", "gain_db": " décibels"}.get(param, "")
     text = f"{value:+g}" if param in ("marge_detection_db", "gain_db") else f"{value:g}"

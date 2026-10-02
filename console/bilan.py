@@ -160,7 +160,8 @@ def summary():
     if not notation.load_notes():
         return "Aucune note pour l'instant. Dans le journal, N pour noter un enregistrement, V pour une bonne prise."
     data = analyse()
-    parts = [f"{sum(e['notes'] for e in data.values())} notes radio sur {len(data)} bandes."]
+    total = sum(e["notes"] for e in data.values())
+    parts = [f"{total} note{'s' if total > 1 else ''} radio sur {len(data)} bande{'s' if len(data) > 1 else ''}."]
     for band, e in sorted(data.items(), key=lambda kv: -kv[1]["notes"]):
         line = f"{e['libelle']} : qualité {round(100 * e['qualite'])} sur 100"
         if e["regression"]:
