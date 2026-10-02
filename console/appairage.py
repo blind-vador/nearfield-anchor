@@ -15,20 +15,14 @@ sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import compagnon  # noqa: E402
 import conseils  # noqa: E402
 import keys  # noqa: E402
-
-TITLE = "Appairage d'une machine compagne."
-CONSIGNE = ("Sur l'autre machine, ouvre Nearfield Bridge et choisis appairer avec un Pi. Quand elle répond, "
-            "vérifie qu'elle affiche le même code, puis valide d'un seul côté : Entrée ici, ou Oui sur la machine. "
-            "Échap : annuler. F1 redit ces consignes.")
-
+from phrases import dire  # noqa: E402
 
 def _spoken_code(code):
     return " ".join(code)
 
 
 def _done_text(answer):
-    return (f"Machine {answer.get('nom')} appairée : nos clés sont échangées. Elle se connectera au Pi et "
-            "calculera pour lui ; dis compagnon pour son état.")
+    return dire("appairage.reussi", nom=answer.get("nom"))
 
 
 def run(key_source, say, out):
@@ -48,12 +42,8 @@ def run(key_source, say, out):
             if answer and "answer" not in found:
                 found["answer"] = answer
                 caps = ", ".join(answer.get("capacites") or []) or "rien pour l'instant"
-                tell(f"La machine {answer.get('nom', 'inconnue')} répond. Code : {_spoken_code(answer['code'])}. "
-                     f"Elle sait faire : {caps}. Si c'est le même code, Entrée ici ou Oui sur la machine ; "
-                     "sinon Échap.")
-            if answer and compagnon.confirmed_by_companion(answer):
-                found["fin"] = "confirme"  # valide sur la machine : on suit
-                keys.wake()
+                tell(dire("appairage.reponse", nom=answer.get("nom", "inconnue"), code=_spoken_code(answer["code"]),
+                          capacites=caps))
                 return
             if answer and compagnon.refused(answer["id"]):
                 found["fin"] = "refus"
@@ -62,33 +52,34 @@ def run(key_source, say, out):
             stop.wait(1)
         if not stop.is_set():
             found["timeout"] = True
-            tell("Aucune machine n'a répondu en trois minutes. Échap pour fermer.")
+            tell(dire("appairage.delai"))
 
-    tell(conseils.intro("appairage", TITLE, CONSIGNE) + " J'attends la machine.")
+    consigne = dire("appairage.consigne")
+    tell(conseils.intro("appairage", dire("appairage.titre"), consigne) + " " + dire("appairage.attente"))
     threading.Thread(target=wait_answer, daemon=True).start()
     try:
         for key in key_source:
             if key == keys.WAKE:
                 if found.get("fin") == "confirme":
                     compagnon.accept(found["answer"])
-                    return "Code validé sur la machine. " + _done_text(found["answer"])
+                    return dire("appairage.valide_ailleurs") + " " + _done_text(found["answer"])
                 if found.get("fin") == "refus":
-                    return "La machine a refusé : les codes ne correspondaient pas. Rien n'est enregistré."
+                    return dire("appairage.refus")
                 continue
             if key == "\x1b":
-                return "Appairage annulé."
+                return dire("appairage.annule")
             if key in ("\r", "\n"):
                 answer = found.get("answer")
                 if answer:
                     compagnon.accept(answer)
                     return _done_text(answer)
-                text = "Pas encore de réponse." if not found.get("timeout") else "Personne n'a répondu. Échap."
+                text = dire("appairage.pas_reponse" if not found.get("timeout") else "appairage.personne")
             elif conseils.is_help(key):
-                text = CONSIGNE
+                text = consigne
             else:
-                text = "Entrée pour accepter quand la machine a répondu, Échap pour annuler."
+                text = dire("appairage.aide_courte")
             tell(text)
-        return "Appairage fermé."
+        return dire("appairage.ferme")
     finally:
         stop.set()
         compagnon.stop_pairing()

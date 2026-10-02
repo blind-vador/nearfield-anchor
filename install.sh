@@ -178,6 +178,9 @@ cp "$REPO_DIR"/lib/rnnoise_lib/*.py "$TARGET_DIR/rnnoise_lib/"
 cp "$REPO_DIR"/tools/*.py "$TARGET_DIR/"
 cp "$REPO_DIR"/bridge/pont_protocole.py "$REPO_DIR"/bridge/lora_decode.py "$TARGET_DIR/"  # pont machine compagne (lib/compagnon.py), decodage LoRa de secours
 install -D -o vador -g vador -m 755 "$REPO_DIR"/tools/python3-gnuradio /home/vador/autopilot/bin/python3-gnuradio
+# Phrases de l'interface, version neutre par langue (lib/phrases.py).
+install -d -o vador -g vador /home/vador/autopilot/phrases
+install -o vador -g vador -m 644 "$REPO_DIR"/phrases/*.ini /home/vador/autopilot/phrases/
 # Exemples de reference de la grille de notation (touches E / F2), referentiel fixe.
 install -d -o vador -g vador /home/vador/autopilot/exemples_notation
 install -o vador -g vador -m 644 "$REPO_DIR"/assets/exemples_notation/* /home/vador/autopilot/exemples_notation/

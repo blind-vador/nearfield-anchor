@@ -41,6 +41,7 @@ import time
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import journaux  # noqa: E402
+from phrases import dire, nombre  # noqa: E402
 import keys  # noqa: E402
 import noise_signatures as ns  # noqa: E402
 import notation  # noqa: E402
@@ -64,14 +65,7 @@ RE_ROOT_FILE = re.compile("_" + _DAY + "_" + _TIME)
 RE_DAY_DIR = re.compile("^" + _DAY + "$")
 RE_TIME_ONLY = re.compile("_" + _TIME)
 
-CONSIGNE = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : "
-            "écouter les enregistrements. Contrôle flèche haut ou bas : premier ou dernier du jour. "
-            "Flèche droite : garder. Flèche gauche : rejeter comme "
-            "parasite. V : valider, bonne prise. N : noter en détail. B : écouter le son brut, avant nettoyage. I : informations. "
-            "Entrée : rejouer. Échap : fermer. F1 redit ces touches.")
-CONSIGNE_CAPTEURS = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : un relevé par capteur, "
-                     "et les annonces. Contrôle flèche haut ou bas : premier ou dernier du jour. Flèche droite : "
-                     "garder. Entrée : relire. Échap : fermer. F1 redit ces touches.")
+# Phrases dites : lib/phrases.py (fichier phrases/<langue>.ini, personnalite du jour).
 
 
 def _date(day, month_name, year):
@@ -226,31 +220,29 @@ def _keep(stamp, path, text, category):
     if text is not None:
         dest = dest[:-4] + ".txt"
     if os.path.exists(dest):
-        return "Déjà gardé."
+        return dire("journal.deja_garde")
     if text is not None:
         with open(dest, "w", encoding="utf-8") as f:
             f.write(text)
     else:
         shutil.copy2(path, dest)
-    return "Gardé."
+    return dire("journal.garde")
 
 
 def info_text(path):
     """Touche I : ce que le systeme sait de cet enregistrement."""
     info = ns.capture_info(path) or {}
     if not info.get("freq_hz"):
-        return "Pas d'informations radio pour celui-ci."
+        return dire("journal.pas_info")
     mhz = f"{info['freq_hz'] / 1e6:.4f}".rstrip("0").replace(".", ",")
     modes = {"nfm": "FM étroite", "wfm": "FM large", "am": "AM", "usb": "BLU haute", "lsb": "BLU basse"}
-    text = f"{mhz} mégahertz, {modes.get(info.get('mode'), info.get('mode') or 'mode inconnu')}"
-    if info.get("label"):
-        text += f", {info['label']}"
+    text = dire("journal.info", frequence=mhz, mode=modes.get(info.get("mode"), info.get("mode") or "mode inconnu"),
+                libelle=info.get("label") or "bande inconnue")
     analysis = (info.get("metrics") or {}).get("analyse")
     if analysis:
-        text += (f". Signal de {str(analysis['largeur_khz']).replace('.', ',')} kilohertz de large, "
-                 f"baisse de {str(analysis['baisse_db']).replace('.', ',')} décibels pour 10 de gain en moins : "
-                 f"{analysis['verdict']}")
-    return text + "."
+        text += " " + dire("journal.info_analyse", largeur=str(analysis["largeur_khz"]).replace(".", ","),
+                           baisse=str(analysis["baisse_db"]).replace(".", ","), verdict=analysis["verdict"])
+    return text
 
 
 def raw_path(path):
@@ -275,8 +267,8 @@ def _reject(path):
         pass
     if info and info.get("fingerprint"):
         ns.add_signature(info)
-        return "Rejeté, empreinte apprise."
-    return "Rejeté et supprimé. Pas d'empreinte sonore pour celui-ci, je ne peux pas l'apprendre."
+        return dire("journal.rejete_appris")
+    return dire("journal.rejete_supprime")
 
 
 def ctrl_held():
@@ -286,12 +278,12 @@ def ctrl_held():
 def run(key_source, say, out, category="radio"):
     name = journaux.NAMES[category]
     if not os.path.ismount("/media/nas/nd1"):
-        return f"Le disque server n'est pas accessible, pas de journal {name}."
+        return dire("journal.disque_absent", nom=name)
     days = scan_recordings(category)
     if not days:
-        return f"Le journal {name} est vide."
-    title = f"Journal {name}."
-    consigne = CONSIGNE_CAPTEURS if category == "capteurs" else CONSIGNE
+        return dire("journal.vide", nom=name)
+    title = dire("journal.titre", nom=name)
+    consigne = dire("journal.consigne_capteurs" if category == "capteurs" else "journal.consigne")
     order = sorted(days, reverse=True)  # du plus recent au plus ancien
     # rec_i = -1 : "avant le premier" -- la premiere fleche bas joue le 1er enregistrement.
     day_i, rec_i = 0, -1
@@ -317,7 +309,7 @@ def run(key_source, say, out, category="radio"):
         date = order[day_i]
         n = len(days[date])
         what = "élément" if category == "capteurs" else "enregistrement"
-        return f"{spoken_day(date)}, {n} {what}{'s' if n > 1 else ''}."
+        return dire("nav.jour", jour=spoken_day(date), elements=nombre(n, what))
 
     def play(i):
         """Joue l'enregistrement, ou lit le releve (journal capteurs)."""
@@ -351,7 +343,7 @@ def run(key_source, say, out, category="radio"):
             elif key in ("\x1b[A", "\x1b[B") and ctrl_held():
                 # Ctrl + fleche : premier ou dernier du jour, joue aussitot.
                 rec_i = 0 if key == "\x1b[A" else len(recs) - 1
-                voix.say_blocking("Premier du jour." if key == "\x1b[A" else "Dernier du jour.")
+                voix.say_blocking(dire("nav.premier_jour" if key == "\x1b[A" else "nav.dernier_jour"))
                 play(rec_i)
             elif key in ("\x1b[A", "\x1b[B"):
                 new_i = rec_i + (1 if key == "\x1b[B" else -1)
@@ -361,7 +353,7 @@ def run(key_source, say, out, category="radio"):
                     rec_i = new_i
                     play(rec_i)
                 else:
-                    bound = "Début de la journée." if new_i < 0 else "Fin de la journée."
+                    bound = dire("nav.debut_journee" if new_i < 0 else "nav.fin_journee")
                     if player.playing() or rec_i < 0 or recs[rec_i][2] is not None:
                         player.stop()
                         text = bound
@@ -371,21 +363,21 @@ def run(key_source, say, out, category="radio"):
                         voix.say_blocking(bound)
                         play(rec_i)
             elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "b", "B", "i", "I"):
-                text = "Choisis d'abord un enregistrement avec la flèche bas."
+                text = dire("journal.choisir")
             elif key in ("\r", "\n"):
                 play(rec_i)
             elif key in ("i", "I"):
-                text = info_text(recs[rec_i][1]) if recs[rec_i][1] else "C'est un relevé de capteurs."
+                text = info_text(recs[rec_i][1]) if recs[rec_i][1] else dire("journal.releve")
             elif key in ("b", "B"):
                 brut = raw_path(recs[rec_i][1])
                 if brut:
                     player.stop()
-                    voix.say_blocking("Son brut.")
+                    voix.say_blocking(dire("journal.son_brut"))
                     player.play(brut)
                 else:
-                    text = "Pas de son brut pour celui-ci : seules les nouvelles écoutes du scanner en ont un."
+                    text = dire("journal.pas_son_brut")
             elif recs[rec_i][2] is not None and key in ("\x1b[D", "n", "N", "v", "V"):
-                text = "Un relevé de capteurs ne se rejette pas et ne se note pas : flèche droite pour le garder."
+                text = dire("journal.releve_non_notable")
             elif key in ("\x1b[C", "\x1b[D"):
                 player.stop()
                 stamp, path, spoken = recs[rec_i]
@@ -398,12 +390,12 @@ def run(key_source, say, out, category="radio"):
                         del days[order[day_i]]
                         order.pop(day_i)
                         if not order:
-                            text += " Plus aucun enregistrement."
+                            text += " " + dire("journal.plus_rien")
                             say(text)
                             break
                         day_i %= len(order)
                         rec_i = -1
-                        text += " Journée vide. " + announce_day()
+                        text += " " + dire("journal.journee_vide") + " " + announce_day()
                     else:
                         # Le suivant prend la place du rejete : on le joue tout de
                         # suite, sinon fleche bas le sauterait.
@@ -422,11 +414,11 @@ def run(key_source, say, out, category="radio"):
             elif conseils.is_help(key):
                 text = consigne
             else:
-                text = "Tab, flèches, V, N, entrée, ou échap pour fermer. F1 pour l'aide."
+                text = dire("journal.aide_courte")
             if text:
                 out(f"[{text}]\n")
                 say(text)
     finally:
         player.close()
         _journal_opened(False)
-    return f"Journal {name} fermé."
+    return dire("journal.ferme", nom=name)

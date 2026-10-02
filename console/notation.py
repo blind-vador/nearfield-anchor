@@ -24,6 +24,7 @@ sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import noise_signatures as ns  # noqa: E402
 import conseils  # noqa: E402
+from phrases import dire, nombre  # noqa: E402
 
 NOTES_PATH = "/media/nas/nd1/server/radio_notes.json"  # jamais purge (le journal, lui, l'est a 48 h)
 
@@ -53,9 +54,6 @@ FIELDS = [
     ("certitude", "Certitude", [("sur", "sûr"), ("hesitant", "hésitant")], 0),
 ]
 OK_INDEX = len(FIELDS)
-TITLE = "Notation."
-CONSIGNE = ("Flèches haut et bas : champ. Gauche et droite : valeur. E ou F2 : écouter l'exemple de "
-            "référence de la valeur choisie. Entrée sur OK pour enregistrer. Échap : annuler. F1 redit ces touches.")
 EXAMPLES_DIR = "/home/vador/autopilot/exemples_notation"
 F2 = ("\x1b[[B", "\x1bOQ", "\x1b[12~")
 NO_EXAMPLE = ("merite", "certitude")  # c'est l'avis de la personne, pas un son
@@ -92,21 +90,21 @@ def play_example(field, values):
     """Touche E / F2 : exemple sonore fixe de la valeur sous le curseur ; rend
     le texte a dire ensuite, ou None."""
     if field >= OK_INDEX:
-        return "Choisis d'abord un champ."
+        return dire("notation.choisir_champ")
     code, question, options, _ = FIELDS[field]
     value_code, value_spoken = options[values[field]]
     if code in NO_EXAMPLE:
-        return f"Pas d'exemple pour {question.lower()} : c'est ton avis."
+        return dire("notation.pas_exemple_avis", champ=question.lower())
     # Brouillages : l'exemple montre le type, quel que soit le niveau choisi.
     name = f"brouillage_{code}" if code in dict(INTERFERENCES) else f"{code}_{value_code}"
     path = os.path.join(EXAMPLES_DIR, name + ".mp3")
     if not os.path.exists(path):
-        return f"Pas d'exemple pour {question.lower()} {value_spoken}."
+        return dire("notation.pas_exemple", champ=question.lower(), valeur=value_spoken)
     import audio_lock
     import sound_player
     import voix
-    voix.say_blocking(f"Exemple : {question.lower()}." if code in dict(INTERFERENCES)
-                      else f"Exemple : {question.lower()}, {value_spoken}.")
+    voix.say_blocking(dire("notation.exemple_type", champ=question.lower()) if code in dict(INTERFERENCES)
+                      else dire("notation.exemple", champ=question.lower(), valeur=value_spoken))
     ticket = audio_lock.acquire("console", timeout=10)
     try:
         sound_player.play_sound_effect(path, timeout_sec=20, label="notation")
@@ -117,7 +115,7 @@ def play_example(field, values):
 
 def _field_text(i, values):
     if i == OK_INDEX:
-        return "OK, entrée pour enregistrer."
+        return dire("notation.ok")
     _, question, options, _ = FIELDS[i]
     return f"{question} : {options[values[i]][1]}."
 
@@ -165,26 +163,26 @@ def _record(info, path, stamp, reponses, rapide=False):
 
 
 def _station_text(station):
-    return " Station probable notée : le scanner s'y recentrera et y reviendra." if station else ""
+    return " " + dire("notation.station_notee") if station else ""
 
 
 def validate(path, stamp):
     """Bonne prise, en une touche : note maximale sur tous les criteres."""
     if not os.path.ismount("/media/nas/nd1"):
-        return "Le disque server n'est pas accessible, validation impossible."
+        return dire("notation.disque_absent_validation")
     previous = next((n for n in load_notes() if n.get("fichier") == os.path.basename(path)), None)
     if previous and previous.get("validation_rapide"):
-        return "Déjà validé."
+        return dire("notation.deja_valide")
     if previous:
-        return "Déjà noté en détail : N pour modifier la note."
+        return dire("notation.deja_note")
     total, station, auto = _record(ns.capture_info(path) or {}, path, stamp, dict(GOOD_TAKE), rapide=True)
-    return f"Validé, bonne prise. {total} note{'s' if total > 1 else ''} au total." + _station_text(station) + auto
+    return dire("notation.valide", total=nombre(total, "note")) + _station_text(station) + auto
 
 
 def rate(key_source, say, out, path, stamp):
     """Dialogue de notation ; rend la phrase de sortie."""
     if not os.path.ismount("/media/nas/nd1"):
-        return "Le disque server n'est pas accessible, notation impossible."
+        return dire("notation.disque_absent")
     info = ns.capture_info(path) or {}
     previous = next((n for n in load_notes() if n.get("fichier") == os.path.basename(path)), None)
     values = [f[3] for f in FIELDS]
@@ -195,12 +193,13 @@ def rate(key_source, say, out, path, stamp):
             if known.get(code) in codes:
                 values[i] = codes.index(known[code])
     field = 0
-    intro = conseils.intro("notation", TITLE, CONSIGNE)
+    consigne = dire("notation.consigne")
+    intro = conseils.intro("notation", dire("notation.titre"), consigne)
     out(intro + "\n")
-    say(intro + (" Déjà noté, tu modifies la note. " if previous else " ") + _field_text(field, values))
+    say(intro + (" " + dire("notation.deja_note_modif") + " " if previous else " ") + _field_text(field, values))
     for key in key_source:
         if key == "\x1b":
-            return "Notation annulée."
+            return dire("notation.annulee")
         if key in ("\x1b[A", "\x1b[B"):
             field = (field + (1 if key == "\x1b[B" else -1)) % (OK_INDEX + 1)
             text = _field_text(field, values)
@@ -211,17 +210,17 @@ def rate(key_source, say, out, path, stamp):
         elif key in ("\r", "\n") and field == OK_INDEX:
             reponses = {code: FIELDS[i][2][values[i]][0] for i, (code, *_) in enumerate(FIELDS)}
             total, station, auto = _record(info, path, stamp, reponses)
-            return f"Note enregistrée. {total} note{'s' if total > 1 else ''} au total." + _station_text(station) + auto
+            return dire("notation.enregistree", total=nombre(total, "note")) + _station_text(station) + auto
         elif key in ("\r", "\n"):
-            text = "Descends jusqu'à OK pour enregistrer."
+            text = dire("notation.descends_ok")
         elif key in ("e", "E") or key in F2:
             text = play_example(field, values)
             if text is None:
                 continue
         elif conseils.is_help(key):
-            text = CONSIGNE
+            text = consigne
         else:
-            text = "Flèches, E pour l'exemple, entrée sur OK, ou échap. F1 pour l'aide."
+            text = dire("notation.aide_courte")
         out(f"[{text}]\n")
         say(text)
-    return "Notation annulée."
+    return dire("notation.annulee")

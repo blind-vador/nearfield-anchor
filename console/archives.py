@@ -24,6 +24,7 @@ import subprocess
 
 import journal
 import journaux  # noqa: E402  (chemin ajoute par journal)
+from phrases import dire, nombre  # noqa: E402
 import espeak_out  # noqa: E402  (chemin ajoute par journal)
 import conseils  # noqa: E402
 import voix  # noqa: E402
@@ -34,11 +35,6 @@ RE_DATED = re.compile(r"^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) (
                       r"(\d{4}) (\d{2})h(\d{2})m(\d{2})s\.")
 VOLUME_STEP = 0.2
 VOLUME_MIN, VOLUME_MAX = 0.2, 3.0
-
-CONSIGNE = ("Tab et majuscule tab : changer de jour. Flèches haut et bas : "
-            "écouter. Contrôle flèche haut ou bas : premier ou dernier du jour. Gauche et droite : volume. "
-            "Entrée : rejouer. Échap : fermer. F1 redit ces touches.")
-
 
 def scan_archives(folder=ARCHIVE_DIR):
     """{date: [(datetime, chemin, titre ou None), ...] tries}."""
@@ -72,11 +68,12 @@ def run(key_source, say, out, category="radio"):
     name = journaux.NAMES[category]
     folder = journaux.archive_dir(category)
     if not os.path.ismount("/media/nas/nd2"):
-        return "Le disque de stockage n'est pas accessible, pas d'archives."
+        return dire("archives.disque_absent")
     days = scan_archives(folder) if os.path.isdir(folder) else {}
     if not days:
-        return f"Aucune archive {name} pour l'instant."
-    title_ = f"Archives {name}, lecture seule."
+        return dire("archives.vide", nom=name)
+    title_ = dire("archives.titre", nom=name)
+    consigne = dire("archives.consigne")
     order = sorted(days, reverse=True)
     day_i, rec_i = 0, -1  # -1 : "avant le premier"
     journal._journal_opened(True)
@@ -84,10 +81,10 @@ def run(key_source, say, out, category="radio"):
 
     def announce_day():
         n = len(days[order[day_i]])
-        return f"{journal.spoken_day(order[day_i])}, {n} extrait{'s' if n > 1 else ''}."
+        return dire("nav.jour", jour=journal.spoken_day(order[day_i]), elements=nombre(n, "extrait"))
 
     try:
-        intro = conseils.intro("archives", title_, CONSIGNE)
+        intro = conseils.intro("archives", title_, consigne)
         out(intro + "\n")
         say(intro + " " + announce_day())
         for key in key_source:
@@ -106,7 +103,7 @@ def run(key_source, say, out, category="radio"):
                     new_i = -1
                 if journal.ctrl_held():
                     new_i = 0 if key == "\x1b[A" else len(recs) - 1
-                    voix.say_blocking("Premier du jour." if key == "\x1b[A" else "Dernier du jour.")
+                    voix.say_blocking(dire("nav.premier_jour" if key == "\x1b[A" else "nav.dernier_jour"))
                 if 0 <= new_i < len(recs):
                     rec_i = new_i
                     _, path, title = recs[rec_i]
@@ -123,7 +120,7 @@ def run(key_source, say, out, category="radio"):
                         player.play(path)
                         out(f"[{os.path.basename(path)}]\n")
                 else:
-                    bound = "Début de la journée." if new_i < 0 else "Fin de la journée."
+                    bound = dire("nav.debut_journee" if new_i < 0 else "nav.fin_journee")
                     if player.playing() or rec_i < 0 or recs[rec_i][1].endswith(".txt"):
                         player.stop()
                         text = bound
@@ -134,10 +131,10 @@ def run(key_source, say, out, category="radio"):
             elif key in ("\x1b[C", "\x1b[D"):
                 step = VOLUME_STEP if key == "\x1b[C" else -VOLUME_STEP
                 player.gain = round(min(max(player.gain + step, VOLUME_MIN), VOLUME_MAX), 1)
-                text = f"Volume {round(player.gain * 100)} pour cent."
+                text = dire("archives.volume", pourcent=round(player.gain * 100))
             elif key in ("\r", "\n"):
                 if rec_i < 0:
-                    text = "Choisis d'abord un extrait avec la flèche bas."
+                    text = dire("archives.choisir")
                 else:
                     path = recs[rec_i][1]
                     if path.endswith(".txt"):
@@ -145,13 +142,13 @@ def run(key_source, say, out, category="radio"):
                     else:
                         player.play(path)
             elif conseils.is_help(key):
-                text = CONSIGNE
+                text = consigne
             else:
-                text = "Tab, flèches, entrée, ou échap pour fermer. F1 pour l'aide."
+                text = dire("archives.aide_courte")
             if text:
                 out(f"[{text}]\n")
                 say(text)
     finally:
         player.close()
         journal._journal_opened(False)
-    return f"Archives {name} fermées."
+    return dire("archives.ferme", nom=name)

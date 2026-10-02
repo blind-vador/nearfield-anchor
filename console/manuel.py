@@ -30,13 +30,9 @@ import threading  # noqa: E402
 import noise_signatures as ns  # noqa: E402
 import conseils  # noqa: E402
 import notation  # noqa: E402
+from phrases import dire, nombre  # noqa: E402
 
 BIG_STEP = 10
-TITLE = "Mode manuel, balayage suspendu."
-CONSIGNE = ("Flèches haut et bas : changer de plage ; en tête, les stations repérées. "
-            "Gauche et droite : ajuster la fréquence, ou passer d'une station repérée à l'autre. "
-            "Page haut et page bas : dix pas. F : filtre et silencieux. V : bonne réception, comme dans le journal. "
-            "Entrée : relire. Échap : fermer. F1 redit ces touches.")
 MODES = {"nfm": "FM étroite", "wfm": "FM large", "am": "AM"}
 
 
@@ -115,17 +111,18 @@ class Tuner:
             edge = self.freq != wanted
         now = self.describe() if plage.get("stations") else spoken_mhz(self.freq)
         if edge:
-            return ("Début de la liste, " if count < 0 else "Fin de la liste, ") + now if plage.get("stations") \
-                else ("Début de plage, " if count < 0 else "Fin de plage, ") + now
+            if plage.get("stations"):
+                return dire("manuel.debut_liste" if count < 0 else "manuel.fin_liste", suite=now)
+            return dire("manuel.debut_plage" if count < 0 else "manuel.fin_plage", suite=now)
         return now
 
     def toggle_filter(self):
         self.filtered = not self.filtered
         if not self.filtered:
-            return "Filtre désactivé."
+            return dire("manuel.filtre_off")
         if self.plage["mode"] == "wfm":
-            return "Filtre activé, mais sans effet sur la radio FM."
-        return "Filtre activé."
+            return dire("manuel.filtre_fm")
+        return dire("manuel.filtre_on")
 
     def describe(self, with_plage=True):
         text = spoken_mhz(self.freq)
@@ -133,11 +130,11 @@ class Tuner:
         if station:
             import stations
             n = self.plage["channels"].index(self.freq) + 1
-            text = (f"station repérée {n} sur {len(self.plage['channels'])}, {text}, "
-                    f"{MODES.get(station['mode'], station['mode'])}, {station.get('label') or station.get('bande')}")
+            text = dire("manuel.station", numero=n, total=len(self.plage["channels"]), frequence=text,
+                        mode=MODES.get(station["mode"], station["mode"]), bande=station.get("label") or station.get("bande"))
             habits = stations.habits(station)
             if habits:
-                text += f", souvent le {stations.JOURS[habits[0][0]]} vers {habits[0][1]} heures"
+                text += ", " + dire("manuel.habitude", jour=stations.JOURS[habits[0][0]], heure=habits[0][1])
             return text
         return f"{self.plage['label']}, {text}" if with_plage else text
 
@@ -163,8 +160,7 @@ class Tuner:
         info = {"freq_hz": t["freq_hz"], "label": t["label"], "target": t["target"], "source": "manuel",
                 "mode": t["mode"], "metrics": {}, "fingerprint": None}
         total, station, auto = notation._record(info, name, stamp, dict(notation.GOOD_TAKE), rapide=True)
-        return (f"Validé, bonne réception. {total} note{'s' if total > 1 else ''} au total."
-                + notation._station_text(station) + auto)
+        return dire("manuel.valide", total=nombre(total, "note")) + notation._station_text(station) + auto
 
 
 KEYS = {
@@ -206,7 +202,7 @@ def run(key_source, say, out):
     """Boucle du dialogue ; rend la phrase de sortie a dire par la console."""
     plages = ns.read_plages()
     if not plages:
-        return "Le scanner radio n'a pas publié sa liste de plages. Vérifie qu'il tourne."
+        return dire("manuel.plages_absentes")
     probable = stations_plage()
     if probable:
         plages = [probable] + plages
@@ -214,7 +210,8 @@ def run(key_source, say, out):
     stop_events = threading.Event()
     threading.Thread(target=_relay_events, args=(say, out, stop_events), daemon=True).start()
     ns.request_manual(tuner.target())
-    intro = conseils.intro("manuel", TITLE, CONSIGNE)
+    consigne = dire("manuel.consigne")
+    intro = conseils.intro("manuel", dire("manuel.titre"), consigne)
     out(intro + "\n")
     say(intro + " " + tuner.describe())
     for key in key_source:
@@ -230,15 +227,14 @@ def run(key_source, say, out):
         elif key in ("v", "V"):
             text = tuner.validate()
         elif key in ("\r", "\n"):
-            text = tuner.describe() + (", filtre activé" if tuner.filtered else "")
+            text = tuner.describe() + (", " + dire("manuel.filtre_actif") if tuner.filtered else "")
         elif conseils.is_help(key):
-            text = CONSIGNE
+            text = consigne
         else:
-            text = "Flèches, F, V, entrée, ou échap pour fermer. F1 pour l'aide."
+            text = dire("manuel.aide_courte")
         ns.request_manual(tuner.target())
         out(f"[{text}]\n")
         say(text)
     stop_events.set()
     ns.request_lock(tuner.target())
-    return (f"Mode manuel fermé. Le scanner reste fixé sur {tuner.describe()}. "
-            "Tape décroche pour reprendre le balayage.")
+    return dire("manuel.ferme", position=tuner.describe())

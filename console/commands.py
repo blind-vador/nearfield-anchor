@@ -458,6 +458,10 @@ COMMANDS = [
             examples=["recommence l'apprentissage à zéro"],
             confirm="Remettre les réglages audio d'origine et repartir de zéro ? Les notes et empreintes de bruit "
                     "seront mises de côté dans des archives. Tape oui puis entrée. Toute autre réponse annule."),
+    Command("personnalité", "personnalité du Pi : décris-la, il réécrit ses phrases chaque nuit ; neutre ou surprise", None,
+            keywords=["personnalite", "personnalité", "caractere du pi", "ton du pi", "change ta facon de parler",
+                      "change ton caractere"],
+            examples=["change ta personnalité", "parle autrement"]),
     Command("priorités", "ordre des sources sur les haut-parleurs et ce qu'elles font quand une plus importante parle", None,
             keywords=["priorites", "priorite", "simultane", "simultanes", "haut parleurs", "ordre des annonces"],
             examples=["qui parle en premier", "règle les priorités"]),

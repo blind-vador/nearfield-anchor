@@ -253,6 +253,9 @@ def run_command(line, key_source, last_response):
         return meteo_obs.summary()
     if cmd.name == "bilan":
         return bilan.summary()
+    if cmd.name == "personnalité":
+        import personnalite_cmd
+        return personnalite_cmd.run(key_source, voix.say, out, read_line)
     if cmd.name == "applique":
         return bilan.apply_all()
     if cmd.name == "réglage précédent":
