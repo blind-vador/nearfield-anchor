@@ -188,6 +188,16 @@ AIRBAND_WINDOWS = [
 ]
 
 
+def _settings(window_name):
+    try:
+        import reglages_audio
+        return reglages_audio.get(window_name)
+    except Exception as exc:
+        print(f"[airband_bridge] reglages audio illisibles : {exc!r}")
+        import reglages_audio
+        return dict(reglages_audio.DEFAULTS)
+
+
 def _build_config(window):
     lines = [
         "devices:",
@@ -201,8 +211,12 @@ def _build_config(window):
         "  (",
     ]
     extra_clauses = ""
-    if "squelch_snr_threshold" in window:
-        extra_clauses += f"squelch_snr_threshold = {window['squelch_snr_threshold']}; "
+    # Marge de detection ajustee par le bilan des notes (lib/reglages_audio.py) :
+    # s'ajoute au seuil du silencieux (9,54 dB par defaut dans RTLSDR-Airband).
+    margin = _settings(window["name"])["marge_detection_db"]
+    if "squelch_snr_threshold" in window or margin:
+        threshold = max(1.0, window.get("squelch_snr_threshold", 9.54) + margin)
+        extra_clauses += f"squelch_snr_threshold = {threshold:g}; "
     if "ampfactor" in window:
         # Doit avoir un point decimal -- libconfig distingue int et float, et
         # le parseur d'ampfactor (contrairement a squelch_snr_threshold) ne
@@ -357,12 +371,14 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         # noise_study/) -- une instance par reception, etat frais a chaque
         # fois. Applique AVANT l'ecriture vers aplay ET avant l'archivage
         # (radio_log) : le journal reflete ce qui a ete reellement entendu.
-        voice_filter = audio_filters.VoiceBandpassFilter(AIRBAND_SAMPLE_RATE_HZ)
         window = next((w for w in AIRBAND_WINDOWS if w["name"] == window_name), {})
-        debounce = window.get("silence_debounce_sec", SILENCE_DEBOUNCE_SEC)
+        settings = _settings(window_name)
+        voice_filter = audio_filters.VoiceBandpassFilter(AIRBAND_SAMPLE_RATE_HZ, lowpass_hz=settings["passe_bas_hz"])
+        debounce = settings["attente_fin_s"] or window.get("silence_debounce_sec", SILENCE_DEBOUNCE_SEC)
         # Nettoyage doux (gresillements, compresseur leger, voir
-        # audio_filters.GentleCleaner) ; son brut garde pour la touche B.
-        cleaner = audio_filters.GentleCleaner(AIRBAND_SAMPLE_RATE_HZ)
+        # audio_filters.GentleCleaner) selon les reglages de la fenetre ; son
+        # brut garde pour la touche B.
+        cleaner = audio_filters.cleaner_for(AIRBAND_SAMPLE_RATE_HZ, None, settings)
         raw_chunks = []
         try:
             while True:

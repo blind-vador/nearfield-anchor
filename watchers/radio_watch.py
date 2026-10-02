@@ -26,6 +26,7 @@ import satellites
 import satellites_watch
 import stations
 import profils_bruit
+import reglages_audio
 import relais
 import meteo_locale
 import adsb_local_watch
@@ -1159,7 +1160,9 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         except Exception:
             multimon = None
 
-    quiet_windows_needed = int(SILENCE_DEBOUNCE_SEC * 1000 / ANALYSIS_WINDOW_MS)
+    settings = _settings(target)
+    debounce = settings["attente_fin_s"] or SILENCE_DEBOUNCE_SEC
+    quiet_windows_needed = int(debounce * 1000 / ANALYSIS_WINDOW_MS)
     quiet_windows_seen = 0
     consecutive_signal_windows = 0
     total_bytes = 0
@@ -1177,7 +1180,8 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     # applique en WFM (diffusion FM commerciale/pirate : musique/parole a
     # pleine bande, un filtrage vocal etroit degraderait le contenu sans
     # raison, ce n'est pas la bande visee par cette demande).
-    voice_filter = audio_filters.VoiceBandpassFilter(sample_rate) if mode != "wfm" else None
+    voice_filter = (audio_filters.VoiceBandpassFilter(sample_rate, lowpass_hz=settings["passe_bas_hz"])
+                    if mode != "wfm" else None)
     # Nettoyage doux (2026-10-02) : empreinte du bruit de cette frequence,
     # gresillements, compresseur leger ; en FM, retrait du pilote a 19 kHz.
     # RNNoise continue de juger le son NON nettoye (detection inchangee), et
@@ -1186,7 +1190,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         cleaner = audio_filters.FmPilotFilter(sample_rate)
     else:
         try:
-            cleaner = audio_filters.GentleCleaner(sample_rate, profils_bruit.get(target, freq_hz, sample_rate))
+            cleaner = audio_filters.cleaner_for(sample_rate, profils_bruit.get(target, freq_hz, sample_rate), settings)
         except Exception as exc:
             print(f"[radio_watch] nettoyage indisponible : {exc!r}")
             cleaner = None
@@ -1540,8 +1544,17 @@ def _station_capture(freq, mode):
         print(f"[radio_watch] station probable non mise a jour : {exc!r}")
 
 
+def _settings(target):
+    """Reglages audio de la bande (lib/reglages_audio.py, ajustes par le bilan des notes)."""
+    try:
+        return reglages_audio.get(target)
+    except Exception as exc:
+        print(f"[radio_watch] reglages audio illisibles : {exc!r}")
+        return dict(reglages_audio.DEFAULTS)
+
+
 def scan_fm_band(band):
-    margin_db = band.get("margin_db", NOISE_MARGIN_DB)
+    margin_db = band.get("margin_db", NOISE_MARGIN_DB) + _settings(band["name"])["marge_detection_db"]
     span_hz = band.get("span_hz", 25_000)
     candidates = check_channels_relative(band["channels"], span_hz=span_hz, margin_db=margin_db)
     for freq, db in candidates:
@@ -1555,7 +1568,7 @@ def scan_fm_band(band):
 
 
 def scan_sweep_band(band):
-    margin_db = band.get("margin_db", NOISE_MARGIN_DB)
+    margin_db = band.get("margin_db", NOISE_MARGIN_DB) + _settings(band["name"])["marge_detection_db"]
     freq, db = sweep_band_peak_relative(band["low_hz"], band["high_hz"], band["step_hz"], margin_db=margin_db)
     if freq is not None:
         print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.4f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")

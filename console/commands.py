@@ -438,6 +438,26 @@ COMMANDS = [
             confirm="Confirmer l'extinction du Pi ? Il faudra couper et remettre le courant pour le rallumer. "
                     "Tape oui puis entrée. Toute autre réponse annule."),
     # Avant "aide" : "aide pratique" doit regler les conseils, pas lister les commandes.
+    # Reglages audio appris des notes (console/bilan.py) : avant "réglages"
+    # (cles API) et "bilan", dont ils partagent des mots.
+    Command("applique", "appliquer les réglages audio proposés par le bilan des notes", None,
+            keywords=["applique les reglages", "applique les propositions", "appliquer les reglages", "applique le bilan"],
+            examples=["applique les réglages proposés"]),
+    Command("réglage précédent", "revenir à la version précédente des réglages audio", None,
+            keywords=["reglage precedent", "reglages precedents", "annule le reglage", "annule les reglages",
+                      "version precedente"],
+            examples=["reviens au réglage d'avant"]),
+    Command("réglages automatiques", "réglages audio appliqués tout seuls d'après tes notes : réglages automatiques oui ou non", None,
+            keywords=["reglages automatiques", "reglage automatique", "mode automatique"],
+            examples=["active les réglages automatiques", "arrête les réglages automatiques"]),
+    Command("réglages audio", "réglages audio en place, bande par bande", None,
+            keywords=["reglages audio", "reglage audio", "reglages du son"],
+            examples=["quels réglages audio"]),
+    Command("réapprendre", "réglages audio d'origine, empreintes de bruit et notes mises de côté : on réapprend de zéro", None,
+            keywords=["reapprendre de zero", "reapprendre", "remise a zero des reglages", "reset des reglages"],
+            examples=["recommence l'apprentissage à zéro"],
+            confirm="Remettre les réglages audio d'origine et repartir de zéro ? Les notes et empreintes de bruit "
+                    "seront mises de côté dans des archives. Tape oui puis entrée. Toute autre réponse annule."),
     Command("priorités", "ordre des sources sur les haut-parleurs et ce qu'elles font quand une plus importante parle", None,
             keywords=["priorites", "priorite", "simultane", "simultanes", "haut parleurs", "ordre des annonces"],
             examples=["qui parle en premier", "règle les priorités"]),

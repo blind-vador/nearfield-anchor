@@ -155,7 +155,13 @@ def _record(info, path, stamp, reponses, rapide=False):
         station = stations.register_from_note(note)
     except Exception as exc:
         print(f"[notation] station probable : {exc!r}")
-    return total, station
+    auto = ""
+    try:  # mode automatique : reglages de la bande ajustes, ou annules s'ils ont nui
+        import bilan
+        auto = bilan.auto_step(note["bande"])
+    except Exception as exc:
+        print(f"[notation] reglage automatique : {exc!r}")
+    return total, station, auto
 
 
 def _station_text(station):
@@ -171,8 +177,8 @@ def validate(path, stamp):
         return "Déjà validé."
     if previous:
         return "Déjà noté en détail : N pour modifier la note."
-    total, station = _record(ns.capture_info(path) or {}, path, stamp, dict(GOOD_TAKE), rapide=True)
-    return f"Validé, bonne prise. {total} note{'s' if total > 1 else ''} au total." + _station_text(station)
+    total, station, auto = _record(ns.capture_info(path) or {}, path, stamp, dict(GOOD_TAKE), rapide=True)
+    return f"Validé, bonne prise. {total} note{'s' if total > 1 else ''} au total." + _station_text(station) + auto
 
 
 def rate(key_source, say, out, path, stamp):
@@ -204,8 +210,8 @@ def rate(key_source, say, out, path, stamp):
             text = FIELDS[field][2][values[field]][1]
         elif key in ("\r", "\n") and field == OK_INDEX:
             reponses = {code: FIELDS[i][2][values[i]][0] for i, (code, *_) in enumerate(FIELDS)}
-            total, station = _record(info, path, stamp, reponses)
-            return f"Note enregistrée. {total} note{'s' if total > 1 else ''} au total." + _station_text(station)
+            total, station, auto = _record(info, path, stamp, reponses)
+            return f"Note enregistrée. {total} note{'s' if total > 1 else ''} au total." + _station_text(station) + auto
         elif key in ("\r", "\n"):
             text = "Descends jusqu'à OK pour enregistrer."
         elif key in ("e", "E") or key in F2:

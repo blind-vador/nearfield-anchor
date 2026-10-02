@@ -253,6 +253,23 @@ def run_command(line, key_source, last_response):
         return meteo_obs.summary()
     if cmd.name == "bilan":
         return bilan.summary()
+    if cmd.name == "applique":
+        return bilan.apply_all()
+    if cmd.name == "réglage précédent":
+        import reglages_audio
+        what = reglages_audio.previous()
+        return f"Revenu à la version d'avant : annulé « {what} »." if what else "Aucun réglage à annuler : tout est d'origine."
+    if cmd.name == "réglages automatiques":
+        import reglages_audio
+        words = set(matcher.normalize(line).split())
+        on = not (words & {"non", "arrete", "arreter", "desactive", "desactiver", "stop", "coupe"})
+        reglages_audio.set_auto(on)
+        return ("Réglages automatiques activés : après chaque note, je règle la bande, et j'annule un réglage "
+                "qui fait baisser tes notes." if on else "Réglages automatiques désactivés : le bilan propose seulement.")
+    if cmd.name == "réglages audio":
+        return bilan.settings_text()
+    if cmd.name == "réapprendre":
+        return bilan.reset_all()
     if cmd.name == "archives":
         return archives.run(key_source, voix.say, out, journaux.from_words(matcher.normalize(line)))
     if cmd.name == "journal":
