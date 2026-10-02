@@ -67,6 +67,7 @@ class _Handler(socketserver.StreamRequestHandler):
             if old:
                 old.close()
             print(f"[compagnon] {hello.get('nom')} connectee depuis {self.client_address[0]}")
+            _results_ready.set()  # un "fini" a pu se perdre pendant la coupure
             for job in compagnon.open_jobs():  # ce qui l'attendait
                 _notify(cid, job["id"])
             while True:

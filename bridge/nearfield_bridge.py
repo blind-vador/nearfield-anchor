@@ -501,6 +501,7 @@ def _claim(share, fast):
             os.rename(src, dst)
         except OSError:
             continue  # une autre machine l'a pris
+        _write(dst, dict(job, pris_par=config()["id"], pris_le=time.time()))  # pour reprendre apres une coupure
         return job_id, os.path.join(folder, job_id), job
     return None
 
@@ -516,6 +517,30 @@ def _lora(job, folder):
     _write(os.path.join(folder, "trames.json"), frames)
     good = sum(1 for f in frames if f.get("crc_ok"))
     return "fait", ["trames.json"], "%d trame%s valide%s" % (good, "s" if good > 1 else "", "s" if good > 1 else "")
+
+
+def _requeue_interrupted():
+    """Au demarrage : un travail pris par CETTE machine et jamais termine (le
+    service a ete coupe en plein calcul) est remis en file d'attente."""
+    me = config()["id"]
+    for pi, card in bridges().items():
+        share = find_share(card)
+        if not share:
+            continue
+        folder = os.path.join(share, "travaux")
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            continue
+        for job_id in names:
+            taken = os.path.join(folder, job_id, "travail.pris.json")
+            job = _read(taken)
+            if job and job.get("pris_par") == me and not os.path.exists(os.path.join(folder, job_id, "resultat.json")):
+                job.pop("pris_par", None)
+                job.pop("pris_le", None)
+                _write(os.path.join(folder, job_id, "travail.json"), job)
+                _remove(taken)
+                log("%s : travail %s interrompu, remis en file" % (pi, job_id))
 
 
 def _process(job, folder):
@@ -588,6 +613,10 @@ def service():
             except Exception:
                 traceback.print_exc()
 
+    try:
+        _requeue_interrupted()
+    except Exception:
+        traceback.print_exc()
     for name in _queues:
         threading.Thread(target=worker, args=(name,), daemon=True).start()
     last_scan = last_beat = 0

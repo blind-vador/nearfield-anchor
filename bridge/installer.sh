@@ -154,8 +154,6 @@ INFO
   <array><string>$AGENT_ID</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
-  <key>ProcessType</key><string>Background</string>
-  <key>LowPriorityIO</key><true/>
   <key>Nice</key><integer>10</integer>
 </dict>
 </plist>
