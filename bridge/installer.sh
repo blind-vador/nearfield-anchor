@@ -99,17 +99,47 @@ rm -rf "$BUILD"
 
 echo "-- service --"
 if [ "$(uname)" = "Darwin" ]; then
-    # Le service tourne dans une application invisible : macOS n'autorise le
-    # disque reseau qu'a une application (une fois, par la fenetre systeme
-    # "souhaite acceder aux fichiers d'un volume reseau"), pas a un Python
-    # lance directement par launchd (constate le 2026-10-01).
-    SERVICE_APP="$DEST/Nearfield Bridge Service.app"
-    rm -rf "$SERVICE_APP"
-    osacompile -o "$SERVICE_APP" "$HERE/service.applescript"
-    /usr/libexec/PlistBuddy -c "Add :LSUIElement bool true" "$SERVICE_APP/Contents/Info.plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier local.nearfield.bridge.service" "$SERVICE_APP/Contents/Info.plist" 2>/dev/null \
-        || /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string local.nearfield.bridge.service" "$SERVICE_APP/Contents/Info.plist"
-    codesign --force --deep -s - "$SERVICE_APP" 2>/dev/null || true
+    # Le service tourne dans une application invisible, "Nearfield Bridge
+    # Agent" : macOS n'accorde le disque reseau et le reseau local qu'a une
+    # application. Construite d'apres Apple TN3179 (2026-10-02) : vrai
+    # programme compile (UUID d'executable unique ; les applets AppleScript
+    # partagent tous le meme), Python lance en enfant (connexions attribuees a
+    # l'application), application responsable declaree au LaunchAgent, et
+    # reconstruite / re-signee SEULEMENT si le lanceur change : macOS garde
+    # ainsi l'autorisation "Reseau local" d'une installation a l'autre.
+    AGENT_ID="local.nearfield.bridge.agent"
+    AGENT_APP="$DEST/Nearfield Bridge Agent.app"
+    AGENT_BIN="$AGENT_APP/Contents/MacOS/nearfield-bridge-agent"
+    STAMP="$(shasum "$HERE/agent_launcher.c" | cut -d' ' -f1)"
+    if [ ! -x "$AGENT_BIN" ] || [ "$(cat "$AGENT_APP/Contents/Resources/source.sha1" 2>/dev/null)" != "$STAMP" ]; then
+        echo "   construction de Nearfield Bridge Agent"
+        rm -rf "$AGENT_APP"
+        mkdir -p "$AGENT_APP/Contents/MacOS" "$AGENT_APP/Contents/Resources"
+        clang -O2 -Wall -isysroot "$SDK" -o "$AGENT_BIN" "$HERE/agent_launcher.c"
+        cat > "$AGENT_APP/Contents/Info.plist" <<INFO
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>$AGENT_ID</string>
+  <key>CFBundleName</key><string>Nearfield Bridge Agent</string>
+  <key>CFBundleDisplayName</key><string>Nearfield Bridge Agent</string>
+  <key>CFBundleExecutable</key><string>nearfield-bridge-agent</string>
+  <key>CFBundlePackageType</key><string>APPL</string>
+  <key>CFBundleVersion</key><string>1</string>
+  <key>CFBundleShortVersionString</key><string>1.0</string>
+  <key>CFBundleDevelopmentRegion</key><string>fr</string>
+  <key>LSUIElement</key><true/>
+  <key>LSMinimumSystemVersion</key><string>13.0</string>
+  <key>NSLocalNetworkUsageDescription</key><string>Se connecter au Raspberry Pi deepspace9 pour faire les calculs lourds qu'il lui confie (images de satellites météo, décodage LoRa).</string>
+</dict>
+</plist>
+INFO
+        echo "$STAMP" > "$AGENT_APP/Contents/Resources/source.sha1"
+        codesign --force -s - --identifier "$AGENT_ID" "$AGENT_APP"
+    fi
+    # Ancienne enveloppe AppleScript du service (executable partage) : retiree.
+    rm -rf "$DEST/Nearfield Bridge Service.app"
     PLIST="$HOME/Library/LaunchAgents/$LABEL.plist"
     mkdir -p "$HOME/Library/LaunchAgents"
     cat > "$PLIST" <<PLIST
@@ -119,7 +149,9 @@ if [ "$(uname)" = "Darwin" ]; then
 <dict>
   <key>Label</key><string>$LABEL</string>
   <key>ProgramArguments</key>
-  <array><string>$SERVICE_APP/Contents/MacOS/applet</string></array>
+  <array><string>$AGENT_BIN</string></array>
+  <key>AssociatedBundleIdentifiers</key>
+  <array><string>$AGENT_ID</string></array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
   <key>ProcessType</key><string>Background</string>
@@ -152,8 +184,12 @@ fi
 if [ "$(uname)" = "Darwin" ]; then
     echo "-- application Nearfield Bridge --"
     mkdir -p "$HOME/Applications"
-    rm -rf "$HOME/Applications/Nearfield Bridge.app"
     APP="$HOME/Applications/Nearfield Bridge.app"
+    # Reconstruite seulement si le script change : macOS garde ainsi l'acces
+    # au disque reseau accorde a l'application (identite stable).
+    APP_STAMP="$(shasum "$HERE/dialogue.applescript" | cut -d' ' -f1)"
+    if [ "$(cat "$APP/Contents/Resources/source.sha1" 2>/dev/null)" != "$APP_STAMP" ]; then
+    rm -rf "$APP"
     osacompile -o "$APP" "$HERE/dialogue.applescript"
     # Langue de l'application = langue du systeme : sinon l'applet est
     # "anglaise" et VoiceOver lit le francais avec une voix anglaise.
@@ -166,7 +202,9 @@ if [ "$(uname)" = "Darwin" ]; then
     mkdir -p "$APP/Contents/Resources/$LANG_SYS.lproj"
     /usr/libexec/PlistBuddy -c "Add :CFBundleIdentifier string local.nearfield.bridge.app" "$APP/Contents/Info.plist" 2>/dev/null \
         || /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier local.nearfield.bridge.app" "$APP/Contents/Info.plist"
+    echo "$APP_STAMP" > "$APP/Contents/Resources/source.sha1"
     codesign --force --deep -s - "$APP" 2>/dev/null || true  # signature locale refaite apres modification
+    fi
     ln -sfn "$HOME/Applications/Nearfield Bridge.app" "$HOME/Desktop/Nearfield Bridge"
     echo "Ouvre « Nearfield Bridge » sur le bureau pour créer un pont."
 else
