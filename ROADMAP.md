@@ -5634,3 +5634,28 @@ tant que le Mac repond.
   du reseau) : -11 dB, voix intacte. Premiers essais ecartes : masque
   spectral simple (abimait la voix de 4 a 7 dB), moyenne synchrone de
   periode (parfaite a 50,00 Hz, inutilisable a 50,02 Hz).
+
+## 2026-10-02 : pont en differe, reseau local macOS, decodeurs en mode manuel
+
+- Pont : sans liaison directe, fonctionnement en DIFFERE par le NAS toutes
+  les 12 h (decision utilisateur : pas d'acces disque frequents) ; signe de
+  vie signe "compagnons/<id>.battement.json", travaux gardes 36 h ; LoRa
+  decode par le Pi tant que la liaison n'est pas directe.
+- macOS "Reseau local" (Apple TN3179, forums developpeurs) : pas de remise a
+  zero possible (FB14944392) ; identite suivie par la signature (mal avec
+  une signature locale "ad hoc") et par l'UUID de l'executable principal
+  (nos deux applets osacompile partagent le meme executable "applet") ;
+  agent launchd : declarer AssociatedBundleIdentifiers ; bug connu de
+  Sequoia : autorisation invalide apres redemarrage, rendue en decochant puis
+  recochant. Exemption officielle par adresse :
+  sudo defaults write com.apple.network.local-network AllowedWiFiLocalNetworkAddresses -array "192.168.1.17/32"
+  (puis redemarrage) -- reglage systeme, a faire par l'utilisateur.
+  Mesure : connexions refusees "No route to host" (Python et nc) depuis le
+  service, meme lance par LaunchServices.
+- Mode manuel : en FM etroite, rtl_fm a 48 kHz nourrit aussi dsd-fme (serveur
+  TCP local 127.0.0.1:7360, comme SDR++ ; -fa plus le mode de la bande) et
+  multimon-ng ; voix numerique confirmee (synchros propres) jouee a la place
+  du gresillement apres le son de decodage ; annonces par la console
+  (/tmp/manuel_evenements.jsonl) ; chiffres DTMF regroupes. Regles communes
+  scanner / manuel dans lib/decodeurs.py. Teste : DTMF reel decode, deux
+  dsd-fme connectes au flux ; voix DMR en manuel pas encore entendue.
