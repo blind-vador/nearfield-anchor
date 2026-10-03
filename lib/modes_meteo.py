@@ -20,7 +20,8 @@ VENTS_KEEP_SEC = 3 * 3600
 REPEAT_SEC = 300           # un compte rendu par avion toutes les 5 min au plus (il en envoie a la chaine)
 FEET_TO_M = 0.3048
 KT_TO_KMH = 1.852
-HAZARD_LEVELS = Etiquettes("modes.danger_niveau", {1: "léger", 2: "modéré", 3: "fort"}, "intensité d'un danger signalé par un avion")
+HAZARD_LEVELS = Etiquettes("modes.intensite", {1: "d'intensité légère", 2: "d'intensité modérée", 3: "d'intensité forte"},
+                           "intensité d'un danger signalé par un avion, après son nom")
 HAZARDS = Etiquettes("modes.danger", {"turbulence": "turbulence", "cisaillement": "cisaillement du vent",
                                       "microrafale": "microrafale", "givrage": "givrage",
                                       "sillage": "turbulence de sillage"}, "danger signalé par un avion")
