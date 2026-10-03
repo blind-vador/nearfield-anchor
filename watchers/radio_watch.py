@@ -1453,6 +1453,14 @@ def _guarded(name, scan):
         _window.update(nom=name, fin=time.time() + dwell_sec)
         try:
             return scan(dwell_sec=dwell_sec, **kwargs)
+        except Exception:
+            # Une fenetre en erreur ne fait plus tomber tout le scanner
+            # (2026-10-03 : redemarrages en boucle sur une erreur de la fenetre
+            # DAB+, le cycle reprenait toujours par les capteurs).
+            import traceback
+            print(f"[radio_watch] fenetre {name} en erreur, le cycle continue :")
+            traceback.print_exc()
+            return False
         finally:
             _window.update(nom=None, fin=0.0)
     return run

@@ -10,8 +10,10 @@ Une frequence par passage, en alternance. Annonces :
   valeurs ;
 - releves (demande utilisateur 2026-10-03) : chaque releve est dit AU FIL
   DE L'EAU, des qu'il est capte, comme une prise vocale du journal
-  "capteurs" (lib/prise_vocale.py) ; seule la meme emission repetee
-  (SAME_FRAME_SEC) est ecartee. Capteurs atypiques (cuisson, piscine,
+  "capteurs" (lib/prise_vocale.py) ; un releve qui redit exactement les
+  valeurs deja annoncees pour ce capteur est tu ; les thermometres
+  d'interieur probables (lib/capteurs_interieurs.py) sont annonces comme
+  tels et ecartes de la meteo. Capteurs atypiques (cuisson, piscine,
   frigo, sol...) : chaque releve avec une petite blague de Gemini ;
 - capteurs de pneus (voitures qui passent) : jamais annonces, archives.
 Les derniers releves sont publies (READINGS_PATH) pour la console et le
@@ -37,7 +39,6 @@ NEW_EVERY_SEC = 7 * 86400
 ALARM_EVERY_SEC = 120
 BUTTON_EVERY_SEC = 60
 READINGS_KEEP_SEC = 6 * 3600
-SAME_FRAME_SEC = 90       # un capteur repete souvent la meme trame : dite une fois
 
 # Thermometres qui ne mesurent PAS l'air exterieur (2026-10-01 : un
 # thermometre de barbecue voisin, "GT-TMBBQ05", a 75 degres, s'etait glisse
@@ -222,24 +223,29 @@ def _hz(freq):
 
 
 def _reading(key, event, kind, freq):
-    """Releve capte : dit tout de suite (prise vocale), sauf la meme trame repetee."""
+    """Releve capte : dit tout de suite (prise vocale), sauf s'il redit
+    exactement les valeurs deja annoncees pour ce capteur (2026-10-03).
+    Rend False : la routine d'un capteur ne pique pas l'attention du scanner
+    (seuls un nouveau capteur, une alarme, une sonnette le font)."""
+    values = _values(event)
     last = _memory.data.get("_dits", {}).get(key)
-    same = last and last.get("temp") == event.get("temperature_C") and last.get("hum") == event.get("humidity")
-    if same and time.time() - last["t"] < SAME_FRAME_SEC:
+    if last and last.get("valeurs") == values:
         return False
     _said(key, event)
-    values = _values(event)
+    _memory.data["_dits"][key]["valeurs"] = values
     fiche = {"protocole": "rtl_433", "frequence_hz": _hz(freq), "source": _name(event), "valeurs": values}
     if kind == "meteo":
         if not values:
             return False
-        vd.announce(dire("capteur.releve_meteo", nom=_name(event), valeurs=values), SOUND, f"capteur_{key}",
+        import capteurs_interieurs
+        phrase = "capteur.releve_interieur" if capteurs_interieurs.is_indoor(key) else "capteur.releve_meteo"
+        vd.announce(dire(phrase, nom=_name(event), valeurs=values), SOUND, f"capteur_{key}",
                     "capteurs_watch", fiche=fiche)
-        return True
+        return False
     what = KIND_NAMES.get(kind) or dire("capteur.type_inconnu")
     plain = dire("capteur.releve_atypique", what=what, nom=_name(event), valeurs=values or dire("capteur.sans_valeur"))
     vd.announce(lambda: _fun_again(event, what) or plain, SOUND, f"capteur_{key}", "capteurs_watch", fiche=fiche)
-    return True
+    return False
 
 
 FUN_AGAIN_PROMPT = """Tu es la voix d'un récepteur radio domestique, au ton amusé et bienveillant.

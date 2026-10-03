@@ -229,9 +229,14 @@ def outdoor_sensors(reference=None, max_age_sec=2 * 3600):
     Rend (gardes {cle: lecture}, nombre d'ecartes)."""
     sensors = _read_json(SENSORS_PATH) or {}
     now = time.time()
+    try:  # thermometres d'interieur probables (lib/capteurs_interieurs.py) : pas l'air dehors
+        import capteurs_interieurs
+        indoor = capteurs_interieurs.indoor_keys()
+    except Exception:
+        indoor = set()
     weather = {k: r for k, r in sensors.items()
                if r.get("type", "meteo") == "meteo" and now - r.get("t", 0) < max_age_sec
-               and (r.get("valeurs") or {}).get("temperature_C") is not None}
+               and (r.get("valeurs") or {}).get("temperature_C") is not None and k not in indoor}
     others = sum(1 for k, r in sensors.items() if k not in weather and now - r.get("t", 0) < max_age_sec
                  and (r.get("valeurs") or {}).get("temperature_C") is not None)
     ref = reference if reference is not None else _median(r["valeurs"]["temperature_C"] for r in weather.values())
