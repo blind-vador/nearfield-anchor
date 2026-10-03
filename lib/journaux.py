@@ -21,7 +21,7 @@ NAMES = {"radio": "radio", "donnees": "données", "capteurs": "capteurs", "satel
 PREFIXES = {
     "satellites": ("passage_", "satellite", "meteor"),
     "capteurs": ("voiture", "capteur_", "sonde_"),
-    "donnees": ("APRS", "ACARS", "OGN_", "balise_", "pager", "meshtastic", "lora"),
+    "donnees": ("APRS", "ACARS", "vdl2", "OGN_", "balise_", "pager", "meshtastic", "lora"),
 }
 # Mots qui designent un journal dans une commande ("journal capteurs",
 # "archives satellites"...), sans accents (matcher.normalize).
