@@ -3,10 +3,15 @@ l'ACARS classique, beaucoup plus bavard en Europe.
 
 dumpvdl2 (compile depuis les sources, comme acarsdec) ecoute les quatre
 frequences europeennes d'un seul coup (moins de 250 kHz d'ecart) et sort
-une ligne JSON par trame. Les messages ACARS transportes par VDL2 sont
-convertis au format d'acarsdec et confies a acars_watch : memes regles
-d'annonce (texte libre, traduction OOOI, anti-repetition), une seule
-logique a maintenir. Toutes les trames sont archivees.
+une ligne JSON par trame. Toutes les trames sont archivees.
+
+Annonces (2026-10-03) : les trames d'un passage sont regroupees par avion
+(emises par lui ou par une station au sol qui lui parle) et dites en
+langage humain par lib/acars_traduction.py : qui est l'avion, a quoi il
+ressemble, sa phase de vol, ce que ses messages veulent dire. Un vrai
+contenu (ACARS, passage de relais avec destination, controle aerien,
+position) est explique par Gemini a chaque nouveaute ; le seul entretien
+de la liaison est dit en une phrase fixe, une fois par AIRCRAFT_REPEAT_SEC.
 """
 import json
 import os
@@ -15,9 +20,10 @@ import subprocess
 import threading
 import time
 
+import acars_traduction as tr
 import acars_watch
+import avions_info
 import veille_donnees as vd
-from phrases import dire, nombre
 
 VDL2_FREQUENCIES = ["136725000", "136775000", "136875000", "136975000"]
 LOCAL_BINARY = "/home/vador/autopilot/bin/dumpvdl2"
@@ -29,17 +35,6 @@ _memory = vd.Memory("/tmp/vdl2_watch_state.json")
 
 def _binary():
     return shutil.which("dumpvdl2") or (LOCAL_BINARY if os.path.exists(LOCAL_BINARY) else None)
-
-
-def _to_acars(frame):
-    """Trame dumpvdl2 -> message au format acarsdec (ou None)."""
-    acars = ((frame.get("vdl2") or {}).get("avlc") or {}).get("acars")
-    if not acars:
-        return None
-    return {"flight": (acars.get("flight") or "").strip() or None,
-            "tail": (acars.get("reg") or "").lstrip(".").strip() or None,
-            "label": acars.get("label", ""), "sublabel": acars.get("sublabel"),
-            "text": acars.get("msg_text") or ""}
 
 
 def _reader(proc, frames):
@@ -63,7 +58,7 @@ def scan_window(dwell_sec=30):
     threading.Thread(target=_reader, args=(proc, frames), daemon=True).start()
     announced = False
     count = 0
-    silent = {}   # trames d'avions sans message texte : {adresse: nombre}
+    by_aircraft = {}   # adresse ICAO -> trames du passage
     try:
         deadline = time.time() + dwell_sec
         while time.time() < deadline:
@@ -75,13 +70,11 @@ def scan_window(dwell_sec=30):
                 frame = frames.pop(0)
                 count += 1
                 vd.archive("vdl2", frame)
-                msg = _to_acars(frame)
-                if msg and acars_watch._process_message(msg):
-                    announced = True
-                elif not msg:
-                    src = ((frame.get("vdl2") or {}).get("avlc") or {}).get("src") or {}
-                    if src.get("type") == "Aircraft" and src.get("addr"):
-                        silent[src["addr"]] = silent.get(src["addr"], 0) + 1
+                avlc = (frame.get("vdl2") or {}).get("avlc") or {}
+                plane = next((side.get("addr") for side in (avlc.get("src") or {}, avlc.get("dst") or {})
+                              if side.get("type") == "Aircraft" and side.get("addr")), None)
+                if plane:
+                    by_aircraft.setdefault(plane, []).append(avlc)
     finally:
         if proc.poll() is None:
             proc.terminate()
@@ -91,13 +84,39 @@ def scan_window(dwell_sec=30):
             proc.kill()
     if count:
         print(f"[vdl2_watch] {count} trame(s) VDL2 en {dwell_sec:.0f} s")
-    # Tout ce qui est capte est dit (demande utilisateur 2026-10-03) : les trames
-    # de liaison sans texte en une phrase, pour les avions pas encore signales.
-    new = [a for a in silent if _memory.due(f"avion|{a}", AIRCRAFT_REPEAT_SEC)]
-    if new:
-        frames_n = sum(silent[a] for a in new)
-        vd.announce(dire("vdl2.liaison", trames=nombre(frames_n, "trame"), avions=nombre(len(new), "avion")),
-                    SOUND, "vdl2", "vdl2_watch")
-        announced = True
+    for plane, frames_of in by_aircraft.items():
+        try:
+            if _announce_aircraft(plane, frames_of):
+                announced = True
+        except Exception as exc:  # une annonce ratee n'arrete pas la veille
+            print(f"[vdl2_watch] annonce {plane} : {exc!r}")
     _memory.save()
     return announced
+
+
+def _announce_aircraft(plane, frames_of):
+    messages = []
+    for avlc in frames_of:
+        kind, detail = tr.frame_kind(avlc)
+        messages.append({"nature": kind, "details": detail, "fond": tr.substantive(kind, detail)})
+    content = [m for m in messages if m["fond"]]
+    if content:
+        signature = json.dumps([m["details"] for m in content], sort_keys=True, default=str)[:300]
+        if not _memory.due(f"contenu|{plane}|{signature}", AIRCRAFT_REPEAT_SEC):
+            return False
+        _memory.due(f"avion|{plane}", AIRCRAFT_REPEAT_SEC)
+        chosen = content
+    elif _memory.due(f"avion|{plane}", AIRCRAFT_REPEAT_SEC):
+        chosen = list({m["nature"]: m for m in messages}.values())
+    else:
+        return False
+    acars = next((a.get("acars") for a in frames_of if a.get("acars")), {}) or {}
+    card = avions_info.card(hex_addr=plane, registration=(acars.get("reg") or "").lstrip(".") or None,
+                            callsign=(acars.get("flight") or "").strip() or None)
+    if content:
+        text, fiche = tr.explain(card, chosen)
+    else:
+        text, fiche = tr.plain(card, [m["nature"] for m in chosen]), None
+    vd.archive("vdl2_traduit", {"adresse": plane, "texte": text, "fiche": fiche or card})
+    vd.announce(text, SOUND, "vdl2", "vdl2_watch")
+    return True

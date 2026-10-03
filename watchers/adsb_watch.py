@@ -135,6 +135,10 @@ IDX_VERTICAL_RATE = 11
 # alors que les annonces vocales restent limitees a MAX_RADIUS_KM. Piqures par
 # fenetre radio, d'apres position, altitude, taux de montee et sol/vol.
 AIR_CONTEXT_PATH = "/tmp/contexte_aerien.json"
+# Etat de chaque appareil (2026-10-03) : phase de vol des messages ACARS/VDL2
+# (lib/avions_info.py), cle = adresse ICAO en majuscules.
+AIRCRAFT_STATE_PATH = "/tmp/avions_etat.json"
+IDX_VELOCITY = 9
 AIR_TARGET_CAP = 3.0
 
 # Categorie ADS-B (norme DO-260B) -- l'API OpenSky ne documente PAS de
@@ -202,6 +206,22 @@ def _publish_air_context(states):
             add("acars", 0.3)
             add("vdl2", 0.3)
             add("aviation", 0.2)
+    detail, now = {}, time.time()
+    for st in states:
+        if not st[IDX_ICAO24]:
+            continue
+        detail[st[IDX_ICAO24].upper()] = {
+            "indicatif": (st[IDX_CALLSIGN] or "").strip(), "lat": st[IDX_LATITUDE], "lon": st[IDX_LONGITUDE],
+            "altitude": st[IDX_BARO_ALTITUDE], "vitesse": st[IDX_VELOCITY] if len(st) > IDX_VELOCITY else None,
+            "vz": st[IDX_VERTICAL_RATE] if len(st) > IDX_VERTICAL_RATE else None, "sol": bool(st[IDX_ON_GROUND]),
+            "t": now}
+    try:
+        tmp = AIRCRAFT_STATE_PATH + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(detail, f)
+        os.replace(tmp, AIRCRAFT_STATE_PATH)
+    except OSError as exc:
+        print(f"[adsb_watch] etat des appareils non publie : {exc}")
     try:
         tmp = AIR_CONTEXT_PATH + ".tmp"
         with open(tmp, "w") as f:

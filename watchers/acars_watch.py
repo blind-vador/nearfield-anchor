@@ -104,29 +104,9 @@ def _extract_q_fields(label, txt):
     return result or None
 
 
-def _vulgarize_oooi(identity, label, fields):
-    """Phrase vulgarisee, volontairement simple et un peu fantasque
-    ("le vol X confirme : evenement[, vers destination]") -- demande
-    explicite de l'utilisateur, style "totalement fantasque" assume."""
-    verb = Q_PHASE_VERBS.get(label) or dire("acars.evenement_vol")
-    message = dire("acars.vol_confirme", identity=identity, verb=verb)
-    da = fields.get("da")
-    if da:
-        message += dire("acars.vers", da=da)
-    return message + "."
-
 SOUND_EFFECTS_DIR = "/media/nas/nd1/server/radio_scaner"
 ACARS_SOUND = f"{SOUND_EFFECTS_DIR}/decoding_numeric.mp3"
 
-# Label standard pour le texte REDIGE par l'equipage/le dispatch (pas une
-# donnee structuree automatique) -- confirme par l'usage etabli du
-# protocole ACARS. D'autres labels peuvent aussi porter un champ "text"
-# non vide (rapports de position/telemetrie), mais leur contenu n'est PAS
-# concu pour etre lu comme une phrase : cas reel capte en session
-# (2026-08-31) et signale par l'utilisateur -- "de KL592 à M I M 41 06 41
-# B..." (coordonnees/donnees codees illisibles), pas du texte libre.
-# Restreint desormais l'annonce parlee a ce seul label.
-FREE_TEXT_LABEL = "H1"
 
 # Historique de deduplication, en memoire seulement (remis a zero a chaque
 # redemarrage du service, comme le reste des traces glissantes du projet).
@@ -137,13 +117,16 @@ def _identity(msg):
     return msg.get("flight") or msg.get("tail") or "inconnu"
 
 
-def _should_announce(key):
+AIRCRAFT_REPEAT_SEC = 1800  # message de service d'un meme appareil : pas plus d'une fois par 30 min
+
+
+def _should_announce(key, window=ACARS_DEDUP_WINDOW_SEC):
     now = time.time()
     last = _recent_events.get(key)
-    if last is not None and now - last < ACARS_DEDUP_WINDOW_SEC:
+    if last is not None and now - last < window:
         return False
     _recent_events[key] = now
-    stale_before = now - ACARS_DEDUP_WINDOW_SEC * ACARS_DEDUP_PURGE_FACTOR
+    stale_before = now - max(ACARS_DEDUP_WINDOW_SEC * ACARS_DEDUP_PURGE_FACTOR, 2 * AIRCRAFT_REPEAT_SEC)
     stale = [k for k, t in _recent_events.items() if t < stale_before]
     for k in stale:
         del _recent_events[k]
@@ -172,48 +155,29 @@ def _announce(text, label_for_log):
 
 
 def _process_message(msg):
-    """Annonce le message s'il est exploitable (texte libre H1 SANS
-    sous-label, ou label serie Q traduisible) et pas deja annonce
-    recemment pour ce vol/cet evenement. Retourne True si une annonce a
-    reellement eu lieu."""
+    """Tout message ACARS est dit en langage humain (2026-10-03, demande
+    utilisateur) par lib/acars_traduction.py : appareil, phase de vol, sens
+    du message. Un vrai contenu (texte, etape de vol, donnees decodees, label
+    inhabituel) est explique a chaque nouveaute ; un simple message de service
+    (liaison, balise) une fois par AIRCRAFT_REPEAT_SEC pour l'appareil.
+    Retourne True si une annonce a reellement eu lieu."""
+    import acars_traduction as tr
+    import avions_info
     identity = _identity(msg)
-    label = msg.get("label", "")
-    text = (msg.get("text") or "").strip()
-
-    if text and label == FREE_TEXT_LABEL:
-        sublabel = msg.get("sublabel")
-        if sublabel:
-            # H1 avec sous-label = rapport structure (ex: "DF" = dump
-            # DFDAU, donnees de vol brutes), pas du texte redige par un
-            # humain -- meme signature que le message KL0592 signale par
-            # l'utilisateur, reproduite sur un exemple reel du fichier
-            # de test acarsdec (sublabel "DF", contenu illisible).
-            print(f"[acars_watch] H1 avec sous-label {sublabel!r} non annonce (donnees structurees) : {text[:80]!r}")
-        else:
-            key = (identity, "texte", text[:60])
-            if _should_announce(key):
-                _announce(dire("acars.message_acars", identity=identity, text=text), f"ACARS_texte_{identity}")
-                return True
-            return False
-
-    fields = _extract_q_fields(label, text)
-    if fields:
-        key = (identity, label, tuple(sorted(fields.items())))
-        if _should_announce(key):
-            message = _vulgarize_oooi(identity, label, fields)
-            _announce(message, f"ACARS_{label}_{identity}")
-            return True
+    detail = tr.acars_meaning(msg)
+    if tr.substantive("acars", detail):
+        key = (identity, msg.get("label", ""), (msg.get("text") or "")[:80])
+    else:
+        key = (identity, "service")
+    if not _should_announce(key, AIRCRAFT_REPEAT_SEC if key[1] == "service" else ACARS_DEDUP_WINDOW_SEC):
         return False
-
-    if text and label != FREE_TEXT_LABEL:
-        # Texte present mais label non gere -- probablement de la
-        # telemetrie structuree (voir label.c : nombreux labels
-        # numeriques/legacy non couverts par Q_FIELD_SPECS). Loggue pour
-        # diagnostiquer/etendre plus tard, plutot que de perdre
-        # l'information.
-        print(f"[acars_watch] label {label!r} non annonce (texte present, pas H1 libre ni serie Q connue) : {text[:80]!r}")
-
-    return False
+    card = avions_info.card(registration=(msg.get("tail") or "").lstrip(".") or None, callsign=msg.get("flight"))
+    if tr.substantive("acars", detail):
+        text, _ = tr.explain(card, [{"nature": "acars", "details": detail}])
+    else:
+        text = tr.plain(card, ["acars"])
+    _announce(text, f"ACARS_{msg.get('label', '')}_{identity}")
+    return True
 
 
 def scan_window(dwell_sec=30):
