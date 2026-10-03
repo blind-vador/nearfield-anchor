@@ -41,6 +41,7 @@ INCOMING_SOUND = f"{SOUND_EFFECTS_DIR}/incoming.mp3"
 # 1,5 -> 3 s (2026-09-30) : une fin coupee trop tot est pire qu'un peu de
 # silence en fin de capture (priorites de veille fixees avec l'utilisateur).
 SILENCE_DEBOUNCE_SEC = 3.0
+MIN_AUDIO_SEC = 0.6          # en dessous : eclat de squelch, prise abandonnee
 GAP_SEC = 0.3  # un trou plus long entre deux paquets = le silencieux s'est ferme puis rouvert
 MAX_HOLD_SEC = 45
 
@@ -422,6 +423,14 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
                 except Exception:
                     pass
 
+        audio_sec = total_bytes / (AIRBAND_SAMPLE_RATE_HZ * 4)
+        if audio_sec < MIN_AUDIO_SEC:
+            # Simple eclat de squelch (2026-10-03 : des prises de 0,1 s dans le
+            # journal) : rien a garder.
+            print(f"[airband_bridge] canal ignore : {audio_sec:.1f} s de son seulement")
+            play_sound_effect(FREQ_OVER_SOUND, label="airband_bridge")
+            log_session.discard()
+            return False
         if captured_chunks:
             log_session.add_raw_pcm(b"".join(captured_chunks), AIRBAND_SAMPLE_RATE_HZ, "f32le")
 

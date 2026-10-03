@@ -19,6 +19,7 @@ import time
 
 import requests
 
+import filtre_pollution
 import veille_donnees as vd
 from phrases import dire
 
@@ -125,12 +126,16 @@ def _say_text(channel, ensemble, service, text):
     key = f"dls|{service}|{text[:100]}"
     if not _memory.due(key, TEXT_REPEAT_SEC):
         return False
+    if not filtre_pollution.text_ok(f"dab|{service}", text, station=service):  # habillage commercial
+        return False
     fiche = {"protocole": "DAB+", "source": f"{service}, {ensemble}", "canal": channel, "texte_original": text}
     vd.announce(dire("dab.texte", station=service, texte=text), SOUND, "message_dab", "dab_watch", fiche=fiche)
     return True
 
 
 def _say_slide(channel, ensemble, service, sid):
+    if filtre_pollution.images_muted(f"dab|{service}"):
+        return False
     try:
         image = requests.get(f"{URL}/slide/{sid}", timeout=3).content
     except requests.RequestException:
@@ -160,7 +165,13 @@ def _say_slide(channel, ensemble, service, sid):
             described, problem = None, repr(exc)
         if problem or not described:
             print(f"[dab_watch] image : {problem}")
-            return dire("dab.image_sans_description", station=service)
+            return None  # pas de description : rien a dire (souvent de la publicite)
+        is_ad = described.strip().upper().strip(" .").startswith("PUB")
+        filtre_pollution.image_verdict(f"dab|{service}", is_ad)
+        if is_ad:
+            vd.archive("filtre_pollution", {"source": service, "image": path, "raison": "image publicitaire"})
+            print(f"[filtre_pollution] image publicitaire ecartee : {service}")
+            return None
         return dire("dab.image", station=service, description=" ".join(described.split()))
 
     vd.announce(text, SOUND, "message_dab_image", "dab_watch", fiche=fiche)

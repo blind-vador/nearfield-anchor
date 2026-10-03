@@ -526,8 +526,8 @@ DSD_FME_STEREO_DATAGRAM = 640
 DSD_FME_MONO_DATAGRAM = 320
 # Une fois la voix accrochee, on continue tant que des paquets arrivent :
 # fin apres DSD_FME_IDLE_SEC sans paquet, plafond DSD_FME_MAX_SEC.
-DSD_FME_IDLE_SEC = 3.0
-DSD_FME_MAX_SEC = 60
+DSD_FME_IDLE_SEC = 10.0  # 2026-10-03 : conversation DMR coupee entre deux interlocuteurs a 3 s
+DSD_FME_MAX_SEC = 300  # une vraie conversation (qso) dure plusieurs minutes
 
 # Pic DC : artefact materiel propre aux dongles RTL-SDR (architecture a conversion
 # directe), qui apparait comme un pic artificiel au centre exact de chaque segment

@@ -24,7 +24,7 @@ NAMES = {"radio": "radio", "messages": "messages", "donnees": "données", "capte
          "satellites": "satellites"}
 PREFIXES = {
     "satellites": ("passage_", "satellite", "meteor"),
-    "capteurs": ("voiture", "capteur_", "sonde_"),
+    "capteurs": ("voiture", "capteur_", "capteurs_", "sonde_"),
     # anciens noms (avant le 2026-10-03) : ACARS, vdl2, pager, meshtastic -> messages
     "messages": ("message_", "ACARS", "vdl2", "pager", "meshtastic"),
     "donnees": ("APRS", "OGN_", "balise_", "lora"),

@@ -267,10 +267,31 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
             except OSError:
                 pass
     else:
+        _espeak_recorded(text, label)
+
+
+def _espeak_recorded(text, label):
+    """Repli espeak en passant par un fichier : la voix est jouee ET copiee
+    dans l'enregistrement du journal en cours (sinon la prise n'a que le
+    carillon, 2026-10-03)."""
+    fd, path = tempfile.mkstemp(suffix=".wav", prefix="espeak_")
+    os.close(fd)
+    try:
+        subprocess.run(["espeak", "-v", "fr", "-b", "1", "-w", path, text], capture_output=True, timeout=30)
+        if os.path.getsize(path) > 0:
+            play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label)
+            return
+    except Exception as exc:
+        print(f"[espeak fichier indisponible: {exc}]")
+    finally:
         try:
-            espeak_out.say(text, "fr", timeout=30, scale=audio_lock.scale)
-        except Exception as exc:
-            print(f"[espeak indisponible: {exc}]")
+            os.remove(path)
+        except OSError:
+            pass
+    try:
+        espeak_out.say(text, "fr", timeout=30, scale=audio_lock.scale)
+    except Exception as exc:
+        print(f"[espeak indisponible: {exc}]")
 
 
 def speak_cloud(text, repetitive=False):

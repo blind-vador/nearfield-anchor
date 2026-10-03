@@ -45,6 +45,11 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player"):
     # morceaux de 100 ms, pour appliquer le volume du moment (attenue si une
     # source plus prioritaire parle par-dessus) ; rien si la source a abandonne.
     if audio_lock.dropped():
+        # Muet (journal ouvert, source qui a cede sa place) : rien sur les
+        # haut-parleurs, mais l'enregistrement du journal garde son carillon
+        # (2026-10-03 : des prises sans habillage dans le journal).
+        if _active_recording_session is not None:
+            _active_recording_session.add_audio_file(path)
         return
     decoder = player = None
     try:
