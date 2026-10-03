@@ -207,7 +207,7 @@ def card(hex_addr=None, registration=None, callsign=None):
     rt = route(callsign)
     out = {"adresse": hex_addr, "indicatif": callsign}
     if ac:
-        out.update(modele=f"{ac.get('manufacturer', '')} {ac.get('type', '')}".strip(),
+        out.update(modele=spoken_model(ac),
                    immatriculation=ac.get("registration"), compagnie=ac.get("registered_owner"),
                    pays=ac.get("registered_owner_country_name"), allure=type_look(ac), livree=livery(ac))
     if rt:
@@ -218,6 +218,17 @@ def card(hex_addr=None, registration=None, callsign=None):
                    vitesse_kmh=round(st["vitesse"] * 3.6) if st.get("vitesse") is not None else None,
                    vitesse_verticale_m_s=round(st["vz"], 1) if st.get("vz") is not None else None)
     return {k: v for k, v in out.items() if v not in (None, "")}
+
+
+def spoken_model(ac):
+    """ "A320 251NSL" (code constructeur) -> "Airbus A320neo" : lisible a voix haute."""
+    words = (ac.get("type") or "").split(" ")
+    first = words[0]
+    if not any(c.isdigit() for c in first) and len(words) > 1 and words[1][:1].isdigit():
+        first += " " + words[1].split("-")[0]   # "CRJ 1000 NG" -> "CRJ 1000", "ERJ 170-100" -> "ERJ 170"
+    if (ac.get("icao_type") or "").endswith("N") and first.startswith(("A31", "A32", "A33")):
+        first += "neo"
+    return f"{ac.get('manufacturer', '')} {first}".strip()
 
 
 def _airport(a):
