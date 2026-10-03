@@ -5863,3 +5863,24 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
 - Reste : HF (NAVTEX, RTTY meteo, FT8/JS8) des que l'antenne filaire est la.
 - Incident : un "pkill -f" dont le motif figurait dans sa propre commande a
   coupe la session SSH et laisse radio-watch arrete ~1 min (relance).
+
+## 2026-10-03 : filtre de pollution, journal sans trous, DMR plus long
+
+- lib/filtre_pollution.py, filtre d'entree des messages (DAB+ d'abord) :
+  promotion (web, reseaux, telephone, jeux, "ecoutez", "la radio du",
+  "100 %", "hits"...), mot distinctif du nom de la station dans son texte,
+  titre musical "ARTISTE - TITRE", slogan appris (meme texte deja vu de la
+  meme source en 7 jours) ; images classees par Gemini (PUB = pas dite ; 3
+  pubs d'affilee : images de la station ignorees 24 h). Tout l'ecarte est
+  archive (donnees/filtre_pollution_*.jsonl). Choix : titres de chansons
+  ecartes (pas des messages).
+- Journal : sound_player enregistre le carillon meme quand la source est
+  muette (journal ouvert, priorite perdue) -- cause des prises sans habillage
+  (FM, 446, OGN...) ; repli espeak de speak_with_lead_sound joue un fichier
+  (enregistre). Eclats de squelch Airband < 0,6 s abandonnes (prises 446 de
+  0,1 s). Prefixe "capteurs_" range dans capteurs (anciennes annonces
+  groupees). Prises aviation silencieuses : du 2 septembre, anciens dossiers
+  du jour, pas un defaut actuel.
+- DMR : DSD_FME_IDLE_SEC 3 -> 10 s, DSD_FME_MAX_SEC 60 -> 300 s (QSO avec
+  le Quebec capte puis coupe entre deux interlocuteurs). Debut manque :
+  inherent au balayage.
