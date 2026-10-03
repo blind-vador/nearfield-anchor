@@ -7,7 +7,13 @@ DESACTIVE, il s'accaparait la cle) tourne DWELL secondes et ecrit
 aircraft.json ; les appareils avec position sont publies dans LOCAL_PATH,
 que adsb_watch fusionne avec les donnees OpenSky a chaque sondage (une
 seule logique d'annonce, pas de doublon).
+
+Mode S etendu (2026-10-03) : les trames brutes (port local RAW_PORT) sont
+lues pendant la fenetre ; la meteo et les dangers transmis par les avions
+sont dits au fil de l'eau (lib/modes_meteo.py).
 """
+import socket
+import threading
 import json
 import os
 import shutil
@@ -23,6 +29,7 @@ KEEP_SEC = 600
 FEET_TO_M = 0.3048
 FPM_TO_MS = 0.00508
 LOW_ALT_M = 2000
+RAW_PORT = 30002
 NEAR_KM = 20
 
 
@@ -40,8 +47,14 @@ def scan_window(dwell_sec=30):
         return False
     json_dir = tempfile.mkdtemp(prefix="dump1090_")
     proc = subprocess.Popen([BINARY, "--device-index", "0", "--gain", "-10", "--quiet",
-                             "--write-json", json_dir, "--write-json-every", "2"],
+                             "--write-json", json_dir, "--write-json-every", "2",
+                             "--net", "--net-bind-address", "127.0.0.1", "--net-ro-port", str(RAW_PORT),
+                             "--net-ri-port", "0", "--net-bi-port", "0",
+                             "--net-bo-port", "0", "--net-sbs-port", "0"],
                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    stop = threading.Event()
+    reader = threading.Thread(target=_raw_reader, args=(stop,), daemon=True)
+    reader.start()
     try:
         deadline = time.time() + dwell_sec
         while time.time() < deadline and proc.poll() is None:
@@ -58,6 +71,7 @@ def scan_window(dwell_sec=30):
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
+        stop.set()
         shutil.rmtree(json_dir, ignore_errors=True)
     now = time.time()
     known = {k: v for k, v in _load().items() if now - v.get("t", 0) < KEEP_SEC}
@@ -89,6 +103,46 @@ def scan_window(dwell_sec=30):
     # Pique l'attention seulement pour ce qui vole bas et pres (helicopteres,
     # approches) : les avions de ligne en croisiere sont toujours la.
     return low_near > 0
+
+
+def _raw_reader(stop):
+    """Trames brutes Mode S de dump1090 -> meteo et dangers des avions."""
+    sock = None
+    for _ in range(20):  # dump1090 ouvre son port en une seconde ou deux
+        if stop.is_set():
+            return
+        try:
+            sock = socket.create_connection(("127.0.0.1", RAW_PORT), timeout=1)
+            break
+        except OSError:
+            time.sleep(0.5)
+    if sock is None:
+        print("[adsb_local] trames brutes indisponibles")
+        return
+    import modes_meteo
+    sock.settimeout(1)
+    buffer, count = b"", 0
+    try:
+        while not stop.is_set():
+            try:
+                data = sock.recv(65536)
+            except socket.timeout:
+                continue
+            if not data:
+                break
+            buffer += data
+            *lines, buffer = buffer.split(b"\n")
+            for line in lines:
+                msg = line.decode(errors="ignore").strip()
+                if len(msg) == 30 and msg.startswith("*"):  # 112 bits : Comm-B (DF20/21) possible
+                    count += 1
+                    modes_meteo.process(msg)
+    except OSError:
+        pass
+    finally:
+        sock.close()
+    if count:
+        print(f"[adsb_local] {count} trame(s) longues Mode S lues")
 
 
 def as_states(max_age_sec=KEEP_SEC):
