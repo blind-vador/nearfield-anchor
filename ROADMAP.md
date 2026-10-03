@@ -5836,3 +5836,30 @@ RTTY (DWD), messages FT8/JS8 des radioamateurs.
 Peu probables ici : AIS et ASN des bateaux (Rhone a ~50 km derriere les
 monts). Exclus : compteurs d'energie sans fil (donnees privees de voisins),
 charges utiles LoRaWAN et radios des secours (chiffrees).
+
+## 2026-10-03 : nouvelles sources de messages (sauf RDS, refuse par l'utilisateur)
+
+- RADIOS NUMERIQUES : lib/decodeurs.dsd_line (commun scanner + manuel)
+  extrait des lignes de dsd-fme l'emetteur (SRC/TGT), l'alias, les SMS et
+  textes (SMS, Text, ISO7/ISO8, M17 Meta Text) et le GPS ; dits au fil de
+  l'eau par lib/messages_numeriques.py (journal messages), avec indicatif et
+  ville via radioid.net (lib/radioamateurs.py, cache 30 j, jamais le nom).
+  Deja capte : DMR TG 208101, SRC 2081639 = F4LFY (Nice), via relais local.
+- MODE S ETENDU : pyModeS 2.22 installe (pip --user, vador) ; la fenetre
+  ADS-B locale lit les trames brutes de dump1090 (127.0.0.1:30002) ;
+  lib/modes_meteo.py dit la meteo (BDS 4,4 : vent, temperature, humidite)
+  et les dangers (BDS 4,5) transmis par les avions, publie les vents en
+  altitude (/tmp/vents_altitude.json, a fondre dans le bulletin plus tard).
+  Trame de test de pyModeS : vent et temperature bien lus (bds.infer la
+  dit EMPTY : trame d'ecole incoherente, normal).
+- DAB+ : welle.io 2.4 installe (apt) ; watchers/dab_watch.py (fenetre
+  "dab", 45 s) decouvre les ensembles puis ecoute a tour de role : textes
+  DLS et images de diaporama (Gemini, 10 par heure au plus ; images gardees
+  dans donnees/dab_images). Ensembles trouves : 6C Saint-Etienne-Et,
+  7B Metropolitain 2, 8A S-ETIENNE LOCAL1 (~/autopilot/dab_ensembles.json).
+  CHALEUR : 7 min de decodage DAB+ + l'installation ont mene le Pi a 76 C
+  (pause thermique) ; une seule station decodee a la fois (CAROUSEL=1).
+- Centre d'interet "dab" ; chien de garde : welle-cli ajoute.
+- Reste : HF (NAVTEX, RTTY meteo, FT8/JS8) des que l'antenne filaire est la.
+- Incident : un "pkill -f" dont le motif figurait dans sa propre commande a
+  coupe la session SSH et laisse radio-watch arrete ~1 min (relance).
