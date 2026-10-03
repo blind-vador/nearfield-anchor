@@ -82,6 +82,15 @@ def _decode(msg):
     return None
 
 
+def _data(d):
+    """Donnees techniques, lues simplement (registre Comm-B et valeurs brutes)."""
+    if d["genre"] == "meteo":
+        return dire("modes.donnees_meteo", direction=round(d["direction"]), vent=d["vent_kmh"],
+                    temperature=vd.fr_number(d["temp"], 0).replace("-", dire("meteo.moins") + " "),
+                    altitude=int(d["altitude_m"]) if d.get("altitude_m") else "?")
+    return dire("modes.donnees_dangers", nombre=len(d["dangers"]))
+
+
 def _sentence(d):
     if d["genre"] == "meteo":
         text = dire("modes.meteo", altitude=int(d["altitude_m"]) if d.get("altitude_m") else "?",
@@ -114,7 +123,7 @@ def process(msg):
         import avions_info
         card = avions_info.card(hex_addr=d["icao"])
         fiche["source"] = " ".join(x for x in (card.get("modele"), card.get("immatriculation")) if x) or d["icao"]
-        return dire("acars.provenance", qui=tr._who(card), protocole="Mode S") + " " + _sentence(d)
+        return tr.sentence(card, tr._plain_description(card), _data(d), _sentence(d))
 
     vd.announce(text, SOUND, f"message_avion_modes_{d['icao']}", "modes_meteo", fiche=fiche)
     return True

@@ -53,18 +53,21 @@ PHASES = Etiquettes("avion.phase", {
     "approche": "en approche finale",
 }, "phase de vol d'un avion")
 
-PROMPT = """Tu es la voix d'un récepteur radio domestique. Il vient de capter un message de données
-envoyé par un avion (ou un autre système électronique embarqué). À partir de la fiche ci-dessous,
-écris un texte à lire à voix haute pour une personne aveugle. Commence EXACTEMENT par :
-"{debut}" puis, en une phrase, une description de l'appareil en texte alternatif calibré pour une
-personne aveugle (allure, livrée, phase de vol, trajet, seulement ce que la fiche donne), puis
-l'explication du CONTENU du message en une ou deux phrases. N'explique pas ce qu'est le protocole
-(ACARS, VDL2...) : l'utilisateur le connaît. Ton léger mais sérieux. N'invente rien ; si le sens
-exact du contenu n'est pas certain, dis-le simplement. Si la destination annoncée par l'avion
-diffère du trajet de la fiche appareil (base publique, parfois périmée), fie-toi à l'avion et
-donne le nom de l'aéroport si tu connais son code OACI. Altitudes en mètres (1 pied = 0,3 mètre,
-arrondi à la centaine). Pas de markdown, pas d'emoji, pas de liste.
-Langue de la réponse : {langue}.
+PROMPT = """Tu aides la voix d'un récepteur radio domestique à dire, à une personne aveugle, un
+message de données capté d'un avion (ou d'un autre système électronique embarqué). À partir de la
+fiche ci-dessous, rends un objet JSON avec trois champs, en {langue} :
+- "description" : texte alternatif court de l'appareil pour une personne aveugle, sans verbe
+  principal : allure, livrée, phase de vol, trajet, seulement ce que la fiche donne
+  (exemple : "biréacteur moyen-courrier blanc et vert, en croisière à 10 500 mètres vers Nice") ;
+- "donnees" : les données techniques du message, lues simplement, sans les expliquer
+  (exemple : "passage de relais vers une station au sol, destination LFMN") ;
+- "sens" : ce que l'appareil a voulu dire, en clair, en une phrase commençant par un sujet
+  (exemple : "il transfère sa liaison de données vers une nouvelle station, en route vers Nice").
+N'explique pas le protocole (ACARS, VDL2...) : l'utilisateur le connaît. Ton léger mais sérieux.
+N'invente rien ; si le sens exact n'est pas certain, dis-le dans "sens". Si la destination annoncée
+par l'avion diffère du trajet de la fiche appareil (base publique, parfois périmée), fie-toi à
+l'avion et donne le nom de l'aéroport si tu connais son code OACI. Altitudes en mètres (1 pied =
+0,3 mètre, arrondi à la centaine). Pas de markdown, pas d'emoji.
 
 Fiche :
 {fiche}
@@ -164,6 +167,7 @@ def substantive(kind, detail):
 # --- phrases -------------------------------------------------------------------------
 
 def _who(card):
+    """ "un Airbus A320neo d'easyJet immatricule HB-AYE" (fiches, journal)."""
     parts = [dire("acars.un_modele", modele=card["modele"]) if card.get("modele") else dire("acars.un_avion")]
     if card.get("compagnie"):
         elided = card["compagnie"][:1].lower() in "aeiouyéèêh"
@@ -173,20 +177,40 @@ def _who(card):
     return " ".join(parts)
 
 
-def plain(card, kinds, protocole):
-    """Meme ordre que la phrase de Gemini, sans Gemini : provenance et
-    protocole, description de l'appareil, contenu."""
-    parts = [dire("acars.provenance", qui=_who(card), protocole=protocole)]
-    if card.get("allure"):
-        parts.append(card["allure"].rstrip(".") + (", " + card["livree"] if card.get("livree") else "") + ".")
-    if card.get("phase") and card.get("altitude_m") and not card["phase"].startswith(("sol", "roulage")):
-        parts.append(dire("acars.phase_altitude", phase=PHASES[card["phase"]], metres=card["altitude_m"]))
-    elif card.get("phase"):
-        parts.append(dire("acars.phase", phase=PHASES[card["phase"]]))
+def sentence(card, description, donnees, sens):
+    """Phrase d'un message d'avion (2026-10-03, demande utilisateur) :
+    "Un appareil modele X, <description>, immatricule Y, envoie le message
+    suivant : <donnees>, signifiant que <sens>." """
+    appareil = dire("avion.appareil_modele", modele=card["modele"]) if card.get("modele") else dire("avion.appareil")
+    sens = (sens or "").strip().rstrip(".")
+    if sens:
+        sens = sens[0].lower() + sens[1:]
+    key = "avion.phrase_qu" if sens[:1] in "aeiouyhéèê" and sens else "avion.phrase"
+    return dire(key, appareil=appareil,
+                description=f", {description.strip().rstrip('.,')}" if description else "",
+                immatriculation=(", " + dire("acars.immatricule", immatriculation=card["immatriculation"])
+                                 if card.get("immatriculation") else ""),
+                donnees=(donnees or "").strip().rstrip("."), sens=sens or dire("avion.sens_inconnu"))
+
+
+def _plain_description(card):
+    parts = []
+    if card.get("livree"):
+        parts.append(card["livree"])
+    elif card.get("compagnie"):
+        parts.append(dire("avion.de_la_compagnie", compagnie=card["compagnie"]))
+    if card.get("phase"):
+        parts.append(PHASES[card["phase"]] + (" " + dire("avion.a_metres", metres=card["altitude_m"])
+                                               if card.get("altitude_m") and card["phase"] not in ("sol", "roulage")
+                                               else ""))
     if card.get("depart") and card.get("arrivee"):
-        parts.append(dire("acars.trajet", depart=card["depart"], arrivee=card["arrivee"]))
-    parts.append(dire("acars.contenu", quoi=", ".join(FRAME_KINDS[k] for k in kinds)))
-    return " ".join(parts)
+        parts.append(dire("avion.de_vers", depart=card["depart"], arrivee=card["arrivee"]))
+    return ", ".join(parts)
+
+
+def plain(card, kinds, protocole=None):
+    """Meme phrase, sans Gemini."""
+    return sentence(card, _plain_description(card), ", ".join(FRAME_KINDS[k] for k in kinds), None)
 
 
 def explain(card, messages, protocole):
@@ -200,13 +224,14 @@ def explain(card, messages, protocole):
         try:
             import avions_info
             import gemini
-            qui = _who(card)
-            text, problem = gemini.ask(PROMPT.format(langue=avions_info._langue(), debut=dire(
-                "acars.provenance", qui=qui, protocole=protocole),
-                fiche=json.dumps(fiche, ensure_ascii=False, default=str)[:3500]), temperature=0.4)
-            if text and not problem:
-                return " ".join(text.split()), fiche
-            print(f"[acars_traduction] Gemini : {problem}")
+            answer, problem = gemini.ask(PROMPT.format(langue=avions_info._langue(),
+                                                       fiche=json.dumps(fiche, ensure_ascii=False, default=str)[:3500]),
+                                         temperature=0.4, json_mode=True)
+            if isinstance(answer, str):
+                answer = json.loads(answer)
+            if isinstance(answer, dict) and not problem and answer.get("donnees"):
+                return sentence(card, answer.get("description"), answer.get("donnees"), answer.get("sens")), fiche
+            print(f"[acars_traduction] Gemini : {problem or answer}")
         except Exception as exc:
             print(f"[acars_traduction] Gemini : {exc!r}")
-    return plain(card, kinds, protocole), fiche
+    return plain(card, kinds), fiche
