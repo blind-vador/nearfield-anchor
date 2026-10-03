@@ -8,12 +8,11 @@ Une frequence par passage, en alternance. Annonces :
 - sonnettes et boutons : a chaque appui (BUTTON_EVERY_SEC) ;
 - capteur jamais vu depuis NEW_EVERY_SEC : presente une fois, avec ses
   valeurs ;
-- releves (demande utilisateur 2026-10-03 : "on doit etre informe vocalement
-  quand le Pi capte quelque chose") : a chaque passage, une phrase groupee
-  des capteurs meteo entendus ; un capteur n'est redit qu'apres
-  READING_REPEAT_SEC, ou plus tot si sa valeur bouge (TEMP_STEP_C,
-  HUMIDITY_STEP) ; capteurs atypiques (cuisson, piscine, frigo, sol...) :
-  meme rythme, chacun avec une petite blague de Gemini sur ses donnees ;
+- releves (demande utilisateur 2026-10-03) : chaque releve est dit AU FIL
+  DE L'EAU, des qu'il est capte, comme une prise vocale du journal
+  "capteurs" (lib/prise_vocale.py) ; seule la meme emission repetee
+  (SAME_FRAME_SEC) est ecartee. Capteurs atypiques (cuisson, piscine,
+  frigo, sol...) : chaque releve avec une petite blague de Gemini ;
 - capteurs de pneus (voitures qui passent) : jamais annonces, archives.
 Les derniers releves sont publies (READINGS_PATH) pour la console et le
 flash ; tout est archive.
@@ -38,9 +37,7 @@ NEW_EVERY_SEC = 7 * 86400
 ALARM_EVERY_SEC = 120
 BUTTON_EVERY_SEC = 60
 READINGS_KEEP_SEC = 6 * 3600
-READING_REPEAT_SEC = 1800
-TEMP_STEP_C = 1.0
-HUMIDITY_STEP = 5
+SAME_FRAME_SEC = 90       # un capteur repete souvent la meme trame : dite une fois
 
 # Thermometres qui ne mesurent PAS l'air exterieur (2026-10-01 : un
 # thermometre de barbecue voisin, "GT-TMBBQ05", a 75 degres, s'etait glisse
@@ -64,7 +61,6 @@ IGNORED_KEYS = {"time", "model", "id", "channel", "mic", "mod", "freq", "freq1",
 
 _memory = vd.Memory(STATE_PATH)
 _next = 0
-_heard = {}   # releves du passage en cours, annonces en fin de passage : {cle: (evenement, genre)}
 # Une meme emission peut etre reconnue par plusieurs decodeurs de rtl_433
 # (2026-10-01 : "Rubicson-Temperature" et "Solight-TE44", meme identifiant,
 # canal et temperature, a la meme seconde : UN thermometre annonce deux
@@ -185,17 +181,18 @@ def _process(event, freq, tpms, at):
         number = dire("capteur.numero", id=event['id']) if event.get("id") is not None else ""
         plain = (dire("capteur.nouveau_sans_fil_megahertz", what=what, freq_txt=freq_txt, v1=_name(event), number=number)
                  + (f", {values}" if values else "") + ".")
-        text = plain if kind == "meteo" else (_fun_explanation(event, what, freq_txt) or plain)
+        text = plain if kind == "meteo" else (lambda: _fun_explanation(event, what, freq_txt) or plain)
         _memory.due(f"bouton|{key}", BUTTON_EVERY_SEC)  # le premier appui est deja raconte
-        vd.announce(text, SOUND, f"capteur_nouveau_{key}", "capteurs_watch")
+        vd.announce(text, SOUND, f"capteur_nouveau_{key}", "capteurs_watch",
+                    fiche={"protocole": "rtl_433", "frequence_hz": _hz(freq), "source": _name(event)})
         _said(key, event)
         return True
-    if kind not in ("alarme", "bouton", "pneu"):
-        _heard[key] = (event, kind)
     if kind == "bouton" and _memory.due(f"bouton|{key}", BUTTON_EVERY_SEC):
         vd.announce(dire("capteur.appui_sonnette_telecommande_sans", v1=_name(event)), SOUND,
                     f"capteur_bouton_{key}", "capteurs_watch")
         return True
+    if kind not in ("alarme", "bouton", "pneu"):
+        return _reading(key, event, kind, freq)
     return False
 
 
@@ -220,15 +217,29 @@ def _said(key, event):
                                                 "hum": event.get("humidity")}
 
 
-def _worth_saying(key, event):
-    """Releve a dire ? Jamais dit, dit il y a plus de READING_REPEAT_SEC, ou
-    valeur qui a bouge depuis."""
+def _hz(freq):
+    return float(freq.rstrip("M")) * 1e6 if freq.rstrip("M").replace(".", "").isdigit() else None
+
+
+def _reading(key, event, kind, freq):
+    """Releve capte : dit tout de suite (prise vocale), sauf la meme trame repetee."""
     last = _memory.data.get("_dits", {}).get(key)
-    if not last or time.time() - last["t"] >= READING_REPEAT_SEC:
+    same = last and last.get("temp") == event.get("temperature_C") and last.get("hum") == event.get("humidity")
+    if same and time.time() - last["t"] < SAME_FRAME_SEC:
+        return False
+    _said(key, event)
+    values = _values(event)
+    fiche = {"protocole": "rtl_433", "frequence_hz": _hz(freq), "source": _name(event), "valeurs": values}
+    if kind == "meteo":
+        if not values:
+            return False
+        vd.announce(dire("capteur.releve_meteo", nom=_name(event), valeurs=values), SOUND, f"capteur_{key}",
+                    "capteurs_watch", fiche=fiche)
         return True
-    temp, hum = event.get("temperature_C"), event.get("humidity")
-    return ((temp is not None and last.get("temp") is not None and abs(temp - last["temp"]) >= TEMP_STEP_C)
-            or (hum is not None and last.get("hum") is not None and abs(hum - last["hum"]) >= HUMIDITY_STEP))
+    what = KIND_NAMES.get(kind) or dire("capteur.type_inconnu")
+    plain = dire("capteur.releve_atypique", what=what, nom=_name(event), valeurs=values or dire("capteur.sans_valeur"))
+    vd.announce(lambda: _fun_again(event, what) or plain, SOUND, f"capteur_{key}", "capteurs_watch", fiche=fiche)
+    return True
 
 
 FUN_AGAIN_PROMPT = """Tu es la voix d'un récepteur radio domestique, au ton amusé et bienveillant.
@@ -240,31 +251,6 @@ aucune donnée, ne porte aucun jugement sur le voisin. Pas de markdown, pas d'em
 Données décodées (format rtl_433) :
 {data}
 """
-
-
-def _announce_readings(freq):
-    """Fin de passage : capteurs meteo groupes en une phrase, atypiques un par un avec une blague."""
-    heard, weather, said = dict(_heard), [], False
-    _heard.clear()
-    for key, (event, kind) in heard.items():
-        if not _worth_saying(key, event):
-            continue
-        values = _values(event)
-        if kind == "meteo":
-            if values:
-                weather.append(dire("capteur.releve", nom=_name(event), valeurs=values))
-                _said(key, event)
-            continue
-        what = KIND_NAMES.get(kind) or dire("capteur.type_inconnu")
-        plain = dire("capteur.releve_atypique", what=what, nom=_name(event), valeurs=values or dire("capteur.sans_valeur"))
-        text = _fun_again(event, what) or plain
-        vd.announce(text, SOUND, f"capteur_{key}", "capteurs_watch")
-        _said(key, event)
-        said = True
-    if weather:
-        vd.announce(dire("capteur.releves_meteo", releves=" ; ".join(weather)), SOUND, "capteurs_meteo",
-                    "capteurs_watch")
-    return said or bool(weather)
 
 
 def _fun_again(event, what):
@@ -368,11 +354,7 @@ def scan_window(dwell_sec=30):
                 announced = True
         if _cars(tpms, freq, min(dwell_sec, time.time() - started)):
             announced = True
-        try:
-            if _announce_readings(freq):
-                announced = True
-        except Exception as exc:  # une annonce ratee n'arrete pas la veille
-            print(f"[capteurs_watch] annonce des releves : {exc!r}")
+
         _memory.save()
     if count:
         print(f"[capteurs_watch] {count} trame(s) capteurs sur {freq}")

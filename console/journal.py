@@ -30,6 +30,7 @@ pilote du jack du Pi (voir lib/manual_tuner.py).
 """
 import audioop
 import datetime
+import json
 import os
 import re
 import shutil
@@ -101,13 +102,8 @@ def scan_recordings(category="radio"):
                     t = RE_TIME_ONLY.search(f.name)
                     if t and f.is_file():
                         add(_date(d[2], d[3], d[4]), t[1], t[2], t[3], f.path)
-    if category == "capteurs":
-        try:
-            import journal_capteurs
-            for date, items in journal_capteurs.day_items().items():
-                days.setdefault(date, []).extend(items)
-        except Exception as exc:
-            print(f"[journal] releves capteurs : {exc!r}")
+    # (2026-10-03) les releves de capteurs sont des prises vocales enregistrees
+    # au fil de l'eau : plus de releves lus par la voix de la console ici.
     for recs in days.values():
         recs.sort(key=lambda r: r[0])
     return days
@@ -236,6 +232,14 @@ def info_text(path):
     """Touche I : ce que le systeme sait de cet enregistrement."""
     info = ns.capture_info(path) or {}
     if not info.get("freq_hz"):
+        fiche = _message_card(path)
+        if fiche:
+            parts = [dire("journal.info_protocole", protocole=fiche["protocole"])] if fiche.get("protocole") else []
+            if fiche.get("source"):
+                parts.append(dire("journal.info_source", source=fiche["source"]))
+            if fiche.get("frequence_hz"):
+                parts.append(dire("journal.info_frequence", frequence=f"{fiche['frequence_hz'] / 1e6:.4f}".rstrip("0").replace(".", ",")))
+            return " ".join(parts) or dire("journal.pas_info")
         return dire("journal.pas_info")
     mhz = f"{info['freq_hz'] / 1e6:.4f}".rstrip("0").replace(".", ",")
     text = dire("journal.info", frequence=mhz, mode=MODES.get(info.get("mode"), info.get("mode") or dire("journal.mode_inconnu")),
@@ -247,6 +251,15 @@ def info_text(path):
         text += " " + dire("journal.info_analyse", largeur=str(analysis["largeur_khz"]).replace(".", ","),
                            baisse=str(analysis["baisse_db"]).replace(".", ","), verdict=verdict)
     return text
+
+
+def _message_card(path):
+    """Fiche d'une prise vocale (lib/prise_vocale.py) : <nom>.json, ou None."""
+    try:
+        with open(path[:-4] + ".json", encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError, TypeError):
+        return None
 
 
 def raw_path(path):

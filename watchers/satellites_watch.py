@@ -34,7 +34,7 @@ FAMILIES = Etiquettes("satellite.passage", {"meteo": "du satellite météo", "is
 
 
 def _announce(text, label):
-    vd.announce(text, SOUND, label, "satellites_watch")
+    vd.announce(text, SOUND, label, "satellites_watch", wait=True)  # dit avant l'ecoute du passage
 
 
 def _meteo(p, seconds):

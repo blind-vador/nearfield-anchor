@@ -3,10 +3,6 @@ import socket
 import subprocess
 import time
 
-import audio_lock
-import radio_log
-import sound_player
-from speak import speak_with_lead_sound
 from phrases import Etiquettes, dire
 
 # --- Veille ACARS (donnees numeriques avion/compagnie) ---
@@ -117,67 +113,51 @@ def _identity(msg):
     return msg.get("flight") or msg.get("tail") or "inconnu"
 
 
-AIRCRAFT_REPEAT_SEC = 1800  # message de service d'un meme appareil : pas plus d'une fois par 30 min
-
-
 def _should_announce(key, window=ACARS_DEDUP_WINDOW_SEC):
     now = time.time()
     last = _recent_events.get(key)
     if last is not None and now - last < window:
         return False
     _recent_events[key] = now
-    stale_before = now - max(ACARS_DEDUP_WINDOW_SEC * ACARS_DEDUP_PURGE_FACTOR, 2 * AIRCRAFT_REPEAT_SEC)
+    stale_before = now - ACARS_DEDUP_WINDOW_SEC * ACARS_DEDUP_PURGE_FACTOR
     stale = [k for k, t in _recent_events.items() if t < stale_before]
     for k in stale:
         del _recent_events[k]
     return True
 
 
-def _announce(text, label_for_log):
-    """Meme schema que _handle_candidate dans radio_watch.py : session de
-    journal audio active pendant l'annonce (son + voix TTS captes
-    automatiquement via sound_player), verrou audio partage."""
-    # Marqueur explicite (2026-09-01, demande explicite) -- meme tag que
-    # "decode numerique:" dans radio_watch.py, pour que log_ship.py puisse
-    # extraire les messages decodes vers un fichier dedie sur le NAS sans
-    # dependre du texte brut (partage avec d'autres watchers dans le
-    # journal, pas fiable a filtrer seul).
-    print(f"[acars_watch] annonce : {text}")
-    log_session = radio_log.RadioLogSession(label_for_log)
-    sound_player.set_recording_session(log_session)
-    lock = audio_lock.acquire("donnees")
-    try:
-        speak_with_lead_sound(ACARS_SOUND, text, label="acars_watch")
-    finally:
-        audio_lock.release(lock)
-        sound_player.set_recording_session(None)
-        log_session.finalize()
-
-
 def _process_message(msg):
-    """Tout message ACARS est dit en langage humain (2026-10-03, demande
-    utilisateur) par lib/acars_traduction.py : appareil, phase de vol, sens
-    du message. Un vrai contenu (texte, etape de vol, donnees decodees, label
-    inhabituel) est explique a chaque nouveaute ; un simple message de service
-    (liaison, balise) une fois par AIRCRAFT_REPEAT_SEC pour l'appareil.
-    Retourne True si une annonce a reellement eu lieu."""
+    """Tout message ACARS est dit au fil de l'eau, en langage humain
+    (lib/acars_traduction.py), comme une prise vocale du journal "messages"
+    (lib/prise_vocale.py). Seule une retransmission identique est ecartee
+    (ACARS_DEDUP_WINDOW_SEC). Rend True si c'est un vrai contenu."""
     import acars_traduction as tr
     import avions_info
+    import veille_donnees as vd
     identity = _identity(msg)
     detail = tr.acars_meaning(msg)
-    if tr.substantive("acars", detail):
-        key = (identity, msg.get("label", ""), (msg.get("text") or "")[:80])
-    else:
-        key = (identity, "service")
-    if not _should_announce(key, AIRCRAFT_REPEAT_SEC if key[1] == "service" else ACARS_DEDUP_WINDOW_SEC):
+    content = tr.substantive("acars", detail)
+    key = (identity, msg.get("label", ""), (msg.get("text") or "")[:80])
+    if not _should_announce(key):
         return False
-    card = avions_info.card(registration=(msg.get("tail") or "").lstrip(".") or None, callsign=msg.get("flight"))
-    if tr.substantive("acars", detail):
-        text, _ = tr.explain(card, [{"nature": "acars", "details": detail}])
-    else:
-        text = tr.plain(card, ["acars"])
-    _announce(text, f"ACARS_{msg.get('label', '')}_{identity}")
-    return True
+    fiche = {"protocole": "ACARS", "source": identity, "frequence_hz": _freq_hz(msg), "details": detail}
+
+    def text():  # dans la file d'annonces : base d'avions et Gemini sans bloquer l'ecoute
+        card = avions_info.card(registration=(msg.get("tail") or "").lstrip(".") or None, callsign=msg.get("flight"))
+        fiche["appareil"] = card
+        if content:
+            return tr.explain(card, [{"nature": "acars", "details": detail}], "ACARS")[0]
+        return tr.plain(card, ["acars"], "ACARS")
+
+    vd.announce(text, ACARS_SOUND, f"message_avion_ACARS_{identity}", "acars_watch", fiche=fiche)
+    return content
+
+
+def _freq_hz(msg):
+    try:
+        return float(msg.get("freq")) * 1e6
+    except (TypeError, ValueError):
+        return None
 
 
 def scan_window(dwell_sec=30):

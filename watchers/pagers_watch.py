@@ -20,7 +20,7 @@ FREQUENCIES_HZ = [466_025_000, 466_050_000, 466_075_000, 466_175_000, 466_206_25
 SAMPLE_RATE = 22050
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_morse.mp3")
 STATE_PATH = "/tmp/pagers_watch_state.json"
-REPEAT_SEC = 1800
+REPEAT_SEC = 300          # retransmission d'un meme appel (reseau qui repete), pas un nouvel appel
 MIN_LETTERS = 6            # en dessous : numerique, bruit ou trame de service
 # POCSAG : "POCSAG1200: Address: 123456  Function: 3  Alpha:   texte"
 # FLEX   : "FLEX|date|1600/2/K/A|12.345|000123456|ALN|texte"
@@ -55,7 +55,8 @@ def _other_page(line, freq):
         text = dire("pager.numerique", chiffres=digits, adresse=address, frequence=mhz)
     else:
         text = dire("pager.appel_sans_texte", adresse=address, frequence=mhz)
-    vd.announce(text, SOUND, "pager", "pagers_watch")
+    vd.announce(text, SOUND, "message_pager", "pagers_watch",
+                fiche={"protocole": "POCSAG", "frequence_hz": freq, "source": f"adresse {address}"})
     return True
 
 
@@ -94,7 +95,8 @@ def scan_window(dwell_sec=30):
                 m = ALPHA.search(line)
                 text = _readable(m.group(1) or m.group(2) or "") if m else ""
                 if text and _memory.due(f"pager|{text[:80]}", REPEAT_SEC):
-                    vd.announce(dire("pager.message_pager", text=text), SOUND, "pager", "pagers_watch")
+                    vd.announce(dire("pager.message_pager", text=text), SOUND, "message_pager", "pagers_watch",
+                                fiche={"protocole": "POCSAG ou FLEX", "frequence_hz": freq, "texte_original": text})
                     announced = True
                 elif not text and _other_page(line, freq):  # appel sans texte ou numerique (2026-10-03)
                     announced = True

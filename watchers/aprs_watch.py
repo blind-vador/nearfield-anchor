@@ -97,13 +97,15 @@ def _process(packet):
         text = packet["message_text"].strip()
         if _memory.due(f"msg|{call}|{text[:60]}", MESSAGE_EVERY_SEC):
             vd.announce(dire("aprs.message_aprs", spell=vd.spell(call), spell2=vd.spell(to), text=text), SOUND,
-                        f"APRS_message_{call}", "aprs_watch")
+                        f"message_aprs_{call}", "aprs_watch",
+                        fiche={"protocole": "APRS", "source": call, "destinataire": to, "texte_original": text})
             return True
         return False
     if fmt == "bulletin" or packet.get("bid") is not None:
         text = (packet.get("message_text") or "").strip()
         if text and _memory.due(f"bln|{call}|{text[:60]}", MESSAGE_EVERY_SEC):
-            vd.announce(dire("aprs.bulletin_aprs", spell=vd.spell(call), text=text), SOUND, f"APRS_bulletin_{call}", "aprs_watch")
+            vd.announce(dire("aprs.bulletin_aprs", spell=vd.spell(call), text=text), SOUND, f"message_aprs_bulletin_{call}", "aprs_watch",
+                        fiche={"protocole": "APRS", "source": call, "texte_original": text})
             return True
         return False
     lat, lon = packet.get("latitude"), packet.get("longitude")

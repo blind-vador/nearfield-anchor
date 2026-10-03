@@ -20,7 +20,7 @@ import time
 
 from phrases import Etiquettes, dire
 
-GEMINI_PER_HOUR = 20
+GEMINI_PER_HOUR = 30
 
 # Labels ACARS dont le sens est etabli (ARINC 618/620) ; les autres sont dits
 # "message de type X" et leur contenu est explique avec prudence.
@@ -55,16 +55,15 @@ PHASES = Etiquettes("avion.phase", {
 
 PROMPT = """Tu es la voix d'un récepteur radio domestique. Il vient de capter un message de données
 envoyé par un avion (ou un autre système électronique embarqué). À partir de la fiche ci-dessous,
-écris un texte à lire à voix haute pour une personne aveugle, dans cet ordre exact :
-"Message provenant d'un <modèle> de <compagnie>, par le protocole <nom du protocole>, " puis une
-description de l'appareil en texte alternatif calibré pour une personne aveugle (allure, livrée,
-phase de vol, trajet si la fiche les donne), puis l'explication du CONTENU du message.
-N'explique pas ce qu'est le protocole (ACARS, VDL2...) : l'utilisateur le connaît. Ton léger mais
-sérieux. N'invente rien qui ne soit pas dans la fiche ; si le sens exact du contenu n'est pas
-certain, dis-le simplement. Ne parle de la phase de vol que si la fiche la donne. Si la destination
-annoncée par l'avion diffère du trajet de la fiche appareil (base publique, parfois périmée),
-fie-toi à l'avion et donne le nom de l'aéroport si tu connais son code OACI. Altitudes en mètres
-(1 pied = 0,3 mètre, arrondi à la centaine). Pas de markdown, pas d'emoji, pas de liste.
+écris un texte à lire à voix haute pour une personne aveugle. Commence EXACTEMENT par :
+"{debut}" puis, en une phrase, une description de l'appareil en texte alternatif calibré pour une
+personne aveugle (allure, livrée, phase de vol, trajet, seulement ce que la fiche donne), puis
+l'explication du CONTENU du message en une ou deux phrases. N'explique pas ce qu'est le protocole
+(ACARS, VDL2...) : l'utilisateur le connaît. Ton léger mais sérieux. N'invente rien ; si le sens
+exact du contenu n'est pas certain, dis-le simplement. Si la destination annoncée par l'avion
+diffère du trajet de la fiche appareil (base publique, parfois périmée), fie-toi à l'avion et
+donne le nom de l'aéroport si tu connais son code OACI. Altitudes en mètres (1 pied = 0,3 mètre,
+arrondi à la centaine). Pas de markdown, pas d'emoji, pas de liste.
 Langue de la réponse : {langue}.
 
 Fiche :
@@ -174,34 +173,40 @@ def _who(card):
     return " ".join(parts)
 
 
-def plain(card, kinds):
-    """Phrase fixe, sans Gemini."""
-    text = dire("acars.capte", qui=_who(card), quoi=", ".join(FRAME_KINDS[k] for k in kinds))
-    if card.get("phase") and card.get("altitude_m") and not card.get("phase", "").startswith(("sol", "roulage")):
-        text += " " + dire("acars.phase_altitude", phase=PHASES[card["phase"]], metres=card["altitude_m"])
+def plain(card, kinds, protocole):
+    """Meme ordre que la phrase de Gemini, sans Gemini : provenance et
+    protocole, description de l'appareil, contenu."""
+    parts = [dire("acars.provenance", qui=_who(card), protocole=protocole)]
+    if card.get("allure"):
+        parts.append(card["allure"].rstrip(".") + (", " + card["livree"] if card.get("livree") else "") + ".")
+    if card.get("phase") and card.get("altitude_m") and not card["phase"].startswith(("sol", "roulage")):
+        parts.append(dire("acars.phase_altitude", phase=PHASES[card["phase"]], metres=card["altitude_m"]))
     elif card.get("phase"):
-        text += " " + dire("acars.phase", phase=PHASES[card["phase"]])
+        parts.append(dire("acars.phase", phase=PHASES[card["phase"]]))
     if card.get("depart") and card.get("arrivee"):
-        text += " " + dire("acars.trajet", depart=card["depart"], arrivee=card["arrivee"])
-    return text
+        parts.append(dire("acars.trajet", depart=card["depart"], arrivee=card["arrivee"]))
+    parts.append(dire("acars.contenu", quoi=", ".join(FRAME_KINDS[k] for k in kinds)))
+    return " ".join(parts)
 
 
-def explain(card, messages):
+def explain(card, messages, protocole):
     """Phrase a dire pour un appareil et ses messages ({nature, details})."""
     kinds = list(dict.fromkeys(m["nature"] for m in messages))
-    fiche = {"appareil": card, "messages": [{"nature": FRAME_KINDS[m["nature"]], **m["details"]} for m in messages]}
+    fiche = {"protocole": protocole, "appareil": card,
+             "messages": [{"nature": FRAME_KINDS[m["nature"]], **m["details"]} for m in messages]}
     if card.get("phase"):
         fiche["appareil"] = dict(card, phase=PHASES[card["phase"]])
     if _budget():
         try:
             import avions_info
             import gemini
-            text, problem = gemini.ask(PROMPT.format(langue=avions_info._langue(),
-                                                     fiche=json.dumps(fiche, ensure_ascii=False, default=str)[:3500]),
-                                       temperature=0.4)
+            qui = _who(card)
+            text, problem = gemini.ask(PROMPT.format(langue=avions_info._langue(), debut=dire(
+                "acars.provenance", qui=qui, protocole=protocole),
+                fiche=json.dumps(fiche, ensure_ascii=False, default=str)[:3500]), temperature=0.4)
             if text and not problem:
                 return " ".join(text.split()), fiche
             print(f"[acars_traduction] Gemini : {problem}")
         except Exception as exc:
             print(f"[acars_traduction] Gemini : {exc!r}")
-    return plain(card, kinds), fiche
+    return plain(card, kinds, protocole), fiche

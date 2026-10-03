@@ -72,7 +72,7 @@ SCRIPT_SOURCES = {
 # annonce, ni son en direct -- on ne saurait plus si on entend le direct ou
 # le journal), puis une phrase courte previent (speak.journal_notice).
 JOURNAL_FLAG = "/tmp/journal_ouvert.json"
-SILENT_WHEN_JOURNAL = {"radio"}
+SILENT_WHEN_JOURNAL = {"radio", "donnees"}  # donnees : prises vocales, deja au journal (lib/prise_vocale.py)
 
 _local = threading.local()
 _settings_cache = (0.0, None)

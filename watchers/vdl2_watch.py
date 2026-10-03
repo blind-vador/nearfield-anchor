@@ -5,13 +5,13 @@ dumpvdl2 (compile depuis les sources, comme acarsdec) ecoute les quatre
 frequences europeennes d'un seul coup (moins de 250 kHz d'ecart) et sort
 une ligne JSON par trame. Toutes les trames sont archivees.
 
-Annonces (2026-10-03) : les trames d'un passage sont regroupees par avion
-(emises par lui ou par une station au sol qui lui parle) et dites en
-langage humain par lib/acars_traduction.py : qui est l'avion, a quoi il
-ressemble, sa phase de vol, ce que ses messages veulent dire. Un vrai
-contenu (ACARS, passage de relais avec destination, controle aerien,
-position) est explique par Gemini a chaque nouveaute ; le seul entretien
-de la liaison est dit en une phrase fixe, une fois par AIRCRAFT_REPEAT_SEC.
+Annonces au fil de l'eau (2026-10-03) : chaque trame est rattachee a son
+avion (emise par lui ou par une station au sol qui lui parle) et dite des
+qu'elle arrive, en langage humain (lib/acars_traduction.py), comme une
+prise vocale du journal "messages" (lib/prise_vocale.py). Un vrai contenu
+(ACARS, passage de relais avec destination, controle aerien, position) est
+dit a chaque fois, sauf une retransmission identique (REPEAT_SAME_SEC) ;
+le simple entretien de la liaison, une fois par avion et par passage.
 """
 import json
 import os
@@ -29,7 +29,7 @@ VDL2_FREQUENCIES = ["136725000", "136775000", "136875000", "136975000"]
 LOCAL_BINARY = "/home/vador/autopilot/bin/dumpvdl2"
 GAIN_DB = "40"
 SOUND = acars_watch.ACARS_SOUND
-AIRCRAFT_REPEAT_SEC = 1800   # un avion deja signale n'est redit qu'apres 30 min
+REPEAT_SAME_SEC = 300        # meme contenu du meme avion : retransmission, pas redit
 _memory = vd.Memory("/tmp/vdl2_watch_state.json")
 
 
@@ -58,7 +58,7 @@ def scan_window(dwell_sec=30):
     threading.Thread(target=_reader, args=(proc, frames), daemon=True).start()
     announced = False
     count = 0
-    by_aircraft = {}   # adresse ICAO -> trames du passage
+    linked = set()     # avions dont l'entretien de liaison est deja dit dans ce passage
     try:
         deadline = time.time() + dwell_sec
         while time.time() < deadline:
@@ -74,7 +74,11 @@ def scan_window(dwell_sec=30):
                 plane = next((side.get("addr") for side in (avlc.get("src") or {}, avlc.get("dst") or {})
                               if side.get("type") == "Aircraft" and side.get("addr")), None)
                 if plane:
-                    by_aircraft.setdefault(plane, []).append(avlc)
+                    try:
+                        if _on_frame(plane, avlc, (frame.get("vdl2") or {}).get("freq"), linked):
+                            announced = True
+                    except Exception as exc:  # une annonce ratee n'arrete pas la veille
+                        print(f"[vdl2_watch] annonce {plane} : {exc!r}")
     finally:
         if proc.poll() is None:
             proc.terminate()
@@ -84,39 +88,36 @@ def scan_window(dwell_sec=30):
             proc.kill()
     if count:
         print(f"[vdl2_watch] {count} trame(s) VDL2 en {dwell_sec:.0f} s")
-    for plane, frames_of in by_aircraft.items():
-        try:
-            if _announce_aircraft(plane, frames_of):
-                announced = True
-        except Exception as exc:  # une annonce ratee n'arrete pas la veille
-            print(f"[vdl2_watch] annonce {plane} : {exc!r}")
     _memory.save()
     return announced
 
 
-def _announce_aircraft(plane, frames_of):
-    messages = []
-    for avlc in frames_of:
-        kind, detail = tr.frame_kind(avlc)
-        messages.append({"nature": kind, "details": detail, "fond": tr.substantive(kind, detail)})
-    content = [m for m in messages if m["fond"]]
+def _on_frame(plane, avlc, freq, linked):
+    """Une trame : annonce mise en file si elle dit quelque chose de neuf.
+    Rend True si c'est un vrai contenu (piqure de la fenetre)."""
+    kind, detail = tr.frame_kind(avlc)
+    content = tr.substantive(kind, detail)
     if content:
-        signature = json.dumps([m["details"] for m in content], sort_keys=True, default=str)[:300]
-        if not _memory.due(f"contenu|{plane}|{signature}", AIRCRAFT_REPEAT_SEC):
+        signature = json.dumps(detail, sort_keys=True, default=str)[:300]
+        if not _memory.due(f"contenu|{plane}|{signature}", REPEAT_SAME_SEC):
             return False
-        _memory.due(f"avion|{plane}", AIRCRAFT_REPEAT_SEC)
-        chosen = content
-    elif _memory.due(f"avion|{plane}", AIRCRAFT_REPEAT_SEC):
-        chosen = list({m["nature"]: m for m in messages}.values())
-    else:
+    elif plane in linked:
         return False
-    acars = next((a.get("acars") for a in frames_of if a.get("acars")), {}) or {}
-    card = avions_info.card(hex_addr=plane, registration=(acars.get("reg") or "").lstrip(".") or None,
-                            callsign=(acars.get("flight") or "").strip() or None)
-    if content:
-        text, fiche = tr.explain(card, chosen)
-    else:
-        text, fiche = tr.plain(card, [m["nature"] for m in chosen]), None
-    vd.archive("vdl2_traduit", {"adresse": plane, "texte": text, "fiche": fiche or card})
-    vd.announce(text, SOUND, "vdl2", "vdl2_watch")
-    return True
+    linked.add(plane)
+    acars = avlc.get("acars") or {}
+    fiche = {"protocole": "VDL2", "frequence_hz": freq, "source": plane, "nature": kind, "details": detail}
+
+    def text():  # dans la file d'annonces : base d'avions et Gemini sans bloquer l'ecoute
+        card = avions_info.card(hex_addr=plane, registration=(acars.get("reg") or "").lstrip(".") or None,
+                                callsign=(acars.get("flight") or "").strip() or None)
+        fiche["source"] = " ".join(x for x in (card.get("modele"), card.get("immatriculation"), card.get("indicatif")) if x) or plane
+        fiche["appareil"] = card
+        if content:
+            said, _ = tr.explain(card, [{"nature": kind, "details": detail}], "VDL2")
+        else:
+            said = tr.plain(card, [kind], "VDL2")
+        vd.archive("vdl2_traduit", {"adresse": plane, "texte": said, "fiche": fiche})
+        return said
+
+    vd.announce(text, SOUND, f"message_avion_{plane}", "vdl2_watch", fiche=fiche)
+    return content

@@ -6,8 +6,11 @@ ses propres archives (extraits gardes, fleche droite).
 
   radio       voix captees par le scanner (bandes, canaux, aviation,
               numerique) : tout ce qui n'est pas dans les autres
-  donnees     annonces de donnees decodees (APRS, ACARS, bipeurs, planeurs,
-              balises, LoRa et Meshtastic)
+  messages    messages texte transportes par radio et decodes (2026-10-03) :
+              avions (ACARS, VDL2), bipeurs, messages et bulletins APRS,
+              Meshtastic ; chacun est une prise vocale (lib/prise_vocale.py)
+              avec sa fiche <nom>.json
+  donnees     autres donnees decodees : stations APRS, planeurs, balises
   capteurs    capteurs sans fil, ballons-sondes, voitures ; plus un releve
               par capteur et par jour, meme ceux ecartes du bulletin meteo
               (console/journal_capteurs.py)
@@ -16,19 +19,24 @@ ses propres archives (extraits gardes, fleche droite).
 import os
 
 KEEP_DIR = "/media/nas/nd2/storage/radio"
-ORDER = ["radio", "donnees", "capteurs", "satellites"]
-NAMES = {"radio": "radio", "donnees": "données", "capteurs": "capteurs", "satellites": "satellites"}
+ORDER = ["radio", "messages", "donnees", "capteurs", "satellites"]
+NAMES = {"radio": "radio", "messages": "messages", "donnees": "données", "capteurs": "capteurs",
+         "satellites": "satellites"}
 PREFIXES = {
     "satellites": ("passage_", "satellite", "meteor"),
     "capteurs": ("voiture", "capteur_", "sonde_"),
-    "donnees": ("APRS", "ACARS", "vdl2", "OGN_", "balise_", "pager", "meshtastic", "lora"),
+    # anciens noms (avant le 2026-10-03) : ACARS, vdl2, pager, meshtastic -> messages
+    "messages": ("message_", "ACARS", "vdl2", "pager", "meshtastic"),
+    "donnees": ("APRS", "OGN_", "balise_", "lora"),
 }
 # Mots qui designent un journal dans une commande ("journal capteurs",
 # "archives satellites"...), sans accents (matcher.normalize).
 WORDS = {
     "satellites": ("satellite", "satellites", "meteor", "spatial"),
     "capteurs": ("capteur", "capteurs", "voiture", "voitures", "sonde", "sondes", "thermometre", "thermometres"),
-    "donnees": ("donnee", "donnees", "data", "aprs", "acars", "bipeur", "bipeurs", "lora", "meshtastic"),
+    "messages": ("message", "messages", "acars", "vdl2", "avion", "avions", "bipeur", "bipeurs", "pager", "pagers",
+                 "meshtastic"),
+    "donnees": ("donnee", "donnees", "data", "aprs", "lora", "planeur", "planeurs", "balise", "balises"),
     "radio": ("radio", "voix"),
 }
 
@@ -44,7 +52,7 @@ def category_of(filename):
 def from_words(normalized_text):
     """Journal designe dans une commande deja normalisee ; radio par defaut."""
     words = set(normalized_text.split())
-    for category in ("satellites", "capteurs", "donnees", "radio"):
+    for category in ("satellites", "capteurs", "messages", "donnees", "radio"):
         if words & set(WORDS[category]):
             return category
     return "radio"

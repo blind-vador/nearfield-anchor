@@ -27,19 +27,12 @@ DIRECTION_VERS = Etiquettes("direction.vers", {d: (f"à l'{d}" if d[0] in "eo" e
 SPELL = Etiquettes("epeler", {"-": "tiret", "/": "barre"}, "signe lu dans un indicatif épelé")
 
 
-def announce(text, sound, label_for_log, tag):
-    """Annonce parlee avec son d'accompagnement, captee dans le journal
-    audio (comme une reception radio), sous le verrou audio partage."""
-    print(f"[{tag}] annonce : {text}")
-    log_session = radio_log.RadioLogSession(label_for_log)
-    sound_player.set_recording_session(log_session)
-    lock = audio_lock.acquire("donnees")
-    try:
-        speak_with_lead_sound(sound, text, label=tag)
-    finally:
-        audio_lock.release(lock)
-        sound_player.set_recording_session(None)
-        log_session.finalize()
+def announce(text, sound, label_for_log, tag, fiche=None, wait=False):
+    """Annonce au fil de l'eau (2026-10-03) : le texte (ou la fonction qui le
+    rend) devient une prise vocale au journal (lib/prise_vocale.py), diffusee
+    depuis une file -- l'ecoute continue pendant qu'on parle."""
+    import prise_vocale
+    prise_vocale.announce(text, sound, label_for_log, tag, fiche=fiche, wait=wait)
 
 
 def archive(kind, record):
