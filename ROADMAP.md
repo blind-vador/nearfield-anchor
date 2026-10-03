@@ -5791,3 +5791,48 @@ tant que le Mac repond.
   en direction de Nice", easyJet "en direction de Faro". Incident d'essai :
   deux annonces ACARS fictives parlees sur le Pi et enregistrees au journal
   (15 h 17), supprimees.
+
+## 2026-10-03 : prises vocales au fil de l'eau, journal "messages"
+
+- lib/prise_vocale.py : toute annonce de donnees (veille_donnees.announce)
+  passe par une file traitee par un fil dedie : le texte (ou la fonction qui
+  le produit : Gemini, base d'avions) est synthetise en fichier (edge-tts,
+  repli espeak dans un fichier), carillon + voix assembles en une prise du
+  journal (server/radio_log/<etiquette>_<date>.mp3) avec sa fiche
+  <nom>.json (texte, protocole, source, frequence), puis diffusee. L'ecoute
+  continue pendant ce temps (mise en file : 0,3 s). Journal ouvert :
+  "donnees" se tait comme "radio" (audio_lock.SILENT_WHEN_JOURNAL), la prise
+  est quand meme au journal, un avis court previent. Passage de satellite :
+  wait=True (dit avant l'ecoute).
+- Au fil de l'eau : capteurs dits a CHAQUE releve (seule la meme trame
+  repetee dans SAME_FRAME_SEC est ecartee) ; VDL2 et ACARS a chaque trame
+  (retransmission identique ecartee 5 min ; entretien de liaison : une fois
+  par avion et par passage) ; pagers : retransmission 5 min.
+- Journal "messages" (lib/journaux.py, prefixe message_) : avions, pagers,
+  messages et bulletins APRS, Meshtastic ; "donnees" garde stations APRS,
+  planeurs, balises. Touche I sur un message : protocole, emetteur,
+  frequence (fiche). Les releves texte des capteurs lus par la voix de la
+  console ne sont plus ajoutes au journal (console/journal_capteurs.py
+  n'est plus appele ; a supprimer ou a refaire en prise vocale du jour).
+- Messages d'avions : "Message provenant d'un <modele> de <compagnie>, par
+  le protocole <nom>." puis description en texte alternatif, puis le
+  contenu ; le protocole n'est plus explique. Modeles lisibles
+  (avions_info.spoken_model : Airbus A320neo, Bombardier CRJ 1000).
+
+### Autres sources de messages a capter (etude, rien d'installe)
+
+Faisables avec le materiel actuel, par ordre d'interet :
+1. RDS des radios FM (redsea, a installer) : nom de station, radiotexte
+   (titres, infos), type de programme, annonces trafic. Se greffe sur la
+   bande FM deja balayee.
+2. Textes des radios numeriques radioamateur : SMS et alias de l'emetteur
+   DMR, texte lent D-STAR, texte C4FM (dsd-fme, deja la).
+3. DAB+ (welle-cli, a installer ; Saint-Etienne a des multiplex locaux) :
+   textes DLS (titres, infos) et diaporamas (images, decrites par Gemini).
+4. Mode S etendu des avions (pyModeS sur la sortie brute de dump1090) :
+   vent et temperature mesures par les avions en altitude.
+Plus tard, avec l'antenne HF : NAVTEX (490/518 kHz), bulletins meteo en
+RTTY (DWD), messages FT8/JS8 des radioamateurs.
+Peu probables ici : AIS et ASN des bateaux (Rhone a ~50 km derriere les
+monts). Exclus : compteurs d'energie sans fil (donnees privees de voisins),
+charges utiles LoRaWAN et radios des secours (chiffrees).
