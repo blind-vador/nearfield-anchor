@@ -26,9 +26,9 @@ import time
 import phrases
 from phrases import dire
 
-BLOCK_SIZE = 20
+BLOCK_SIZE = 40         # ~760 phrases reecrivables (2026-10-03) : une vingtaine d'appels par nuit
 PAUSE_SEC = 4           # entre deux blocs (quotas de Gemini)
-TIMEOUT_SEC = 120
+TIMEOUT_SEC = 180
 RUN_AT = (0, 0)         # minuit
 
 STYLE_PROMPT = """Tu prépares la voix d'un petit ordinateur domestique (un Raspberry Pi) qui parle à une

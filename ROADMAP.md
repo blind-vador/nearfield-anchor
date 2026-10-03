@@ -5677,3 +5677,37 @@ tant que le Mac repond.
   bloc illisible retente une fois, sinon phrase neutre. Sortie :
   ~/autopilot/phrases/personnalite_fr.ini (+ _hier). Essai reel : 3 min,
   79 phrases reecrites ("un vieux loup de mer bourru mais attachant").
+
+### Suite (2026-10-03) : TOUTE l'interface passe par les phrases
+
+- 1433 phrases dans phrases/fr.ini (757 reecrivables par la personnalite,
+  les autres "fixe" : noms, unites, morceaux de phrase). Console, lib et
+  veilles : tout ce qui est dit ou affiche passe par dire().
+- Pluriels traduisibles : nombre(n, "note") lit [unite.note] = "note|notes".
+- Tableaux de libelles (codes enregistres, libelles dits) :
+  phrases.Etiquettes (dict traduit a la lecture : modes radio, couleurs et
+  niveaux de vigilance, directions avec preposition "au nord" / "de l'est",
+  types APRS, marques de voitures, touches du clavier, jours, mois...) et
+  phrases.Champs (grilles de notation et d'observation). Cle
+  <groupe>.<code>, ou par libelle (par_libelle) quand les codes sont
+  illisibles. dire_ou(cle, defaut) pour les descriptions des commandes
+  (commande.<nom>.description / .confirmation).
+- Espaces de bord : l'INI les perd, ils restent dans le code (" " + dire()).
+- Verdict "vraie station ou artefact" : garde en CODE (bruit, artefact,
+  vraie, indecis) dans stations.json, dit dans la langue du moment.
+- Outils : tools/phrases_convertir.py (liste, convertir, constantes,
+  etiquettes, reste) ; tools/phrases_verifier.py (chaque dire() du code :
+  cle presente, memes variables) -- a lancer avant chaque deploiement.
+  Piege corrige : en Python 3.9 (Mac) la position des expressions DANS une
+  f-string est fausse, l'outil regenere le code par ast.unparse.
+- Personnalite : blocs de 40 (une vingtaine d'appels Gemini par nuit).
+- Volontairement HORS des phrases (a traiter avec la traduction) :
+  * mots-cles et exemples des commandes, phrases directes d'observation
+    (meteo_obs.QUICK) : prochaine etape, jeux de mots-cles par langue ;
+  * consignes envoyees a Gemini (flash, capteurs, APRS, personnalite) :
+    en francais ; ajouter "reponds en <langue>" quand une autre langue
+    sera choisie ;
+  * noms de bandes et de canaux enregistres dans les journaux (radio_watch,
+    relais.GROUPS, airband_bridge) : ce sont des donnees ;
+  * reecriture des commentaires APRS (aprs_texte.WORDS) : moteur propre
+    au francais ; messages de debogage (print).
