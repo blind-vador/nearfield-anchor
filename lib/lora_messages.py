@@ -148,3 +148,9 @@ def handle(job, frames, by):
     except (OSError, ValueError, KeyError):
         pass
     print(f"[lora] {p['profil']} decode par {by} : {len(good)} trame(s) valide(s), {len(frames) - len(good)} abimee(s)")
+    if good:  # la piqure LoRa ne vient que d'une vraie trame (2026-10-03)
+        try:
+            import attention
+            attention.stimulate("lora", attention.CAPTURE_POINTS)
+        except Exception as exc:
+            print(f"[lora] attention : {exc!r}")

@@ -1,13 +1,23 @@
 """Captation LoRa (Meshtastic et APRS LoRa).
 
-La fenetre d'ecoute repere les rafales (puissance au-dessus du bruit), les
-garde en I/Q brut sur le disque de stockage avec leur fiche JSON, et confie
-chacune tout de suite au pont (lib/lora_messages.py) : la machine compagne
-la decode et le Pi annonce le message aussitot ; le Pi ne decode lui-meme
-que si aucune machine ne repond.
+Detection par DECHIRP (2026-10-03), comme un vrai recepteur LoRa : chaque
+symbole recu est multiplie par une rampe descendante ; le preambule LoRa (8
+rampes montantes identiques) devient alors un pic net, au meme endroit,
+plusieurs symboles d'affilee -- meme 15 a 20 dB SOUS le bruit (c'est le
+principe du LoRa). Une porteuse, un capteur 433,92 MHz voisin ou du bruit
+s'etalent et ne donnent jamais plusieurs symboles alignes. L'ancienne
+detection par energie (+6 dB) gardait les capteurs voisins (0 trame decodee
+sur toutes ses rafales) et ratait le vrai LoRa, presque toujours sous le
+bruit. Mesures : synthese gr-lora_sdr detectee jusqu'a ~-21 dB (SF12) ;
+13 fausses rafales enregistrees et 20 s de bruit : 0 ou 1 symbole aligne.
 
-  meshtastic  869,525 MHz, largeur 250 kHz (preset europeen LongFast)
-  lora_aprs   433,775 MHz, largeur 125 kHz (APRS LoRa des radioamateurs)
+Un preambule detecte -> on garde la seconde d'avant et la suite de la trame
+(I/Q brut, disque de stockage, avec sa fiche JSON), et on la confie aussitot
+au pont (lib/lora_messages.py) : la machine compagne la decode et le Pi
+annonce le message ; le Pi ne decode lui-meme que si aucune machine ne repond.
+
+  meshtastic  869,525 MHz, largeur 250 kHz, SF11 (preset europeen LongFast)
+  lora_aprs   433,775 MHz, largeur 125 kHz, SF12 (APRS LoRa des radioamateurs)
 """
 import json
 import os
@@ -20,41 +30,48 @@ import veille_donnees as vd
 from lecture_flux import lire
 
 PROFILES = [
-    {"nom": "meshtastic", "freq": 869_525_000, "largeur": 250_000},
-    {"nom": "lora_aprs", "freq": 433_775_000, "largeur": 125_000},
+    {"nom": "meshtastic", "freq": 869_525_000, "largeur": 250_000, "sf": 11, "apres_s": 2.5},
+    {"nom": "lora_aprs", "freq": 433_775_000, "largeur": 125_000, "sf": 12, "apres_s": 6.0},
 ]
 RATE = 1_000_000
-BLOCK = 10_000                # 10 ms d'I/Q
-THRESHOLD_DB = 6.0            # au-dessus du bruit median
-MIN_BURST_BLOCKS = 5          # 50 ms : plus court qu'un paquet LoRa = parasite
-MARGIN_BLOCKS = 10            # 100 ms gardes avant et apres
-MAX_BURST_BLOCKS = 600        # 6 s au plus par rafale
+MIN_PAPR = 25.0               # pic / moyenne du spectre dechirpe (bruit pur : 10 a 17)
+MIN_RUN = 4                   # symboles alignes d'affilee (preambule : 7 ou 8)
+BEFORE_S = 1.0                # garde avant la detection (debut du preambule)
 STORE_DIR = "/media/nas/nd2/storage/radio/lora"
 
 _next = 0
 
 
-def _band_power(block_u8, width):
-    """Puissance (dB) dans la largeur du canal, autour du centre."""
-    iq = block_u8.astype(np.float32) - 127.5
-    x = iq[0::2] + 1j * iq[1::2]
-    spectrum = np.abs(np.fft.fft(x)) ** 2
-    keep = int(len(x) * width / RATE / 2)
-    band = np.concatenate([spectrum[1:keep], spectrum[-keep:]])  # sans la raie centrale
-    return 10 * np.log10(band.mean() + 1e-9)
+def _downchirp(profile):
+    n = int(2 ** profile["sf"] * RATE / profile["largeur"])
+    bw, T = profile["largeur"], 2 ** profile["sf"] / profile["largeur"]
+    t = np.arange(n) / RATE
+    return np.exp(-2j * np.pi * (-bw / 2 * t + bw / (2 * T) * t ** 2)).astype(np.complex64)
 
 
-def _save(profile, blocks, start_t, peak_db, floor_db):
+def _iq(raw):
+    x = np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 127.5
+    z = (x[0::2] + 1j * x[1::2]).astype(np.complex64)
+    return z - z.mean()
+
+
+def _peak(raw, ref):
+    """(case du pic, pic / moyenne) du symbole dechirpe."""
+    spec = np.abs(np.fft.fft(_iq(raw) * ref)) ** 2
+    i = int(np.argmax(spec))
+    return i, float(spec[i] / (spec.mean() + 1e-12))
+
+
+def _save(profile, raw, start_t, papr):
     folder = os.path.join(STORE_DIR, profile["nom"])
     os.makedirs(folder, exist_ok=True)
     stamp = time.strftime("%Y-%m-%d_%H%M%S", time.localtime(start_t))
     base = os.path.join(folder, f"{stamp}_{profile['freq']}")
     with open(base + ".cu8", "wb") as f:
-        for b in blocks:
-            f.write(b.tobytes())
+        f.write(raw)
     info = {"profil": profile["nom"], "freq": profile["freq"], "largeur": profile["largeur"], "taux": RATE,
-            "format": "cu8", "t": start_t, "duree_s": round(len(blocks) * BLOCK / RATE, 2),
-            "crete_db": round(float(peak_db), 1), "bruit_db": round(float(floor_db), 1), "decode": None}
+            "format": "cu8", "t": start_t, "duree_s": round(len(raw) / 2 / RATE, 2), "sf": profile["sf"],
+            "detection": "dechirp", "pic": round(papr, 1), "decode": None}
     with open(base + ".json", "w", encoding="utf-8") as f:
         json.dump(info, f)
     vd.archive("lora", info)
@@ -62,52 +79,47 @@ def _save(profile, blocks, start_t, peak_db, floor_db):
         import lora_messages
         lora_messages.submit_burst(base + ".cu8", info)
     except Exception as exc:  # le pont ne doit pas arreter l'ecoute
-        print(f"[lora_watch] rafale non confiee au pont : {exc!r}")
+        print(f"[lora_watch] trame non confiee au pont : {exc!r}")
 
 
 def scan_window(dwell_sec=30):
-    """Ecoute un profil (en alternance) ; rend True si des rafales ont ete gardees."""
+    """Ecoute un profil (en alternance). Rend toujours False : la piqure LoRa
+    ne vient que d'une trame vraiment decodee (lib/lora_messages.py)."""
     global _next
     profile = PROFILES[_next % len(PROFILES)]
     _next += 1
+    ref = _downchirp(profile)
+    sym_bytes = 2 * len(ref)
+    keep = int(BEFORE_S * RATE * 2 / sym_bytes) + 1
     proc = subprocess.Popen(["rtl_sdr", "-f", str(profile["freq"]), "-s", str(RATE), "-g", "40", "-"],
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    history, powers = [], []
-    burst, quiet, peak = None, 0, -999.0
-    saved = 0
+    history, run, prev, saved, best = [], 0, None, 0, 0.0
     try:
+        lire(proc.stdout, RATE * 2 // 4)  # le premier quart de seconde (reglage du tuner) est jete
         end = time.time() + dwell_sec
         while time.time() < end:
-            raw = lire(proc.stdout, BLOCK * 2)
-            if len(raw) < BLOCK * 2:
+            raw = lire(proc.stdout, sym_bytes)
+            if len(raw) < sym_bytes:
                 if not raw:
                     print(f"[lora_watch] {profile['nom']} : la cle n'envoie plus rien, fenetre abandonnee")
                 break
-            block = np.frombuffer(raw, dtype=np.uint8)
-            p = _band_power(block, profile["largeur"])
-            powers.append(p)
-            floor = float(np.median(powers[-500:]))
-            history = (history + [block])[-MARGIN_BLOCKS:]
-            loud = len(powers) > 50 and p > floor + THRESHOLD_DB
-            if burst is None:
-                if loud:
-                    burst, quiet, peak = list(history), 0, p
-                    burst_t = time.time() - MARGIN_BLOCKS * BLOCK / RATE
-                continue
-            burst.append(block)
-            peak = max(peak, p)
-            quiet = 0 if loud else quiet + 1
-            if quiet >= MARGIN_BLOCKS or len(burst) >= MAX_BURST_BLOCKS:
-                if len(burst) - quiet - MARGIN_BLOCKS >= MIN_BURST_BLOCKS:
-                    _save(profile, burst, burst_t, peak, floor)
-                    saved += 1
-                burst = None
+            history = (history + [raw])[-keep:]
+            i, papr = _peak(raw, ref)
+            best = max(best, papr)
+            aligned = prev is not None and min((i - prev) % len(ref), (prev - i) % len(ref)) <= 1
+            run = run + 1 if papr >= MIN_PAPR and aligned else (1 if papr >= MIN_PAPR else 0)
+            prev = i if papr >= MIN_PAPR else None
+            if run >= MIN_RUN:
+                start_t = time.time() - len(history) * len(ref) / RATE
+                tail = lire(proc.stdout, int(profile["apres_s"] * RATE) * 2)
+                _save(profile, b"".join(history) + tail, start_t, papr)
+                saved += 1
+                history, run, prev = [], 0, None
     finally:
         proc.terminate()
         try:
             proc.wait(timeout=5)
         except subprocess.TimeoutExpired:
             proc.kill()
-    if saved:
-        print(f"[lora_watch] {profile['nom']} : {saved} rafale(s) gardee(s)")
-    return saved > 0
+    print(f"[lora_watch] {profile['nom']} : {saved} trame(s) LoRa reperee(s), pic max {best:.0f}")
+    return False
