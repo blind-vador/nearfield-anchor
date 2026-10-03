@@ -48,6 +48,7 @@ DISTANCE_SCALE_KM = 25
 LOCAL_SENSOR_KM = 0.3          # thermometres sans fil : a portee radio, donc tout pres
 RAIN_WINDOW_SEC = 3600
 FRESH_SEC = 20 * 60
+RECALE_MENTION_SEC = 3600    # en dessous (METAR de 30 min...), inutile d'expliquer le recalage
 
 
 # --- modele ------------------------------------------------------------------------
@@ -243,7 +244,7 @@ def composition(state):
     if state["balayage"]:
         text += " " + dire("agregat.dont_balayage", nombre=state["balayage"])
     oldest = max([(state[f] or {}).get("plus_ancien", 0) for f in ("temp", "humidite", "pression")])
-    if oldest > FRESH_SEC:
+    if oldest > RECALE_MENTION_SEC:
         text += " " + dire("agregat.recales", age=_age(oldest))
     rejected = max((state[f] or {}).get("ecartes", 0) for f in ("temp", "humidite", "pression"))
     if rejected:

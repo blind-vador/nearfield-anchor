@@ -608,7 +608,9 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
         text += dire("meteo.humidite_cent", humidity=humidity) + (dire("meteo.air_presque_sature_eau") if (humidity or 0) >= 95 else ".")
         wind = state["vent"]["valeur"] if state["vent"] else c.get("wind_speed_10m")
         if wind is not None:
-            fresh_airport = [a for a in state["aeroports"] if a.get("direction") is not None and time.time() - a["t"] < 3600]
+            # direction : l'aeroport le plus proche qui a vraiment du vent (VRB ou calme : pas de direction)
+            fresh_airport = sorted((a for a in state["aeroports"] if a.get("direction") is not None
+                                    and (a.get("vent") or 0) >= 4 and time.time() - a["t"] < 3600), key=lambda a: a["km"])
             heading = fresh_airport[0]["direction"] if state["vent"] and fresh_airport else c.get('wind_direction_10m')
             text += (" " + dire("meteo.vent_kilometres_heure", v1=_wind_from(heading), round=round(wind)))
             gusts = max([r.get("rafale") or 0 for r in (state["vent"] or {}).get("sources", [])] + [c.get("wind_gusts_10m") or 0])
