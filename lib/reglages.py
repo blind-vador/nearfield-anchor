@@ -22,6 +22,8 @@ import json
 import os
 import sys
 
+from phrases import Etiquettes
+
 SETTINGS_DIR = "/media/nas/nd1/server/nearfield-anchor-settings"
 KEYS_DIR = os.path.join(SETTINGS_DIR, "cles")
 CACHE_DIR = "/home/vador/autopilot/reglages_cache"
@@ -52,6 +54,7 @@ KEYS = {
     "octoprint": ("OCTOPRINT_API_KEY", "imprimante"),
     "airlabs": ("AIRLABS_API_KEY", "tableau des aéroports"),
 }
+KEY_LABELS = Etiquettes("reglages.cle", {k: v[1] for k, v in KEYS.items()}, "usage d'une clé API, dit quand elle manque")
 
 README = """Réglages de nearfield anchor (deepspace9)
 

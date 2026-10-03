@@ -38,7 +38,7 @@ def status():
     gare = reglages.get("trains")
     avions = reglages.get("avions")
     keys = reglages.keys_status()
-    missing = [reglages.KEYS[k][1] for k, ok in keys.items() if not ok]
+    missing = [reglages.KEY_LABELS[k] for k, ok in keys.items() if not ok]
     parts = [
         dire("reglages.commune", commune=lieu['commune'], departement=lieu['departement_nom']),
         dire("reglages.gare", gare=gare['gare']),

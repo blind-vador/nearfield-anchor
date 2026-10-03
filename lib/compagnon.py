@@ -30,6 +30,7 @@ import time
 import uuid
 
 import pont_protocole as proto
+from phrases import dire, nombre
 
 BRIDGE_DIR = "/media/nas/nd1/server/nearfield-anchor-bridge"
 LOCAL_DIR = "/home/vador/autopilot/compagnon"
@@ -317,21 +318,20 @@ def status():
     """Commande "compagnon" : etat du pont."""
     found = companions()
     if not found:
-        return ("Aucune machine compagne appairée. Ouvre Nearfield Bridge sur la machine, choisis appairer, "
-                "et dis appairage ici en même temps.")
+        return (dire("compagnon.aucune_machine_compagne_appairee"))
     parts = []
     for c in found:
-        caps = ", ".join(c.get("capacites", [])) or "rien de déclaré"
+        caps = ", ".join(c.get("capacites", [])) or dire("compagnon.rien_declare")
         stats = c.get("stats", {})
-        state = ("connectée" if c.get("directe") else "en différé par le NAS, deux fois par jour" if c["presente"]
-                 else "pas connectée, je la réveillerai au besoin")
-        text = (f"{c['nom']}, {state}, "
-                f"sait faire : {caps}")
+        state = (dire("compagnon.connectee") if c.get("directe") else dire("compagnon.differe_nas_deux_fois") if c["presente"]
+                 else dire("compagnon.connectee_reveillerai_au_besoin"))
+        text = dire("compagnon.fiche", nom=c['nom'], etat=state, capacites=caps)
         done, failed = stats.get("faits", 0), stats.get("echecs", 0)
         if done or failed:
-            text += (f", {done} {'travaux réussis' if done > 1 else 'travail réussi'}, "
-                     f"{failed} sans résultat")
+            text += ", " + dire("compagnon.bilan_travaux", reussis=nombre(done, "travail réussi", "travaux réussis"),
+                                echecs=failed)
         parts.append(text)
     pending = pending_count()
-    return ("Machines compagnes : " + " ; ".join(parts) + "."
-            + (" 1 travail en cours." if pending == 1 else f" {pending} travaux en cours." if pending else ""))
+    return (dire("compagnon.machines", machines=" ; ".join(parts))
+            + (" " + dire("compagnon.en_cours", travaux=nombre(pending, "travail en cours", "travaux en cours"))
+               if pending else ""))

@@ -239,11 +239,13 @@ def info_text(path):
         return dire("journal.pas_info")
     mhz = f"{info['freq_hz'] / 1e6:.4f}".rstrip("0").replace(".", ",")
     text = dire("journal.info", frequence=mhz, mode=MODES.get(info.get("mode"), info.get("mode") or dire("journal.mode_inconnu")),
-                libelle=info.get("label") or "bande inconnue")
+                libelle=info.get("label") or dire("journal.bande_inconnue"))
     analysis = (info.get("metrics") or {}).get("analyse")
     if analysis:
+        import stations  # verdict dit dans la langue du moment (le code est garde depuis le 2026-10-03)
+        verdict = stations.VERDICTS[analysis["code"]] if analysis.get("code") in stations.VERDICTS else analysis["verdict"]
         text += " " + dire("journal.info_analyse", largeur=str(analysis["largeur_khz"]).replace(".", ","),
-                           baisse=str(analysis["baisse_db"]).replace(".", ","), verdict=analysis["verdict"])
+                           baisse=str(analysis["baisse_db"]).replace(".", ","), verdict=verdict)
     return text
 
 

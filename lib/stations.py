@@ -25,6 +25,9 @@ import time
 
 import numpy as np
 
+from phrases import Etiquettes
+from phrases import dire
+
 STORE_PATH = "/home/vador/autopilot/stations_probables.json"
 LOCK_PATH = "/tmp/stations_probables.lock"
 TOLERANCE_HZ = {"wfm": 100_000, "am": 6_000}       # "meme station" a moins de... ; 12,5 kHz sinon
@@ -57,6 +60,11 @@ class _Locked:
             os.replace(tmp, STORE_PATH)
         fcntl.flock(self.f, fcntl.LOCK_UN)
         self.f.close()
+VERDICTS = Etiquettes("station.verdict", {
+    "bruit": "bruit large, pas une émission : parasite local probable (ordinateur, alimentation, câble USB)",
+    "artefact": "artefact probable : une émission forte qui sature la clé, pas une station sur cette fréquence",
+    "vraie": "vraie émission probable sur cette fréquence",
+    "indecis": "indécis"}, "verdict du test vraie station ou artefact")
 
 
 def load():
@@ -238,14 +246,15 @@ def analyse(freq_hz):
     width_khz = round(float(bins[hi] - bins[lo]) / 1000, 1)
     drop = round(float(peak - low[1][peak_i]), 1)
     if width_khz > 400:
-        verdict = "bruit large, pas une émission : parasite local probable (ordinateur, alimentation, câble USB)"
+        code = "bruit"
     elif width_khz > 60 or drop >= 2 * GAIN_STEP_DB:
-        verdict = "artefact probable : une émission forte qui sature la clé, pas une station sur cette fréquence"
+        code = "artefact"
     elif width_khz <= 20 and drop <= 1.5 * GAIN_STEP_DB:
-        verdict = "vraie émission probable sur cette fréquence"
+        code = "vraie"
     else:
-        verdict = "indécis"
-    return {"largeur_khz": width_khz, "baisse_db": drop, "verdict": verdict}
+        code = "indecis"
+    # le code sert aux decisions ; le texte, dit dans la langue du moment, a l'ecoute
+    return {"largeur_khz": width_khz, "baisse_db": drop, "code": code, "verdict": VERDICTS[code]}
 
 
 def note_analysis(freq_hz, mode, result):
@@ -306,19 +315,18 @@ def spoken_list():
     """Commande "stations" : les stations probables, de la plus suivie a la moins."""
     stations = sorted(load()["stations"], key=lambda s: -interest(s))
     if not stations:
-        return ("Aucune station probable pour l'instant. Dans le journal radio, V sur une prise parfaite "
-                "en crée une.")
+        return (dire("station.aucune_station_probable_instant"))
     parts = []
     for s in stations[:12]:
         mhz = f"{s['freq_hz'] / 1e6:.4f}".rstrip("0").replace(".", ",")
-        text = f"{mhz} mégahertz, {s.get('label') or s['mode']}, {len(s['captures'])} capture{'s' if len(s['captures']) > 1 else ''}"
+        text = dire("station.megahertz_capture", mhz=mhz, v1=s.get('label') or s['mode'], len=len(s['captures']), pluriel='s' if len(s['captures']) > 1 else '')
         h = habits(s)
         if h:
             wd, hour, n = h[0]
-            text += f", souvent le {JOURS[wd]} vers {hour} heures"
+            text += dire("station.souvent_vers_heures", v1=JOURS[wd], hour=hour)
         if not s.get("centree"):
-            text += ", pas encore recentrée"
-        if s.get("analyse", {}).get("verdict", "").startswith("artefact"):
-            text += ", sans doute un artefact de la clé"
+            text += dire("station.encore_recentree")
+        if s.get("analyse", {}).get("code", s.get("analyse", {}).get("verdict", "")[:8]) == "artefact":
+            text += dire("station.sans_doute_artefact_cle")
         parts.append(text)
-    return f"{len(stations)} station{'s' if len(stations) > 1 else ''} probable{'s' if len(stations) > 1 else ''} : " + " ; ".join(parts) + "."
+    return (dire("station.station_probable", len=len(stations), pluriel='s' if len(stations) > 1 else '', pluriel2='s' if len(stations) > 1 else '') + " ") + " ; ".join(parts) + "."

@@ -24,6 +24,9 @@ import json
 import os
 import time
 
+from phrases import Etiquettes
+from phrases import dire
+
 NAS_ROOT = "/media/nas/nd1"
 STATE_NAS = f"{NAS_ROOT}/server/radio_log/attention.json"   # survit aux redemarrages
 STATE_LOCAL = "/home/vador/autopilot/pi_console/attention.json"
@@ -50,9 +53,10 @@ ACARS_BASE_DWELL = 30
 # sequence) : cible -> duree d'ecoute de base. Voir radio_watch.DATA_SCANNERS.
 DATA_WINDOWS = {"acars": ACARS_BASE_DWELL, "vdl2": 25, "aprs": 30, "capteurs": 30,
                 "pagers": 30, "adsb": 30, "balises": 55, "sondes": 45, "lora": 30}
-DATA_LABELS = {"acars": "ACARS", "vdl2": "VDL2", "aprs": "APRS", "capteurs": "capteurs sans fil",
+DATA_LABELS = Etiquettes("attention.donnees", {"acars": "ACARS", "vdl2": "VDL2", "aprs": "APRS", "capteurs": "capteurs sans fil",
                "pagers": "pagers 466", "adsb": "avions en direct", "balises": "balises de détresse",
-               "sondes": "ballons-sondes", "lora": "LoRa et Meshtastic"}
+               "sondes": "ballons-sondes", "lora": "LoRa et Meshtastic"},
+                         "nom d'une fenêtre d'écoute de données")
 # Fenetres espacees : pas plus d'une visite par intervalle (sauf si ca pique).
 DATA_MIN_INTERVAL = {"balises": 900, "adsb": 240}
 
@@ -229,16 +233,16 @@ def describe(labels):
         if total >= 0.2:
             why = []
             if activity >= 0.1:
-                why.append(f"activité récente {activity:.1f}".replace(".", ","))
+                why.append(dire("attention.activite_recente", activity=format(activity, ".1f")).replace(".", ","))
             if air >= 0.1:
                 why.append(f"avions {air:.1f}".replace(".", ","))
-            rows.append((total, f"{label} : piqûre {total:.1f}".replace(".", ",") + f" ({', '.join(why)})"))
+            rows.append((total, dire("attention.piqure", label=label, total=format(total, ".1f")).replace(".", ",") + f" ({', '.join(why)})"))
     rows.sort(reverse=True)
     planes = ctx.get("avions")
-    head = (f"{planes} avion{'s' if planes and planes > 1 else ''} dans la zone. " if planes is not None
-            else "Pas de données avions récentes. ")
+    head = ((dire("attention.avion_zone", planes=planes, pluriel='s' if planes and planes > 1 else '') + " ") if planes is not None
+            else (dire("attention.donnees_avions_recentes") + " "))
     if ctx.get("meteo"):
-        head += f"Vigilance météo renforcée, niveau {ctx['meteo']} sur 3 : écoute accrue des stations voisines. "
+        head += (dire("attention.vigilance_meteo_renforcee_niveau", meteo=ctx['meteo']) + " ")
     if not rows:
-        return head + "Aucune piqûre en ce moment : le scanner explore tout à égalité."
-    return head + " ; ".join(text for _, text in rows[:6]) + ". Le reste est exploré à égalité."
+        return head + dire("attention.aucune_piqure_moment_scanner")
+    return head + " ; ".join(text for _, text in rows[:6]) + dire("attention.reste_explore_egalite")

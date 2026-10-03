@@ -24,6 +24,7 @@ import random
 import time
 
 import phrases
+from phrases import dire
 
 BLOCK_SIZE = 20
 PAUSE_SEC = 4           # entre deux blocs (quotas de Gemini)
@@ -97,7 +98,7 @@ def description():
         return phrases.dire("personnalite.neutre")
     if cfg.get("resume"):
         return cfg["resume"]
-    return "surprise, inventée chaque nuit" if cfg.get("surprise") else cfg.get("prompt", "")
+    return dire("personnalite.surprise_inventee_chaque_nuit") if cfg.get("surprise") else cfg.get("prompt", "")
 
 
 # --- generation ---------------------------------------------------------------------------
@@ -114,7 +115,7 @@ def _ask_json(prompt, temperature):
                 return data, None
         except ValueError:
             pass
-    return None, "réponse de Gemini illisible"
+    return None, dire("personnalite.reponse_gemini_illisible")
 
 
 def _write_ini(path, entries, header):
@@ -136,17 +137,17 @@ def generate(log=print):
     """Reecrit les phrases du jour ; rend (resultat, None) ou (None, raison)."""
     cfg = settings()
     if not cfg.get("active"):
-        return None, "aucune personnalité choisie"
+        return None, dire("personnalite.aucune_personnalite_choisie")
     lang = phrases.langue()
     langue = LANGUES.get(lang, lang)
     base = phrases.base(lang)
     if not base:
-        return None, "fichier de phrases introuvable"
+        return None, dire("personnalite.fichier_phrases_introuvable")
     demand = SURPRISE_DEMAND if cfg.get("surprise") else USER_DEMAND.format(prompt=cfg.get("prompt", ""))
     style, problem = _ask_json(STYLE_PROMPT.format(langue=langue, demande=demand, date=datetime.date.today().isoformat(),
                                                     graine=random.choice(GRAINES)), temperature=1.0)
     if problem or not style.get("resume"):
-        return None, problem or "fiche de style vide"
+        return None, problem or dire("personnalite.fiche_style_vide")
     resume, fiche = " ".join(str(style["resume"]).split()), str(style.get("fiche", ""))
     log(f"[personnalite] voix du jour : {resume}")
     todo = [(k, v) for k, v in base.items() if not v["fixe"]]
@@ -172,7 +173,7 @@ def generate(log=print):
                     new[key] = text
         time.sleep(PAUSE_SEC)
     if not new:
-        return None, "aucune phrase réécrite correctement"
+        return None, dire("personnalite.aucune_phrase_reecrite_correctement")
     path = phrases.persona_path(lang)
     if os.path.exists(path):
         os.replace(path, path.replace(".ini", "_hier.ini"))
