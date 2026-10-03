@@ -16,6 +16,7 @@ import subprocess
 import time
 
 import compagnon
+from phrases import dire
 import veille_donnees as vd
 
 GR_PYTHON = "/home/vador/autopilot/bin/python3-gnuradio"
@@ -76,7 +77,7 @@ def decode_locally(job):
         print(f"[lora] decodage local {job['id']} : {exc!r}")
         frames = []
     try:
-        handle(job, frames, "le Pi")
+        handle(job, frames, dire("lora.pi"))
     finally:
         shutil.rmtree(folder, ignore_errors=True)
 
@@ -101,12 +102,12 @@ def _meshtastic(frame):
         new = sender not in known
         known[sender] = info["nom"]
         _nodes.save()
-        return (f"Nouveau nœud Meshtastic : {info['nom']}." if new else None), info
+        return (dire("lora.nouveau_ud_meshtastic", nom=info['nom']) if new else None), info
     if kind == "texte" and info.get("texte"):
-        to = "à tous" if info["pour"] == "tous" else f"à {_node_name(info['pour'])}"
-        return f"Message Meshtastic de {_node_name(sender)} {to} : {info['texte']}", info
+        to = dire("lora.tous") if info["pour"] == "tous" else dire("lora.phrase", v1=_node_name(info['pour']))
+        return dire("lora.message_meshtastic", v1=_node_name(sender), to=to, texte=info['texte']), info
     if kind == "position" and info.get("lat") and _nodes.due(f"pos|{sender}", 3600):
-        return f"Nœud Meshtastic {_node_name(sender)}, {vd.where(info['lat'], info['lon'])}.", info
+        return dire("lora.ud_meshtastic", v1=_node_name(sender), where=vd.where(info['lat'], info['lon'])), info
     return None, info
 
 

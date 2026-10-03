@@ -7,6 +7,7 @@ import shutil
 import time
 
 import compagnon
+from phrases import dire
 import veille_donnees as vd
 
 SOUND = "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3"
@@ -17,7 +18,7 @@ STALE_SEC = 36 * 3600  # travail jamais pris : la machine n'est pas revenue (mod
 def _meteor(job, result, folder):
     sat = job["params"].get("satellite", "Meteor")
     if result.get("etat") != "fait":
-        vd.announce(f"Passage {sat} : {result.get('message') or 'aucune image décodable cette fois'}.",
+        vd.announce(dire("compagnon.passage", sat=sat, v1=result.get('message') or 'aucune image décodable cette fois'),
                     SOUND, "meteor", "compagnon")
         return
     import meteor_traitement
@@ -29,7 +30,7 @@ def _meteor(job, result, folder):
     text = meteor_traitement.describe(final, sat)
     vd.archive("meteor", {"satellite": sat, "image": final, "par": result.get("compagnon"),
                           "detail": result.get("message"), "description": text})
-    vd.announce(f"Image du satellite météo {sat} reçue de la machine compagne. {text}",
+    vd.announce(dire("compagnon.image_satellite_meteo_recue", sat=sat, text=text),
                 SOUND, "meteor", "compagnon")
 
 
@@ -41,7 +42,7 @@ def _lora(job, result, folder):
         with open(os.path.join(folder, next(iter(result["sorties"]))), encoding="utf-8") as f:
             frames = json.load(f)
     card = compagnon.trusted().get(result.get("compagnon"), {})
-    lora_messages.handle(job, frames, card.get("nom", "la machine compagne"))
+    lora_messages.handle(job, frames, card.get("nom") or dire("compagnon.la_machine"))
 
 
 HANDLERS = {"meteor": _meteor, "lora": _lora}

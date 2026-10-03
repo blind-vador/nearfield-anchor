@@ -18,6 +18,10 @@ import urllib.request
 import ephem
 
 import reglages
+from phrases import Etiquettes, dire, nombre
+
+FAMILIES = Etiquettes("satellite.famille", {"meteo": "satellite météo", "iss": "station spatiale",
+                                               "fm": "satellite radioamateur"}, "famille d'un satellite")
 
 TLE_DIR = "/home/vador/autopilot/tle"
 TLE_GROUPS = ["weather", "stations", "amateur"]
@@ -175,15 +179,14 @@ def spoken_list(hours=12):
     note = ""
     if not compagnon.available("meteor"):
         passes = [p for p in passes if p["famille"] != "meteo"]
-        note = " Les satellites météo ne sont écoutés que quand une machine compagne est là pour calculer les images."
+        note = (" " + dire("satellites.satellites_meteo_sont_ecoutes"))
     if not passes:
-        return f"Aucun passage de satellite assez haut dans les {hours} prochaines heures." + note
-    families = {"meteo": "satellite météo", "iss": "station spatiale", "fm": "satellite radioamateur"}
-    hour = lambda h: "minuit" if h == 0 else "midi" if h == 12 else f"{h} heures"
+        return dire("satellites.aucun_passage_satellite_assez", hours=hours) + note
+    hour = lambda h: (dire("capteurs.minuit") if h == 0 else dire("capteurs.midi") if h == 12
+                      else dire("capteurs.heures", heures=nombre(h, "heure")))
     lines = []
     for p in passes[:8]:
         start = datetime.datetime.fromtimestamp(p["debut"])
         minutes = round((p["fin"] - p["debut"]) / 60)
-        lines.append(f"{hour(start.hour)} {start.minute:02d}, {families[p['famille']]} {p['nom']}, "
-                     f"{p['elevation_max']} degrés au plus haut, {minutes} minutes")
-    return f"{len(passes)} passages dans les {hours} prochaines heures : " + " ; ".join(lines) + "." + note
+        lines.append(dire("satellites.degres_au_plus_haut", hour=hour(start.hour), minute=format(start.minute, "02d"), v1=FAMILIES[p['famille']], nom=p['nom'], elevation_max=p['elevation_max'], minutes=minutes))
+    return (dire("satellites.passages_prochaines_heures", len=len(passes), hours=hours) + " ") + " ; ".join(lines) + "." + note

@@ -48,6 +48,7 @@ import audio_lock
 import chaine_audio
 import decodeurs
 from sound_paths import RADIO_SCANER_DIR
+from phrases import dire
 
 SETTLE_SEC = 0.5        # frequence stable depuis ce delai avant de s'y caler
 STOP_GRACE_SEC = 1.5    # SIGTERM, puis SIGKILL si toujours vivant
@@ -283,7 +284,7 @@ class ManualStream:
                 protocol = stats["protocol"] or "numérique"
                 print(f"[manual_tuner] decodage {protocol} confirme ({stats['clean']} synchros propres)")
                 self._digital_until = time.time() + DIGITAL_HOLD_SEC + 3
-                event(f"Réception {protocol}.")
+                event(dire("manuel_radio.reception", protocol=protocol))
                 self._play_chime(generation)
             stereo = len(data) == decodeurs.DSD_STEREO_DATAGRAM and flag not in decodeurs.DSD_MONO_MODES
             if stereo:
@@ -312,7 +313,7 @@ class ManualStream:
         def flush():
             nonlocal digits
             if digits:
-                event("Tonalités DTMF : " + " ".join(digits) + ".")
+                event((dire("manuel_radio.tonalites_dtmf") + " ") + " ".join(digits) + ".")
                 digits = []
 
         try:
@@ -332,7 +333,7 @@ class ManualStream:
                     continue
                 last[text] = time.time()
                 print(f"[manual_tuner] decode : {text}")
-                event(f"Message numérique décodé : {text}")
+                event(dire("manuel_radio.message_numerique_decode", text=text))
         except (OSError, ValueError):
             pass
         flush()

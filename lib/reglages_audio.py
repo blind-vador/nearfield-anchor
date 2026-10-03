@@ -14,6 +14,8 @@ import json
 import os
 import time
 
+from phrases import Etiquettes
+
 STORE_PATH = "/home/vador/autopilot/reglages_audio.json"
 LOCK_PATH = "/tmp/reglages_audio.lock"
 
@@ -29,12 +31,12 @@ DEFAULTS = {
     "anti_bourdonnement": False,  # retire les harmoniques du secteur (50 Hz)
     "gain_db": 0.0,               # volume apres nettoyage
 }
-NAMES = {
+NAMES = Etiquettes("audio.reglage", {
     "attente_fin_s": "attente avant de clore", "marge_detection_db": "marge de détection",
     "passe_bas_hz": "aigus gardés", "reduction_bruit_db": "retrait du souffle",
     "anti_crachotements": "seuil anti-crachotements", "anti_sifflement": "filtre anti-sifflement",
     "anti_bourdonnement": "filtre anti-bourdonnement", "gain_db": "volume",
-}
+}, "nom d'un réglage audio, suivi de sa valeur")
 
 
 def _empty():

@@ -14,6 +14,7 @@ import edge_tts
 
 from sound_player import play_sound_effect
 from sound_paths import TTS_CACHE_DIR
+from phrases import dire
 
 # --- Voix cloud (edge-tts) + repli local (espeak) ---
 # Ajoute en session (2026-08-30) suite a un constat direct de l'utilisateur
@@ -73,7 +74,6 @@ def _speech_timeout(path):
     return max(SPEECH_TIMEOUT_MIN_SEC, seconds + SPEECH_TIMEOUT_MARGIN_SEC)
 
 
-JOURNAL_NOTICE = "Captation entrante ajoutée au journal."
 
 
 def journal_notice():
@@ -83,7 +83,7 @@ def journal_notice():
     lock = audio_lock.acquire("console", timeout=120)
     try:
         if not lock.dropped:
-            speak_cloud(JOURNAL_NOTICE, repetitive=True)
+            speak_cloud(dire("annonce.journal_notice"), repetitive=True)
     finally:
         audio_lock.release(lock)
 

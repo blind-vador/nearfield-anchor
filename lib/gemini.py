@@ -4,6 +4,7 @@ Rend (texte, None) ou (None, raison parlee)."""
 import requests
 
 import reglages
+from phrases import dire
 
 URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"]
@@ -15,7 +16,7 @@ def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT):
     json_mode : Gemini rend du JSON strict (responseMimeType), rendu tel quel."""
     key = reglages.cle("gemini")
     if not key:
-        return None, "pas de clé Gemini"
+        return None, dire("gemini.cle_gemini")
     parts = [{"text": prompt}]
     if jpeg is not None:
         import base64
@@ -24,22 +25,22 @@ def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT):
     if json_mode:
         config["responseMimeType"] = "application/json"
     body = {"contents": [{"parts": parts}], "generationConfig": config}
-    reason = "Gemini ne répond pas"
+    reason = dire("gemini.gemini_repond")
     for model in MODELS:
         try:
             resp = requests.post(URL.format(model=model), json=body, timeout=timeout,
                                  headers={"x-goog-api-key": key})
         except requests.RequestException:
-            return None, "pas d'accès à Gemini"
+            return None, dire("gemini.acces_gemini")
         if resp.status_code in (401, 403):
-            return None, "Google refuse la clé Gemini"
+            return None, dire("gemini.google_refuse_cle_gemini")
         if not resp.ok:
-            reason = "quota Gemini épuisé" if resp.status_code == 429 else reason
+            reason = dire("gemini.quota_gemini_epuise") if resp.status_code == 429 else reason
             continue
         try:
             text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
         except (KeyError, IndexError, ValueError):
-            reason = "réponse de Gemini inutilisable"
+            reason = dire("gemini.reponse_gemini_inutilisable")
             continue
         if json_mode:
             return text, None

@@ -16,12 +16,15 @@ import radio_log
 import reglages
 import sound_player
 from sound_paths import RADIO_LOG_DIR
+from phrases import Etiquettes, dire, nombre
 from speak import speak_with_lead_sound
 
 ARCHIVE_DIR = os.path.join(RADIO_LOG_DIR, "donnees")
 EARTH_RADIUS_KM = 6371.0
 DIRECTIONS = ["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"]
-SPELL = {"-": "tiret", "/": "barre"}
+DIRECTION_VERS = Etiquettes("direction.vers", {d: (f"à l'{d}" if d[0] in "eo" else f"au {d}") for d in DIRECTIONS},
+                            "où se trouve quelque chose, après une distance : à 12 kilomètres au nord")
+SPELL = Etiquettes("epeler", {"-": "tiret", "/": "barre"}, "signe lu dans un indicatif épelé")
 
 
 def announce(text, sound, label_for_log, tag):
@@ -110,10 +113,8 @@ def where(lat, lon):
     """ "a 8 kilometres au nord-est" """
     km = distance_km(lat, lon)
     if km < 1:
-        return "à moins d'un kilomètre"
-    towards = direction(lat, lon)
-    towards = f"à l'{towards}" if towards[0] in "eo" else f"au {towards}"
-    return f"à {round(km)} kilomètre{'s' if round(km) > 1 else ''} {towards}"
+        return dire("donnees.moins_un_kilometre")
+    return dire("meteo.a_distance", distance=nombre(round(km), "kilomètre"), direction=DIRECTION_VERS[direction(lat, lon)])
 
 
 def spell(code):
