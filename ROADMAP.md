@@ -5765,3 +5765,29 @@ tant que le Mac repond.
   pagers sans texte et numeriques ; trames VDL2 sans texte resumees par
   avion nouveau (30 min). Constat 30 h : toutes les fenetres de donnees
   visitees a chaque cycle ; APRS 144,800 sans paquet capte.
+
+## 2026-10-03 : messages ACARS et VDL2 dits en langage humain
+
+- Avant : seuls le texte libre H1 et la serie Q (OOOI) etaient dits ; tout
+  le reste ecarte. Constat sur les archives VDL2 : controle X.25, accuses,
+  ACARS transporte (label _d), passages de relais XID avec destination du
+  plan de vol (dst_airport) et position de l'avion.
+- lib/avions_info.py : appareil d'apres adsbdb.com (gratuit, sans cle :
+  modele, compagnie, immatriculation, photo ; trajet par indicatif), cache
+  carte SD ~/autopilot/avions_cache.json ; phase de vol d'apres l'etat ADS-B
+  publie par adsb_watch (/tmp/avions_etat.json : sol, roulage, decollage,
+  montee, croisiere, palier, descente, approche) ; allure du MODELE (Gemini,
+  une fois par type) et LIVREE d'apres une vraie photo (Gemini vision, une
+  fois par compagnie) ; plafond 40 appels Gemini par jour pour ces fiches.
+- lib/acars_traduction.py : fiche deterministe (nature de trame, label
+  ACARS sur, etape OOOI, destination annoncee par l'avion, CPDLC/ADS-C
+  libacars) + appareil, mise en 2-3 phrases par Gemini (leger mais serieux,
+  rien d'invente, altitudes en metres, l'avion fait foi contre la base
+  publique) ; repli phrase fixe ; 20 appels par heure au plus.
+- VDL2 : trames regroupees par avion a chaque passage ; vrai contenu
+  explique a chaque nouveaute, simple entretien de liaison dit une fois par
+  30 min (phrase fixe, sans Gemini). ACARS classique : meme traduction.
+- Essai sur les vraies trames archivees : Transavia F-HTVQ "blanc et vert...
+  en direction de Nice", easyJet "en direction de Faro". Incident d'essai :
+  deux annonces ACARS fictives parlees sur le Pi et enregistrees au journal
+  (15 h 17), supprimees.
