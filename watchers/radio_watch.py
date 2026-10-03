@@ -752,14 +752,8 @@ def _dsdfme_stdout_watcher(proc, stats=None):
             if not text:
                 continue
             print(f"[radio_watch] dsd-fme: {text}")
-            if stats is None:
-                continue
-            m = re.search(r"Sync: [+-]([\w-]+)", text)
-            if m:
-                stats["total"] += 1
-                if "ERR" not in text:
-                    stats["clean"] += 1
-                    stats["protocol"] = DSD_FME_PROTOCOLS.get(m.group(1), m.group(1))
+            if stats is not None:
+                decodeurs.dsd_line(stats, text)  # regles communes avec le mode manuel
     except Exception:
         pass
 
@@ -804,7 +798,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label=""):
              "-o", f"udp:{DSD_FME_UDP_HOST}:{DSD_FME_UDP_PORT}"],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
-        stats = {"clean": 0, "total": 0, "protocol": None}
+        stats = decodeurs.new_stats(freq_hz)  # textes transportes (alias, SMS, GPS) : lib/decodeurs.py
         stdout_thread = threading.Thread(target=_dsdfme_stdout_watcher, args=(proc, stats), daemon=True)
         stdout_thread.start()
 

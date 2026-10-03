@@ -43,18 +43,55 @@ MULTIMON_RATE = 22050
 MIN_DECODED_MESSAGE_CHARS = 4
 
 
-def new_stats():
-    return {"clean": 0, "total": 0, "protocol": None}
+# Textes transportes avec la voix (2026-10-03) : lignes de dsd-fme.
+SRC_RE = re.compile(r"SRC[=:]\s*(\d+)")
+TGT_RE = re.compile(r"TGT[=:]\s*(\d+)")
+ALIAS_RE = re.compile(r"Alias:\s*\[?([^\]]*?)\]?\s*$")
+TEXT_RE = re.compile(r"(?:SMS|ISO7 Text|ISO8 Text|Complete Meta Text|Text):\s*(.+?)\s*$")
+GPS_RE = re.compile(r"GPS:\s*\(?\s*(-?\d+\.\d+)[^\d-]+(-?\d+\.\d+)")
+
+
+def new_stats(freq_hz=None):
+    return {"clean": 0, "total": 0, "protocol": None, "freq_hz": freq_hz, "src": None, "tgt": None}
+
+
+def _readable(value):
+    value = " ".join(value.split())
+    return value if sum(c.isalnum() for c in value) >= MIN_DECODED_MESSAGE_CHARS else ""
 
 
 def dsd_line(stats, text):
-    """Compte une ligne de sortie de dsd-fme (synchros propres ou en erreur)."""
+    """Une ligne de sortie de dsd-fme : compte les synchros propres ou en
+    erreur, retient l'emetteur, et fait dire aussitot les textes transportes
+    (alias, SMS, textes, GPS) une fois le decodage valide."""
     m = re.search(r"Sync: [+-]([\w-]+)", text)
     if m:
         stats["total"] += 1
         if "ERR" not in text:
             stats["clean"] += 1
             stats["protocol"] = DSD_PROTOCOLS.get(m.group(1), m.group(1))
+    for regex, field in ((SRC_RE, "src"), (TGT_RE, "tgt")):
+        found = regex.search(text)
+        if found:
+            stats[field] = found.group(1)
+    if not dsd_validated(stats):
+        return
+    for regex, kind in ((ALIAS_RE, "alias"), (TEXT_RE, "texte")):
+        found = regex.search(text)
+        if found and _readable(found.group(1)):
+            _say(kind, _readable(found.group(1)), stats)
+            return
+    found = GPS_RE.search(text)
+    if found:
+        _say("gps", f"{found.group(1)}, {found.group(2)}", stats)
+
+
+def _say(kind, value, stats):
+    try:
+        import messages_numeriques
+        messages_numeriques.found(kind, value, stats)
+    except Exception as exc:  # une annonce ratee n'arrete pas le decodage
+        print(f"[decodeurs] texte {kind} : {exc!r}")
 
 
 def dsd_validated(stats):

@@ -225,7 +225,7 @@ class ManualStream:
                                          "-o", f"udp:127.0.0.1:{port}"],
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 self._helpers.append(proc)
-                stats = decodeurs.new_stats()
+                stats = decodeurs.new_stats(freq_hz)  # textes transportes dits au fil de l'eau
                 threading.Thread(target=self._watch_dsd, args=(proc, stats), daemon=True).start()
                 threading.Thread(target=self._relay_dsd, args=(udp, stats, flag, generation), daemon=True).start()
         except OSError as exc:
