@@ -47,6 +47,15 @@ FRAME_KINDS = Etiquettes("vdl2.trame", {
     "position": "rapport automatique de position",
     "autre": "trame de données non détaillée",
 }, "nature d'une trame VDL2 captée")
+# Sens sur de chaque nature de trame, pour la phrase de secours (sans Gemini).
+FRAME_MEANINGS = Etiquettes("vdl2.sens", {
+    "accuse": "la station au sol et lui se confirment la bonne réception des données",
+    "liaison": "il entretient sa liaison de données avec la station au sol",
+    "relais": "il passe sa liaison de données à une autre station au sol",
+    "connexion": "il ouvre une liaison de données avec une station au sol",
+    "controle": "il échange avec le contrôle aérien par liaison de données",
+    "position": "il transmet automatiquement sa position au contrôle aérien",
+}, "sens d'une trame VDL2, après « signifiant que »")
 PHASES = Etiquettes("avion.phase", {
     "sol": "au sol, à l'arrêt", "roulage": "en train de rouler au sol", "decollage": "en train de décoller",
     "montee": "en montée", "croisiere": "en croisière", "palier": "en palier", "descente": "en descente",
@@ -57,10 +66,12 @@ PROMPT = """Tu aides la voix d'un récepteur radio domestique à dire, à une pe
 message de données capté d'un avion (ou d'un autre système électronique embarqué). À partir de la
 fiche ci-dessous, rends un objet JSON avec trois champs, en {langue} :
 - "description" : texte alternatif court de l'appareil pour une personne aveugle, sans verbe
-  principal : allure, livrée, phase de vol, trajet, seulement ce que la fiche donne
-  (exemple : "biréacteur moyen-courrier blanc et vert, en croisière à 10 500 mètres vers Nice") ;
-- "donnees" : les données techniques du message, lues simplement, sans les expliquer
-  (exemple : "passage de relais vers une station au sol, destination LFMN") ;
+  principal et SANS répéter le modèle ni l'immatriculation (déjà dits) : allure, compagnie et
+  livrée, phase de vol, trajet, seulement ce que la fiche donne
+  (exemple : "biréacteur moyen-courrier de Transavia, blanc et vert, en croisière à 10 500 mètres
+  vers Nice") ;
+- "donnees" : les données techniques du message, en français, lues simplement, sans les expliquer
+  (exemple : "réponse de passage de relais vers une station au sol, destination LFMN") ;
 - "sens" : ce que l'appareil a voulu dire, en clair, en une phrase commençant par un sujet
   (exemple : "il transfère sa liaison de données vers une nouvelle station, en route vers Nice").
 N'explique pas le protocole (ACARS, VDL2...) : l'utilisateur le connaît. Ton léger mais sérieux.
@@ -210,7 +221,9 @@ def _plain_description(card):
 
 def plain(card, kinds, protocole=None):
     """Meme phrase, sans Gemini."""
-    return sentence(card, _plain_description(card), ", ".join(FRAME_KINDS[k] for k in kinds), None)
+    meanings = [FRAME_MEANINGS[k] for k in kinds if k in FRAME_MEANINGS]
+    return sentence(card, _plain_description(card), ", ".join(FRAME_KINDS[k] for k in kinds),
+                    meanings[0] if meanings else None)
 
 
 def explain(card, messages, protocole):
