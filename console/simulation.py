@@ -142,7 +142,7 @@ def crue_changement():
 
 def crue_alerte():
     import crue_watch
-    crue_watch._speak_initial_alert(3, crue_watch.SAFETY_ADVICE)
+    crue_watch._speak_initial_alert(3, dire("crue.safety_advice"))
 
 
 # --- Bus et tram (stas_watch) ---

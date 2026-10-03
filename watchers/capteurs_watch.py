@@ -22,6 +22,8 @@ from datetime import datetime
 import veille_donnees as vd
 import voitures
 from sound_paths import RADIO_SCANER_DIR
+from phrases import Etiquettes, dire
+from phrases import dire
 
 FREQUENCIES = ["433.92M", "868.3M"]
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
@@ -42,9 +44,10 @@ NOT_WEATHER = [
     ("frigo", ("refrigerator", "freezer", "acurite-986")),
     ("sol", ("soil", "wh51", "springfield", "rainpoint", "xt300")),
 ]
-KIND_NAMES = {"meteo": "thermomètre ou station météo", "alarme": "détecteur", "bouton": "bouton",
+KIND_NAMES = Etiquettes("capteur.type", {"meteo": "thermomètre ou station météo", "alarme": "détecteur", "bouton": "bouton",
               "cuisson": "thermomètre de cuisson ou de barbecue", "piscine": "thermomètre de piscine",
-              "frigo": "thermomètre de réfrigérateur ou congélateur", "sol": "sonde de sol"}
+              "frigo": "thermomètre de réfrigérateur ou congélateur", "sol": "sonde de sol"},
+                        "type de capteur sans fil")
 
 ALARM_WORDS = ("smoke", "fumee", "alarm", "water", "leak", "flood", "tamper", "intrusion", "gas", "co_")
 BUTTON_WORDS = ("doorbell", "bell", "button", "remote", "switch", "keyfob")
@@ -69,13 +72,13 @@ def _key(event):
 def _values(event):
     parts = []
     if event.get("temperature_C") is not None:
-        parts.append(f"{vd.fr_number(event['temperature_C'], 1)} degrés")
+        parts.append(dire("capteur.degres", fr_number=vd.fr_number(event['temperature_C'], 1)))
     if event.get("humidity") is not None:
-        parts.append(f"humidité {event['humidity']} pour cent")
+        parts.append(dire("capteur.humidite_cent", humidity=event['humidity']))
     if event.get("wind_avg_km_h") is not None:
-        parts.append(f"vent {round(event['wind_avg_km_h'])} kilomètres heure")
+        parts.append(dire("capteur.vent_kilometres_heure", round=round(event['wind_avg_km_h'])))
     if event.get("rain_mm") is not None:
-        parts.append(f"pluie cumulée {vd.fr_number(event['rain_mm'], 1)} millimètres")
+        parts.append(dire("capteur.pluie_cumulee_millimetres", fr_number=vd.fr_number(event['rain_mm'], 1)))
     if event.get("battery_ok") == 0:
         parts.append("pile faible")
     return ", ".join(parts)
@@ -164,21 +167,21 @@ def _process(event, freq, tpms, at):
     _publish(key, event, kind)
     values = _values(event)
     if kind == "alarme" and _memory.due(f"alarme|{key}", ALARM_EVERY_SEC):
-        vd.announce(f"Alarme d'un capteur sans fil proche : {_name(event)}." + (f" {values}." if values else ""),
+        vd.announce(dire("capteur.alarme_capteur_sans_fil", v1=_name(event)) + (f" {values}." if values else ""),
                     SOUND, f"capteur_alarme_{key}", "capteurs_watch")
         return True
     if _memory.due(f"nouveau|{key}", NEW_EVERY_SEC):
-        what = KIND_NAMES.get(kind, "capteur")
+        what = KIND_NAMES.get(kind) or dire("capteur.type_inconnu")
         freq_txt = "433" if freq.startswith("433") else "868"
-        number = f", numéro {event['id']}" if event.get("id") is not None else ""
-        plain = (f"Nouveau {what} sans fil en {freq_txt} mégahertz : {_name(event)}{number}"
+        number = dire("capteur.numero", id=event['id']) if event.get("id") is not None else ""
+        plain = (dire("capteur.nouveau_sans_fil_megahertz", what=what, freq_txt=freq_txt, v1=_name(event), number=number)
                  + (f", {values}" if values else "") + ".")
         text = plain if kind == "meteo" else (_fun_explanation(event, what, freq_txt) or plain)
         _memory.due(f"bouton|{key}", BUTTON_EVERY_SEC)  # le premier appui est deja raconte
         vd.announce(text, SOUND, f"capteur_nouveau_{key}", "capteurs_watch")
         return True
     if kind == "bouton" and _memory.due(f"bouton|{key}", BUTTON_EVERY_SEC):
-        vd.announce(f"Appui sur une sonnette ou télécommande sans fil : {_name(event)}.", SOUND,
+        vd.announce(dire("capteur.appui_sonnette_telecommande_sans", v1=_name(event)), SOUND,
                     f"capteur_bouton_{key}", "capteurs_watch")
         return True
     return False

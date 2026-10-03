@@ -18,6 +18,8 @@ import aprslib
 
 import veille_donnees as vd
 from sound_paths import FLIGHT_SCANER_DIR
+from phrases import Etiquettes, dire
+from phrases import dire
 
 SERVER = ("aprs.glidernet.org", 14580)
 RADIUS_KM = 30
@@ -27,9 +29,10 @@ SOUND = f"{FLIGHT_SCANER_DIR}/simple_contact.mp3"
 STATE_PATH = "/tmp/ogn_watch_state.json"
 IGNORED_DEST = ("OGNSDR", "OGADSB", "OGADSL", "OGNDSX")
 AIRCRAFT_ID = re.compile(r"\bid([0-9A-F]{2})([0-9A-F]{6})\b")
-TYPES = {1: "planeur", 2: "avion remorqueur", 3: "hélicoptère", 4: "parachutiste",
+TYPES = Etiquettes("planeur.type", {1: "planeur", 2: "avion remorqueur", 3: "hélicoptère", 4: "parachutiste",
          5: "avion largueur", 6: "deltaplane", 7: "parapente", 8: "avion léger", 9: "avion à réaction",
-         11: "ballon", 12: "dirigeable", 13: "drone", 15: "objet fixe"}
+         11: "ballon", 12: "dirigeable", 13: "drone", 15: "objet fixe"},
+                   "type d'aéronef du réseau des planeurs")
 
 _memory = vd.Memory(STATE_PATH)
 
@@ -44,7 +47,7 @@ def _handle(line):
     m = AIRCRAFT_ID.search(packet.get("comment", "") or "")
     if not m:
         return
-    kind = TYPES.get((int(m.group(1), 16) >> 2) & 0x0F, "aéronef")
+    kind = TYPES.get((int(m.group(1), 16) >> 2) & 0x0F) or dire("planeur.aeronef")
     address = m.group(2)
     lat, lon = packet["latitude"], packet["longitude"]
     if vd.distance_km(lat, lon) > RADIUS_KM:
@@ -53,12 +56,12 @@ def _handle(line):
     if not _memory.due(f"ogn|{address}", ANNOUNCE_EVERY_SEC):
         return
     altitude = packet.get("altitude")
-    text = f"{kind.capitalize()} signalé par le réseau des planeurs, {vd.where(lat, lon)}"
+    text = dire("planeur.signale_reseau_planeurs", capitalize=kind.capitalize(), where=vd.where(lat, lon))
     if altitude:
-        text += f", altitude {round(altitude)} mètres"
+        text += dire("planeur.altitude_metres", round=round(altitude))
     speed = packet.get("speed")
     if speed:
-        text += f", {round(speed)} kilomètres heure"
+        text += dire("planeur.kilometres_heure", round=round(speed))
     vd.announce(text + ".", SOUND, f"OGN_{address}", "ogn_watch")
     _memory.save()
 

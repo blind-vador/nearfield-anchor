@@ -6,6 +6,8 @@ import requests
 from speak import speak, speak_with_lead_sound
 import audio_lock
 from sound_paths import METEO_SCANER_DIR
+from phrases import Etiquettes, dire
+from phrases import dire
 
 # Vigicrues (service public gratuit, sans clé) -- réutilise telle quelle
 # l'architecture d'alerte de meteo_watch.py : même échelle de couleurs 1-4,
@@ -25,7 +27,7 @@ VIGICRUE_URL = "https://www.vigicrues.gouv.fr/services/1/InfoVigiCru.geojson"
 TRONCON_CODE = "LC126"
 TRONCON_NAME = "Loire forézienne"
 
-COLOR_NAMES = {1: "vert", 2: "jaune", 3: "orange", 4: "rouge"}
+COLOR_NAMES = Etiquettes("vigilance.couleur", {1: "vert", 2: "jaune", 3: "orange", 4: "rouge"}, "couleur de vigilance météo")
 
 SOUND_EFFECTS_DIR = METEO_SCANER_DIR  # chemin de base centralise dans sound_paths.py (2026-08-31)
 SIMPLE_MESSAGE_SOUND = f"{SOUND_EFFECTS_DIR}/simple_message.mp3"
@@ -36,11 +38,6 @@ VIGILANCE_SOUNDS = {
     4: f"{SOUND_EFFECTS_DIR}/vigilence_4.mp3",
 }
 
-SAFETY_ADVICE = (
-    "Ne vous engagez pas sur une route inondée, même en voiture. "
-    "Évitez sous-sols et caves. Coupez l'électricité si l'eau approche. "
-    "Éloignez-vous des cours d'eau et tenez-vous informé."
-)
 
 # Vigicrues publie a 10h et 16h, ou plus souvent si la situation l'exige --
 # un sondage horaire (meme cadence que la vigilance meteo) est deja plus
@@ -79,7 +76,7 @@ def _speak_initial_alert(level, advice_text=None):
     pendant ALARM_LOOP_DURATION_SEC, PUIS coupe et parle le conseil de
     sécurité une seule fois, au calme."""
     sound_path = _alert_sound_path(level)
-    short_text = f"Alerte {COLOR_NAMES[level]} {PHENOMENON_LABEL} !"
+    short_text = dire("crue.alerte", v1=COLOR_NAMES[level], PHENOMENON_LABEL=PHENOMENON_LABEL)
     lock = audio_lock.acquire()
     try:
         deadline = time.time() + ALARM_LOOP_DURATION_SEC
@@ -135,14 +132,10 @@ def main():
         if level is not None and level != previous:
             if previous is not None:
                 if level >= 3:
-                    _speak_initial_alert(level, SAFETY_ADVICE)
+                    _speak_initial_alert(level, dire("crue.safety_advice"))
                 else:
-                    direction = "monter" if level > previous else "baisser"
-                    message = (
-                        f"Le niveau d'alerte crue pour le tronçon {TRONCON_NAME} "
-                        f"vient de {direction}, passant de {COLOR_NAMES[previous]} "
-                        f"à {COLOR_NAMES[level]}."
-                    )
+                    message = dire("crue.niveau_monte" if level > previous else "crue.niveau_baisse",
+                                   troncon=TRONCON_NAME, avant=COLOR_NAMES[previous], apres=COLOR_NAMES[level])
                     _speak_lightly(message)
             previous = level
             state[TRONCON_CODE] = level

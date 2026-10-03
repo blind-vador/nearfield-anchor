@@ -16,6 +16,8 @@ import time
 import radio_log
 import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
+from phrases import Etiquettes, dire
+from phrases import dire
 
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
 # Encadrement de toute diffusion dans le journal, comme le scanner (2026-10-02).
@@ -27,8 +29,8 @@ METEOR_RATE = 1_024_000
 FM_RATE = 22050
 FM_CHUNK_SEC = 0.2
 FM_MIN_VOICE_SEC = 4
-FAMILIES = {"meteo": "du satellite météo", "iss": "de la station spatiale",
-            "fm": "du satellite radioamateur"}
+FAMILIES = Etiquettes("satellite.passage", {"meteo": "du satellite météo", "iss": "de la station spatiale",
+                                             "fm": "du satellite radioamateur"}, "après « Passage » : Passage du satellite météo")
 
 
 def _announce(text, label):
@@ -55,7 +57,7 @@ def _meteo(p, seconds):
 
 def _iss(p, seconds):
     import aprs_watch
-    aprs_watch.scan_window(dwell_sec=seconds, freq_hz=p["frequences"][0], via="la station spatiale internationale")
+    aprs_watch.scan_window(dwell_sec=seconds, freq_hz=p["frequences"][0], via=dire("satellite.iss"))
 
 
 def _fm(p, seconds, speech_detector):
@@ -95,7 +97,7 @@ def _fm(p, seconds, speech_detector):
     session.add_raw_pcm(b"".join(kept), FM_RATE, "s16le")
     session.add_audio_file(FREQ_OVER_SOUND)
     session.finalize()
-    _announce(f"Passage du satellite {p['nom']} : {round(voice_sec)} secondes de voix enregistrées dans le journal.",
+    _announce(dire("satellite.passage_satellite_secondes_voix", nom=p['nom'], round=round(voice_sec)),
               f"satellite_{p['nom']}")
 
 
@@ -104,8 +106,7 @@ def run_pass(p, speech_detector=None):
     rendre une fonction (morceau PCM 16 bits, frequence) -> voix ?"""
     seconds = max(30, int(p["fin"] - time.time()))
     minutes = max(1, round(seconds / 60))
-    _announce(f"Passage {FAMILIES[p['famille']]} {p['nom']}, à {p['elevation_max']} degrés au plus haut : "
-              f"j'écoute pendant {minutes} minute{'s' if minutes > 1 else ''}.", f"passage_{p['nom']}")
+    _announce(dire("satellite.passage_degres_au_plus", v1=FAMILIES[p['famille']], nom=p['nom'], elevation_max=p['elevation_max'], minutes=minutes, pluriel='s' if minutes > 1 else ''), f"passage_{p['nom']}")
     try:
         if p["famille"] == "meteo":
             _meteo(p, seconds)

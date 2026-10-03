@@ -11,6 +11,8 @@ from sound_paths import FLIGHT_SCANER_DIR
 import reglages
 import adsb_local_watch
 import ogn_watch
+from phrases import Etiquettes, dire
+from phrases import dire
 
 # API OpenSky Network. Compte authentifie cree en session (username
 # blind_vador) -- l'API exige desormais OAuth2 (client_credentials).
@@ -140,7 +142,7 @@ AIR_TARGET_CAP = 3.0
 # lookup de modele d'appareil precis (ex: "Airbus A320"), meme authentifie
 # (confirme en session par lecture de la doc officielle) -- ceci est
 # l'information la plus precise disponible sur le TYPE d'appareil.
-CATEGORY_NAMES = {
+CATEGORY_NAMES = Etiquettes("avion.categorie", {
     0: None,  # aucune info -- on ne dit rien plutot que "categorie inconnue"
     1: None,
     2: "avion léger",
@@ -156,7 +158,7 @@ CATEGORY_NAMES = {
     12: "ULM ou parapente",
     14: "drone",
     15: "véhicule spatial",
-}
+}, "type d'appareil annoncé par un avion")
 
 EARTH_RADIUS_KM = 6371.0
 
@@ -248,7 +250,7 @@ def _speak_coordinated(text):
 def _announce_flyby(callsign):
     lock = audio_lock.acquire()
     try:
-        speak_with_lead_sound(FLYBY_SOUND, f"{callsign} passe juste au-dessus.", sound_timeout_sec=60, label="adsb_watch")
+        speak_with_lead_sound(FLYBY_SOUND, dire("avion.passe_juste_au_dessus", callsign=callsign), sound_timeout_sec=60, label="adsb_watch")
     finally:
         audio_lock.release(lock)
 
@@ -268,7 +270,7 @@ def _merge(remote, local):
 
 def main():
     print("[adsb_watch] demarrage de la veille ADS-B (API OpenSky + antenne)")
-    _speak_coordinated("Veille ADS-B démarrée.")
+    _speak_coordinated(dire("avion.veille_ads_b_demarree"))
     ogn_watch.start()
 
     # Buffer des appareils deja annonces (icao24 -> indicatif) : sert
@@ -312,15 +314,15 @@ def main():
             current_aircraft[icao24] = callsign
 
             if now - known_aircraft.get(icao24, 0) > FORGET_SEC:
-                parts = [f"Avion détecté : {callsign}."]
+                parts = [dire("avion.avion_detecte", callsign=callsign)]
                 if icao24 in local_only:
-                    parts.append("Capté en direct par l'antenne.")
+                    parts.append(dire("avion.capte_direct_antenne"))
                 category_name = CATEGORY_NAMES.get(category)
                 if category_name:
                     parts.append(f"{category_name.capitalize()}.")
                 if altitude_m:
-                    parts.append(f"Altitude {altitude_m:.0f} mètres.")
-                parts.append(f"Distance {dist:.0f} kilomètres.")
+                    parts.append(dire("avion.altitude_metres", altitude_m=format(altitude_m, ".0f")))
+                parts.append(dire("avion.distance_kilometres", dist=format(dist, ".0f")))
                 lock = audio_lock.acquire()
                 try:
                     speak_with_lead_sound(SIMPLE_CONTACT_SOUND, " ".join(parts), label="adsb_watch")

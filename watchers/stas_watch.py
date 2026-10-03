@@ -7,6 +7,7 @@ from bs4 import BeautifulSoup
 from speak import speak_with_lead_sound
 import audio_lock
 from sound_paths import TRAIN_SCANER_DIR
+from phrases import dire
 
 # Page publique "infos trafic" de l'exploitant STAS (Cityway). Pas d'API
 # JSON publique documentée trouvée pour les perturbations (contrairement
@@ -67,9 +68,9 @@ def _speak_new_disruptions(new_disruptions):
     if not new_disruptions:
         return
     if len(new_disruptions) == 1:
-        intro = "Nouvelle perturbation sur le réseau de bus et tram de Saint-Étienne."
+        intro = dire("bus.nouvelle_perturbation_reseau_bus")
     else:
-        intro = f"{len(new_disruptions)} nouvelles perturbations sur le réseau de bus et tram de Saint-Étienne."
+        intro = dire("bus.nouvelles_perturbations_reseau_bus", len=len(new_disruptions))
     lines = [intro] + [d["title"] for d in new_disruptions]
     message = " ".join(lines)
 

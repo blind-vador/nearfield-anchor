@@ -22,6 +22,7 @@ import meteo_locale
 import reglages
 import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
+from phrases import dire
 
 DECODER_DIR = "/home/vador/autopilot/bin"
 DECODERS = {"RS41": "rs41mod", "M10": "m10m20mod", "M20": "m10m20mod", "DFM": "dfm09mod"}
@@ -91,14 +92,14 @@ def _profile(serial, frame):
 def _describe(frame, lieu):
     parts = [vd.where(frame["lat"], frame["lon"])]
     if frame.get("alt") is not None:
-        parts.append(f"altitude {round(frame['alt'])} mètres")
+        parts.append(dire("sonde.altitude_metres", round=round(frame['alt'])))
     if frame.get("temp") is not None:
-        parts.append(f"{vd.fr_number(frame['temp'])} degrés")
+        parts.append(dire("sonde.degres", fr_number=vd.fr_number(frame['temp'])))
     if frame.get("humidity") is not None:
-        parts.append(f"humidité {round(frame['humidity'])} pour cent")
+        parts.append(dire("sonde.humidite_cent", round=round(frame['humidity'])))
     vel = frame.get("vel_v")
     if vel is not None:
-        parts.append("en montée" if vel > 1 else "en descente" if vel < -1 else "stable")
+        parts.append(dire("sonde.montee") if vel > 1 else dire("sonde.descente") if vel < -1 else "stable")
     return ", ".join(parts)
 
 
@@ -110,17 +111,16 @@ def _process(frame, serial):
         return False
     freezing = _profile(serial, frame)
     if freezing is not None:
-        vd.announce(f"Le ballon-sonde vient de mesurer la limite du gel vers {int(round(freezing, -1))} mètres.",
+        vd.announce(dire("sonde.ballon_sonde_vient_mesurer", int=int(round(freezing, -1))),
                     SOUND, f"sonde_gel_{serial}", "sondes_watch")
         return True
     vel = frame.get("vel_v") or 0
     if vel <= BURST_DESCENT_MS and _memory.due(f"eclatement|{serial}", 6 * 3600):
-        vd.announce(f"Le ballon-sonde a éclaté vers {round(frame.get('alt') or 0)} mètres ; la sonde redescend "
-                    f"en parachute, {vd.where(frame['lat'], frame['lon'])}.", SOUND, f"sonde_eclatement_{serial}",
+        vd.announce(dire("sonde.ballon_sonde_eclate_vers", round=round(frame.get('alt') or 0), where=vd.where(frame['lat'], frame['lon'])), SOUND, f"sonde_eclatement_{serial}",
                     "sondes_watch")
         return True
     if _memory.due(f"sonde|{serial}", REANNOUNCE_SEC):
-        vd.announce(f"Ballon-sonde capté en direct par l'antenne : {_describe(frame, lieu)}.", SOUND,
+        vd.announce(dire("sonde.ballon_sonde_capte_direct", v1=_describe(frame, lieu)), SOUND,
                     f"sonde_{serial}", "sondes_watch")
         return True
     return False

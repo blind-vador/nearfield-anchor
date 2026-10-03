@@ -27,6 +27,7 @@ import aprs_texte
 import relais
 import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
+from phrases import dire
 
 APRS_FREQ_HZ = 144_800_000
 SAMPLE_RATE = 22050
@@ -53,13 +54,13 @@ VIA_MAX_ANNOUNCES = 6
 def _weather_text(wx):
     parts = []
     if wx.get("temperature") is not None:
-        parts.append(f"{vd.fr_number(wx['temperature'])} degrés")
+        parts.append(dire("aprs.degres", fr_number=vd.fr_number(wx['temperature'])))
     if wx.get("humidity") is not None:
-        parts.append(f"humidité {int(wx['humidity'])} pour cent")
+        parts.append(dire("aprs.humidite_cent", int=int(wx['humidity'])))
     if wx.get("wind_speed") is not None:
-        parts.append(f"vent {round(wx['wind_speed'] * 3.6)} kilomètres heure")
+        parts.append(dire("aprs.vent_kilometres_heure", round=round(wx['wind_speed'] * 3.6)))
     if wx.get("rain_1h"):
-        parts.append(f"{vd.fr_number(wx['rain_1h'], 1)} millimètres de pluie en une heure")
+        parts.append(dire("aprs.millimetres_pluie_heure", fr_number=vd.fr_number(wx['rain_1h'], 1)))
     if wx.get("pressure") is not None:
         parts.append(f"pression {round(wx['pressure'])} hectopascals")
     return ", ".join(parts)
@@ -95,14 +96,14 @@ def _process(packet):
         to = packet.get("addresse", "")
         text = packet["message_text"].strip()
         if _memory.due(f"msg|{call}|{text[:60]}", MESSAGE_EVERY_SEC):
-            vd.announce(f"Message APRS de {vd.spell(call)} pour {vd.spell(to)} : {text}", SOUND,
+            vd.announce(dire("aprs.message_aprs", spell=vd.spell(call), spell2=vd.spell(to), text=text), SOUND,
                         f"APRS_message_{call}", "aprs_watch")
             return True
         return False
     if fmt == "bulletin" or packet.get("bid") is not None:
         text = (packet.get("message_text") or "").strip()
         if text and _memory.due(f"bln|{call}|{text[:60]}", MESSAGE_EVERY_SEC):
-            vd.announce(f"Bulletin APRS de {vd.spell(call)} : {text}", SOUND, f"APRS_bulletin_{call}", "aprs_watch")
+            vd.announce(dire("aprs.bulletin_aprs", spell=vd.spell(call), text=text), SOUND, f"APRS_bulletin_{call}", "aprs_watch")
             return True
         return False
     lat, lon = packet.get("latitude"), packet.get("longitude")
@@ -114,7 +115,7 @@ def _process(packet):
             return False
         name = (packet.get("object_name") or call).strip()
         _via["annonces"] += 1
-        vd.announce(f"Via {_via['nom']} : station {vd.spell(name)}, {vd.where(lat, lon)}.", SOUND,
+        vd.announce(dire("aprs.via_station", nom=_via['nom'], spell=vd.spell(name), where=vd.where(lat, lon)), SOUND,
                     f"APRS_via_{name}", "aprs_watch")
         return True
     if km > MAX_DISTANCE_KM:
@@ -125,7 +126,7 @@ def _process(packet):
         _publish_weather(name, lat, lon, wx)
         details = _weather_text(wx)
         if details and _memory.due(f"wx|{name}", WX_EVERY_SEC):
-            vd.announce(f"Station météo APRS {vd.spell(name)}, {vd.where(lat, lon)} : {details}.", SOUND,
+            vd.announce(dire("aprs.station_meteo_aprs", spell=vd.spell(name), where=vd.where(lat, lon), details=details), SOUND,
                         f"APRS_meteo_{name}", "aprs_watch")
             return True
         return False
@@ -134,7 +135,7 @@ def _process(packet):
     kind = aprs_texte.station_type(packet)
     text = f"{kind.capitalize() if kind else 'Station APRS'} {vd.spell(name)}, {vd.where(lat, lon)}"
     if moving:
-        text += f", en mouvement à {round(speed)} kilomètres heure"
+        text += dire("aprs.mouvement_kilometres_heure", round=round(speed))
     # Relais qui annonce sa frequence : appris et ajoute a l'ecoute du scanner (lib/relais.py).
     learned = relais.learn(name, packet.get("comment") or "", packet.get("symbol"), km)
     if learned:
@@ -147,13 +148,13 @@ def _process(packet):
     first = _memory.due(f"station|{name}", STATION_EVERY_SEC)
     near = km <= NEAR_KM and _memory.due(f"near|{name}", NEAR_EVERY_SEC)
     if first or near:
-        prefix = "Tout près : " if near and not first else ""
+        prefix = (dire("aprs.tout_pres") + " ") if near and not first else ""
         raw_comment = (packet.get("comment") or packet.get("status") or "").strip()
         explained = _explain(name, packet, raw_comment) if aprs_texte.is_weird(raw_comment, comment) else None
         if explained:  # l'explication remplace la traduction
             text = f"{header}. {explained.rstrip('.')}"
         if learned:
-            text += ". Je l'ajoute à mon écoute des relais"
+            text += dire("aprs.ajoute_mon_ecoute_relais")
         vd.announce(prefix + text + ".", SOUND, f"APRS_{name}", "aprs_watch")
         return True
     return False

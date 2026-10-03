@@ -14,6 +14,7 @@ import time
 
 import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
+from phrases import dire
 
 FREQUENCIES_HZ = [466_025_000, 466_050_000, 466_075_000, 466_175_000, 466_206_250, 466_231_250]
 SAMPLE_RATE = 22050
@@ -71,7 +72,7 @@ def scan_window(dwell_sec=30):
                 m = ALPHA.search(line)
                 text = _readable(m.group(1) or m.group(2) or "") if m else ""
                 if text and _memory.due(f"pager|{text[:80]}", REPEAT_SEC):
-                    vd.announce(f"Message de pager : {text}", SOUND, "pager", "pagers_watch")
+                    vd.announce(dire("pager.message_pager", text=text), SOUND, "pager", "pagers_watch")
                     announced = True
     finally:
         for p in (rtl, mm):

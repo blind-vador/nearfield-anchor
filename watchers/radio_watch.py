@@ -231,6 +231,7 @@ MULTIMON_ARGS = decodeurs.MULTIMON_ARGS  # regles communes (lib/decodeurs.py)
 
 from sound_player import AUDIO_DEVICE, play_sound_effect
 from sound_paths import RADIO_SCANER_DIR
+from phrases import dire
 
 # Effets sonores courts (habillage du scanner), fournis par l'utilisateur sur
 # le NAS (deja monte localement sur le Pi, pas besoin de copie locale).
@@ -829,13 +830,13 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label=""):
                     channels = 2
                 elif size == DSD_FME_MONO_DATAGRAM:
                     channels = 1
-                protocol = stats["protocol"] or "numérique"
+                protocol = stats["protocol"] or dire("radio.numerique")
                 print(f"[radio_watch] dsd-fme : decodage {protocol} confirme "
                       f"({stats['clean']} synchros propres sur {stats['total']}), {channels} voie(s)")
                 # Carillon et annonce seulement maintenant ; le son continue
                 # d'arriver dans le tampon de la socket pendant ce temps.
                 speak_with_lead_sound(DECODING_NUMERIC_SOUND,
-                                      f"Réception {protocol}" + (f", {band_label}" if band_label else "") + ".",
+                                      dire("radio.reception", protocol=protocol) + (f", {band_label}" if band_label else "") + ".",
                                       label="radio_watch")
                 # Meme encadrement que la voix analogique (2026-10-02) : son
                 # d'ouverture avant la voix, son de fin apres (_handle_candidate).
@@ -1292,7 +1293,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         print(f"[radio_watch] {ignored_count} message(s) decode(s) ignore(s) (trop court/bruit)")
     for msg in meaningful_messages:
         print(f"[radio_watch] decode numerique: {msg}")
-        speak_with_lead_sound(DECODING_MORSE_SOUND, f"Message numérique décodé : {msg}", label="radio_watch")
+        speak_with_lead_sound(DECODING_MORSE_SOUND, dire("radio.message_numerique_decode", msg=msg), label="radio_watch")
 
     return heard_signal or bool(meaningful_messages)
 
@@ -1410,7 +1411,7 @@ def _thermal_pause_wait(duration):
         if allowed and wanted:
             if not _meteo_pause["announced"]:
                 _meteo_pause["announced"] = True
-                _speak_pause(f"Malgré la chaleur, je garde l'écoute météo seule, jusqu'à {limit:.0f} degrés.")
+                _speak_pause(dire("radio.malgre_chaleur_garde_ecoute", limit=format(limit, ".0f")))
             if meteo_locale.scan_requested():
                 _meteo_scan_if_requested(max_temp=limit)
             elif level >= 2 and time.time() - _meteo_pause["last_watch"] >= METEO_PAUSE_WATCH_EVERY_SEC:
@@ -1443,7 +1444,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
         protocol = try_digital_voice_decode(freq, band_label=band_label) if mode == "nfm" else None
         if protocol:
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
-            speak(f"Réception {protocol} terminée.")
+            speak(dire("radio.reception_terminee", protocol=protocol))
             path = log_session.finalize()
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
                                             {"niveau_db": level_db, "numerique": True})
@@ -1477,7 +1478,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             sound_player.set_recording_session(log_session)
             if try_digital_voice_decode(freq, extra[0], band_label):
                 play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
-                speak(f"Réception {extra[1]} terminée.")
+                speak(dire("radio.reception_terminee_2", v1=extra[1]))
                 path = log_session.finalize()
                 noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
                                                 {"niveau_db": level_db, "numerique": True, "mode_numerique": extra[1]})
@@ -1802,7 +1803,7 @@ def main():
                       f"(reprise prevue sous {effective_resume_c:.1f}C)")
                 manual_stream.stop()  # la securite thermique coupe aussi l'ecoute manuelle
                 _speak_pause(
-                    f"Pause du scanner radio, température élevée : {temp:.0f} degrés.",
+                    dire("radio.pause_scanner_radio_temperature", temp=format(temp, ".0f")),
                     sound=SCANER_ERROR_SOUND,
                 )
                 meteo_locale.set_scanner_state("pause_thermique")
@@ -1832,8 +1833,7 @@ def main():
                             plateau_warned = True
                             print(f"[radio_watch] plateau thermique a {temp:.1f}C, au-dessus de "
                                   f"{PLATEAU_RESUME_MAX_C:.0f}C -- pause maintenue")
-                            _speak_pause(f"Le Pi ne refroidit plus et reste à {temp:.0f} degrés. "
-                                         f"Le scanner radio reste en pause. Vérifie la ventilation.")
+                            _speak_pause(dire("radio.pi_refroidit_plus_reste", temp=format(temp, ".0f")))
                 last_pause_end_time = time.time()
                 pause_duration = last_pause_end_time - pause_actual_start
 
@@ -1855,9 +1855,9 @@ def main():
 
                 print(f"[radio_watch] reprise apres refroidissement (temperature : {temp})")
                 if plateau_resume:
-                    _speak_pause(f"Le Pi ne refroidit plus, le scanner radio reprend à {temp:.0f} degrés.")
+                    _speak_pause(dire("radio.pi_refroidit_plus_scanner", temp=format(temp, ".0f")))
                 else:
-                    _speak_pause("Le scanner radio reprend, température redescendue.")
+                    _speak_pause(dire("radio.scanner_radio_reprend_temperature"))
                 meteo_locale.set_scanner_state("actif")
                 cycle_start = time.time()
                 continue
@@ -1893,10 +1893,10 @@ def main():
                 print(f"[radio_watch] fin du mode manuel, verrouillage sur {lock_capture['freq_hz']/1e6:.4f} MHz")
             elif lock_capture:
                 print(f"[radio_watch] verrouillage sur {lock_capture['freq_hz']/1e6:.4f} MHz ({lock_capture['label']})")
-                _speak_pause(f"Scanner verrouillé sur {lock_capture['label']}.")
+                _speak_pause(dire("radio.scanner_verrouille", label=lock_capture['label']))
             else:
                 print("[radio_watch] fin du verrouillage, reprise du balayage")
-                _speak_pause("Balayage radio repris.")
+                _speak_pause(dire("radio.balayage_radio_repris"))
                 cycle_start = time.time()
             current_lock_key = lock_key
         if lock_capture:
@@ -1910,7 +1910,7 @@ def main():
         if now - cycle_start >= SCAN_ON_DURATION_SEC:
             print(f"[radio_watch] pause programmee ({SCAN_OFF_DURATION_SEC}s)")
             _speak_pause(
-                f"Pause programmée du scanner radio, reprise dans {SCAN_OFF_DURATION_SEC // 60} minutes."
+                dire("radio.pause_programmee_scanner_radio", v1=SCAN_OFF_DURATION_SEC // 60)
             )
             # Un balayage meteo demande par la console passe quand meme.
             meteo_locale.set_scanner_state("pause_programmee")
@@ -1920,7 +1920,7 @@ def main():
                     _meteo_scan_if_requested()
                 time.sleep(1)
             meteo_locale.set_scanner_state("actif")
-            _speak_pause("Le scanner radio reprend.")
+            _speak_pause(dire("radio.scanner_radio_reprend"))
             cycle_start = time.time()
             continue
 
@@ -1985,21 +1985,21 @@ def main():
         if _rtl_power_failure_count == DEVICE_DOWN_WARNING_THRESHOLD and not device_down_announced:
             lock = audio_lock.acquire()
             try:
-                speak_with_lead_sound(SCANER_ERROR_SOUND, "Attention, le dongle radio semble indisponible. Vérifie la connexion USB.", label="radio_watch", repetitive=True)
+                speak_with_lead_sound(SCANER_ERROR_SOUND, dire("radio.attention_dongle_radio_semble"), label="radio_watch", repetitive=True)
             finally:
                 audio_lock.release(lock)
             device_down_announced = True
         elif _rtl_power_failure_count == 0 and device_down_announced:
             lock = audio_lock.acquire()
             try:
-                speak("Le dongle radio est de nouveau disponible.")
+                speak(dire("radio.dongle_radio_nouveau_disponible"))
             finally:
                 audio_lock.release(lock)
             device_down_announced = False
         elif device_down_announced and _rtl_power_failure_count % DEVICE_DOWN_REMINDER_EVERY == 0:
             lock = audio_lock.acquire()
             try:
-                speak_with_lead_sound(SCANER_ERROR_SOUND, "Le dongle radio est toujours indisponible.", label="radio_watch", repetitive=True)
+                speak_with_lead_sound(SCANER_ERROR_SOUND, dire("radio.dongle_radio_toujours_indisponible"), label="radio_watch", repetitive=True)
             finally:
                 audio_lock.release(lock)
 

@@ -203,7 +203,8 @@ class Etiquettes(collections.abc.Mapping):
         return f"{self.groupe}.{_code(self._raw[code] if self.par_libelle else code)}"
 
     def __getitem__(self, code):
-        return etiquette(self.cle(code), self._raw[code])
+        raw = self._raw[code]
+        return None if raw is None else etiquette(self.cle(code), raw)  # None : rien a dire
 
     def __iter__(self):
         return iter(self._raw)
@@ -212,7 +213,7 @@ class Etiquettes(collections.abc.Mapping):
         return len(self._raw)
 
     def sections(self):
-        return [(self.cle(c), v, self.contexte) for c, v in self._raw.items()]
+        return [(self.cle(c), v, self.contexte) for c, v in self._raw.items() if v is not None]
 
 
 class Champs(collections.abc.Sequence):

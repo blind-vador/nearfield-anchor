@@ -7,6 +7,8 @@ import audio_lock
 import radio_log
 import sound_player
 from speak import speak_with_lead_sound
+from phrases import Etiquettes, dire
+from phrases import dire
 
 # --- Veille ACARS (donnees numeriques avion/compagnie) ---
 # Ajoute en session (2026-08-31, demande explicite de l'utilisateur) --
@@ -63,7 +65,7 @@ Q_FIELD_SPECS = {
 
 # Verbe/evenement vulgarise par label -- un evenement principal par
 # label (Q1 combine tout, traite a part comme "compte-rendu complet").
-Q_PHASE_VERBS = {
+Q_PHASE_VERBS = Etiquettes("acars.evenement", {
     "Q1": "compte-rendu de vol complet",
     "Q2": "heure d'arrivée estimée mise à jour",
     "QA": "sortie de porte",
@@ -83,7 +85,7 @@ Q_PHASE_VERBS = {
     "QR": "atterrissage",
     "QS": "arrivée à la porte",
     "QT": "sortie de porte",
-}
+}, "étape d'un vol confirmée par message ACARS", par_libelle=True)
 
 
 def _extract_q_fields(label, txt):
@@ -107,11 +109,11 @@ def _vulgarize_oooi(identity, label, fields):
     """Phrase vulgarisee, volontairement simple et un peu fantasque
     ("le vol X confirme : evenement[, vers destination]") -- demande
     explicite de l'utilisateur, style "totalement fantasque" assume."""
-    verb = Q_PHASE_VERBS.get(label, "événement de vol")
-    message = f"Le vol {identity} confirme : {verb}"
+    verb = Q_PHASE_VERBS.get(label) or dire("acars.evenement_vol")
+    message = dire("acars.vol_confirme", identity=identity, verb=verb)
     da = fields.get("da")
     if da:
-        message += f", vers {da}"
+        message += dire("acars.vers", da=da)
     return message + "."
 
 SOUND_EFFECTS_DIR = "/media/nas/nd1/server/radio_scaner"
@@ -191,7 +193,7 @@ def _process_message(msg):
         else:
             key = (identity, "texte", text[:60])
             if _should_announce(key):
-                _announce(f"Message ACARS de {identity} : {text}", f"ACARS_texte_{identity}")
+                _announce(dire("acars.message_acars", identity=identity, text=text), f"ACARS_texte_{identity}")
                 return True
             return False
 

@@ -9,6 +9,7 @@ from speak import speak, speak_with_lead_sound
 import audio_lock
 from sound_paths import METEO_SCANER_DIR
 import reglages
+from phrases import Etiquettes, dire
 
 # Miroir public (sans cle) des donnees officielles de vigilance
 # Meteo-France, sur Opendatasoft. L'API officielle exige desormais un
@@ -33,7 +34,7 @@ REF_LON = float(_LIEU["lon"])
 # (aujourd'hui) -- "J1" (demain) serait de la prevision.
 ECHEANCE = "J"
 
-COLOR_NAMES = {1: "vert", 2: "jaune", 3: "orange", 4: "rouge"}
+COLOR_NAMES = Etiquettes("vigilance.couleur", {1: "vert", 2: "jaune", 3: "orange", 4: "rouge"}, "couleur de vigilance météo")
 
 # Son court joue AVANT toute annonce "sans gravite" (ticker de vigilance,
 # heads-up jaune local, retour au calme) -- distinct des sons vigilence_N,
@@ -113,12 +114,9 @@ def _vigilance_watcher():
                 if previous == color_id:
                     continue
                 if previous is not None:
-                    direction = "monter" if color_id > previous else "baisser"
-                    _speak_lightly(
-                        f"Le niveau d'alerte {phenomenon} pour le département de la "
-                        f"{DEPARTMENT_NAME} vient de {direction}, passant de "
-                        f"{COLOR_NAMES[previous]} à {COLOR_NAMES[color_id]}."
-                    )
+                    _speak_lightly(dire("meteo_watch.niveau_monte" if color_id > previous else "meteo_watch.niveau_baisse",
+                                        phenomene=PHENOMENES.get(phenomenon, phenomenon), departement=DEPARTMENT_NAME,
+                                        avant=COLOR_NAMES[previous], apres=COLOR_NAMES[color_id]))
                 known_colors[phenomenon] = color_id
                 changed = True
             if changed:
@@ -148,12 +146,12 @@ NOWCAST_THRESHOLDS = {
 
 # Message court et naturel par type de perturbation ("on speak simplement si
 # de la pluie approche par exemple") -- pas de jargon, pas de boilerplate.
-NOWCAST_APPROACH_MESSAGE = {
+NOWCAST_APPROACH_MESSAGE = Etiquettes("meteo_watch.approche", {
     "precipitation": "De la pluie approche",
     "wind_gusts_10m": "Des rafales de vent approchent",
     "cape": "Un orage approche",
     "lightning_potential": "Un orage approche",
-}
+}, "début d'annonce : ce qui approche, suivi de quand")
 NOWCAST_METRIC_PHENOMENON = {
     "precipitation": "pluie",
     "wind_gusts_10m": "vent",
@@ -163,11 +161,17 @@ NOWCAST_METRIC_PHENOMENON = {
 
 # Conseils de securite -- lus seulement a partir du niveau orange (le
 # simple heads-up jaune reste volontairement court, sans conseil).
-SAFETY_ADVICE = {
+SAFETY_ADVICE = Etiquettes("meteo_watch.conseil", {
     "orages": "Débranchez les appareils électriques sensibles. Fermez fenêtres et volets.",
     "vent": "Fermez et sécurisez volets et fenêtres. Rangez les objets extérieurs susceptibles d'être emportés.",
     "pluie": "Évitez les sous-sols et zones basses. Ne vous engagez pas sur une route inondée.",
-}
+}, "conseil de sécurité lu une fois, après une alerte orange ou rouge")
+# Noms dits des phenomenes (les codes servent aux sons et aux conseils).
+PHENOMENES = Etiquettes("meteo_watch.phenomene", {"orages": "orages", "vent": "vent", "pluie": "pluie", "crue": "crue",
+                                                  "canicule": "canicule", "neige": "neige", "grand froid": "grand froid",
+                                                  "avalanches": "avalanches", "vagues-submersion": "vagues-submersion",
+                                                  "pluie-inondation": "pluie-inondation"},
+                        "phénomène météo d'une alerte")
 
 SOUND_EFFECTS_DIR = METEO_SCANER_DIR  # chemin de base centralise dans sound_paths.py (2026-08-31)
 VIGILANCE_SOUNDS = {
@@ -210,6 +214,8 @@ CARDINAL_DIRECTIONS = [
     "sud", "sud-sud-ouest", "sud-ouest", "ouest-sud-ouest",
     "ouest", "ouest-nord-ouest", "nord-ouest", "nord-nord-ouest",
 ]
+DIRECTION_DE = Etiquettes("direction.de", {d: (f"de l'{d}" if d[0] in "eo" else f"du {d}") for d in CARDINAL_DIRECTIONS},
+                          "d'où vient le vent ou la perturbation")
 
 
 def _cardinal_direction(degrees):
@@ -276,9 +282,9 @@ def _nowcast_announce(level, metric, minutes_ahead, data=None):
     """Heads-up leger, reserve au niveau jaune -- les niveaux orange/rouge
     passent desormais par _speak_initial_alert()/_speak_proximity_alert()
     (voir _nowcast_watcher), pas par cette fonction."""
-    approach = NOWCAST_APPROACH_MESSAGE.get(metric, "Une perturbation approche")
-    timing = "d'un instant à l'autre" if minutes_ahead <= 5 else f"dans environ {minutes_ahead} minutes"
-    message = f"{approach}, {timing}."
+    approach = NOWCAST_APPROACH_MESSAGE.get(metric) or dire("meteo_watch.perturbation_approche")
+    timing = dire("meteo_watch.instant") if minutes_ahead <= 5 else dire("meteo_watch.dans_minutes", minutes=minutes_ahead)
+    message = dire("meteo_watch.approche_quand", approche=approach, quand=timing)
 
     if data is not None:
         index = minutes_ahead // 15
@@ -288,10 +294,9 @@ def _nowcast_announce(level, metric, minutes_ahead, data=None):
         speed = speeds[index] if index < len(speeds) else None
         if cardinal:
             # Elision : "de l'est", "de l'ouest-nord-ouest" mais "du nord", "du sud-est".
-            origin = f"de l'{cardinal}" if cardinal[0] in "eo" else f"du {cardinal}"
-            message += f" Vient {origin}."
+            message += " " + dire("meteo_watch.vient_de", origine=DIRECTION_DE[cardinal])
         if speed:
-            message += f" Vent à {speed:.0f} kilomètres par heure."
+            message += " " + dire("meteo_watch.vent_vitesse", vitesse=f"{speed:.0f}")
 
     _speak_lightly(message)
 
@@ -320,7 +325,7 @@ def _speak_initial_alert(level, phenomenon, advice_text=None):
     "Alerte {niveau} {phénomène} !", PUIS coupe et parle le conseil de
     sécurité une seule fois, au calme."""
     sound_path = _alert_sound_path(level, phenomenon)
-    short_text = f"Alerte {COLOR_NAMES[level]} {phenomenon} !"
+    short_text = dire("meteo_watch.alerte", couleur=COLOR_NAMES[level], phenomene=PHENOMENES.get(phenomenon, phenomenon))
     lock = audio_lock.acquire()
     try:
         _loop_alarm_sound(sound_path, short_text)
@@ -336,7 +341,7 @@ def _speak_proximity_alert(level, phenomenon, minutes_threshold):
     "Alerte {niveau} {phénomène} !" -- pas de conseil répété ici, déjà
     donné à l'alerte initiale."""
     sound_path = PROXIMITY_SOUNDS[minutes_threshold]
-    short_text = f"Alerte {COLOR_NAMES[level]} {phenomenon} !"
+    short_text = dire("meteo_watch.alerte", couleur=COLOR_NAMES[level], phenomene=PHENOMENES.get(phenomenon, phenomenon))
     lock = audio_lock.acquire()
     try:
         _loop_alarm_sound(sound_path, short_text)
@@ -385,7 +390,7 @@ def _nowcast_watcher():
         if level == 2 and last_level < 2:
             _nowcast_announce(level, metric, minutes_ahead, data)
         elif level < 3 <= last_level:
-            _speak_lightly("L'alerte météo locale est retombée.")
+            _speak_lightly(dire("meteo_watch.alerte_retombee"))
             episode_active = False
             stage_15_done = False
             stage_10_done = False
@@ -424,21 +429,21 @@ def _precursor_watcher():
             for s in fresh:
                 announced[s["texte"]] = now
             if level > last_level and level >= 2:
-                text = ("Danger météo imminent : " if level == 3 else "Une perturbation approche : ")
-                text += ", ".join(reasons) + ". Je renforce l'écoute des stations météo voisines."
+                text = dire("meteo_watch.danger_imminent" if level == 3 else "meteo_watch.perturbation_raisons",
+                            raisons=", ".join(reasons))
                 _speak_lightly(text)
             elif level < last_level and last_level >= 2 and level <= 1:
-                _speak_lightly("La situation météo se calme. Écoute normale des stations voisines.")
+                _speak_lightly(dire("meteo_watch.calme"))
             if fresh:
                 try:
                     import meteo_obs
                     meteo_obs.log_signs(fresh)  # pour juger leur fiabilite (bilan meteo)
                 except Exception as exc:
                     print(f"[meteo_watch] journal des signes : {exc!r}")
-                text = "Signe avant-coureur : " + " ; ".join(s["texte"] for s in fresh[:3]) + "."
+                text = dire("meteo_watch.signe", signes=" ; ".join(s["texte"] for s in fresh[:3]))
                 origin = meteo_locale.approach_direction(signs)
                 if origin and len({s["direction"] for s in signs if s["direction"]}) > 1:
-                    text += f" La perturbation semble arriver {origin}."
+                    text += " " + dire("meteo_watch.arrive_de", origine=origin)
                 _speak_lightly(text)
             announced = {k: t for k, t in announced.items() if now - t < 6 * 3600}
             last_level = level

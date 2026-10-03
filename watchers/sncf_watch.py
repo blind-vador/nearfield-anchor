@@ -12,6 +12,7 @@ import audio_lock
 from sound_player import play_sound_effect
 from sound_paths import TRAIN_SCANER_DIR
 import reglages
+from phrases import dire
 
 # API SNCF (moteur Navitia), gratuite avec compte -- 150 000 requetes/mois
 # (5000/jour). Jeton dans nearfield-anchor-settings/cles/sncf.txt, relu a
@@ -240,7 +241,7 @@ def _train_label(mode, train_number):
     qu'en gare les numeros de train sont annonces comme des nombres, pas
     epeles."""
     if train_number:
-        return f"{mode} numéro {train_number}"
+        return dire("trains.numero", mode=mode, train_number=train_number)
     return mode
 
 
@@ -297,8 +298,7 @@ def _speak_depart_announcement(mode, destination, scheduled_dt, train_number=Non
     par l'utilisateur, pas une omission volontaire)."""
     mode_label = _train_label(mode, train_number)
     message = (
-        f"Le {mode_label}, à destination de {destination}, "
-        f"départ : {_format_time_spoken(scheduled_dt)}, va être mis en place."
+        dire("trains.destination_depart_va_etre", mode_label=mode_label, destination=destination, v1=_format_time_spoken(scheduled_dt))
     )
     lock = audio_lock.acquire()
     try:
@@ -312,7 +312,7 @@ def _speak_terminus_announcement(mode, origin, scheduled_dt, train_number=None):
     absent de /departures) -- juste l'origine, pas de destination
     puisqu'il n'y en a pas apres Chateaucreux pour ce train."""
     mode_label = _train_label(mode, train_number)
-    message = f"Le {mode_label}, en provenance de {origin}, entrera en gare à {_format_time_spoken(scheduled_dt)}."
+    message = dire("trains.provenance_entrera_gare", mode_label=mode_label, origin=origin, v1=_format_time_spoken(scheduled_dt))
     lock = audio_lock.acquire()
     try:
         speak_with_lead_sound(SOUND_MODERNE, message, label="sncf_watch")
@@ -327,8 +327,7 @@ def _speak_stop_and_go_announcement(mode, origin, destination, scheduled_dt, tra
     physique (demande explicite de l'utilisateur, 2026-08-31)."""
     mode_label = _train_label(mode, train_number)
     message = (
-        f"Le {mode_label}, en provenance de {origin}, et à destination de {destination}, "
-        f"entrera en gare à {_format_time_spoken(scheduled_dt)}."
+        dire("trains.provenance_destination_entrera_gare", mode_label=mode_label, origin=origin, destination=destination, v1=_format_time_spoken(scheduled_dt))
     )
     lock = audio_lock.acquire()
     try:
@@ -360,11 +359,9 @@ def _cancel_scheduled_announcement(state, vj_id):
 
 def _speak_disruption(mode, destination, scheduled_dt, delay_min, motif=None, train_number=None):
     mode_label = _train_label(mode, train_number)
-    reason = f" Motif : {motif}." if motif else ""
+    reason = (" " + dire("trains.motif", motif=motif)) if motif else ""
     message = (
-        f"Perturbation : le {mode_label} à destination de {destination}, "
-        f"prévu à {_format_time_spoken(scheduled_dt)}, partira avec un "
-        f"retard estimé à {delay_min} minutes.{reason}"
+        dire("trains.perturbation_destination_prevu_partira", mode_label=mode_label, destination=destination, v1=_format_time_spoken(scheduled_dt), delay_min=delay_min, reason=reason)
     )
     lock = audio_lock.acquire()
     try:
@@ -375,10 +372,9 @@ def _speak_disruption(mode, destination, scheduled_dt, delay_min, motif=None, tr
 
 def _speak_cancellation(mode, destination, scheduled_dt, motif=None, train_number=None):
     mode_label = _train_label(mode, train_number)
-    reason = f" Motif : {motif}." if motif else " Motif non précisé."
+    reason = (" " + dire("trains.motif_2", motif=motif)) if motif else (" " + dire("trains.motif_non_precise"))
     message = (
-        f"Suppression : le {mode_label} à destination de {destination}, "
-        f"prévu à {_format_time_spoken(scheduled_dt)}, est supprimé.{reason}"
+        dire("trains.suppression_destination_prevu_supprime", mode_label=mode_label, destination=destination, v1=_format_time_spoken(scheduled_dt), reason=reason)
     )
     lock = audio_lock.acquire()
     try:
@@ -517,7 +513,7 @@ def _process_station(state):
             mode_label = _train_label(mode, train_number)
             lock = audio_lock.acquire()
             try:
-                speak_with_lead_sound(SOUND_MODERNE, f"Le {mode_label} à destination de {destination} n'a plus de retard notable.", label="sncf_watch")
+                speak_with_lead_sound(SOUND_MODERNE, dire("trains.destination_plus_retard_notable", mode_label=mode_label, destination=destination), label="sncf_watch")
             finally:
                 audio_lock.release(lock)
             state["known_delays"].pop(vj_id, None)

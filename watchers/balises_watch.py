@@ -17,6 +17,7 @@ import time
 
 import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
+from phrases import dire
 
 LOCAL_BINARY = "/home/vador/autopilot/bin/dec406_scan"
 SOUND = os.path.join(RADIO_SCANER_DIR, "scaner_error.mp3")
@@ -41,9 +42,9 @@ def _describe(block):
     country = _field(block, "Country")
     ident = _field(block, "Identification")
     test = _field(block, "Test Protocol").lower() in ("active", "yes", "oui", "1", "true")
-    text = "Essai de balise de détresse capté" if test else "Balise de détresse 406 mégahertz captée"
+    text = dire("balise.essai") if test else dire("balise.detresse")
     if country and not country.startswith("0 "):
-        text += f", pays {country.split('(')[-1].rstrip(')')}"
+        text += ", " + dire("balise.pays", pays=country.split('(')[-1].rstrip(')'))
     if ident:
         text += f", {ident}"
     m = POSITION.search(block)
