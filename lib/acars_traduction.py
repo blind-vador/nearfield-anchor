@@ -59,7 +59,9 @@ fiche ci-dessous, dis en 2 ou 3 phrases courtes, à lire à voix haute pour une 
 qui est l'appareil et à quoi il ressemble si c'est indiqué, où il en est de son vol, et ce que ses
 messages veulent dire en clair. Explique simplement les sigles. Ton léger mais sérieux.
 N'invente rien qui ne soit pas dans la fiche ; si le sens exact d'un message n'est pas certain,
-dis-le simplement. Ne parle de la phase de vol que si la fiche la donne. Altitudes en mètres
+dis-le simplement. Ne parle de la phase de vol que si la fiche la donne. Si la destination annoncée
+par l'avion diffère du trajet de la fiche appareil (base publique, parfois périmée), fie-toi à
+l'avion et donne le nom de l'aéroport si tu connais son code OACI. Altitudes en mètres
 (convertis les pieds : 1 pied = 0,3 mètre, arrondi à la centaine). Commence directement par
 l'appareil, sans formule d'introduction. Pas de markdown, pas d'emoji, pas de liste, pas de codes
 bruts épelés inutilement.
@@ -135,7 +137,10 @@ def frame_kind(avlc):
     xid = avlc.get("xid")
     if xid:
         params = {p.get("name"): p.get("value") for p in (xid.get("vdl_params") or [])}
-        detail = {k: params[k] for k in ("dst_airport", "ac_location", "airport_coverage") if k in params}
+        # dst_airport : destination du plan de vol, annoncee par l'avion lui-meme
+        names = {"dst_airport": "destination_annoncee_par_l_avion", "ac_location": "position_de_l_avion",
+                 "airport_coverage": "aeroports_couverts_par_la_station"}
+        detail = {names[k]: params[k] for k in names if k in params}
         kind = "relais" if "HO" in str(xid.get("type")) else "connexion"
         return kind, dict(detail, description=xid.get("type_descr"))
     if avlc.get("frame_type") == "S":
@@ -150,7 +155,7 @@ def substantive(kind, detail):
     if kind in ("controle", "position"):
         return True
     if kind == "relais":
-        return bool(detail.get("dst_airport") or detail.get("ac_location"))
+        return bool(detail.get("destination_annoncee_par_l_avion") or detail.get("position_de_l_avion"))
     if kind == "acars":
         return bool(detail.get("texte") or detail.get("etape_de_vol") or detail.get("donnees_decodees")) \
             or detail.get("label") not in ("_d", "Q0", "SQ")
