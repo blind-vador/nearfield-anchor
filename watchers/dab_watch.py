@@ -49,6 +49,12 @@ DEFAULT_BANNED = [
     "radio scoop", "tonic radio", "alouette", "hit west", "contact fm", "radio espace", "forum", "vibration",
     "nostalgie", "jordanne", "totem", "radio star",
 ]
+CAROUSEL = "1"             # une station decodee a la fois : le DAB+ chauffe le Pi (76 C le 2026-10-03)
+SOUND = "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3"
+TEXT_REPEAT_SEC = 1800     # le meme texte de la meme station : redit apres 30 min
+SLIDES_PER_HOUR = 10       # images decrites par Gemini, au plus
+_memory = vd.Memory("/tmp/dab_watch.json")
+_slides = []
 
 
 def _state():
