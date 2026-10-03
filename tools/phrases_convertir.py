@@ -183,6 +183,10 @@ def convert(path, prefix, spec, fixe=False):
     tree = ast.parse(src)
     wanted = _lines(spec)
     chosen = [c for c in candidates(src) if c[0] in wanted]
+    # un texte DANS un autre texte choisi (f"{d.get('x', 'état inconnu')}") : seul l'englobant est converti
+    spans = [(c[3].lineno, c[3].col_offset, c[3].end_lineno, c[3].end_col_offset) for c in chosen]
+    chosen = [c for c, sp in zip(chosen, spans)
+              if not any(o != sp and o[:2] <= sp[:2] and sp[2:] <= o[2:] for o in spans)]
     parser = configparser.RawConfigParser(interpolation=None)
     parser.optionxform = str
     parser.read(INI, encoding="utf-8")

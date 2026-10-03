@@ -179,6 +179,12 @@ def _code(code):
     return re.sub(r"[^a-z0-9]+", "_", plain).strip("_") or "x"
 
 
+def dire_ou(cle, defaut, **variables_):
+    """dire(cle) si la langue a cette phrase, sinon le texte francais du
+    programme (descriptions des commandes, ajoutees au fil de l'eau)."""
+    return dire(cle, **variables_) if cle in base() else defaut
+
+
 def etiquette(cle, defaut=None):
     entry = base().get(cle)
     return entry["texte"] if entry else (cle if defaut is None else defaut)
@@ -187,12 +193,14 @@ def etiquette(cle, defaut=None):
 class Etiquettes(collections.abc.Mapping):
     """{code: libelle} traduit a la lecture : MODES["nfm"] -> "FM étroite"."""
 
-    def __init__(self, groupe, libelles, contexte=""):
-        self.groupe, self._raw, self.contexte = groupe, dict(libelles), contexte
+    def __init__(self, groupe, libelles, contexte="", par_libelle=False):
+        # par_libelle : la cle vient du libelle francais, pour les codes
+        # illisibles ("\x1b[A" -> touche.fleche_haut)
+        self.groupe, self._raw, self.contexte, self.par_libelle = groupe, dict(libelles), contexte, par_libelle
         REGISTRE.append(self)
 
     def cle(self, code):
-        return f"{self.groupe}.{_code(code)}"
+        return f"{self.groupe}.{_code(self._raw[code] if self.par_libelle else code)}"
 
     def __getitem__(self, code):
         return etiquette(self.cle(code), self._raw[code])

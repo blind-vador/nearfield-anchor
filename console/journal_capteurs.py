@@ -10,6 +10,7 @@ import json
 import os
 import re
 import sys
+from phrases import dire, nombre
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
@@ -36,31 +37,33 @@ def _num(value, decimals=1):
 
 def _range(values, unit):
     lo, hi = min(values), max(values)
-    return f"{_num(lo)} {unit}" if lo == hi else f"de {_num(lo)} à {_num(hi)} {unit}"
+    return f"{_num(lo)} {unit}" if lo == hi else dire("capteurs.plage", de=_num(lo), a=_num(hi), unite=unit)
 
 
 def _hour(t):
     d = datetime.datetime.fromtimestamp(t)
-    hour = "minuit" if d.hour == 0 else "midi" if d.hour == 12 else f"{d.hour} heures"
+    hour = dire("capteurs.minuit") if d.hour == 0 else dire("capteurs.midi") if d.hour == 12 \
+        else dire("capteurs.heures", heures=d.hour)
     return f"{hour} {d.minute:02d}"
 
 
 def _sensor_text(name, rows, kind, kinds_spoken, joke):
     first, last = rows[0]["t"], rows[-1]["t"]
-    parts = [f"{name} : {len(rows)} relevé{'s' if len(rows) > 1 else ''}"
-             + (f", de {_hour(first)} à {_hour(last)}" if last - first > 60 else f", à {_hour(first)}")]
+    releves = nombre(len(rows), "relevé")
+    parts = [dire("capteurs.releves_de_a", nom=name, releves=releves, de=_hour(first), a=_hour(last))
+             if last - first > 60 else dire("capteurs.releves_a", nom=name, releves=releves, a=_hour(first))]
     temps = [r["temperature_C"] for r in rows if isinstance(r.get("temperature_C"), (int, float))]
     hums = [r["humidity"] for r in rows if isinstance(r.get("humidity"), (int, float))]
     if temps:
-        parts.append("température " + _range(temps, "degrés"))
+        parts.append(dire("capteurs.temperature", plage=_range(temps, dire("capteurs.degres"))))
     if hums:
-        parts.append("humidité " + _range(hums, "pour cent"))
+        parts.append(dire("capteurs.humidite", plage=_range(hums, dire("capteurs.cent"))))
     if any(r.get("battery_ok") == 0 for r in rows):
-        parts.append("pile faible")
+        parts.append(dire("capteurs.pile_faible"))
     if kind == "meteo":
-        parts.append("pris en compte pour la météo locale, s'il reste plausible")
+        parts.append(dire("capteurs.pris_compte_meteo_locale"))
     else:
-        parts.append(f"écarté du relevé météo : {kinds_spoken.get(kind, 'pas un capteur météo')}")
+        parts.append(dire("capteurs.ecarte_releve_meteo", get=kinds_spoken.get(kind) or dire("capteurs.pas_meteo")))
     text = ", ".join(parts) + "."
     if joke:
         text += " " + joke
@@ -99,13 +102,13 @@ def _cars_text(tpms):
         passing = len(series) - len(parked)
         name = data["vehicules"].get(vid, {}).get("nom") if not vid.startswith("?") else None
         text = (name.capitalize() + ", " if name else "") + desc
-        facts = [f"garée tout près de {_hour(s_[0]['t'])} à {_hour(s_[-1]['t'])}" for s_ in parked]
+        facts = [dire("capteurs.garee_tout_pres", v1=_hour(s_[0]['t']), v3=_hour(s_[-1]['t'])) for s_ in parked]
         if passing:
-            facts.append(f"{passing} passage{'s' if passing > 1 else ''}"
-                         + (f" à {_hour(series[0][0]['t'])}" if passing == 1 and not parked else ""))
+            facts.append(dire("capteurs.passage_a", passages=nombre(passing, "passage"), a=_hour(series[0][0]['t']))
+                         if passing == 1 and not parked else nombre(passing, "passage"))
         lines.append(f"{text[0].upper()}{text[1:]} : {', '.join(facts)}")
     n = len(lines)
-    return (f"Voitures : {n} véhicule{'s' if n > 1 else ''} entendu{'s' if n > 1 else ''}. "
+    return (dire("capteurs.voitures", vehicules=nombre(n, "véhicule entendu", "véhicules entendus")) + " "
             + ". ".join(lines) + ".")
 
 
@@ -139,7 +142,7 @@ def day_items():
             rows.sort(key=lambda r: r["t"])
             name = str(model or "capteur").replace("-", " ").replace("_", " ")
             if sid is not None:
-                name += f" numéro {sid}"
+                name += (" " + dire("capteurs.numero", sid=sid))
             if channel is not None:
                 name += f" canal {channel}"
             text = _sensor_text(name, rows, kind_of(rows[0]), kinds_spoken, jokes.get(model))

@@ -12,7 +12,10 @@ import threading
 
 import evdev
 
-CHAR_NAMES = {
+from phrases import Etiquettes
+from phrases import dire
+
+CHAR_NAMES = Etiquettes("touche", {
     " ": "espace", ".": "point", ",": "virgule", ";": "point-virgule",
     ":": "deux-points", "!": "point d'exclamation", "?": "point d'interrogation",
     "'": "apostrophe", '"': "guillemet", "-": "tiret", "_": "souligné",
@@ -30,10 +33,10 @@ CHAR_NAMES = {
     "ë": "e tréma", "à": "a accent grave", "â": "a accent circonflexe",
     "ù": "u accent grave", "û": "u accent circonflexe", "ç": "c cédille",
     "î": "i accent circonflexe", "ï": "i tréma", "ô": "o accent circonflexe",
-}
+}, "nom d'un caractère tapé", par_libelle=True)
 
 # Sequences d'echappement de la console Linux (TERM=linux).
-ESCAPE_NAMES = {
+ESCAPE_NAMES = Etiquettes("touche", {
     "\x1b[A": "flèche haut", "\x1b[B": "flèche bas",
     "\x1b[C": "flèche droite", "\x1b[D": "flèche gauche",
     "\x1b[1~": "début", "\x1b[H": "début", "\x1b[4~": "fin", "\x1b[F": "fin",
@@ -43,13 +46,13 @@ ESCAPE_NAMES = {
     "\x1b[17~": "F6", "\x1b[18~": "F7", "\x1b[19~": "F8", "\x1b[20~": "F9",
     "\x1b[21~": "F10", "\x1b[23~": "F11", "\x1b[24~": "F12",
     "\x1b[G": "5 du pavé numérique",
-}
+}, "nom d'une touche spéciale", par_libelle=True)
 
-CONTROL_NAMES = {"\t": "tabulation", "\r": "entrée", "\n": "entrée",
-                 "\x7f": "retour arrière", "\x08": "retour arrière", "\x1b": "échap"}
+CONTROL_NAMES = Etiquettes("touche", {"\t": "tabulation", "\r": "entrée", "\n": "entrée",
+                 "\x7f": "retour arrière", "\x08": "retour arrière", "\x1b": "échap"}, "nom d'une touche de contrôle", par_libelle=True)
 
 # Touches sans caractere : annoncees via evdev en mode reperage uniquement.
-EVDEV_NAMES = {
+EVDEV_NAMES = Etiquettes("touche", {
     "KEY_LEFTSHIFT": "majuscule gauche", "KEY_RIGHTSHIFT": "majuscule droite",
     "KEY_LEFTCTRL": "contrôle gauche", "KEY_RIGHTCTRL": "contrôle droite",
     "KEY_LEFTALT": "alt", "KEY_RIGHTALT": "alt gr",
@@ -63,7 +66,7 @@ EVDEV_NAMES = {
     "KEY_STOPCD": "stop", "KEY_HOMEPAGE": "page d'accueil", "KEY_MAIL": "courrier",
     "KEY_CALC": "calculatrice", "KEY_SEARCH": "recherche", "KEY_POWER": "alimentation",
     "KEY_SLEEP": "veille", "KEY_WAKEUP": "réveil",
-}
+}, "nom d'une touche du clavier", par_libelle=True)
 
 
 # Reveil de la lecture clavier sans touche : un dialogue que l'autre machine
@@ -120,9 +123,9 @@ def sequence_name(seq):
     if seq in CONTROL_NAMES:
         return CONTROL_NAMES[seq]
     if len(seq) == 2 and seq[0] == "\x1b":
-        return f"alt plus {char_name(seq[1])}"
+        return dire("touches.alt_plus", char_name=char_name(seq[1]))
     if len(seq) == 1 and ord(seq) < 32:
-        return f"contrôle plus {chr(ord(seq) + 96)}"
+        return dire("touches.controle_plus", chr=chr(ord(seq) + 96))
     if len(seq) == 1:
         return char_name(seq)
     return "touche inconnue"

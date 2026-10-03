@@ -17,6 +17,7 @@ import requests
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import reglages  # noqa: E402
+from phrases import Etiquettes, _code, dire, dire_ou, nombre  # noqa: E402
 
 OCTOPRINT_URL = "http://127.0.0.1:5000"
 FM_RANGE = "88M:108M:125k"
@@ -33,6 +34,21 @@ class Command:
     confirm: str = ""  # si renseigne : question posee, "oui" exige avant d'agir
     busy: object = None  # si renseigne : rend l'etat parle d'une action deja en cours, ou ""
 
+    # Description et question de confirmation passent par les phrases
+    # (commande.<nom>.description / .confirmation) ; le texte ci-dessus sert
+    # de repli. Les noms et mots-cles restent ceux de la reconnaissance.
+    def texte_description(self):
+        return dire_ou(f"commande.{_code(self.name)}.description", self.description)
+
+    def question(self):
+        return self.confirm and dire_ou(f"commande.{_code(self.name)}.confirmation", self.confirm)
+
+
+JOURS = Etiquettes("jour", dict(enumerate(["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"])),
+                   "jour de la semaine, 0 = lundi")
+MOIS = Etiquettes("mois", dict(enumerate(["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+                                          "septembre", "octobre", "novembre", "décembre"], 1)), "nom du mois")
+
 
 def _fr_number(value, decimals=1):
     return f"{value:.{decimals}f}".replace(".", ",")
@@ -44,51 +60,46 @@ def pi_temp():
                              text=True, timeout=5).stdout
         value = float(out.split("=")[1].split("'")[0])
     except Exception:
-        return "Impossible de lire la température du Pi."
-    return f"Le Pi est à {_fr_number(value)} degrés."
+        return dire("commandes.impossible_lire_temperature_pi")
+    return dire("commandes.pi_degres", v1=_fr_number(value))
 
 
 def heure():
     now = datetime.datetime.now()
-    jours = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
-    mois = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet",
-            "août", "septembre", "octobre", "novembre", "décembre"]
-    minutes = f" {now.minute}" if now.minute else ""
-    return (f"Il est {now.hour} heures{minutes}, "
-            f"{jours[now.weekday()]} {now.day} {mois[now.month - 1]}.")
+    return dire("commandes.heure_minutes" if now.minute else "commandes.heure_pile", heures=now.hour,
+                minutes=now.minute, jour=JOURS[now.weekday()], date=now.day, mois=MOIS[now.month])
 
 
 def printer_status():
     api_key = reglages.cle("octoprint")
     if not api_key:
-        return ("Clé API OctoPrint absente : colle-la dans le fichier octoprint point txt "
-                "du dossier cles des réglages.")
+        return (dire("commandes.cle_api_octoprint_absente"))
     headers = {"X-Api-Key": api_key}
     try:
         printer = requests.get(f"{OCTOPRINT_URL}/api/printer", headers=headers, timeout=5)
         if printer.status_code == 409:
-            return "L'imprimante n'est pas connectée à OctoPrint."
+            return dire("commandes.imprimante_connectee_octoprint")
         if printer.status_code in (401, 403):
-            return "OctoPrint refuse la clé API. Vérifie-la."
+            return dire("commandes.octoprint_refuse_cle_api")
         printer.raise_for_status()
         job = requests.get(f"{OCTOPRINT_URL}/api/job", headers=headers, timeout=5).json()
     except requests.RequestException:
-        return "OctoPrint ne répond pas."
+        return dire("commandes.octoprint_repond")
 
     data = printer.json()
     temps = data.get("temperature", {})
-    parts = [f"Imprimante : {data.get('state', {}).get('text', 'état inconnu')}."]
+    parts = [dire("commandes.imprimante", get=data.get('state', {}).get('text') or dire("commandes.etat_inconnu"))]
     progress = (job.get("progress") or {})
     if progress.get("completion") is not None and job.get("state", "").startswith("Printing"):
-        parts.append(f"Impression à {round(progress['completion'])} pour cent.")
+        parts.append(dire("commandes.impression_cent", round=round(progress['completion'])))
         left = progress.get("printTimeLeft")
         if left:
             h, m = divmod(int(left) // 60, 60)
-            parts.append(f"Il reste {h} heures {m} minutes." if h else f"Il reste {m} minutes.")
+            parts.append(dire("commandes.reste_heures_minutes", h=h, m=m) if h else dire("commandes.reste_minutes", m=m))
     for key, label in (("tool0", "Buse"), ("bed", "Plateau")):
         t = temps.get(key)
         if t and t.get("actual") is not None:
-            parts.append(f"{label} {round(t['actual'])} degrés, cible {round(t.get('target') or 0)}.")
+            parts.append(dire("commandes.degres_cible", label=label, round=round(t['actual']), round2=round(t.get('target') or 0)))
     return " ".join(parts)
 
 
@@ -99,9 +110,9 @@ def radio_scan():
         proc = subprocess.run(["rtl_power", "-f", FM_RANGE, "-i", "2", "-1", path],
                               capture_output=True, text=True, timeout=FM_SCAN_TIMEOUT_SEC)
         if "usb_claim_interface" in proc.stderr or "Failed to open" in proc.stderr:
-            return "L'antenne est occupée par la veille radio. Réessaie plus tard."
+            return dire("commandes.antenne_occupee_veille_radio")
         if "No supported devices" in proc.stderr:
-            return "Aucune antenne radio détectée."
+            return dire("commandes.aucune_antenne_radio_detectee")
         best_freq, best_db = None, None
         with open(path, newline="") as f:
             for row in csv.reader(f):
@@ -111,14 +122,14 @@ def radio_scan():
                     if best_db is None or db > best_db:
                         best_freq, best_db = low + i * step, db
     except subprocess.TimeoutExpired:
-        return "Le scan radio a pris trop de temps."
+        return dire("commandes.scan_radio_pris_trop")
     except (OSError, ValueError, IndexError):
-        return "Le scan radio a échoué."
+        return dire("commandes.scan_radio_echoue")
     finally:
         os.unlink(path)
     if best_freq is None:
-        return "Le scan radio n'a rien renvoyé."
-    return f"Signal FM le plus fort : {_fr_number(best_freq / 1e6)} mégahertz."
+        return dire("commandes.scan_radio_rien_renvoye")
+    return dire("commandes.signal_fm_plus_fort", v1=_fr_number(best_freq / 1e6))
 
 
 RADIONO_SCRIPT = "/home/vador/autopilot/radiono.py"
@@ -142,21 +153,21 @@ def rire():
     global _radiono_thread
     import threading
     if not os.path.isfile(RADIONO_SCRIPT):
-        return "Le script radiono est introuvable."
+        return dire("commandes.script_radiono_introuvable")
     if _radiono_thread is not None and _radiono_thread.is_alive():
-        return "Un son de radiono est déjà en cours."
+        return dire("commandes.son_radiono_deja_cours")
     # Petit delai : laisser la console dire sa reponse avant le son.
     _radiono_thread = threading.Timer(3, _play_radiono)
     _radiono_thread.daemon = True
     _radiono_thread.start()
-    return "Radiono, un son au hasard."
+    return dire("commandes.radiono_son_au_hasard")
 
 
-WATCHERS = {
+WATCHERS = Etiquettes("veille", {
     "nas-watch": "disques", "radio-watch": "radio", "meteo-watch": "météo",
     "crue-watch": "crues", "sncf-watch": "trains", "adsb-watch": "avions",
     "stas-watch": "bus et tram", "log-ship": "copie des journaux",
-}
+}, "nom d'une veille (service du Pi)")
 NAS_MOUNTS = ["/media/nas/nd1", "/media/nas/nd2"]
 
 
@@ -183,10 +194,10 @@ def _uptime_text():
     days, rem = divmod(minutes, 1440)
     hours, mins = divmod(rem, 60)
     if days:
-        return f"{days} jour{'s' if days > 1 else ''} et {hours} heures"
+        return dire("commandes.duree_jours", jours=nombre(days, "jour"), heures=hours)
     if hours:
-        return f"{hours} heures {mins}"
-    return f"{mins} minutes"
+        return dire("commandes.duree_heures", heures=hours, minutes=mins)
+    return dire("commandes.duree_minutes", minutes=mins)
 
 
 def sante():
@@ -195,19 +206,19 @@ def sante():
 
     cpu = _cpu_percent()
     load1 = os.getloadavg()[0]
-    details.append(f"Processeur à {round(cpu)} pour cent, charge moyenne {_fr_number(load1)}.")
+    details.append(dire("commandes.processeur_cent_charge_moyenne", round=round(cpu), v1=_fr_number(load1)))
     if cpu > 90:
-        problems.append("processeur saturé")
+        problems.append(dire("commandes.processeur_sature"))
 
     try:
         temp = float(_vcgencmd("measure_temp").split("=")[1].split("'")[0])
-        details.append(f"Température {_fr_number(temp)} degrés.")
+        details.append(dire("commandes.temperature_degres", v1=_fr_number(temp)))
         if temp >= 80:
-            problems.append("température critique, le Pi ralentit")
+            problems.append(dire("commandes.temperature_critique_pi_ralentit"))
         elif temp >= 75:
-            problems.append("température élevée")
+            problems.append(dire("commandes.temperature_elevee"))
     except (IndexError, ValueError, OSError):
-        details.append("Température illisible.")
+        details.append(dire("commandes.temperature_illisible"))
 
     # get_throttled : bits 0-3 = etat actuel, bits 16-19 = survenu depuis
     # le demarrage (0 sous-tension, 1 frequence bridee, 2 ralenti, 3 limite thermique).
@@ -215,52 +226,52 @@ def sante():
         flags = int(_vcgencmd("get_throttled").split("=")[1], 16)
         volts = _vcgencmd("measure_volts", "core").split("=")[1].rstrip("V")
         if flags & 0x1:
-            problems.append("sous-tension en ce moment, l'alimentation est trop faible")
-            details.append("Alimentation : sous-tension en cours.")
+            problems.append(dire("commandes.sous_tension_moment_alimentation"))
+            details.append(dire("commandes.alimentation_sous_tension_cours"))
         elif flags & 0x10000:
-            problems.append("sous-tension survenue depuis le démarrage")
-            details.append("Alimentation : correcte maintenant, mais une sous-tension a eu lieu depuis le démarrage.")
+            problems.append(dire("commandes.sous_tension_survenue_depuis"))
+            details.append(dire("commandes.alimentation_correcte_maintenant_mais"))
         else:
-            details.append("Alimentation correcte, aucune sous-tension depuis le démarrage.")
-        details.append(f"Tension du processeur {_fr_number(float(volts), 2)} volt.")
+            details.append(dire("commandes.alimentation_correcte_aucune_sous"))
+        details.append(dire("commandes.tension_processeur_volt", v1=_fr_number(float(volts), 2)))
         if flags & 0x4:
-            problems.append("processeur ralenti en ce moment")
+            problems.append(dire("commandes.processeur_ralenti_moment"))
         elif flags & 0x40000:
-            details.append("Le processeur a été ralenti depuis le démarrage.")
+            details.append(dire("commandes.processeur_ete_ralenti_depuis"))
     except (IndexError, ValueError, OSError):
-        details.append("État de l'alimentation illisible.")
+        details.append(dire("commandes.etat_alimentation_illisible"))
 
     with open("/proc/meminfo") as f:
         mem = {line.split(":")[0]: int(line.split()[1]) for line in f}
     mem_used = 100 * (1 - mem["MemAvailable"] / mem["MemTotal"])
-    details.append(f"Mémoire utilisée {round(mem_used)} pour cent.")
+    details.append(dire("commandes.memoire_utilisee_cent", round=round(mem_used)))
     if mem_used > 90:
-        problems.append("mémoire presque pleine")
+        problems.append(dire("commandes.memoire_presque_pleine"))
 
     import shutil
     sd = shutil.disk_usage("/")
     sd_used = 100 * sd.used / sd.total
-    details.append(f"Carte SD remplie à {round(sd_used)} pour cent.")
+    details.append(dire("commandes.carte_sd_remplie_cent", round=round(sd_used)))
     if sd_used > 90:
         problems.append("carte SD presque pleine")
 
     mounted = sum(os.path.ismount(p) for p in NAS_MOUNTS)
-    details.append(f"Disques du NAS : {mounted} sur {len(NAS_MOUNTS)} montés.")
+    details.append(dire("commandes.disques_nas_montes", mounted=mounted, len=len(NAS_MOUNTS)))
     if mounted < len(NAS_MOUNTS):
-        problems.append("disque du NAS manquant")
+        problems.append(dire("commandes.disque_nas_manquant"))
 
     states = subprocess.run(["systemctl", "is-active", *WATCHERS], capture_output=True,
                             text=True, timeout=10).stdout.split()
     down = [WATCHERS[u] for u, s in zip(WATCHERS, states) if s != "active"]
     if down:
-        problems.append(f"veille arrêtée : {', '.join(down)}")
-        details.append(f"{len(WATCHERS) - len(down)} veilles sur {len(WATCHERS)} actives.")
+        problems.append(dire("commandes.veille_arretee", join=', '.join(down)))
+        details.append(dire("commandes.veilles_actives", v1=len(WATCHERS) - len(down), len=len(WATCHERS)))
     else:
-        details.append(f"Les {len(WATCHERS)} veilles sont actives.")
+        details.append(dire("commandes.veilles_sont_actives", len=len(WATCHERS)))
 
-    details.append(f"Allumé depuis {_uptime_text()}.")
-    summary = ("Le Pi va bien." if not problems
-               else "Attention : " + ", ".join(problems) + ".")
+    details.append(dire("commandes.allume_depuis", v1=_uptime_text()))
+    summary = (dire("commandes.pi_va_bien") if not problems
+               else (dire("commandes.attention") + " ") + ", ".join(problems) + ".")
     return " ".join([summary] + details)
 
 
@@ -275,11 +286,11 @@ def mise_a_jour(announce):
 def _ago(timestamp):
     minutes = int((time.time() - timestamp) // 60)
     if minutes < 1:
-        return "à l'instant"
+        return dire("commandes.instant")
     if minutes < 60:
-        return f"il y a {minutes} minute{'s' if minutes > 1 else ''}"
+        return dire("commandes.il_y_a", duree=nombre(minutes, "minute"))
     hours = minutes // 60
-    return f"il y a {hours} heure{'s' if hours > 1 else ''}"
+    return dire("commandes.il_y_a", duree=nombre(hours, "heure"))
 
 
 def parasite():
@@ -289,22 +300,22 @@ def parasite():
     import noise_signatures as ns
     capture = ns.last_capture()
     if not capture:
-        return "Aucune réception radio récente à signaler."
+        return dire("commandes.aucune_reception_radio_recente")
     label = capture["label"]
     if capture.get("marked_noise"):
-        return f"La dernière réception, {label}, est déjà marquée comme parasite."
-    parts = [f"Réception {label}, {_ago(capture['time'])}, marquée comme parasite."]
+        return dire("commandes.derniere_reception_deja_marquee", label=label)
+    parts = [dire("commandes.reception_marquee_comme_parasite", label=label, v1=_ago(capture['time']))]
     path = capture.get("log_path")
     if path and os.path.isfile(path):
         os.remove(path)
-        parts.append("Supprimée du journal.")
+        parts.append(dire("commandes.supprimee_journal"))
     else:
-        parts.append("Elle n'était pas, ou plus, dans le journal.")
+        parts.append(dire("commandes.elle_etait_plus_journal"))
     if capture.get("fingerprint"):
         ns.add_signature(capture)
-        parts.append("J'ai retenu sa forme sonore : si elle revient sur cette fréquence, le scanner l'ignorera.")
+        parts.append(dire("commandes.ai_retenu_sa_forme"))
     else:
-        parts.append("Pas d'empreinte sonore pour cette réception, je ne peux pas l'apprendre.")
+        parts.append(dire("commandes.empreinte_sonore_cette_reception"))
     ns.mark_last_capture_noise()
     try:  # un parasite ne doit pas attirer l'attention du scanner
         import attention
@@ -340,8 +351,7 @@ def capteurs():
         if wx.get("temperature") is None:
             continue
         age = int((time.time() - st["t"]) // 60)
-        parts.append(f"Station météo {vd.spell(call)}, {vd.where(st['lat'], st['lon'])} : "
-                     f"{vd.fr_number(wx['temperature'])} degrés, il y a {age} minutes.")
+        parts.append(dire("commandes.station_meteo_degres_minutes", spell=vd.spell(call), where=vd.where(st['lat'], st['lon']), fr_number=vd.fr_number(wx['temperature']), age=age))
     try:
         with open("/tmp/capteurs_releves.json", encoding="utf-8") as f:
             readings = json.load(f)
@@ -351,16 +361,16 @@ def capteurs():
         v = r.get("valeurs") or {}
         values = []
         if v.get("temperature_C") is not None:
-            values.append(f"{vd.fr_number(v['temperature_C'], 1)} degrés")
+            values.append(dire("commandes.degres", fr_number=vd.fr_number(v['temperature_C'], 1)))
         if v.get("humidity") is not None:
-            values.append(f"humidité {v['humidity']} pour cent")
+            values.append(dire("commandes.humidite_cent", humidity=v['humidity']))
         age = int((time.time() - r["t"]) // 60)
-        kinds = {"cuisson": "cuisson ou barbecue", "piscine": "piscine", "frigo": "réfrigérateur", "sol": "sonde de sol"}
+        kinds = {"cuisson": dire("commandes.cuisson_barbecue"), "piscine": "piscine", "frigo": "réfrigérateur", "sol": dire("commandes.sonde_sol")}
         kind = f", {kinds[r['type']]}" if r.get("type") in kinds else ""
-        parts.append(f"{r['nom']}{kind}" + (f" : {', '.join(values)}" if values else "") + f", il y a {age} minutes.")
+        parts.append(f"{r['nom']}{kind}" + (f" : {', '.join(values)}" if values else "") + dire("commandes.minutes", age=age))
     if not parts:
-        return "Aucun capteur ni station météo capté ces dernières heures."
-    return f"{len(parts)} source{'s' if len(parts) > 1 else ''}. " + " ".join(parts[:12])
+        return dire("commandes.aucun_capteur_ni_station")
+    return dire("commandes.sources", sources=nombre(len(parts), "source")) + " " + " ".join(parts[:12])
 
 
 def voitures_cmd(line):
@@ -374,8 +384,8 @@ def voitures_cmd(line):
     if m and re.search(r"\bnomm|\bappel|\brenomm", matcher.normalize(line)):
         vid, name = m.group(1), m.group(2).strip()
         if voitures.rename(vid, name):
-            return f"Le véhicule numéro {vid} s'appelle maintenant {name}. Je dirai quand il passe."
-        return f"Je ne connais pas de véhicule numéro {vid}."
+            return dire("commandes.vehicule_numero_appelle_maintenant", vid=vid, name=name)
+        return dire("commandes.connais_vehicule_numero", vid=vid)
     return voitures.summary()
 
 
@@ -383,39 +393,38 @@ def accroche():
     import noise_signatures as ns
     locked = ns.lock_request()
     if locked:
-        return f"Le scanner est déjà verrouillé sur {locked['label']}. Tape décroche pour reprendre le balayage."
+        return dire("commandes.scanner_deja_verrouille_tape", label=locked['label'])
     capture = ns.last_capture()
     if not capture:
-        return "Aucune réception récente sur laquelle se fixer."
+        return dire("commandes.aucune_reception_recente_laquelle")
     ns.request_lock(capture)
-    return (f"Verrouillage demandé sur {capture['label']}, capté {_ago(capture['time'])}. "
-            "Le scanner s'y fixe dans moins d'une demi-minute.")
+    return (dire("commandes.verrouillage_demande_capte_scanner", label=capture['label'], v1=_ago(capture['time'])))
 
 
 def decroche():
     import noise_signatures as ns
     if not ns.lock_request() and not ns.manual_request():
-        return "Le scanner n'est pas verrouillé, il balaye déjà."
+        return dire("commandes.scanner_verrouille_balaye_deja")
     ns.request_unlock()
-    return "Reprise du balayage demandée."
+    return dire("commandes.reprise_balayage_demandee")
 
 
 def help_text():
-    lines = [f"{c.name} : {c.description}." for c in COMMANDS]
-    return "Commandes disponibles. " + " ".join(lines)
+    lines = [dire("commandes.aide_ligne", nom=c.name, description=c.texte_description()) for c in COMMANDS]
+    return (dire("commandes.commandes_disponibles") + " ") + " ".join(lines)
 
 
-def _power(action, done_text):
+def _power(action, done_key):
     def handler(announce):
         # Annonce AVANT d'agir : apres, le systeme coupe la voix en plein mot.
-        announce(done_text)
+        announce(dire(done_key))
         # sudo -n : echoue immediatement plutot que d'attendre un mot de
         # passe que personne ne peut taper sur cette console.
         proc = subprocess.run(["sudo", "-n", "/usr/bin/systemctl", action],
                               capture_output=True, text=True, timeout=15)
         if proc.returncode != 0:
             print(f"[console] systemctl {action} : {proc.stderr.strip()}", file=sys.stderr)
-            return "Échec : la console n'a pas les droits pour le faire."
+            return dire("commandes.echec_console_droits_faire")
         return ""
     return handler
 
@@ -429,11 +438,11 @@ def _power(action, done_text):
 # declenches par le repli flou, uniquement par mot-cle explicite.
 COMMANDS = [
     Command("redémarrer", "redémarre le Pi, après confirmation",
-            _power("reboot", "Redémarrage du Pi. À tout de suite."),
+            _power("reboot", "commandes.redemarrage_pi"),
             keywords=["redemarre", "redemarrer", "redemarrage", "reboot"],
             confirm="Confirmer le redémarrage du Pi ? Tape oui puis entrée. Toute autre réponse annule."),
     Command("éteindre", "éteint le Pi, après confirmation",
-            _power("poweroff", "Extinction du Pi. Attends trente secondes avant de couper le courant."),
+            _power("poweroff", "commandes.extinction_pi"),
             keywords=["eteins", "eteindre", "extinction", "shutdown", "arrete le pi"],
             confirm="Confirmer l'extinction du Pi ? Il faudra couper et remettre le courant pour le rallumer. "
                     "Tape oui puis entrée. Toute autre réponse annule."),

@@ -18,6 +18,7 @@ import subprocess
 import sys
 import threading
 from datetime import datetime
+from phrases import dire, nombre
 
 LOG_DIRS = ["/media/nas/nd1/server/logs", os.path.expanduser("~")]
 APT_ENV = dict(os.environ, DEBIAN_FRONTEND="noninteractive", LC_ALL="C")
@@ -25,9 +26,7 @@ APT_OPTS = ["-y", "-o", "Dpkg::Options::=--force-confdef", "-o", "Dpkg::Options:
 # Paquets dont la mise a jour ne prend effet qu'au redemarrage.
 REBOOT_HINTS = ("linux-image", "raspberrypi-kernel", "raspi-firmware", "raspberrypi-bootloader",
                 "libc6", "systemd", "rpi-eeprom")
-MILESTONES = [(0.25, "Un quart de l'installation est fait."),
-              (0.5, "La moitié de l'installation est faite."),
-              (0.75, "Trois quarts de l'installation sont faits.")]
+MILESTONES = [(0.25, "maj.quart"), (0.5, "maj.moitie"), (0.75, "maj.trois_quarts")]  # cles des phrases
 
 _thread = None
 _stage = ""
@@ -36,7 +35,7 @@ _stage = ""
 def busy():
     """Etat parle si une mise a jour tourne deja, sinon chaine vide."""
     if _thread is not None and _thread.is_alive():
-        return f"Mise à jour en cours : {_stage}"
+        return dire("maj.mise_jour_cours", v1=_stage)
     return ""
 
 
@@ -64,12 +63,12 @@ def _apt(args, log, on_line=None):
 
 def _explain(error):
     if "Could not get lock" in error or "Unable to acquire" in error:
-        return "Une autre installation est déjà en cours sur le Pi. Réessaie plus tard."
+        return dire("maj.autre_installation_deja_cours")
     if "sudo" in error or "password" in error:
-        return "La console n'a pas les droits pour faire la mise à jour."
+        return dire("maj.console_droits_faire_mise")
     if "Temporary failure" in error or "Could not resolve" in error:
-        return "Pas d'accès à internet."
-    return "Le détail est dans le journal de mise à jour."
+        return dire("maj.acces_internet")
+    return dire("maj.detail_journal_mise_jour")
 
 
 def _newer_kernel_installed():
@@ -94,11 +93,11 @@ def _run(say):
     global _stage
     path = _log_path()
     with open(path, "w") as log:
-        _stage = "recherche des mises à jour."
-        say("Recherche des mises à jour.")
+        _stage = dire("maj.recherche_mises_jour")
+        say(dire("maj.recherche_mises_jour_2"))
         code, err = _apt(["update"], log)
         if code != 0:
-            say("La recherche des mises à jour a échoué. " + _explain(err))
+            say((dire("maj.recherche_mises_jour_echoue") + " ") + _explain(err))
             return
 
         # Simulation (-s) : nombre de paquets concernes, sans rien toucher.
@@ -107,9 +106,9 @@ def _run(say):
         match = re.search(r"(\d+) upgraded, (\d+) newly installed", sim.stdout)
         total = (int(match.group(1)) + int(match.group(2))) if match else 0
         if total == 0:
-            say("Tout est déjà à jour.")
+            say(dire("maj.tout_deja_jour"))
         else:
-            say(f"{total} paquets à mettre à jour. Téléchargement.")
+            say(dire("maj.paquets", paquets=nombre(total, "paquet")))
             _stage = "téléchargement."
             state = {"setup": 0, "installing": False, "next": 0, "reboot": False}
 
@@ -117,34 +116,35 @@ def _run(say):
                 global _stage
                 if line.startswith(("Unpacking", "Setting up")) and not state["installing"]:
                     state["installing"] = True
-                    _stage = "installation, début."
-                    say("Téléchargement fini. Installation en cours.")
+                    _stage = dire("maj.installation_debut")
+                    say(dire("maj.telechargement_fini_installation_cours"))
                 if line.startswith("Setting up"):
                     state["setup"] += 1
                     if any(h in line for h in REBOOT_HINTS):
                         state["reboot"] = True
                     while (state["next"] < len(MILESTONES)
                            and state["setup"] >= MILESTONES[state["next"]][0] * total):
-                        _stage = MILESTONES[state["next"]][1].lower()
-                        say(MILESTONES[state["next"]][1])
+                        milestone = dire(MILESTONES[state["next"]][1])
+                        _stage = milestone.lower()
+                        say(milestone)
                         state["next"] += 1
 
             code, err = _apt(["full-upgrade", *APT_OPTS], log, progress)
             if code != 0:
-                say("L'installation des mises à jour a échoué. " + _explain(err))
+                say((dire("maj.installation_mises_jour_echoue") + " ") + _explain(err))
                 return
-            say("Installation terminée.")
+            say(dire("maj.installation_terminee"))
 
         _stage = "nettoyage."
-        say("Nettoyage.")
+        say(dire("maj.nettoyage"))
         _apt(["autoremove", "--purge", *APT_OPTS], log)
         _apt(["clean"], log)
 
         reboot = (os.path.exists("/var/run/reboot-required") or (total and state["reboot"])
                   or _newer_kernel_installed())
-        end = "Mise à jour terminée, système propre."
+        end = dire("maj.mise_jour_terminee_systeme")
         if reboot:
-            end += " Un redémarrage est conseillé : tape redémarre quand tu veux."
+            end += (" " + dire("maj.redemarrage_conseille_tape_redemarre"))
         say(end)
 
 
@@ -158,7 +158,7 @@ def start(say):
             _run(say)
         except Exception as exc:
             print(f"[console] mise a jour : {exc!r}", file=sys.stderr)
-            say("La mise à jour s'est arrêtée sur une erreur inattendue.")
+            say(dire("maj.mise_jour_arretee_erreur"))
 
     _thread = threading.Thread(target=run, daemon=True)
     _thread.start()

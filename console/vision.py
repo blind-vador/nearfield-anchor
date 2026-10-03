@@ -25,6 +25,7 @@ import urllib.request
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import reglages  # noqa: E402
+from phrases import dire  # noqa: E402
 
 SNAPSHOT_URL = "http://127.0.0.1:8080/?action=snapshot"
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
@@ -52,7 +53,7 @@ _thread = None
 
 def busy():
     if _thread is not None and _thread.is_alive():
-        return "Une description est déjà en cours."
+        return dire("vision.description_deja_cours")
     return ""
 
 
@@ -69,13 +70,13 @@ def _brightness(jpeg):
 def _ask_gemini(jpeg, question):
     key = reglages.cle("gemini")
     if not key:
-        return None, "Clé Gemini absente : colle-la dans le fichier gemini point txt du dossier cles des réglages."
+        return None, dire("vision.cle_gemini_absente_colle")
     prompt = PROMPT + (f" La personne demande en plus : {question}" if question else "")
     body = json.dumps({"contents": [{"parts": [
         {"text": prompt},
         {"inline_data": {"mime_type": "image/jpeg", "data": base64.b64encode(jpeg).decode()}},
     ]}]}).encode()
-    last_problem = "Le service d'intelligence artificielle ne répond pas."
+    last_problem = dire("vision.service_intelligence_artificielle_repond")
     for model in GEMINI_MODELS:
         req = urllib.request.Request(GEMINI_URL.format(model=model), data=body,
                                      headers={"Content-Type": "application/json", "x-goog-api-key": key})
@@ -86,31 +87,31 @@ def _ask_gemini(jpeg, question):
         except urllib.error.HTTPError as exc:
             print(f"[console] vision {model} : HTTP {exc.code}", file=sys.stderr)
             if exc.code in (401, 403):
-                return None, "Google refuse la clé Gemini. Vérifie-la."
+                return None, dire("vision.google_refuse_cle_gemini")
             if exc.code == 429:
-                last_problem = "Quota gratuit de Gemini épuisé pour le moment. Réessaie plus tard."
+                last_problem = dire("vision.quota_gratuit_gemini_epuise")
             continue  # 429, 5xx, modele retire : modele suivant
         except (urllib.error.URLError, TimeoutError, OSError):
-            return None, "Pas d'accès à internet, ou Google ne répond pas."
+            return None, dire("vision.acces_internet_google_repond")
         except (KeyError, IndexError, ValueError):
             # Reponse sans texte (ex. bloquee par les filtres de securite).
-            last_problem = "Gemini n'a pas renvoyé de description."
+            last_problem = dire("vision.gemini_renvoye_description")
             continue
     return None, last_problem
 
 
 def _run(question, say):
-    say("Photo.")
+    say(dire("vision.photo"))
     try:
         jpeg = _snapshot()
     except OSError:
-        say("La caméra ne répond pas. Vérifie que la webcam est allumée.")
+        say(dire("vision.camera_repond_verifie_webcam"))
         return
     try:
         if _brightness(jpeg) < MIN_BRIGHTNESS:
-            say("Photo trop sombre, le caisson n'est pas éclairé. Rien n'a été envoyé.")
+            say(dire("vision.photo_trop_sombre_caisson"))
             return
-        say("Analyse en cours.")
+        say(dire("vision.analyse_cours"))
         description, problem = _ask_gemini(jpeg, question)
     finally:
         del jpeg  # la photo n'a jamais ete ecrite sur disque ; on lache la derniere reference
@@ -128,7 +129,7 @@ def start(question, say):
             _run(question, say)
         except Exception as exc:
             print(f"[console] vision : {exc!r}", file=sys.stderr)
-            say("La description a échoué sur une erreur inattendue.")
+            say(dire("vision.description_echoue_erreur_inattendue"))
 
     _thread = threading.Thread(target=run, daemon=True)
     _thread.start()

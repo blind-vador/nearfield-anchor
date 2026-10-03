@@ -228,8 +228,9 @@ def run_command(line, key_source, last_response):
         if state:
             return state
     if cmd.confirm:
-        out(f"{cmd.confirm}\n? ")
-        voix.say(cmd.confirm, lock=True)
+        question = cmd.question()
+        out(f"{question}\n? ")
+        voix.say(question, lock=True)
         if matcher.normalize(read_line(key_source)) != "oui":
             return dire("commun.annule")
         def announce(text):

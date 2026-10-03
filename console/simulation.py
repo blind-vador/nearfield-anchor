@@ -25,9 +25,10 @@ for _path in (PI_CONSOLE_DIR, NAS_MANAGER_DIR):
     if _path not in sys.path:
         sys.path.insert(0, _path)
 
+from phrases import _code, dire, etiquette, nombre  # noqa: E402
+
 TRIGGER_WORDS = {"simulation", "simulations", "simule", "simuler", "simulez"}
 START_DELAY_SEC = 4
-ALARM_NOTE = " Les alertes orange et rouge durent une minute, comme les vraies."
 
 
 def _in_minutes(minutes):
@@ -226,9 +227,13 @@ SCENARIOS = [
     ("échec de remontage de disque", ["disque", "nas", "echec"], disque_echec),
 ]
 
-CATEGORIES = "train, avion, météo, crue, bus, radio, disque, ou tout"
 
 _running = None
+
+
+def _nom(name):
+    """Nom parle d'un scenario dans la langue (le nom francais reste la cle)."""
+    return etiquette(f"simulation.scenario.{_code(name)}", name)
 
 
 def _select(request):
@@ -256,12 +261,12 @@ def _run(scenarios):
     announce_each = len(scenarios) > 1
     for name, _, fn in scenarios:
         if announce_each:
-            _locked(lambda n=name: speak(f"Simulation : {n}."))
+            _locked(lambda n=name: speak(dire("simulation.annonce", nom=_nom(n))))
         try:
             fn()
         except Exception as exc:
             print(f"[console] simulation {name} en echec : {exc!r}", file=sys.stderr)
-            _locked(lambda n=name: speak(f"La simulation {n} a échoué."))
+            _locked(lambda n=name: speak(dire("simulation.echec", nom=_nom(n))))
 
 
 def handle(request):
@@ -270,16 +275,17 @@ def handle(request):
     global _running
     selection = _select(request)
     if selection is None:
-        return f"Simulations disponibles : {CATEGORIES}. Exemple : simulation train retard."
+        return dire("simulation.disponibles", categories=dire("simulation.categories"))
     if not selection:
-        return f"Scénario de simulation non reconnu. Catégories : {CATEGORIES}."
+        return dire("simulation.non_reconnu", categories=dire("simulation.categories"))
     if _running is not None and _running.is_alive():
-        return "Une simulation est déjà en cours. Attends qu'elle se termine."
+        return dire("simulation.deja_en_cours")
     # Petit delai : laisser la console dire sa reponse avant le premier scenario.
     _running = threading.Timer(START_DELAY_SEC, _run, args=(selection,))
     _running.daemon = True
     _running.start()
     if len(selection) == 1:
-        return f"Simulation : {selection[0][0]}."
-    note = ALARM_NOTE if any("alerte" in s[0] for s in selection) else ""
-    return f"{len(selection)} scénarios de simulation lancés, à la suite.{note}"
+        return dire("simulation.annonce", nom=_nom(selection[0][0]))
+    note = (" " + dire("simulation.alertes_durent")) if any("alerte" in s[0] for s in selection) else ""
+    return dire("simulation.lances", scenarios=nombre(len(selection), "scénario de simulation lancé",
+                                                      "scénarios de simulation lancés")) + note
