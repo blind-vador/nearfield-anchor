@@ -5888,11 +5888,12 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
 ## 2026-10-03 : DAB+ par station, pre-ecoute avant d'ouvrir le son
 
 - DAB+ : le filtre de contenu (lib/filtre_pollution.py) ne marchait pas et
-  consommait Gemini : supprime. On filtre par STATION (le nom est dans le
-  multiplex) : seules les radios publiques (France Inter, Culture, Musique,
-  franceinfo, FIP, Mouv', ici / France Bleu) et celles du reglage "dab"
-  (cle "stations", NAS) sont dites ; les commerciales sont ignorees sans
-  aucun appel a Gemini. Stations vues par ensemble : /tmp/dab_watch.json.
+  consommait Gemini : supprime. Filtrage par STATION, en LISTE NOIRE (on ne
+  cherche que le peu connu : radios locales, associatives...) : Radio France
+  (dont le reseau "ici" + lieu), grandes radios nationales et reseaux
+  commerciaux (dab_watch.DEFAULT_BANNED) + reglage "dab" cle "interdites"
+  (NAS) ; mots entiers (rtl interdit RTL2, pas RTLB). Aucune requete Gemini
+  pour une station interdite. Stations vues par ensemble : /tmp/dab_watch.json.
 - PRE-ECOUTE (balayage : radio_watch._prelisten ; Airband/446 :
   airband_bridge._prelisten, detecteur RNNoise fourni par radio_watch) :
   jusqu'a 6 s d'ecoute silencieuse ; voix reconnue sur 0,6 s d'affilee (ou
