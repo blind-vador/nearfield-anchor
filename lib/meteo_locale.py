@@ -24,6 +24,8 @@ from datetime import datetime
 import requests
 
 import reglages
+from phrases import Etiquettes, dire, nombre
+from phrases import dire
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 SONDEHUB_URL = "https://api.v2.sondehub.org/sondes"
@@ -50,17 +52,24 @@ PRECURSOR_MAX_AGE_SEC = 90 * 60
 ATTENTION_BOOST = {"aprs": 0.6, "capteurs": 0.6, "sondes": 0.3}
 SONDE_PROFILE_PATH = "/tmp/sondes_profil.json"   # ecrit par watchers/sondes_watch.py
 
-WMO = {0: "ciel dégagé", 1: "ciel peu nuageux", 2: "éclaircies", 3: "ciel couvert",
+WMO = Etiquettes("meteo.temps", {0: "ciel dégagé", 1: "ciel peu nuageux", 2: "éclaircies", 3: "ciel couvert",
        45: "brouillard", 48: "brouillard givrant", 51: "bruine légère", 53: "bruine",
        55: "bruine forte", 61: "pluie faible", 63: "pluie", 65: "forte pluie",
        66: "pluie verglaçante", 67: "forte pluie verglaçante", 71: "neige faible",
        73: "neige", 75: "forte neige", 77: "grains de neige", 80: "averses",
        81: "averses", 82: "fortes averses", 85: "averses de neige", 86: "fortes averses de neige",
-       95: "orages", 96: "orages avec grêle", 99: "orages avec forte grêle"}
+       95: "orages", 96: "orages avec grêle", 99: "orages avec forte grêle"},
+                 "temps qu'il fait, d'après le code météo")
 STORM_CODES = {95, 96, 99}
-COLOR_NAMES = {2: "jaune", 3: "orange", 4: "rouge"}
+COLOR_NAMES = Etiquettes("vigilance.couleur", {2: "jaune", 3: "orange", 4: "rouge"}, "couleur de vigilance météo")
 DIRECTIONS = ["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"]
-LEVEL_NAMES = {0: "calme", 1: "à surveiller", 2: "perturbation en approche", 3: "danger imminent"}
+LEVEL_NAMES = Etiquettes("vigilance.niveau", {0: "calme", 1: "à surveiller", 2: "perturbation en approche",
+                                                3: "danger imminent"}, "niveau de vigilance du Pi")
+# Les directions restent des codes (enregistres) ; dites avec leur preposition.
+DIRECTION_VERS = Etiquettes("direction.vers", {d: (f"à l'{d}" if d[0] in "eo" else f"au {d}") for d in DIRECTIONS},
+                            "où se trouve quelque chose, après une distance : à 12 kilomètres au nord")
+DIRECTION_DE = Etiquettes("direction.de", {d: (f"de l'{d}" if d[0] in "eo" else f"du {d}") for d in DIRECTIONS},
+                          "d'où vient le vent ou la perturbation")
 
 
 # --- outils -----------------------------------------------------------------
@@ -104,21 +113,20 @@ def _direction(lat0, lon0, lat, lon):
 def _where(lieu, lat, lon):
     lat0, lon0 = _home(lieu)
     km = round(_distance_km(lat0, lon0, lat, lon))
-    towards = _direction(lat0, lon0, lat, lon)
-    towards = f"à l'{towards}" if towards[0] in "eo" else f"au {towards}"
-    return "tout près" if km < 1 else f"à {km} kilomètre{'s' if km > 1 else ''} {towards}"
+    towards = DIRECTION_VERS[_direction(lat0, lon0, lat, lon)]
+    return dire("meteo.tout_pres") if km < 1 else dire("meteo.a_distance", distance=nombre(km, "kilomètre"),
+                                                       direction=towards)
 
 
 def _num(value, decimals=0):
     text = f"{value:.{decimals}f}"
-    return text.replace(".", ",").replace("-", "moins ")
+    return text.replace(".", ",").replace("-", dire("meteo.moins") + " ")
 
 
 def _wind_from(degrees):
     if degrees is None:
         return ""
-    name = DIRECTIONS[int(((degrees % 360) + 22.5) // 45) % 8]
-    return f"de l'{name}" if name[0] in "eo" else f"du {name}"
+    return DIRECTION_DE[DIRECTIONS[int(((degrees % 360) + 22.5) // 45) % 8]]
 
 
 # --- donnees ouvertes --------------------------------------------------------
@@ -255,7 +263,7 @@ def precursors(lieu, history=None):
             if _distance_km(lat0, lon0, entry["lat"], entry["lon"]) > STATION_MAX_KM:
                 continue
             where = _where(lieu, entry["lat"], entry["lon"])
-            label = f"station météo radioamateur {where}"
+            label = dire("meteo.station_meteo_radioamateur", where=where)
             direction = _direction(lat0, lon0, entry["lat"], entry["lon"])
         else:
             label = f"capteur voisin {entry.get('nom') or ''}".strip()
@@ -266,27 +274,24 @@ def precursors(lieu, history=None):
             if peak and peak["temp"] - last["temp"] >= TEMP_DROP_C:
                 minutes = max(1, round((last["t"] - peak["t"]) / 60))
                 signs.append({"t": last["t"], "gravite": 2, "direction": direction, "type": "chute_temp",
-                              "texte": f"chute de {_num(peak['temp'] - last['temp'])} degrés en {minutes} minutes "
-                                       f"chez une {label}"})
+                              "texte": dire("meteo.chute_degres_minutes_chez", v1=_num(peak['temp'] - last['temp']), minutes=minutes, label=label)})
         if last.get("pression") is not None:
             before = _value_at(rows, "pression", last["t"] - 3 * 3600 + 600)
             if before and before["t"] <= last["t"] - 2 * 3600 and before["pression"] - last["pression"] >= PRESSURE_FALL_HPA:
                 signs.append({"t": last["t"], "gravite": 1, "direction": direction, "type": "pression",
-                              "texte": f"pression en baisse de {_num(before['pression'] - last['pression'])} "
-                                       f"hectopascals en 3 heures chez une {label}"})
+                              "texte": dire("meteo.pression_baisse_hectopascals_3", v1=_num(before['pression'] - last['pression']), label=label)})
         gust = last.get("rafale") if last.get("rafale") is not None else last.get("vent")
         if gust is not None:
             field = "rafale" if last.get("rafale") is not None else "vent"
             before = _value_at(rows, field, last["t"] - 30 * 60)
             if before and gust - before[field] >= GUST_JUMP_KMH:
                 signs.append({"t": last["t"], "gravite": 2, "direction": direction, "type": "vent",
-                              "texte": f"vent passé de {round(before[field])} à {round(gust)} kilomètres heure "
-                                       f"chez une {label}"})
+                              "texte": dire("meteo.vent_passe_kilometres_heure", round=round(before[field]), round2=round(gust), label=label)})
         if last.get("pluie_1h"):
             before = _value_at(rows, "pluie_1h", last["t"] - 30 * 60)
             if before and not before["pluie_1h"] and last["pluie_1h"] >= 0.5:
                 signs.append({"t": last["t"], "gravite": 1, "direction": direction, "type": "pluie",
-                              "texte": f"la pluie vient de commencer chez une {label}"})
+                              "texte": dire("meteo.pluie_vient_commencer_chez", label=label)})
     # Fiabilite apprise des observations de l'utilisateur (lib/meteo_obs.py) :
     # un type de signe rarement suivi d'un orage ou d'une forte pluie ici
     # perd du poids, un type souvent suivi en gagne.
@@ -304,7 +309,7 @@ def precursors(lieu, history=None):
                 s["texte"] += ", signe peu fiable ici"
             elif rate >= 0.6:
                 s["gravite"] = 2
-                s["texte"] += f", signe souvent suivi d'orage ici, {hits} fois sur {total}"
+                s["texte"] += dire("meteo.signe_souvent_suivi_orage", hits=hits, total=total)
     signs.sort(key=lambda s: -s["t"])
     return signs
 
@@ -352,29 +357,29 @@ def threat(lieu, fc=None, signs=None):
     worst = max([v for v in vigil.values() if isinstance(v, int)] or [1])
     if worst >= 2:
         level = max(level, {2: 1, 3: 2, 4: 3}[worst])
-        reasons.append(f"vigilance {COLOR_NAMES[worst]} sur le département")
+        reasons.append(dire("meteo.vigilance_departement", v1=COLOR_NAMES[worst]))
     if fc:
         out = storm_outlook(fc)
         if out["orage_des"] is not None:
             level = max(level, 3 if out["orage_des"] <= 1 else 2)
-            reasons.append("orage prévu " + ("maintenant" if out["orage_des"] == 0
-                                              else f"dans {out['orage_des']} heure{'s' if out['orage_des'] > 1 else ''}"))
+            reasons.append((dire("meteo.orage_prevu") + " ") + (dire("meteo.maintenant_seul") if out["orage_des"] == 0
+                                              else dire("meteo.heure", orage_des=out['orage_des'], pluriel='s' if out['orage_des'] > 1 else '')))
         if out["cape"][0] >= 1500:
             level = max(level, 2)
-            reasons.append("atmosphère très instable, potentiel orageux fort")
+            reasons.append(dire("meteo.atmosphere_tres_instable_potentiel"))
         elif out["cape"][0] >= 500:
             level = max(level, 1)
-            reasons.append("atmosphère instable")
+            reasons.append(dire("meteo.atmosphere_instable"))
         if out["rafales"][0] >= 70:
             level = max(level, 2)
-            reasons.append(f"rafales jusqu'à {round(out['rafales'][0])} kilomètres heure")
+            reasons.append(dire("meteo.rafales_jusqu_kilometres_heure", round=round(out['rafales'][0])))
         elif out["rafales"][0] >= 50:
             level = max(level, 1)
-            reasons.append(f"rafales jusqu'à {round(out['rafales'][0])} kilomètres heure")
+            reasons.append(dire("meteo.rafales_jusqu_kilometres_heure_2", round=round(out['rafales'][0])))
         _, delta = pressure_trend(fc)
         if delta is not None and delta <= -PRESSURE_FALL_HPA:
             level = max(level, 1)
-            reasons.append(f"pression en chute de {_num(-delta)} hectopascals en 3 heures")
+            reasons.append(dire("meteo.pression_chute_hectopascals_3", v1=_num(-delta)))
     try:
         import meteo_obs
         observed = meteo_obs.recent()
@@ -384,16 +389,16 @@ def threat(lieu, fc=None, signs=None):
         thunder = observed.get("orage")
         if thunder in ("proche", "tout_pres"):
             level = 3
-            reasons.append("tonnerre " + ("tout près" if thunder == "tout_pres" else "proche") + ", d'après ton observation")
+            reasons.append(dire("meteo.obs_tonnerre_tout_pres" if thunder == "tout_pres" else "meteo.obs_tonnerre_proche"))
         elif thunder == "loin":
             level = max(level, 2)
-            reasons.append("tonnerre entendu au loin, d'après ton observation")
+            reasons.append(dire("meteo.tonnerre_entendu_au_loin"))
         if observed.get("precip") in ("violente", "grele"):
             level = max(level, 2)
-            reasons.append(("grêle" if observed["precip"] == "grele" else "averse violente") + ", d'après ton observation")
+            reasons.append(dire("meteo.obs_grele" if observed["precip"] == "grele" else "meteo.obs_averse_violente"))
         elif observed.get("precip") == "forte":
             level = max(level, 1)
-            reasons.append("forte pluie, d'après ton observation")
+            reasons.append(dire("meteo.forte_pluie_apres_ton"))
     try:
         import donnees_ouvertes
         storms = donnees_ouvertes.airport_storms()
@@ -401,11 +406,11 @@ def threat(lieu, fc=None, signs=None):
         storms = []
     if storms:
         level = max(level, 2)
-        reasons.append("orage signalé par l'aéroport de " + " et de ".join(storms))
+        reasons.append(dire("meteo.orage_aeroports", aeroports=(" " + dire("meteo.et_de") + " ").join(storms)))
     signs = precursors(lieu) if signs is None else signs
     if any(s["gravite"] >= 2 for s in signs):
         level = max(level, 2)
-        reasons.append("signes avant-coureurs chez les voisins")
+        reasons.append(dire("meteo.signes_avant_coureurs_chez"))
     elif signs:
         level = max(level, 1)
     return level, reasons
@@ -432,7 +437,7 @@ def approach_direction(signs):
     if not located:
         return None
     first = located[0]["direction"]
-    return f"de l'{first}" if first[0] in "eo" else f"du {first}"
+    return DIRECTION_DE.get(first, first)
 
 
 # --- balayage meteo force (commande "meteo" de la console) ------------------
@@ -488,9 +493,10 @@ def scan_counts(started):
 
 SCANNER_STATE_PATH = "/tmp/radio_watch_etat.json"
 # Etats ou le scanner ne peut pas faire le balayage (la console n'attend pas)
-SCANNER_BUSY = {"pause_thermique": "le Pi est trop chaud, même pour l'écoute météo seule",
-                "manuel": "le scanner est en mode manuel",
-                "accroche": "le scanner est accroché sur une fréquence"}
+SCANNER_BUSY = Etiquettes("scanner_occupe", {"pause_thermique": "le Pi est trop chaud, même pour l'écoute météo seule",
+                                             "manuel": "le scanner est en mode manuel",
+                                             "accroche": "le scanner est accroché sur une fréquence"},
+                          "pourquoi le scanner ne peut pas balayer les stations météo")
 
 
 def set_scanner_state(state):
@@ -543,23 +549,22 @@ def _neighbors_text(lieu, reference=None):
             odd += 1  # station sans doute mal reglee ou au soleil : pas citee
             continue
         shown += 1
-        text = f"station radioamateur {_where(lieu, st['lat'], st['lon'])} : {_num(wx['temperature'])} degrés"
+        text = dire("meteo.station_radioamateur_degres", v1=_where(lieu, st['lat'], st['lon']), v3=_num(wx['temperature']))
         if wx.get("pressure"):
             text += f", pression {round(wx['pressure'])}"
         parts.append(text)
     kept, excluded = outdoor_sensors(reference)
     temps = sorted(r["valeurs"]["temperature_C"] for r in kept.values())
     if temps:
-        span = (f"{_num(temps[0], 1)} degrés" if len(temps) == 1 or temps[0] == temps[-1]
-                else f"entre {_num(temps[0], 1)} et {_num(temps[-1], 1)} degrés")
-        parts.append(f"thermomètres extérieurs des voisins : {span}")
+        span = (dire("meteo.degres", v1=_num(temps[0], 1)) if len(temps) == 1 or temps[0] == temps[-1]
+                else dire("meteo.entre_degres", v1=_num(temps[0], 1), v3=_num(temps[-1], 1)))
+        parts.append(dire("meteo.thermometres_exterieurs_voisins", span=span))
     if not parts:
         return ""
-    text = "Relevés autour de toi : " + " ; ".join(parts) + "."
+    text = (dire("meteo.releves_autour_toi") + " ") + " ; ".join(parts) + "."
     if excluded or odd:
         n = excluded + odd
-        text += (f" J'ai écarté {n} appareil{'s' if n > 1 else ''} qui ne mesure{'nt' if n > 1 else ''} "
-                 "pas l'air dehors : intérieur, cuisson, piscine, ou station mal réglée.")
+        text += ((" " + dire("meteo.ai_ecarte_appareil_qui", n=n, pluriel='s' if n > 1 else '', pluriel2='nt' if n > 1 else '')))
     return text
 
 
@@ -573,7 +578,7 @@ def aloft_meaning(alt_m, temp_c, fc):
     Compare a ce qu'on attend en partant de la temperature au sol (6,5
     degres de moins par kilometre en moyenne)."""
     if alt_m >= TROPOPAUSE_M:
-        return "c'est la haute atmosphère, au-dessus des nuages, où il fait toujours très froid : rien d'anormal"
+        return dire("meteo.haute_atmosphere_au_dessus")
     current = (fc or {}).get("current") or {}
     ground = current.get("temperature_2m")
     if ground is None:
@@ -582,11 +587,10 @@ def aloft_meaning(alt_m, temp_c, fc):
     expected = ground - LAPSE_C_PER_KM * (alt_m - elevation) / 1000
     gap = temp_c - expected
     if gap <= -ALOFT_ANOMALY_C:
-        return ("c'est plus froid que d'habitude à cette hauteur : de l'air froid en altitude au-dessus "
-                "d'un sol plus doux rend l'atmosphère instable, ce qui favorise averses et orages")
+        return (dire("meteo.plus_froid_habitude_cette"))
     if gap >= ALOFT_ANOMALY_C:
-        return "c'est plus doux que d'habitude là-haut : l'atmosphère est stable, peu propice aux orages"
-    return "c'est normal à cette altitude, l'air se refroidit d'environ 6 degrés et demi par kilomètre"
+        return dire("meteo.plus_doux_habitude_haut")
+    return dire("meteo.normal_cette_altitude_air")
 
 
 def _sondes_text(lieu, found, fc=None):
@@ -594,18 +598,18 @@ def _sondes_text(lieu, found, fc=None):
         return ""
     lat0, lon0 = _home(lieu)
     s = min(found, key=lambda s: _distance_km(lat0, lon0, s["lat"], s["lon"]))
-    text = (f"Un ballon-sonde, un ballon météo qui mesure l'air en montant, est {_where(lieu, s['lat'], s['lon'])}")
+    text = (dire("meteo.ballon_sonde_ballon_meteo", v1=_where(lieu, s['lat'], s['lon'])))
     if s.get("alt"):
-        text += f", à {round(s['alt'] / 100) / 10:.1f} kilomètres d'altitude".replace(".", ",")
+        text += dire("meteo.kilometres_altitude", v1=format(round(s['alt'] / 100) / 10, ".1f")).replace(".", ",")
         if s.get("temp") is not None:
-            text += f" : il y fait {_num(s['temp'])} degrés"
+            text += (" " + dire("meteo.fait_degres", v1=_num(s['temp'])))
             meaning = aloft_meaning(s["alt"], s["temp"], fc)
             if meaning:
                 text += f" ; {meaning}"
         if (s.get("vitesse_v") or 0) < -2:
-            text += ". Il redescend en parachute"
+            text += dire("meteo.redescend_parachute")
     if len(found) > 1:
-        text += f". {len(found)} ballons en vol en tout dans un rayon de {SONDE_RADIUS_KM} kilomètres"
+        text += dire("meteo.ballons_vol_tout_rayon", len=len(found), SONDE_RADIUS_KM=SONDE_RADIUS_KM)
     return text + "."
 
 
@@ -617,48 +621,48 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
     fc = forecast(lieu)
     signs = precursors(lieu)
     level, reasons = threat(lieu, fc, signs)
-    parts = [f"Météo de {lieu['commune']}."]
+    parts = [dire("meteo.meteo", commune=lieu['commune'])]
     if fc and fc.get("current"):
         c = fc["current"]
-        text = f"En ce moment, {WMO.get(c.get('weather_code'), 'temps indéterminé')}, {_num(c['temperature_2m'])} degrés"
+        text = dire("meteo.moment_degres", get=WMO.get(c.get('weather_code'), dire('meteo.temps_indetermine')), v1=_num(c['temperature_2m']))
         if c.get("apparent_temperature") is not None and abs(c["apparent_temperature"] - c["temperature_2m"]) >= 2:
             text += f", ressenti {_num(c['apparent_temperature'])}"
         humidity = c.get("relative_humidity_2m")
-        text += f", humidité {humidity} pour cent" + (", l'air est presque saturé d'eau." if (humidity or 0) >= 95 else ".")
+        text += dire("meteo.humidite_cent", humidity=humidity) + (dire("meteo.air_presque_sature_eau") if (humidity or 0) >= 95 else ".")
         if c.get("wind_speed_10m") is not None:
-            text += f" Vent {_wind_from(c.get('wind_direction_10m'))} à {round(c['wind_speed_10m'])} kilomètres heure"
+            text += (" " + dire("meteo.vent_kilometres_heure", v1=_wind_from(c.get('wind_direction_10m')), round=round(c['wind_speed_10m'])))
             if (c.get("wind_gusts_10m") or 0) >= 30:
-                text += f", rafales à {round(c['wind_gusts_10m'])}"
+                text += dire("meteo.rafales", round=round(c['wind_gusts_10m']))
             text += "."
         parts.append(text)
         pressure, delta = pressure_trend(fc)
         if pressure is not None:
             trend = ("stable" if abs(delta) < 1 else
-                     f"en {'hausse' if delta > 0 else 'baisse'} de {_num(abs(delta))} en 3 heures")
+                     dire("meteo.3_heures", v1=dire('meteo.mot_hausse') if delta > 0 else dire('meteo.mot_baisse'), v3=_num(abs(delta))))
             if delta <= -2:
-                meaning = "une baisse comme celle-ci annonce souvent une dégradation"
+                meaning = dire("meteo.baisse_comme_celle_ci")
             elif delta >= 2:
-                meaning = "la hausse annonce plutôt une amélioration"
+                meaning = dire("meteo.hausse_annonce_plutot_amelioration")
             elif pressure >= 1020:
-                meaning = "haute pression, temps plutôt stable"
+                meaning = dire("meteo.haute_pression_temps_plutot")
             elif pressure <= 1005:
-                meaning = "basse pression, temps souvent agité"
+                meaning = dire("meteo.basse_pression_temps_souvent")
             else:
                 meaning = "pression moyenne"
-            parts.append(f"Pression {round(pressure)} hectopascals, {trend} : {meaning}.")
+            parts.append(dire("meteo.pression_hectopascals", round=round(pressure), trend=trend, meaning=meaning))
         out = storm_outlook(fc, hours=12)
         hourly = fc["hourly"]
         upcoming = []
         if out["orage_des"] is not None:
-            upcoming.append("orage possible " + ("dès maintenant" if out["orage_des"] == 0
-                                                  else f"dans {out['orage_des']} heure{'s' if out['orage_des'] > 1 else ''}"))
+            upcoming.append(dire("meteo.orage_possible") + " " + (dire("meteo.maintenant") if out["orage_des"] == 0
+                                                  else dire("meteo.heure_2", orage_des=out['orage_des'], pluriel='s' if out['orage_des'] > 1 else '')))
         if out["pluie_des"] is not None:
-            upcoming.append("pluie probable " + ("dès maintenant" if out["pluie_des"] == 0
-                                                  else f"dans {out['pluie_des']} heure{'s' if out['pluie_des'] > 1 else ''}"))
+            upcoming.append(dire("meteo.pluie_probable") + " " + (dire("meteo.maintenant_2") if out["pluie_des"] == 0
+                                                  else dire("meteo.heure_3", pluie_des=out['pluie_des'], pluriel='s' if out['pluie_des'] > 1 else '')))
         if out["cape"][0] >= 1500:
-            upcoming.append("air très instable, orages possibles, parfois forts")
+            upcoming.append(dire("meteo.air_tres_instable_orages"))
         elif out["cape"][0] >= 500:
-            upcoming.append("air instable, des averses peuvent éclater rapidement")
+            upcoming.append(dire("meteo.air_instable_averses_peuvent"))
         try:
             import meteo_obs
             threshold = meteo_obs.thunder_threshold()
@@ -669,47 +673,44 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
         except Exception:
             threshold, calibrated = None, ""
         if threshold is not None and out["cape"][0] >= threshold:
-            upcoming.append("chez toi, le tonnerre a déjà grondé avec une telle instabilité")
+            upcoming.append(dire("meteo.chez_toi_tonnerre_deja"))
         if out["rafales"][0] >= 50:
-            upcoming.append(f"rafales jusqu'à {round(out['rafales'][0])} kilomètres heure")
+            upcoming.append(dire("meteo.rafales_jusqu_kilometres_heure_3", round=round(out['rafales'][0])))
         i = _hourly_index(fc)
         freezing = (hourly.get("freezing_level_height") or [None] * (i + 1))[i]
         if freezing is not None and freezing < 2500:
-            upcoming.append(f"il gèle au-dessus de {int(round(freezing, -2))} mètres d'altitude")
-        parts.append("Dans les 12 prochaines heures : " + (", ".join(upcoming) if upcoming else "rien de notable") + ".")
+            upcoming.append(dire("meteo.gele_au_dessus_metres", int=int(round(freezing, -2))))
+        parts.append((dire("meteo.12_prochaines_heures") + " ") + (", ".join(upcoming) if upcoming else dire("meteo.rien_notable")) + ".")
         if calibrated:
             parts.append(calibrated)
         daily = fc.get("daily") or {}
         days = []
-        for k, label in enumerate(["Aujourd'hui", "Demain", "Après-demain"]):
+        for k, label in enumerate([dire("meteo.aujourdhui"), dire("meteo.demain"), dire("meteo.apres_demain")]):
             try:
-                text = (f"{label}, {WMO.get(daily['weather_code'][k], '')}, de {_num(daily['temperature_2m_min'][k])} "
-                        f"à {_num(daily['temperature_2m_max'][k])} degrés")
+                text = (dire("meteo.degres_2", label=label, get=WMO.get(daily['weather_code'][k], ''), v1=_num(daily['temperature_2m_min'][k]), v3=_num(daily['temperature_2m_max'][k])))
                 if (daily["precipitation_sum"][k] or 0) >= 1:
-                    text += f", {round(daily['precipitation_sum'][k])} millimètres de pluie"
+                    text += dire("meteo.millimetres_pluie", round=round(daily['precipitation_sum'][k]))
                 if (daily["wind_gusts_10m_max"][k] or 0) >= 60:
-                    text += f", rafales à {round(daily['wind_gusts_10m_max'][k])}"
+                    text += dire("meteo.rafales_2", round=round(daily['wind_gusts_10m_max'][k]))
                 days.append(text)
             except (KeyError, IndexError, TypeError):
                 continue
         if days:
             parts.append(". ".join(days) + ".")
     else:
-        parts.append("Les prévisions Open-Meteo ne répondent pas pour le moment.")
+        parts.append(dire("meteo.previsions_open_meteo_repondent"))
     vigil = _read_json(METEO_STATE) or {}
     active = [(lvl, name) for name, lvl in vigil.items() if isinstance(lvl, int) and lvl >= 2]
     if active:
-        parts.append("Vigilance : " + ", ".join(f"{COLOR_NAMES[l]} {n}" for l, n in sorted(active, reverse=True)) + ".")
+        parts.append((dire("meteo.vigilance") + " ") + ", ".join(f"{COLOR_NAMES[l]} {n}" for l, n in sorted(active, reverse=True)) + ".")
     crue = _read_json(CRUE_STATE) or {}
     if any(isinstance(l, int) and l >= 2 for l in crue.values()):
-        parts.append("Vigilance crue en cours sur la rivière surveillée.")
+        parts.append(dire("meteo.vigilance_crue_cours_riviere"))
     if scan:
-        parts.append(f"Panel radio météo balayé : {scan.get('stations', 0)} station"
-                     f"{'s' if scan.get('stations', 0) > 1 else ''} radioamateur et {scan.get('capteurs', 0)} "
-                     f"capteur{'s' if scan.get('capteurs', 0) > 1 else ''} reçus à l'instant.")
+        parts.append(dire("meteo.panel_radio_meteo_balaye", get=scan.get('stations', 0), pluriel='s' if scan.get('stations', 0) > 1 else '', get2=scan.get('capteurs', 0), pluriel2='s' if scan.get('capteurs', 0) > 1 else ''))
     elif scan_failed:
-        reason = scan_failed if isinstance(scan_failed, str) else "le scanner n'a pas répondu"
-        parts.append(f"Pas de balayage radio cette fois, {reason} : relevés locaux des dernières heures.")
+        reason = scan_failed if isinstance(scan_failed, str) else dire("meteo.scanner_repondu")
+        parts.append(dire("meteo.balayage_radio_cette_fois", reason=reason))
     try:
         import donnees_ouvertes
         airports, _ = donnees_ouvertes.airports_text()
@@ -735,25 +736,24 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
         last_obs = None
     if last_obs and time.time() - last_obs["t"] < 3 * 3600:
         minutes = round((time.time() - last_obs["t"]) / 60)
-        when = "à l'instant" if minutes < 1 else f"il y a {minutes} minute{'s' if minutes > 1 else ''}"
-        parts.append(f"Ta dernière observation, {when} : {meteo_obs.spoken(last_obs['reponses'])}.")
+        when = dire("meteo.instant") if minutes < 1 else dire("meteo.minute", minutes=minutes, pluriel='s' if minutes > 1 else '')
+        parts.append(dire("meteo.ta_derniere_observation", when=when, spoken=meteo_obs.spoken(last_obs['reponses'])))
     if signs:
-        text = "Signes avant-coureurs : " + " ; ".join(s["texte"] for s in signs[:3])
+        text = (dire("meteo.signes_avant_coureurs") + " ") + " ; ".join(s["texte"] for s in signs[:3])
         origin = approach_direction(signs)
         if origin and len({s["direction"] for s in signs if s["direction"]}) > 1:
-            text += f". Les premiers signes sont venus {origin}"
+            text += dire("meteo.premiers_signes_sont_venus", origin=origin)
         parts.append(text + ".")
     profiles = _read_json(SONDE_PROFILE_PATH) or {}
     measured = [p for p in profiles.values() if p.get("gel") and time.time() - p["points"][-1]["t"] < 6 * 3600]
     if measured:
-        parts.append(f"Un ballon-sonde capté ici a mesuré qu'il gèle au-dessus de "
-                     f"{int(round(measured[-1]['gel'], -2))} mètres d'altitude.")
+        parts.append(dire("meteo.ballon_sonde_capte_ici", int=int(round(measured[-1]['gel'], -2))))
     if with_sondes:
         sondes_text = _sondes_text(lieu, sondes(lieu), fc)
         if sondes_text:
             parts.append(sondes_text)
     if level >= 1:
-        parts.append(f"Niveau de vigilance du Pi : {LEVEL_NAMES[level]}" +
+        parts.append(dire("meteo.niveau_vigilance_pi", v1=LEVEL_NAMES[level]) +
                      (f", {', '.join(reasons)}" if reasons else "") + ".")
     publish_context(level, reasons)
     return " ".join(parts)

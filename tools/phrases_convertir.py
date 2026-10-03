@@ -91,6 +91,9 @@ def _var_name(expr, src, used):
         base = expr.slice.value
     elif isinstance(expr, ast.Call) and isinstance(expr.func, (ast.Name, ast.Attribute)):
         base = expr.func.id if isinstance(expr.func, ast.Name) else expr.func.attr
+    elif (isinstance(expr, ast.IfExp) and isinstance(expr.body, ast.Constant)
+          and isinstance(expr.body.value, str) and len(expr.body.value) <= 3):
+        base = "pluriel"  # {'s' if n > 1 else ''} : marque du pluriel, qu'une autre langue peut omettre
     base = re.sub(r"\W", "_", base or "") if base else ""
     if not base or not base.isidentifier() or keyword.iskeyword(base) or base.startswith("_"):
         base = "v"
@@ -114,9 +117,12 @@ def _convert(node, src):
         if isinstance(v, ast.Constant):
             parts.append(v.value.replace("{", "{{").replace("}", "}}"))
             continue
-        expr = ast.get_source_segment(src, v.value)
+        # ast.unparse et non le texte source : en Python 3.9, la position des
+        # expressions DANS une f-string est fausse quand le meme texte apparait
+        # plus tot sur la ligne (recherche du premier exemplaire).
+        expr = ast.unparse(v.value)
         if v.format_spec is not None:
-            spec = "".join(x.value if isinstance(x, ast.Constant) else "{" + ast.get_source_segment(src, x.value) + "}"
+            spec = "".join(x.value if isinstance(x, ast.Constant) else "{" + ast.unparse(x.value) + "}"
                            for x in v.format_spec.values)
             expr = f'format({expr}, f"{spec}")' if "{" in spec else f'format({expr}, "{spec}")'
         if v.conversion == ord("r"):
@@ -332,7 +338,27 @@ def etiquettes(modules):
     print(f"{len(new)} etiquettes ajoutees")
 
 
+def reste(path):
+    """Repere large, pour relire a l'oeil : toute chaine qui a l'air francaise,
+    hors docstrings et hors appels deja passes par les phrases."""
+    src = open(path, encoding="utf-8").read().replace("\r\n", "\n")
+    tree = ast.parse(src)
+    docs = _docstrings(tree)
+    done = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "id", None) in (
+                "dire", "dire_ou", "etiquette", "Etiquettes", "Champs", "nombre"):
+            done.update(id(n) for n in ast.walk(node))
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Constant) and isinstance(node.value, str) and id(node) not in docs
+                and id(node) not in done and FR.search(node.value) and not node.value.startswith(("[", "/"))):
+            print(f"{node.lineno:5d}  {node.value[:100]!r}")
+
+
 if __name__ == "__main__":
+    if sys.argv[1] == "reste":
+        reste(sys.argv[2])
+        sys.exit(0)
     if sys.argv[1] == "etiquettes":
         etiquettes(sys.argv[2])
         sys.exit(0)
