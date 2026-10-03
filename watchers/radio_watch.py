@@ -1097,6 +1097,42 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     # d'usage clair ("canal 446 civil", "bande aviation militaire UHF"...).
     # band_label : petit ensemble fixe de noms de bande (voir BANDS) --
     # candidat naturel au cache repetitif (2026-08-31).
+    multimon = None
+    multimon_queue = None
+    multimon_thread = None
+    if mode == "nfm":
+        try:
+            multimon = subprocess.Popen(
+                ["multimon-ng"] + MULTIMON_ARGS,
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+            )
+            multimon_queue = queue.Queue()
+            multimon_thread = threading.Thread(
+                target=_multimon_reader, args=(multimon, multimon_queue), daemon=True,
+            )
+            multimon_thread.start()
+        except Exception:
+            multimon = None
+
+    # Pre-ecoute silencieuse (2026-10-03, demande utilisateur) : on n'ouvre le
+    # son que si ca vaut la peine -- voix reconnue ou message decode --, puis
+    # on joue tout ce qui a ete mis en attente (tant pis pour le temps reel).
+    confirmed, decoded_early, pre_filtered = _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode,
+                                                        multimon, multimon_queue)
+    if not confirmed:
+        print(f"[radio_watch] pre-ecoute {mhz:.4f} MHz : rien qui vaille la peine, son jamais ouvert")
+        _last_stream_fingerprint = (noise_signatures.fingerprint(pre_filtered, sample_rate, "s16le")
+                                    if pre_filtered else None)
+        _last_stream_filtered = (pre_filtered, sample_rate)
+        for proc in (rtl_fm, multimon):
+            if proc is not None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=2)
+                except Exception:
+                    proc.kill()
+        return False
+
     speak_with_lead_sound(INCOMING_SOUND, band_label, label="radio_watch", repetitive=True)
     play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
 
@@ -1126,23 +1162,6 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     )
     aplay_stderr_thread.start()
 
-    multimon = None
-    multimon_queue = None
-    multimon_thread = None
-    if mode == "nfm":
-        try:
-            multimon = subprocess.Popen(
-                ["multimon-ng"] + MULTIMON_ARGS,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            )
-            multimon_queue = queue.Queue()
-            multimon_thread = threading.Thread(
-                target=_multimon_reader, args=(multimon, multimon_queue), daemon=True,
-            )
-            multimon_thread.start()
-        except Exception:
-            multimon = None
-
     settings = _settings(target)
     debounce = settings["attente_fin_s"] or SILENCE_DEBOUNCE_SEC
     quiet_windows_needed = int(debounce * 1000 / ANALYSIS_WINDOW_MS)
@@ -1150,8 +1169,8 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     consecutive_signal_windows = 0
     total_bytes = 0
     max_bytes = int(sample_rate * 2 * MAX_HOLD_SEC)
-    heard_signal = False  # confirmé : au moins MIN_CONSECUTIVE_SIGNAL_WINDOWS de suite
-    decoded_messages = []
+    heard_signal = True  # deja confirme par la pre-ecoute (_prelisten)
+    decoded_messages = list(decoded_early)
 
     rnnoise_state = _rnnoise_create()
     resample_state = None
@@ -1181,6 +1200,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
             # rtl_fm/aplay/multimon orphelins indefiniment (observe et
             # corrige en session, plusieurs redemarrages bloques). Une
             # reverification periodique laisse le signal s'appliquer.
+            replaying = bool(prebuffer)  # deja donne a multimon pendant la pre-ecoute
             if prebuffer:
                 chunk = prebuffer.pop(0)
             else:
@@ -1190,7 +1210,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
                     continue
             if chunk is None:
                 break
-            if multimon is not None:
+            if multimon is not None and not replaying:
                 # Signal BRUT, non filtre -- multimon-ng decode des tons
                 # numeriques (POCSAG, AFSK1200...) qui peuvent deborder ou
                 # etre sensibles a la phase/amplitude alteree par le
@@ -1291,6 +1311,57 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         speak_with_lead_sound(DECODING_MORSE_SOUND, dire("radio.message_numerique_decode", msg=msg), label="radio_watch")
 
     return heard_signal or bool(meaningful_messages)
+
+
+PRELISTEN_MAX_SEC = 6.0   # pre-ecoute silencieuse au plus ; voix reconnue = ouverture aussitot
+
+
+def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multimon, multimon_queue):
+    """Ecoute sans rien jouer : (ca vaut la peine ?, messages decodes, audio
+    filtre). Vaut la peine : MIN_CONSECUTIVE_SIGNAL_WINDOWS fenetres de voix
+    d'affilee (RNNoise, meme detecteur que pendant la diffusion) ou un message
+    de donnees lisible. Tout l'audio recu reste dans prebuffer, rejoue ensuite."""
+    chain = chaine_audio.nouvelle(target, freq_hz, sample_rate, mode)
+    rnnoise_state = _rnnoise_create()
+    resample_state = smoothed_prob = None
+    consecutive, filtered_all, decoded = 0, [], []
+    analysed = 0
+    start = time.time()
+    try:
+        while time.time() - start < PRELISTEN_MAX_SEC:
+            if analysed < len(prebuffer):
+                chunk = prebuffer[analysed]
+            else:
+                try:
+                    chunk = audio_queue.get(timeout=0.5)
+                except queue.Empty:
+                    continue
+                prebuffer.append(chunk)
+            analysed += 1
+            if chunk is None:
+                break
+            if multimon is not None:
+                try:
+                    multimon.stdin.write(chunk)
+                except Exception:
+                    pass
+            filtered, _ = chain.process_s16le(chunk)
+            filtered_all.append(filtered)
+            is_signal, _, resample_state, smoothed_prob = _chunk_is_signal(
+                filtered, sample_rate, rnnoise_state, resample_state, smoothed_prob)
+            consecutive = consecutive + 1 if is_signal else 0
+            if multimon_queue is not None:
+                while not multimon_queue.empty():
+                    decoded.append(multimon_queue.get_nowait())
+            if consecutive >= MIN_CONSECUTIVE_SIGNAL_WINDOWS:
+                print(f"[radio_watch] pre-ecoute : voix reconnue en {time.time() - start:.1f} s "
+                      f"(prob {smoothed_prob:.2f})")
+                return True, decoded, b"".join(filtered_all)
+            if any(_is_meaningful_decoded_message(m) for m in decoded):
+                return True, decoded, b"".join(filtered_all)
+    finally:
+        _rnnoise_destroy(rnnoise_state)
+    return False, decoded, b"".join(filtered_all)
 
 
 HF_ANALYSIS_MAX_HZ = 30_000_000  # analyse "vraie station ou artefact" sous 30 MHz
@@ -1757,6 +1828,7 @@ def _speak_pause(message, sound=None):
 def main():
     print("[radio_watch] demarrage de la veille radio")
     threading.Thread(target=_window_watchdog, daemon=True).start()
+    airband_bridge.SPEECH_DETECTOR_FACTORY = _speech_detector  # pre-ecoute du 446 et de l'aviation
     radio_log.start_purge_scheduler()
     _publish_plages()
     manual_stream = ManualStream()  # touche F = RTLSDR-Airband, voir manual_tuner.py

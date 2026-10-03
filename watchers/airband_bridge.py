@@ -280,6 +280,47 @@ def _save_raw(path, pcm_f32):
     threading.Thread(target=work, daemon=True).start()
 
 
+# Detecteur de voix fourni par radio_watch au demarrage (meme RNNoise que le
+# balayage) : fabrique -> fonction (morceau PCM s16le, frequence) -> voix ?
+SPEECH_DETECTOR_FACTORY = None
+PRELISTEN_MAX_SEC = 6.0
+PRELISTEN_WINDOW_SEC = 0.2
+PRELISTEN_VOICE_WINDOWS = 3
+
+
+def _prelisten(packet_queue):
+    """(paquets recus, voix reconnue ?) apres une ecoute silencieuse."""
+    import numpy as np
+    packets, pending = [], b""
+    check = SPEECH_DETECTOR_FACTORY() if SPEECH_DETECTOR_FACTORY else None
+    window = int(AIRBAND_SAMPLE_RATE_HZ * 4 * PRELISTEN_WINDOW_SEC)
+    voiced = consecutive = 0
+    total = 0
+    start = time.time()
+    while time.time() - start < PRELISTEN_MAX_SEC:
+        try:
+            data = packet_queue.get(timeout=0.3)
+        except queue.Empty:
+            continue
+        packets.append(data)
+        if data is None:
+            break
+        total += len(data)
+        pending += data
+        while len(pending) >= window:
+            block, pending = pending[:window], pending[window:]
+            if check is None:  # pas de detecteur : au moins une seconde de son suffit
+                voiced += 1
+                consecutive = voiced if total >= AIRBAND_SAMPLE_RATE_HZ * 4 else 0
+            else:
+                pcm = (np.clip(np.frombuffer(block, dtype="<f4"), -1, 1) * 32767).astype("<i2").tobytes()
+                consecutive = consecutive + 1 if check(pcm, AIRBAND_SAMPLE_RATE_HZ) else 0
+            if consecutive >= PRELISTEN_VOICE_WINDOWS:
+                print(f"[airband_bridge] pre-ecoute : voix reconnue en {time.time() - start:.1f} s")
+                return packets, True
+    return packets, False
+
+
 def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window_name=None):
     """Diffuse en direct l'audio UDP recu tant qu'il arrive, coupe apres
     SILENCE_DEBOUNCE_SEC sans paquet (le squelch de RTLSDR-Airband a alors
@@ -309,31 +350,18 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         reader_thread = threading.Thread(target=_udp_reader, args=(sock, packet_queue, stop_event), daemon=True)
         reader_thread.start()
 
-        # Parasites connus (commande console "parasite", 2026-09-29) : voir
-        # stream_until_quiet() dans radio_watch.py -- pre-ecoute silencieuse,
-        # seulement si cette frequence a deja donne un parasite signale.
-        prebuffer = []
+        # Pre-ecoute silencieuse (2026-10-03, demande utilisateur) : on n'ouvre
+        # le son que si ca vaut la peine -- voix reconnue (RNNoise) -- puis on
+        # joue tout ce qui a ete mis en attente. Un bref parasite n'ouvre plus
+        # rien : ni carillon, ni "crcrr", ni prise au journal.
+        prebuffer, worth = _prelisten(packet_queue)
+        if not worth:
+            print(f"[airband_bridge] pre-ecoute {freq_hz/1e6:.5f} MHz : pas de voix, son jamais ouvert")
+            stop_event.set()
+            log_session.discard()
+            return False
+        # Parasites connus (commande console "parasite") : compares sur le meme son.
         if noise_signatures.has_signatures_near(freq_hz):
-            # L'audio arrive par morceaux (silencieux) : on prolonge jusqu'a avoir
-            # assez de son pour une empreinte, dans la limite de PRECHECK_MAX_SEC.
-            needed = int(noise_signatures.MIN_AUDIO_SEC * AIRBAND_SAMPLE_RATE_HZ * 4 * 1.2)
-            begin = time.time()
-            collected = 0
-            while True:
-                elapsed = time.time() - begin
-                if elapsed >= noise_signatures.PRECHECK_MAX_SEC:
-                    break
-                if elapsed >= noise_signatures.PRECHECK_SEC and collected >= needed:
-                    break
-                try:
-                    item = packet_queue.get(timeout=0.2)
-                except queue.Empty:
-                    continue
-                prebuffer.append(item)
-                if item is None:
-                    break
-                collected += len(item)
-            # Meme filtre que l'audio d'ou vient l'empreinte apprise (coherence).
             pre_pcm = audio_filters.VoiceBandpassFilter(AIRBAND_SAMPLE_RATE_HZ).process_f32le(
                 b"".join(d for d in prebuffer if d))
             is_noise, sim = noise_signatures.matches_known_noise(
@@ -343,7 +371,6 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
                 stop_event.set()
                 log_session.discard()
                 return False
-            print(f"[airband_bridge] pre-ecoute : pas un parasite connu (meilleure similarite {sim})")
 
         # "incoming" avant l'annonce (tampon pendant la synthese cloud, voir
         # speak_with_lead_sound) ; annonce simplifiee (2026-08-30, demande de
