@@ -12,6 +12,8 @@ import xml.etree.ElementTree as ET
 import requests
 
 import reglages
+from phrases import Etiquettes, dire, nombre
+from phrases import dire
 
 URL = ("https://tipi.bison-fute.gouv.fr/bison-fute-ouvert/publicationsDIR/"
        "Evenementiel-DIR/grt/RRN/content.xml")
@@ -32,6 +34,9 @@ TYPES = {
     "GeneralInstructionOrMessageToRoadUsers": (2, "message aux usagers"),
 }
 DIRECTIONS = ["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"]
+TYPE_NAMES = Etiquettes("trafic.type", {k: name for k, (_, name) in TYPES.items()}, "type d'incident routier")
+DIRECTION_VERS = Etiquettes("direction.vers", {d: (f"à l'{d}" if d[0] in "eo" else f"au {d}") for d in DIRECTIONS},
+                            "où se trouve quelque chose, après une distance : à 12 kilomètres au nord")
 
 
 def _tag(el):
@@ -58,7 +63,7 @@ def _where(lat0, lon0, lat, lon):
     y = math.sin(math.radians(lon - lon0)) * math.cos(p1)
     x = math.cos(p0) * math.sin(p1) - math.sin(p0) * math.cos(p1) * math.cos(math.radians(lon - lon0))
     name = DIRECTIONS[int(((math.degrees(math.atan2(y, x)) + 360) % 360 + 22.5) // 45) % 8]
-    return km, (f"à l'{name}" if name[0] in "eo" else f"au {name}")
+    return km, DIRECTION_VERS[name]
 
 
 def events(radius_km=RADIUS_KM):
@@ -96,7 +101,8 @@ def events(radius_km=RADIUS_KM):
         km, towards = _where(lat0, lon0, lat, lon)
         if km > radius_km:
             continue
-        rank, name = TYPES.get(kind, (3, "événement"))
+        rank = TYPES.get(kind, (3, ""))[0]
+        name = TYPE_NAMES[kind] if kind in TYPES else dire("trafic.evenement")
         found.append({"rang": rank, "km": km, "nom": name, "direction": towards, "route": road,
                       "ville": town, "description": description})
     found.sort(key=lambda e: (e["rang"], e["km"]))
@@ -117,24 +123,25 @@ def summary(radius_km=RADIUS_KM):
         found = events(radius_km)
     except (requests.RequestException, ET.ParseError, OSError) as exc:
         print(f"[trafic] Bison Fute indisponible : {exc}")
-        return "Le service Bison Futé ne répond pas pour le moment."
+        return dire("trafic.service_bison_fute_repond")
     if not found:
-        return f"Aucun incident signalé sur les grandes routes à moins de {radius_km} kilomètres."
+        return dire("trafic.aucun_incident_signale_grandes", radius_km=radius_km)
     serious = sum(1 for e in found if e["rang"] == 0)
-    head = (f"{len(found)} événement{'s' if len(found) > 1 else ''} sur les grandes routes à moins de "
-            f"{radius_km} kilomètres, dont {serious} gênant{'s' if serious > 1 else ''} en ce moment.")
+    head = dire("trafic.resume", evenements=nombre(len(found), "événement"), rayon=radius_km,
+                genants=nombre(serious, "gênant"))
     lines = []
     for e in found[:MAX_EVENTS]:
         text = e["nom"].capitalize()
         if e["route"]:
-            text += f" sur la {_road(e['route'])}"
+            text += (" " + dire("trafic.phrase", v1=_road(e['route'])))
         if e["ville"]:
-            text += f", vers {e['ville']}"
-        text += f", à {round(e['km'])} kilomètres {e['direction']}"
+            text += dire("trafic.vers", ville=e['ville'])
+        text += dire("trafic.kilometres", round=round(e['km']), direction=e['direction'])
         boilerplate = (e["description"] or "").startswith(("La mesure est", "Arrêté"))
         if e["description"] and len(e["description"]) < 120 and not boilerplate:
             text += f" : {e['description'].rstrip('.')}"
         lines.append(text)
     more = len(found) - MAX_EVENTS
-    tail = f" Et {more} autre{'s' if more > 1 else ''}, moins gênant{'s' if more > 1 else ''}." if more > 0 else ""
+    tail = (" " + dire("trafic.autres_moins_genants", autres=nombre(more, "autre, moins gênant", "autres, moins gênants"))
+            if more > 0 else "")
     return head + " " + ". ".join(lines) + "." + tail

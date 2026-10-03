@@ -10,21 +10,23 @@ codes techniques), et on garde le reste tel quel.
 """
 import re
 
+from phrases import Etiquettes, dire
+
 # Symboles APRS, table principale ("/").
-PRIMARY = {
+PRIMARY = Etiquettes("aprs.type", {
     "-": "station fixe", ">": "voiture", "[": "piéton", "_": "station météo", "#": "relais numérique",
     "r": "relais radio", "v": "fourgon", "k": "camion", "u": "camion", "b": "vélo", "<": "moto",
     "R": "camping-car", "Y": "voilier", "s": "bateau", "O": "ballon", "'": "petit avion", "^": "avion",
     "X": "hélicoptère", "y": "station fixe", "j": "véhicule tout-terrain", "U": "bus", "a": "ambulance",
     "f": "camion de pompiers", "P": "police", "&": "passerelle", "`": "antenne parabolique",
     "$": "téléphone", "l": "ordinateur portable", "n": "nœud radio", "h": "hôpital", "+": "Croix-Rouge",
-}
+}, "type de station APRS", par_libelle=True)
 # Table secondaire ("\\" ou une lettre/chiffre en surimpression).
-SECONDARY = {"#": "relais numérique", "&": "passerelle", "_": "station météo", "0": "nœud radio",
-             "a": "station", "-": "station fixe", ">": "véhicule", "r": "relais radio"}
-OVERLAY = {"L": "LoRa", "I": "internet", "D": "numérique", "E": "EchoLink", "R": "réception"}
-SSID = {"5": "smartphone", "7": "portatif", "9": "mobile", "13": "station météo", "14": "camion",
-        "8": "bateau", "11": "ballon ou aéronef"}
+SECONDARY = Etiquettes("aprs.type", {"#": "relais numérique", "&": "passerelle", "_": "station météo", "0": "nœud radio",
+             "a": "station", "-": "station fixe", ">": "véhicule", "r": "relais radio"}, "type de station APRS", par_libelle=True)
+OVERLAY = Etiquettes("aprs.type", {"L": "LoRa", "I": "internet", "D": "numérique", "E": "EchoLink", "R": "réception"}, "technique d'une station APRS", par_libelle=True)
+SSID = Etiquettes("aprs.type", {"5": "smartphone", "7": "portatif", "9": "mobile", "13": "station météo", "14": "camion",
+        "8": "bateau", "11": "ballon ou aéronef"}, "type de station APRS", par_libelle=True)
 
 FREQ = r"(\d{2,4}(?:\.\d{1,5})?)\s?MHz"
 # Frequence sans unite, dans les bandes radioamateur 2 m et 70 cm ("145.500").
@@ -81,23 +83,23 @@ def _frequencies(text):
     found = []
     m = re.search(r"(\d{3}\.\d{2,5})\s*<=>\s*(\d{3}\.\d{2,5})", text)
     if m:
-        found.append(f"lien entre {_num(m.group(1))} et {_num(m.group(2))} mégahertz")
+        found.append(dire("aprs.lien_entre_megahertz", v1=_num(m.group(1)), v3=_num(m.group(2))))
         text = text.replace(m.group(0), " ")
     freqs = re.findall(FREQ, text) or re.findall(BARE_FREQ, text)
     if freqs:
         main = freqs[0]
-        part = f"fréquence {_num(main)} mégahertz"
+        part = dire("aprs.frequence_megahertz", v1=_num(main))
         offset = (re.search(FREQ + r"\s+([+-]\d+\.\d+)\s?MHz", text)
                   or re.search(r"(?<!\S)()([+-]\d\.\d+)(?!\S)", text))
         if offset and float(offset.group(2)) != 0:
-            part += f", décalage {_num(offset.group(2))} mégahertz"
+            part += dire("aprs.decalage_megahertz", v1=_num(offset.group(2)))
         found.append(part)
     tone = re.search(r"\bT(\d{3})\b|tone\s*(\d+)\s*Hz|CTCSS\s*(\d+)\s*Hz", text)
     if tone:
-        found.append(f"tonalité d'accès {int(next(g for g in tone.groups() if g))} hertz")
+        found.append(dire("aprs.tonalite_acces_hertz", int=int(next((g for g in tone.groups() if g)))))
     rng = re.search(r"\bR(\d+)k\b", text)
     if rng:
-        found.append(f"portée {rng.group(1)} kilomètres")
+        found.append(dire("aprs.portee_kilometres", group=rng.group(1)))
     mode = re.search(r"\((D-Star|DMR|C4FM)\)", text)
     if mode:
         found.insert(0, f"relais vocal {mode.group(1)}")
@@ -115,10 +117,10 @@ def _measures(text):
         found.append(f"tension {_num((volts.group(1) or volts.group(2)).replace(',', '.'))} volts")
     temp = re.search(r"(?<![\w.])(-?\d{1,2}\.\d)C\b", text)
     if temp:
-        found.append(f"température {_num(temp.group(1))} degrés")
+        found.append(dire("aprs.temperature_degres", v1=_num(temp.group(1))))
     alt = re.search(r"\bAlt:\s*(\d+)\s*m\b|\b(\d{3,4})m\b", text)
     if alt:
-        found.append(f"altitude {alt.group(1) or alt.group(2)} mètres")
+        found.append(dire("aprs.altitude_metres", v1=alt.group(1) or alt.group(2)))
     for pattern in (r"\bU=\s*\d+[.,]\d+\s*V\b", r"(?<![\w.])-?\d+([.,]\d+)?(V|A|PV|Ah|Wh|W|C|%)(?!\w)",
                     r"\bAlt:\s*\d+\s*m\b", r"\b\d{3,4}m\b", r"\b\d+\.\d+\s*MHz\b"):
         text = re.sub(pattern, " ", text)
@@ -194,7 +196,7 @@ def station_type(packet):
             tech = OVERLAY.get(table)
             if kind and tech and tech not in kind:
                 kind = f"{kind} {tech}"
-            elif kind == "station":
+            elif symbol == "a":  # "station" seule : rien a dire
                 kind = ""
         if kind:
             return kind

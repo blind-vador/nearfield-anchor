@@ -30,6 +30,8 @@ import json
 import os
 import time
 from datetime import datetime
+from phrases import Etiquettes, dire, nombre
+from phrases import dire
 
 NAS_PATH = "/media/nas/nd1/server/radio_log/voitures.json"
 LOCAL_PATH = "/home/vador/autopilot/voitures.json"
@@ -45,17 +47,18 @@ PARKED_MIN_SEC = 3600
 # Modeles rtl_433 qui donnent la marque de la voiture ; les autres sont des
 # fabricants de capteurs montes sur beaucoup de marques, ou des capteurs
 # ajoutes apres coup.
-CAR_BRANDS = {"toyota": "Toyota ou Lexus", "lexus": "Lexus", "ford": "Ford", "renault": "Renault ou Dacia",
+CAR_BRANDS = Etiquettes("voiture.marque", {"toyota": "Toyota ou Lexus", "lexus": "Lexus", "ford": "Ford", "renault": "Renault ou Dacia",
               "citroen": "Citroën ou Peugeot", "peugeot": "Peugeot", "hyundai": "Hyundai", "elantra": "Hyundai",
               "kia": "Kia", "abarth": "Fiat ou Abarth", "fiat": "Fiat", "porsche": "Porsche", "bmw": "BMW",
               "nissan": "Nissan", "mazda": "Mazda", "honda": "Honda", "volkswagen": "Volkswagen", "audi": "Audi",
-              "mercedes": "Mercedes", "pmv": "Toyota ou Lexus"}
+              "mercedes": "Mercedes", "pmv": "Toyota ou Lexus"}, "marque probable d'une voiture")
 SENSOR_MAKERS = {"schrader": "Schrader", "jansite": "Jansite", "steelmate": "Steelmate", "eeztire": "EezTire",
                  "tyreguard": "TyreGuard", "ave": "AVE", "truck": "poids lourd", "trw": "TRW"}
 
 
 def _hour(h):
-    return "minuit" if h == 0 else "midi" if h == 12 else f"{h} heures"
+    return dire("capteurs.minuit") if h == 0 else dire("capteurs.midi") if h == 12 \
+        else dire("capteurs.heures", heures=nombre(h, "heure"))
 
 
 def _path():
@@ -82,27 +85,28 @@ def brand_text(model):
     low = str(model).lower()
     for key, name in CAR_BRANDS.items():
         if key in low:
-            return f"probablement une {name}"
+            return dire("voiture.probablement", name=name)
     for key, name in SENSOR_MAKERS.items():
         if key in low:
-            if name == "poids lourd":
-                return "probablement un poids lourd"
-            return f"capteur {name}, monté sur beaucoup de marques"
+            if key == "truck":
+                return dire("voiture.poids_lourd")
+            return dire("voiture.capteur_monte_beaucoup_marques", name=name)
     return f"capteur {model}"
 
 
 def bars(kpa):
-    return f"{kpa / 100:.1f}".replace(".", ",") + " bars"
+    return dire("voiture.bars", pression=f"{kpa / 100:.1f}".replace(".", ","))
 
 
 def describe(model, n_tyres, pressures):
     """'probablement une Toyota ou Lexus, 4 pneus, environ 2,2 bars'."""
     parts = [brand_text(model)]
     if n_tyres:
-        parts.append(f"{n_tyres} pneu{'s' if n_tyres > 1 else ''} entendu{'s' if n_tyres > 1 else ''}")
+        parts.append(nombre(n_tyres, "pneu entendu", "pneus entendus"))
     if pressures:
         lo, hi = min(pressures), max(pressures)
-        parts.append(f"environ {bars(lo)}" if hi - lo < 15 else f"de {bars(lo)} à {bars(hi)}")
+        parts.append(dire("voiture.environ", pression=bars(lo)) if hi - lo < 15
+                     else dire("voiture.de_a", de=bars(lo), a=bars(hi)))
     return ", ".join(parts)
 
 
@@ -150,7 +154,7 @@ def label(data, vid):
     v = data["vehicules"].get(vid, {})
     if v.get("nom"):
         return v["nom"]
-    return f"véhicule numéro {vid}" + (f", {brand_text(v['marque'])}" if v.get("marque") else "")
+    return dire("voiture.vehicule_numero", vid=vid) + (f", {brand_text(v['marque'])}" if v.get("marque") else "")
 
 
 def _assign(data, clusters):
@@ -227,11 +231,10 @@ def learn(events):
                         and v["dernier"] - v.get("serie_debut", t) >= PARKED_MIN_SEC):
                     v["garee_dite"] = True
                     since = datetime.fromtimestamp(v["serie_debut"])
-                    sentences.append(f"Une voiture semble garée tout près : {desc}. Ses pneus émettent depuis "
-                                     f"{_hour(since.hour)} {since.minute:02d}.")
+                    sentences.append(dire("voiture.voiture_semble_garee_tout", desc=desc, v1=_hour(since.hour), minute=format(since.minute, "02d")))
                 if v.get("nom") and pressures and min(pressures) < LOW_PRESSURE_KPA and not v.get("pression_dite"):
                     v["pression_dite"] = True
-                    sentences.append(f"Un pneu de {v['nom']} semble sous-gonflé : {bars(min(pressures))}.")
+                    sentences.append(dire("voiture.pneu_semble_sous_gonfle", nom=v['nom'], bars=bars(min(pressures))))
                 continue
             v["serie_debut"], v["garee_dite"], v["pression_dite"] = t, False, False
             v["passages"] += 1
@@ -240,17 +243,16 @@ def learn(events):
             if not v["habituel"] and len(v["jours"]) >= HABITUAL_DAYS:
                 v["habituel"] = True
                 usual = max(v["heures"], key=v["heures"].get)
-                sentences.append(f"Véhicule habituel appris : {label(data, vid)}, {desc}, vu {len(v['jours'])} "
-                                 f"jours différents, surtout vers {_hour(int(usual))}.")
+                sentences.append(dire("voiture.vehicule_habituel_appris_vu", label=label(data, vid), desc=desc, len=len(v['jours']), v1=_hour(int(usual))))
             elif v.get("nom"):
-                sentences.append(f"{v['nom'].capitalize()} passe.")
+                sentences.append(dire("voiture.passe", capitalize=v['nom'].capitalize()))
             elif not v["habituel"] and hour in NIGHT_HOURS:
                 minute = datetime.fromtimestamp(t).minute
-                sentences.append(f"Passage d'une voiture inconnue à {_hour(hour)}" + (f" {minute:02d}" if minute else "")
+                sentences.append(dire("voiture.passage_voiture_inconnue", v1=_hour(hour)) + (f" {minute:02d}" if minute else "")
                                  + f" : {desc}.")
             if v.get("nom") and pressures and min(pressures) < LOW_PRESSURE_KPA:
                 v["pression_dite"] = True
-                sentences.append(f"Un pneu de {v['nom']} semble sous-gonflé : {bars(min(pressures))}.")
+                sentences.append(dire("voiture.pneu_semble_sous_gonfle_2", nom=v['nom'], bars=bars(min(pressures))))
         _prune(data, time.time())
     return sentences
 
@@ -273,10 +275,9 @@ def summary():
     parts = []
     if listen_today >= 60:
         rate = len(today_passages) / (listen_today / 3600)
-        parts.append(f"Aujourd'hui : {len(today_passages)} passages pour {round(listen_today / 60)} minutes "
-                     f"d'écoute, soit environ {round(rate)} par heure.")
+        parts.append(dire("voiture.aujourd_hui_passages_minutes", len=len(today_passages), round=round(listen_today / 60), round2=round(rate)))
     else:
-        parts.append("Pas encore assez d'écoute aujourd'hui pour une statistique.")
+        parts.append(dire("voiture.encore_assez_ecoute_aujourd"))
     listen_by_hour, passages_by_hour = {}, {}
     for hours in data["ecoute"].values():
         for h, sec in hours.items():
@@ -287,17 +288,16 @@ def summary():
     rates = {h: passages_by_hour.get(h, 0) / (sec / 3600) for h, sec in listen_by_hour.items() if sec >= 600}
     if len(rates) >= 3:
         busy = sorted(rates, key=rates.get, reverse=True)[:3]
-        parts.append("Heures les plus chargées : " + ", ".join(_hour(h) for h in busy) + ".")
+        parts.append((dire("voiture.heures_plus_chargees") + " ") + ", ".join(_hour(h) for h in busy) + ".")
     habitual = [(vid, v) for vid, v in data["vehicules"].items() if v.get("habituel")]
     if habitual:
         items = []
         for vid, v in sorted(habitual, key=lambda p: -p[1].get("dernier", 0))[:8]:
             ago = int((now - v.get("dernier", now)) // 3600)
-            when = "dans l'heure" if ago < 1 else f"il y a {ago} heure{'s' if ago > 1 else ''}"
+            when = dire("voiture.heure") if ago < 1 else dire("voiture.heure_2", ago=ago, pluriel='s' if ago > 1 else '')
             items.append(f"{label(data, vid)}, vu {len(v['jours'])} jours, dernier passage {when}")
-        parts.append(f"{len(habitual)} véhicule{'s' if len(habitual) > 1 else ''} "
-                     f"habituel{'s' if len(habitual) > 1 else ''} : " + " ; ".join(items) + ".")
+        parts.append((dire("voiture.vehicule_habituel", len=len(habitual), pluriel='s' if len(habitual) > 1 else '', pluriel2='s' if len(habitual) > 1 else '') + " ") + " ; ".join(items) + ".")
     else:
-        parts.append("Aucun véhicule habituel appris pour l'instant, il faut quelques jours.")
-    parts.append(f"{len(data['vehicules'])} véhicules différents repérés en tout.")
+        parts.append(dire("voiture.aucun_vehicule_habituel_appris"))
+    parts.append(dire("voiture.vehicules_differents_reperes_tout", len=len(data['vehicules'])))
     return " ".join(parts)
