@@ -312,7 +312,7 @@ def weather_text(lieu):
     except (requests.RequestException, ValueError, KeyError):
         return ""
     day = 1 if evening else 0
-    when = "Demain" if evening else "Aujourd'hui"
+    when = dire("meteo.demain") if evening else dire("meteo.aujourdhui")
     try:
         sky = WMO.get(daily["weather_code"][day], "")
         tmin, tmax = round(daily["temperature_2m_min"][day]), round(daily["temperature_2m_max"][day])
@@ -444,10 +444,8 @@ def _spoken_now():
     return f"{now.hour} heures {now.minute}" if now.minute else f"{now.hour} heures"
 
 
-def build():
-    """Rend {"texte": flash complet, "sujets": sujets pour les details,
-    "nouveau": presse regeneree ?, "remarque": probleme eventuel}."""
-    lieu = reglages.get("lieu")
+def _press(lieu):
+    """Partie presse : (texte, rubriques, sujets, regeneree ?, remarque)."""
     articles, failed = fetch_articles(lieu)
     stories = cluster(articles)
     # La peche : tous les titres des sujets retenus. Un nouveau titre (meme
@@ -466,9 +464,49 @@ def build():
         news, rubriques = cache["texte"], cache.get("rubriques") or {}
     if failed and not articles:
         news = dire("flash.presse_locale_injoignable_moment")
-    services = [t for t in (alerts_text(lieu), weather_text(lieu), nearby_station_text(lieu),
-                            trains_text(), stas_text(lieu)) if t]
-    text = (dire("flash.flash_info", commune=lieu['commune'], v1=_spoken_now(), news=news) + " ") + " ".join(services)
+    return news, rubriques, stories, fresh, remark
+
+
+def collect(lieu, complet=False, scan=None, scan_failed=None):
+    """1) On rassemble tout, en parallele : presse, et pour le flash complet
+    (demande utilisateur 2026-10-03) le bulletin meteo bati sur l'agregat de
+    toutes les mesures (environnement compris : rivieres, seismes, air), le
+    trafic routier, les trains et les bus. Le flash court garde les resumes."""
+    import trafic
+    jobs = {"presse": (_press, lieu), "trains": (trains_text,), "bus": (stas_text, lieu)}
+    if complet:
+        import meteo_locale
+        jobs["meteo"] = (lambda: meteo_locale.bulletin(lieu, scan=scan, scan_failed=scan_failed),)
+        jobs["routes"] = (trafic.summary,)
+    else:
+        jobs.update(alertes=(alerts_text, lieu), meteo=(weather_text, lieu), station=(nearby_station_text, lieu))
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+        futures = {name: pool.submit(job[0], *job[1:]) for name, job in jobs.items()}
+        found = {}
+        for name, future in futures.items():
+            try:
+                found[name] = future.result()
+            except Exception as exc:  # une source en panne n'empeche pas le flash
+                print(f"[flash_info] {name} : {exc!r}")
+                found[name] = "" if name != "presse" else (dire("flash.presse_locale_injoignable_moment"), {}, [], False, None)
+    return found
+
+
+def build(complet=False, scan=None, scan_failed=None):
+    """Rend {"texte": flash complet, "sujets": sujets pour les details,
+    "nouveau": presse regeneree ?, "remarque": probleme eventuel}.
+    2) Mise en forme, une fois tout rassemble."""
+    lieu = reglages.get("lieu")
+    found = collect(lieu, complet, scan, scan_failed)
+    news, rubriques, stories, fresh, remark = found["presse"]
+    if complet:
+        sections = [found["meteo"],
+                    (dire("flash.sur_les_routes") + " " + found["routes"]) if found["routes"] else "",
+                    found["trains"], found["bus"]]
+    else:
+        sections = [found["alertes"], found["meteo"], found["station"], found["trains"], found["bus"]]
+    text = (dire("flash.flash_info", commune=lieu['commune'], v1=_spoken_now(), news=news) + " ") + \
+        " ".join(t for t in sections if t)
     for story in stories:
         story["rubrique"] = rubriques.get(story["cle"], "Autres infos")
         story.pop("mots", None)

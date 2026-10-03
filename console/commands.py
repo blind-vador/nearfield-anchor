@@ -514,7 +514,7 @@ COMMANDS = [
     Command("capteurs", "derniers relevés des capteurs sans fil et stations météo radioamateur captés", capteurs,
             keywords=["capteurs", "capteur", "sondes", "stations meteo", "thermometres"],
             examples=["quelle température chez les voisins", "les relevés des capteurs"]),
-    Command("flash", "flash d'info locale de la ville choisie ; flash détails pour les sujets par rubrique", None,
+    Command("flash", "flash d'info complet de la ville choisie : presse, météo mesurée autour de toi, environnement, routes, trains et bus ; flash détails pour les sujets par rubrique", None,
             keywords=["flash", "flash info", "flashinfo", "flash infos", "info locale", "infos locales",
                       "information locale", "informations locales", "quoi de neuf", "actualites",
                       "actualite", "actus", "actu", "nouvelles", "infos", "info"],

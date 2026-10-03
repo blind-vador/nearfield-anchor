@@ -167,10 +167,10 @@ _async_response = {"text": "", "t": 0.0}
 _last_direct = {"t": 0.0}
 
 
-def meteo_cmd(line):
-    """Balayage du panel radio meteo local par le scanner, PUIS bulletin
-    complet (lib/meteo_locale.py), ultra-local compris (demande utilisateur
-    2026-10-01). L'attente se fait en arriere-plan : le clavier reste libre."""
+def _scan_then(produce, busy_key, wait_key, fail_key):
+    """Balayage du panel radio meteo local par le scanner, PUIS produce(scan,
+    scan_failed) en arriere-plan : le clavier reste libre, la reponse est
+    dite quand elle est prete (et "repete" la relit)."""
     import threading
     import meteo_locale
     asked = meteo_locale.request_scan()
@@ -182,21 +182,38 @@ def meteo_cmd(line):
         scan = None if busy else meteo_locale.wait_scan(asked, timeout=seconds + 180)
         reason = busy or meteo_locale.scanner_busy()
         try:
-            text = meteo_locale.bulletin(scan=scan, scan_failed=(reason or True) if scan is None else None)
+            text = produce(scan, (reason or True) if scan is None else None)
         except Exception as exc:  # une source au format inattendu ne doit pas tuer la console
-            print(f"[console] meteo : {exc!r}", file=sys.stderr)
-            text = dire("console.bulletin_meteo_echoue_erreur")
+            print(f"[console] {fail_key} : {exc!r}", file=sys.stderr)
+            text = dire(fail_key)
         _async_response.update(text=text, t=time.time())
         out(f"{text}\n> ")
         voix.say_and_wait(text)
 
     threading.Thread(target=run, daemon=True).start()
     if busy:
-        return dire("console.prepare_bulletin_meteo_balayage", busy=busy)
+        return dire(busy_key, busy=busy)
     # Le scanner finit d'abord son etape en cours (balayage d'une bande large,
     # captation) : mesure reelle 2026-10-01, 3 min d'attente + 2 min 30 de balayage.
     low, high = max(3, round(seconds / 60) + 1), max(5, round(seconds / 60) + 3)
-    return (dire("console.balaie_abord_panel_radio", low=low, high=high))
+    return dire(wait_key, low=low, high=high)
+
+
+def meteo_cmd(line):
+    """Bulletin complet bati sur l'agregat de toutes les mesures, apres un
+    balayage frais du panel radio meteo (demande utilisateur 2026-10-01)."""
+    import meteo_locale
+    return _scan_then(lambda scan, failed: meteo_locale.bulletin(scan=scan, scan_failed=failed),
+                      "console.prepare_bulletin_meteo_balayage", "console.balaie_abord_panel_radio",
+                      "console.bulletin_meteo_echoue_erreur")
+
+
+def flash_cmd(line):
+    """Flash complet (demande utilisateur 2026-10-03) : on prend le temps de
+    tout rassembler -- balayage meteo, agregat, bulletin, routes, trains,
+    bus, presse -- puis on met en forme."""
+    return _scan_then(flash.texte_complet, "flash.prepare_complet_sans_balayage", "flash.prepare_complet",
+                      "flash.flash_info_echoue_erreur")
 
 
 def _match(line):
@@ -309,7 +326,9 @@ def run_command(line, key_source, last_response):
     if cmd.name == "météo":
         return meteo_cmd(line)
     if cmd.name == "flash":
-        return flash.run(line, key_source, voix.say, out)
+        if set(matcher.normalize(line).split()) & flash.DETAIL_WORDS:
+            return flash.run(line, key_source, voix.say, out)
+        return flash_cmd(line)
     if cmd.name == "tableau":
         return tableaux.run(line, key_source, voix.say, out)
     if cmd.name == "réglages":

@@ -49,6 +49,15 @@ def _details(built, key_source, say, out):
     return dire("flash.details_fermes")
 
 
+def texte_complet(scan=None, scan_failed=None):
+    """Flash complet, une fois tout rassemble (console/main.py : flash_cmd)."""
+    built = flash_info.build(complet=True, scan=scan, scan_failed=scan_failed)
+    text = built["texte"]
+    if built["remarque"]:
+        text += " " + dire("flash.flash_lu_sans_redaction", remarque=built['remarque'])
+    return text
+
+
 def run(line, key_source, say, out):
     words = set(matcher.normalize(line).split())
     say(dire("flash.prepare_flash_info"))

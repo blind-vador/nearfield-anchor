@@ -15,7 +15,7 @@ import json
 import math
 import re
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import requests
 
@@ -112,6 +112,43 @@ def metar_raw(codes):
         elif parts and len(parts[0]) == 4 and parts[0].isalpha():
             found[parts[0]] = line
     return found
+
+
+def metar_values(raw):
+    """METAR -> mesures chiffrees pour l'agregat meteo (lib/meteo_agregat.py) :
+    {t, temp, rosee, humidite, pression, vent, rafale, direction, pluie, orage}."""
+    tokens = raw.split()
+    out = {"t": None, "temp": None, "rosee": None, "humidite": None, "pression": None, "vent": None,
+           "rafale": None, "direction": None, "pluie": False, "orage": False}
+    when = next((t for t in tokens if re.fullmatch(r"\d{6}Z", t)), None)
+    if when:
+        now = datetime.now(timezone.utc)
+        utc = now.replace(hour=int(when[2:4]), minute=int(when[4:6]), second=0, microsecond=0)
+        if utc > now:  # releve d'hier soir lu apres minuit UTC
+            utc -= timedelta(days=1)
+        out["t"] = utc.timestamp()
+    for t in tokens:
+        m = re.fullmatch(r"(\d{3}|VRB)(\d{2,3})(G(\d{2,3}))?KT", t)
+        if m:
+            out["vent"] = round(int(m.group(2)) * 1.852)
+            out["rafale"] = round(int(m.group(4)) * 1.852) if m.group(4) else None
+            out["direction"] = None if m.group(1) == "VRB" else int(m.group(1))
+        m = re.fullmatch(r"(M?\d{2})/(M?\d{2})", t)
+        if m:
+            out["temp"] = int(m.group(1).replace("M", "-"))
+            out["rosee"] = int(m.group(2).replace("M", "-"))
+        m = re.fullmatch(r"Q(\d{4})", t)
+        if m:
+            out["pression"] = int(m.group(1))
+        m = re.fullmatch(r"(\+|-|VC)?((?:TS|SH|FZ)?(?:RA|DZ|SN|SG|GR|GS|PL|IC)+|TS)", t)
+        if m and m.group(1) != "VC":
+            out["pluie"] = out["pluie"] or bool(re.search(r"RA|DZ|SN|SG|GR|GS|PL|IC", m.group(2)))
+            out["orage"] = out["orage"] or "TS" in m.group(2)
+    if out["temp"] is not None and out["rosee"] is not None:  # formule de Magnus
+        a, b = 17.62, 243.12
+        gamma = lambda x: a * x / (b + x)
+        out["humidite"] = round(100 * math.exp(gamma(out["rosee"]) - gamma(out["temp"])))
+    return out
 
 
 def metar_meaning(raw):

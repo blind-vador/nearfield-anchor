@@ -138,8 +138,9 @@ def forecast(lieu):
             "current": "temperature_2m,apparent_temperature,relative_humidity_2m,weather_code,"
                        "wind_speed_10m,wind_direction_10m,wind_gusts_10m,pressure_msl,precipitation",
             "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code,"
-                      "wind_gusts_10m,cape,pressure_msl,freezing_level_height",
-            "past_hours": 3, "forecast_hours": 24,
+                      "wind_gusts_10m,cape,pressure_msl,freezing_level_height,relative_humidity_2m,wind_speed_10m",
+            # 6 h de passe : les releves anciens sont recales sur l'evolution du modele (meteo_agregat)
+            "past_hours": 6, "forecast_hours": 24,
             "daily": "weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,"
                      "precipitation_probability_max,wind_gusts_10m_max",
             "forecast_days": 3})
@@ -319,7 +320,7 @@ def _hourly_index(fc):
     """Indice de l'heure courante dans les series horaires."""
     times = (fc.get("hourly") or {}).get("time") or []
     now = datetime.now().strftime("%Y-%m-%dT%H:00")
-    return times.index(now) if now in times else min(3, max(0, len(times) - 1))
+    return times.index(now) if now in times else min(6, max(0, len(times) - 1))
 
 
 def pressure_trend(fc):
@@ -531,42 +532,6 @@ def take_scan_request():
 
 # --- bulletin -------------------------------------------------------------------
 
-def _neighbors_text(lieu, reference=None):
-    parts = []
-    aprs = _read_json(APRS_WX_PATH) or {}
-    lat0, lon0 = _home(lieu)
-    near = sorted(((_distance_km(lat0, lon0, s["lat"], s["lon"]), c, s) for c, s in aprs.items()
-                   if s.get("lat") is not None and (s.get("meteo") or {}).get("temperature") is not None
-                   and time.time() - s.get("t", 0) < 3 * 3600), key=lambda p: p[0])
-    odd = 0
-    shown = 0
-    for km, call, st in near:
-        if km > STATION_MAX_KM or shown >= 2:
-            break
-        wx = st["meteo"]
-        if reference is not None and abs(wx["temperature"] - reference) > PLAUSIBLE_STATION_C:
-            odd += 1  # station sans doute mal reglee ou au soleil : pas citee
-            continue
-        shown += 1
-        text = dire("meteo.station_radioamateur_degres", v1=_where(lieu, st['lat'], st['lon']), v3=_num(wx['temperature']))
-        if wx.get("pressure"):
-            text += f", pression {round(wx['pressure'])}"
-        parts.append(text)
-    kept, excluded = outdoor_sensors(reference)
-    temps = sorted(r["valeurs"]["temperature_C"] for r in kept.values())
-    if temps:
-        span = (dire("meteo.degres", v1=_num(temps[0], 1)) if len(temps) == 1 or temps[0] == temps[-1]
-                else dire("meteo.entre_degres", v1=_num(temps[0], 1), v3=_num(temps[-1], 1)))
-        parts.append(dire("meteo.thermometres_exterieurs_voisins", span=span))
-    if not parts:
-        return ""
-    text = (dire("meteo.releves_autour_toi") + " ") + " ; ".join(parts) + "."
-    if excluded or odd:
-        n = excluded + odd
-        text += ((" " + dire("meteo.ai_ecarte_appareil_qui", n=n, pluriel='s' if n > 1 else '', pluriel2='nt' if n > 1 else '')))
-    return text
-
-
 LAPSE_C_PER_KM = 6.5        # refroidissement moyen de l'air avec l'altitude (atmosphere standard)
 TROPOPAUSE_M = 11000         # au-dela : haute atmosphere, toujours tres froide
 ALOFT_ANOMALY_C = 4
@@ -614,29 +579,51 @@ def _sondes_text(lieu, found, fc=None):
 
 def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
     """Bulletin meteo local complet, en phrases. scan : compte rendu du
-    balayage radio qui vient d'etre fait (wait_scan)."""
+    balayage radio qui vient d'etre fait (wait_scan). L'etat present vient
+    de l'AGREGAT de toutes les mesures (lib/meteo_agregat.py : aeroports,
+    stations, thermometres, captes pendant le balayage ou avant, recales sur
+    le modele) ; le modele seul ne sert que de repli."""
+    import meteo_agregat
     lieu = lieu or reglages.get("lieu")
-    record_observations()  # les releves tout frais du balayage
     fc = forecast(lieu)
+    state = meteo_agregat.agreger(lieu, fc, scan_started=(scan or {}).get("debut"))  # enregistre aussi l'historique
     signs = precursors(lieu)
     level, reasons = threat(lieu, fc, signs)
     parts = [dire("meteo.meteo", commune=lieu['commune'])]
     if fc and fc.get("current"):
         c = fc["current"]
-        text = dire("meteo.moment_degres", get=WMO.get(c.get('weather_code'), dire('meteo.temps_indetermine')), v1=_num(c['temperature_2m']))
+        sky = WMO.get(c.get('weather_code'), dire('meteo.temps_indetermine'))
+        measured = state["temp"]
+        if measured:
+            temp = measured["valeur"]
+            model_temp = measured["modele"] if measured["modele"] is not None else c["temperature_2m"]
+            key = "meteo.moment_mesure_modele" if abs(temp - model_temp) >= 1.5 else "meteo.moment_mesure"
+            text = dire(key, ciel=sky, temperature=_num(temp), modele=_num(model_temp))
+        else:
+            temp, model_temp = c["temperature_2m"], c["temperature_2m"]
+            text = dire("meteo.moment_degres", get=sky, v1=_num(temp))
         if c.get("apparent_temperature") is not None and abs(c["apparent_temperature"] - c["temperature_2m"]) >= 2:
-            text += f", ressenti {_num(c['apparent_temperature'])}"
-        humidity = c.get("relative_humidity_2m")
+            text += dire("meteo.ressenti", ressenti=_num(c['apparent_temperature'] + temp - model_temp))
+        humidity = round(state["humidite"]["valeur"]) if state["humidite"] else c.get("relative_humidity_2m")
         text += dire("meteo.humidite_cent", humidity=humidity) + (dire("meteo.air_presque_sature_eau") if (humidity or 0) >= 95 else ".")
-        if c.get("wind_speed_10m") is not None:
-            text += (" " + dire("meteo.vent_kilometres_heure", v1=_wind_from(c.get('wind_direction_10m')), round=round(c['wind_speed_10m'])))
-            if (c.get("wind_gusts_10m") or 0) >= 30:
-                text += dire("meteo.rafales", round=round(c['wind_gusts_10m']))
+        wind = state["vent"]["valeur"] if state["vent"] else c.get("wind_speed_10m")
+        if wind is not None:
+            fresh_airport = [a for a in state["aeroports"] if a.get("direction") is not None and time.time() - a["t"] < 3600]
+            heading = fresh_airport[0]["direction"] if state["vent"] and fresh_airport else c.get('wind_direction_10m')
+            text += (" " + dire("meteo.vent_kilometres_heure", v1=_wind_from(heading), round=round(wind)))
+            gusts = max([r.get("rafale") or 0 for r in (state["vent"] or {}).get("sources", [])] + [c.get("wind_gusts_10m") or 0])
+            if gusts >= 30:
+                text += dire("meteo.rafales", round=round(gusts))
             text += "."
         parts.append(text)
+        if state["pluie"]:
+            parts.append(dire("agregat.pluie_mesuree", sources=", ".join(state["pluie"][:3])))
+        parts.append(meteo_agregat.composition(state))
         pressure, delta = pressure_trend(fc)
+        if pressure is not None and state["pression"]:
+            pressure = state["pression"]["valeur"]
         if pressure is not None:
-            trend = ("stable" if abs(delta) < 1 else
+            trend = (dire("donnees.stable") if abs(delta) < 1 else
                      dire("meteo.3_heures", v1=dire('meteo.mot_hausse') if delta > 0 else dire('meteo.mot_baisse'), v3=_num(abs(delta))))
             if delta <= -2:
                 meaning = dire("meteo.baisse_comme_celle_ci")
@@ -647,7 +634,7 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
             elif pressure <= 1005:
                 meaning = dire("meteo.basse_pression_temps_souvent")
             else:
-                meaning = "pression moyenne"
+                meaning = dire("meteo.pression_moyenne")
             parts.append(dire("meteo.pression_hectopascals", round=round(pressure), trend=trend, meaning=meaning))
         out = storm_outlook(fc, hours=12)
         hourly = fc["hourly"]
@@ -705,14 +692,11 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
     crue = _read_json(CRUE_STATE) or {}
     if any(isinstance(l, int) and l >= 2 for l in crue.values()):
         parts.append(dire("meteo.vigilance_crue_cours_riviere"))
-    if scan:
-        parts.append(dire("meteo.panel_radio_meteo_balaye", get=scan.get('stations', 0), pluriel='s' if scan.get('stations', 0) > 1 else '', get2=scan.get('capteurs', 0), pluriel2='s' if scan.get('capteurs', 0) > 1 else ''))
-    elif scan_failed:
+    if not scan and scan_failed:  # balayage reussi : deja dit par la composition de l'agregat
         reason = scan_failed if isinstance(scan_failed, str) else dire("meteo.scanner_repondu")
         parts.append(dire("meteo.balayage_radio_cette_fois", reason=reason))
     try:
         import donnees_ouvertes
-        airports, _ = donnees_ouvertes.airports_text()
         rivers = donnees_ouvertes.rivers_text()
         found = donnees_ouvertes.quakes() or []
         quake = (donnees_ouvertes.quake_sentence(found[0])
@@ -720,14 +704,10 @@ def bulletin(lieu=None, with_sondes=True, scan=None, scan_failed=None):
         air = donnees_ouvertes.air_text()
     except Exception as exc:
         print(f"[meteo_locale] donnees ouvertes : {exc!r}")
-        airports = rivers = quake = air = ""
-    for text in (airports, rivers, quake, air):
+        rivers = quake = air = ""
+    for text in (rivers, quake, air):
         if text:
             parts.append(text)
-    reference = ((fc or {}).get("current") or {}).get("temperature_2m")
-    neighbors = _neighbors_text(lieu, reference)
-    if neighbors:
-        parts.append(neighbors)
     try:
         import meteo_obs
         last_obs = (meteo_obs.load() or [None])[-1]
