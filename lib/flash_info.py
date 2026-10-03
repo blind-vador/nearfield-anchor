@@ -31,6 +31,7 @@ from datetime import datetime, timedelta
 import requests
 
 import reglages
+from phrases import Etiquettes, dire
 
 CACHE_PATH = os.path.join(reglages.CACHE_DIR, "flash_info.json")
 TIMEOUT = 15
@@ -54,8 +55,8 @@ APRS_WX_MAX_AGE_SEC = 2 * 3600
 METEO_STATE = "/tmp/meteo_watch_vigilance_state.json"
 CRUE_STATE = "/tmp/crue_watch_vigilance_state.json"
 STAS_STATE = "/tmp/stas_watch_state.json"
-CRUE_NAMES = {"LC126": "la Loire forézienne"}
-COLOR_NAMES = {2: "jaune", 3: "orange", 4: "rouge"}
+CRUE_NAMES = Etiquettes("crue.troncon", {"LC126": "la Loire forézienne"}, "nom d'un tronçon de rivière surveillé")
+COLOR_NAMES = Etiquettes("vigilance.couleur", {2: "jaune", 3: "orange", 4: "rouge"}, "couleur de vigilance météo")
 STAS_DEPARTEMENT = "42"
 TRAIN_WINDOW_SEC = 3 * 3600
 
@@ -63,13 +64,14 @@ STOP_WORDS = set("""le la les l un une des de du d a au aux et en dans sur pour 
 avec sans ce cette ces se sa son ses leur leurs qui que quoi est sont ont a ete plus
 pas ne apres avant entre sous vers chez il elle ils elles on nous vous""".split())
 
-WMO = {0: "ciel dégagé", 1: "ciel peu nuageux", 2: "éclaircies", 3: "ciel couvert",
+WMO = Etiquettes("meteo.temps", {0: "ciel dégagé", 1: "ciel peu nuageux", 2: "éclaircies", 3: "ciel couvert",
        45: "brouillard", 48: "brouillard givrant", 51: "bruine légère", 53: "bruine",
        55: "bruine forte", 61: "pluie faible", 63: "pluie", 65: "forte pluie",
        66: "pluie verglaçante", 67: "forte pluie verglaçante", 71: "neige faible",
        73: "neige", 75: "forte neige", 77: "grains de neige", 80: "averses",
        81: "averses", 82: "fortes averses", 85: "averses de neige", 86: "fortes averses de neige",
-       95: "orages", 96: "orages avec grêle", 99: "orages avec forte grêle"}
+       95: "orages", 96: "orages avec grêle", 99: "orages avec forte grêle"},
+                 "temps qu'il fait, d'après le code météo")
 
 PROMPT = """Tu es journaliste dans une radio locale française. Rédige le flash
 d'information locale de {commune} ({departement}), à lire à voix haute par une
@@ -235,21 +237,21 @@ def _gemini(prompt):
     """(dict JSON, None) ou (None, raison)."""
     key = reglages.cle("gemini")
     if not key:
-        return None, "pas de clé Gemini"
+        return None, dire("flash.cle_gemini")
     body = {"contents": [{"parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json", "temperature": 0.3}}
-    reason = "Gemini ne répond pas"
+    reason = dire("flash.gemini_repond")
     for model in GEMINI_MODELS:
         try:
             resp = requests.post(GEMINI_URL.format(model=model), json=body, timeout=60,
                                  headers={"x-goog-api-key": key})
         except requests.RequestException:
-            return None, "pas d'accès à Gemini"
+            return None, dire("flash.acces_gemini")
         if resp.status_code in (401, 403):
-            return None, "Google refuse la clé Gemini"
+            return None, dire("flash.google_refuse_cle_gemini")
         if not resp.ok:
             print(f"[flash_info] Gemini {model} : HTTP {resp.status_code}")
-            reason = "quota Gemini épuisé" if resp.status_code == 429 else reason
+            reason = dire("flash.quota_gemini_epuise") if resp.status_code == 429 else reason
             continue
         try:
             text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
@@ -258,20 +260,20 @@ def _gemini(prompt):
                 return data, None
         except (KeyError, IndexError, ValueError, AttributeError):
             pass
-        reason = "réponse de Gemini inutilisable"
+        reason = dire("flash.reponse_gemini_inutilisable")
     return None, reason
 
 
 def _hours_ago(ts):
     hours = int((time.time() - ts) // 3600)
-    return "moins d'une heure" if hours < 1 else f"{hours} heure{'s' if hours > 1 else ''}"
+    return dire("flash.moins_heure") if hours < 1 else f"{hours} heure{'s' if hours > 1 else ''}"
 
 
 def write_news(lieu, stories):
     """(texte, {cle: rubrique}, remarque ou None)."""
     top = stories[:TOP_STORIES]
     if not top:
-        return "Pas d'information locale marquante depuis hier.", {}, None
+        return dire("flash.information_locale_marquante_depuis"), {}, None
     sujets = "\n".join(
         json.dumps({"id": str(i), "titre": s["titre"], "resume": s["resume"][:400],
                     "medias": s["medias"], "il_y_a": _hours_ago(s["date"])}, ensure_ascii=False)
@@ -280,7 +282,7 @@ def write_news(lieu, stories):
                                           departement=lieu["departement_nom"], sujets=sujets))
     if data is None:
         titles = ". ".join(s["titre"].rstrip(".") for s in top[:5])
-        return f"Les titres. {titles}.", {}, problem
+        return dire("flash.titres", titles=titles), {}, problem
     rubriques = {}
     for i, s in enumerate(top):
         rubrique = (data.get("rubriques") or {}).get(str(i))
@@ -317,11 +319,11 @@ def weather_text(lieu):
         rain, gusts = daily["precipitation_sum"][day], daily["wind_gusts_10m_max"][day]
     except (KeyError, IndexError, TypeError):
         return ""
-    text = f"La météo. {when} à {lieu['commune']}, {sky}, de {tmin} à {tmax} degrés."
+    text = dire("flash.meteo_degres", when=when, commune=lieu['commune'], sky=sky, tmin=tmin, tmax=tmax)
     if rain and rain >= 1:
-        text += f" {round(rain)} millimètre{'s' if round(rain) > 1 else ''} de pluie attendus."
+        text += (" " + dire("flash.millimetre_pluie_attendus", round=round(rain), pluriel='s' if round(rain) > 1 else ''))
     if gusts and gusts >= 50:
-        text += f" Rafales jusqu'à {round(gusts)} kilomètres heure."
+        text += (" " + dire("flash.rafales_jusqu_kilometres_heure", round=round(gusts)))
     return text
 
 
@@ -342,9 +344,9 @@ def nearby_station_text(lieu):
     if best is None:
         return ""
     km, wx = best
-    where = "tout près" if km < 1 else f"à {round(km)} kilomètre{'s' if round(km) > 1 else ''}"
-    temp = f"{wx['temperature']:.0f}".replace("-", "moins ")
-    return f"Relevé d'une station météo radioamateur {where} : {temp} degrés en ce moment."
+    where = dire("flash.tout_pres") if km < 1 else dire("flash.kilometre", round=round(km), pluriel='s' if round(km) > 1 else '')
+    temp = f"{wx['temperature']:.0f}".replace("-", dire("meteo.moins") + " ")
+    return dire("flash.releve_station_meteo_radioamateur", where=where, temp=temp)
 
 
 def alerts_text(lieu):
@@ -355,13 +357,12 @@ def alerts_text(lieu):
         by_color = {}
         for level, name in sorted(active, reverse=True):
             by_color.setdefault(COLOR_NAMES.get(level, "jaune"), []).append(name)
-        parts.append(" ".join(f"Vigilance {color} {' et '.join(names)} sur le département {lieu['departement_nom']}."
+        parts.append(" ".join(dire("flash.vigilance_departement", color=color, join=' et '.join(names), departement_nom=lieu['departement_nom'])
                               for color, names in by_color.items()))
     crue = _read_json(CRUE_STATE) or {}
     for code, level in crue.items():
         if isinstance(level, int) and level >= 2:
-            parts.append(f"Vigilance crue {COLOR_NAMES.get(level, 'jaune')} sur "
-                         f"{CRUE_NAMES.get(code, 'le tronçon surveillé')}.")
+            parts.append(dire("flash.vigilance_crue", get=COLOR_NAMES.get(level, 'jaune'), get2=CRUE_NAMES.get(code, 'le tronçon surveillé')))
     return " ".join(parts)
 
 
@@ -394,18 +395,18 @@ def trains_text():
             continue
         hour = f"{base.hour} heure {base.minute}" if base.minute else f"{base.hour} heure"
         if any(l.get("id") in cancelled for l in links):
-            gone.append(f"le {hour} vers {direction}")
+            gone.append(dire("flash.vers", hour=hour, direction=direction))
         elif (real - base) >= timedelta(minutes=5):
-            late.append(f"le {hour} vers {direction}, {int((real - base).total_seconds() // 60)} minutes de retard")
+            late.append(dire("flash.vers_minutes_retard", hour=hour, direction=direction, int=int((real - base).total_seconds() // 60)))
     name = gare["gare"]
     if not late and not gone:
-        return f"Trafic normal en gare de {name} dans les 3 prochaines heures."
+        return dire("flash.trafic_normal_gare_3", name=name)
     parts = []
     if gone:
-        parts.append("supprimé : " + ", ".join(gone[:3]))
+        parts.append((dire("flash.supprime") + " ") + ", ".join(gone[:3]))
     if late:
-        parts.append("en retard : " + ", ".join(late[:3]))
-    return f"En gare de {name}, " + " ; ".join(parts) + "."
+        parts.append((dire("flash.retard") + " ") + ", ".join(late[:3]))
+    return (dire("flash.gare", name=name) + " ") + " ; ".join(parts) + "."
 
 
 def stas_text(lieu):
@@ -415,11 +416,10 @@ def stas_text(lieu):
     if not isinstance(titles, list):
         return ""
     if not titles:
-        return "Pas de perturbation signalée sur les bus et tram."
+        return dire("flash.perturbation_signalee_bus_tram")
     shown = ", ".join(t.split(" : ", 1)[0] if " : " in t else t for t in titles[:3])
     count = len(titles)
-    return (f"Bus et tram : {count} perturbation{'s' if count > 1 else ''} en cours, "
-            f"dont {shown}." if count > 3 else f"Bus et tram : {shown}.")
+    return (dire("flash.bus_tram_perturbation_cours", count=count, pluriel='s' if count > 1 else '', shown=shown) if count > 3 else dire("flash.bus_tram", shown=shown))
 
 
 # --- Assemblage -------------------------------------------------------------
@@ -465,10 +465,10 @@ def build():
     else:
         news, rubriques = cache["texte"], cache.get("rubriques") or {}
     if failed and not articles:
-        news = "La presse locale est injoignable pour le moment."
+        news = dire("flash.presse_locale_injoignable_moment")
     services = [t for t in (alerts_text(lieu), weather_text(lieu), nearby_station_text(lieu),
                             trains_text(), stas_text(lieu)) if t]
-    text = f"Flash info de {lieu['commune']}, {_spoken_now()}. {news} " + " ".join(services)
+    text = (dire("flash.flash_info", commune=lieu['commune'], v1=_spoken_now(), news=news) + " ") + " ".join(services)
     for story in stories:
         story["rubrique"] = rubriques.get(story["cle"], "Autres infos")
         story.pop("mots", None)

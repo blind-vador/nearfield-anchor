@@ -27,7 +27,7 @@ from datetime import datetime
 
 import meteo_locale
 import reglages
-from phrases import Champs
+from phrases import Champs, Etiquettes, dire
 
 OBS_PATH = "/media/nas/nd1/server/meteo_observations.json"
 OBS_LOCAL = "/home/vador/autopilot/meteo_observations.json"
@@ -109,7 +109,7 @@ def spoken(answers):
         if value is None or value in ("aucune", "aucun", "calme", "continue", "doux", "inconnue", "sur"):
             continue
         parts.append(dict(options).get(value, value))
-    return ", ".join(parts) or "rien de particulier"
+    return ", ".join(parts) or dire("observation.rien_particulier")
 
 
 # --- enregistrement ------------------------------------------------------------
@@ -228,8 +228,7 @@ def calibrated_note(prob):
     observed = rained / total
     if abs(observed * 100 - prob) < 20:
         return ""
-    return (f"Le modèle annonce {round(prob)} pour cent de risque de pluie ; d'après tes observations, "
-            f"dans ce cas il a plu ici {round(observed * 10)} fois sur 10.")
+    return (dire("observation.modele_annonce_cent_risque", round=round(prob), round2=round(observed * 10)))
 
 
 def thunder_threshold():
@@ -257,39 +256,34 @@ def sign_reliability():
     return result
 
 
-SIGN_NAMES = {"chute_temp": "chutes de température", "pression": "baisses de pression",
-              "vent": "coups de vent", "pluie": "débuts de pluie"}
+SIGN_NAMES = Etiquettes("observation.signe", {"chute_temp": "chutes de température", "pression": "baisses de pression",
+                                             "vent": "coups de vent", "pluie": "débuts de pluie"},
+                        "type de signe avant-coureur, au pluriel")
 
 
 def summary():
     """Commande "bilan meteo" : ce que le Pi a appris, et sur combien."""
     observations = load()
     if not observations:
-        return ("Aucune observation pour l'instant. Dis par exemple : il pleut fort, ou tonnerre au loin, "
-                "ou observation pour le dialogue complet.")
-    parts = [f"{len(observations)} observation{'s' if len(observations) > 1 else ''} enregistrée"
-             f"{'s' if len(observations) > 1 else ''}."]
+        return (dire("observation.aucune_observation_instant_dis"))
+    parts = [dire("observation.observation_enregistree", len=len(observations), pluriel='s' if len(observations) > 1 else '', pluriel2='s' if len(observations) > 1 else '')]
     table = calibration()
     lines = []
     for (low, high), (rained, total) in table.items():
         if total >= MIN_SAMPLES:
-            lines.append(f"quand le modèle annonce de {low} à {min(high, 100)} pour cent, il a plu "
-                         f"{round(rained / total * 10)} fois sur 10")
-    parts.append("Pluie : " + ("; ".join(lines) + "." if lines
-                               else f"pas encore assez d'observations, il en faut {MIN_SAMPLES} par tranche de probabilité."))
+            lines.append(dire("observation.quand_modele_annonce_cent", low=low, min=min(high, 100), round=round(rained / total * 10)))
+    parts.append((dire("observation.pluie") + " ") + ("; ".join(lines) + "." if lines
+                               else dire("observation.encore_assez_observations_faut", MIN_SAMPLES=MIN_SAMPLES)))
     threshold = thunder_threshold()
-    parts.append(f"Orages : chez toi, le tonnerre a déjà été entendu à partir d'une instabilité de "
-                 f"{round(threshold)} joules par kilo." if threshold is not None
-                 else "Orages : pas encore assez de tonnerres observés, il en faut 3.")
+    parts.append(dire("observation.orages_chez_toi_tonnerre", round=round(threshold)) if threshold is not None
+                 else dire("observation.orages_encore_assez_tonnerres"))
     reliability = sign_reliability()
     known = [(t, h, n) for t, (h, n) in reliability.items() if n >= MIN_SAMPLES]
     if known:
-        parts.append("Signes avant-coureurs : " + "; ".join(
-            f"{SIGN_NAMES.get(t, t)} suivies d'un orage ou d'une forte pluie {h} fois sur {n}" for t, h, n in known) + ".")
+        parts.append((dire("observation.signes_avant_coureurs") + " ") + "; ".join(
+            dire("observation.suivies_orage_forte_pluie", get=SIGN_NAMES.get(t, t), h=h, n=n) for t, h, n in known) + ".")
     else:
-        parts.append("Signes avant-coureurs : pas encore assez de recul pour juger leur fiabilité.")
+        parts.append(dire("observation.signes_avant_coureurs_encore"))
     quick = sum(1 for o in observations if o.get("rapide"))
-    parts.append(f"Dont {quick} par phrase directe. Les observations hésitantes comptent pour moitié. "
-                 "Attention, on observe surtout quand il se passe quelque chose : dire aussi il fait beau aide "
-                 "le Pi à juger le modèle.")
+    parts.append(dire("observation.dont_phrase_directe_observations", quick=quick))
     return " ".join(parts)
