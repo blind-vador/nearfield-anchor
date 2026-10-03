@@ -5711,3 +5711,34 @@ tant que le Mac repond.
     relais.GROUPS, airband_bridge) : ce sont des donnees ;
   * reecriture des commentaires APRS (aprs_texte.WORDS) : moteur propre
     au francais ; messages de debogage (print).
+
+## 2026-10-03 : scanner bloque par une cle muette ; agregat meteo ; flash complet
+
+- PANNE : de 3 h 07 a 11 h 41 puis de nouveau des 11 h 44, le scanner est
+  reste bloque dans la fenetre LoRa 869,525 MHz : rtl_sdr attendait la cle
+  (plus aucun echantillon), lora_watch attendait rtl_sdr (read() sans
+  limite). Plus aucune ecoute, capteurs compris (d'ou un bulletin sans
+  releves). Corrige : lib/lecture_flux.lire() (rend la main apres 5 s de
+  silence) pour LoRa et la voix des satellites FM ; chien de garde dans
+  radio_watch : une fenetre de donnees qui depasse sa duree + 120 s voit ses
+  programmes radio (rtl_*, dump1090, dumpvdl2, acarsdec, dec406 -- jamais la
+  voix) arretes, le cycle reprend, une ligne dans le journal. Teste sur le Pi
+  avec un faux rtl_sdr.
+- AGREGAT METEO (lib/meteo_agregat.py) : le bulletin part de TOUTES les
+  mesures -- METAR des deux aeroports (donnees_ouvertes.metar_values),
+  stations APRS et thermometres captes pendant le balayage ou avant
+  (historique 24 h) -- recalees sur le modele : ecart au modele a l'heure du
+  releve, applique au modele de maintenant, poids exp(-age/tau) x qualite x
+  distance, mediane ponderee, ecarts invraisemblables rejetes. Fenetres :
+  temperature 6 h (tau 3 h), humidite 3 h, pression 3 h, vent 1 h, pluie
+  1 h. Modele Open-Meteo : 6 h de passe, humidite et vent horaires. Le
+  bulletin dit "N degres mesures autour de toi" (et le modele s'il s'ecarte
+  de 1,5 degre ou plus), puis la composition ("d'apres 4 releves : 2
+  aeroports, 2 thermometres"). Les anciennes phrases "releves autour de toi"
+  et "aeroport de ..." en clair sont remplacees par l'agregat (les orages
+  d'aeroport restent dans les raisons de vigilance).
+- FLASH COMPLET : commande "flash" = balayage meteo puis collecte en
+  parallele (flash_info.collect : presse, bulletin agrege avec rivieres,
+  seismes, air, sondes, routes Bison Fute, trains, bus) puis mise en forme
+  (build). En arriere-plan comme la meteo (main._scan_then) ; "flash
+  details" reste immediat. Essai reel : 19 s de collecte hors balayage.
