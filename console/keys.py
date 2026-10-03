@@ -12,8 +12,7 @@ import threading
 
 import evdev
 
-from phrases import Etiquettes
-from phrases import dire
+from phrases import Etiquettes, dire
 
 CHAR_NAMES = Etiquettes("touche", {
     " ": "espace", ".": "point", ",": "virgule", ";": "point-virgule",

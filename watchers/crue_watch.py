@@ -7,7 +7,6 @@ from speak import speak, speak_with_lead_sound
 import audio_lock
 from sound_paths import METEO_SCANER_DIR
 from phrases import Etiquettes, dire
-from phrases import dire
 
 # Vigicrues (service public gratuit, sans clé) -- réutilise telle quelle
 # l'architecture d'alerte de meteo_watch.py : même échelle de couleurs 1-4,

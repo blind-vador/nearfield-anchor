@@ -13,7 +13,6 @@ import requests
 
 import reglages
 from phrases import Etiquettes, dire, nombre
-from phrases import dire
 
 URL = ("https://tipi.bison-fute.gouv.fr/bison-fute-ouvert/publicationsDIR/"
        "Evenementiel-DIR/grt/RRN/content.xml")

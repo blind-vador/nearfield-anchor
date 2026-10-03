@@ -16,8 +16,8 @@ import time
 import radio_log
 import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
+from lecture_flux import lire
 from phrases import Etiquettes, dire
-from phrases import dire
 
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
 # Encadrement de toute diffusion dans le journal, comme le scanner (2026-10-02).
@@ -71,7 +71,7 @@ def _fm(p, seconds, speech_detector):
     end = time.time() + seconds
     try:
         while time.time() < end:
-            chunk = proc.stdout.read(chunk_bytes)
+            chunk = lire(proc.stdout, chunk_bytes)
             if not chunk:
                 break
             if is_voice(chunk, FM_RATE):

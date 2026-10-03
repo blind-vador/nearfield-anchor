@@ -8,7 +8,6 @@ import radio_log
 import sound_player
 from speak import speak_with_lead_sound
 from phrases import Etiquettes, dire
-from phrases import dire
 
 # --- Veille ACARS (donnees numeriques avion/compagnie) ---
 # Ajoute en session (2026-08-31, demande explicite de l'utilisateur) --

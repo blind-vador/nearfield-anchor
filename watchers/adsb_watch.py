@@ -12,7 +12,6 @@ import reglages
 import adsb_local_watch
 import ogn_watch
 from phrases import Etiquettes, dire
-from phrases import dire
 
 # API OpenSky Network. Compte authentifie cree en session (username
 # blind_vador) -- l'API exige desormais OAuth2 (client_credentials).

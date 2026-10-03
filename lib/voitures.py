@@ -31,7 +31,6 @@ import os
 import time
 from datetime import datetime
 from phrases import Etiquettes, dire, nombre
-from phrases import dire
 
 NAS_PATH = "/media/nas/nd1/server/radio_log/voitures.json"
 LOCAL_PATH = "/home/vador/autopilot/voitures.json"

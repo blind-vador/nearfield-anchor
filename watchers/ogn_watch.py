@@ -19,7 +19,6 @@ import aprslib
 import veille_donnees as vd
 from sound_paths import FLIGHT_SCANER_DIR
 from phrases import Etiquettes, dire
-from phrases import dire
 
 SERVER = ("aprs.glidernet.org", 14580)
 RADIUS_KM = 30

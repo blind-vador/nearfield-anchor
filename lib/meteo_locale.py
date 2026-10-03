@@ -25,7 +25,6 @@ import requests
 
 import reglages
 from phrases import Etiquettes, dire, nombre
-from phrases import dire
 
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 SONDEHUB_URL = "https://api.v2.sondehub.org/sondes"

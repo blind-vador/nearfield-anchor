@@ -24,8 +24,7 @@ import json
 import os
 import time
 
-from phrases import Etiquettes
-from phrases import dire
+from phrases import Etiquettes, dire
 
 NAS_ROOT = "/media/nas/nd1"
 STATE_NAS = f"{NAS_ROOT}/server/radio_log/attention.json"   # survit aux redemarrages

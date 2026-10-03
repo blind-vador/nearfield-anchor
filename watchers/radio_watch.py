@@ -1325,7 +1325,73 @@ def _save_raw(path):
 # VDL2, APRS, capteurs sans fil 433/868 MHz (et pneus), pagers 466 MHz,
 # ADS-B direct 1090 MHz, balises de detresse 406 MHz. Chacune prend le dongle pour
 # sa duree d'ecoute puis le rend.
-DATA_SCANNERS = {
+# Chien de garde des fenetres de donnees (2026-10-03) : une cle RTL-SDR qui
+# cesse d'envoyer des echantillons laisse le programme radio en attente, et
+# la fenetre avec lui (scanner bloque 8 h 30 sur LoRa, plus aucune ecoute).
+# Au-dela de la duree prevue + WINDOW_GRACE_SEC, les programmes lances par
+# la veille sont arretes : la lecture bloquee rend la main, le cycle reprend.
+WINDOW_GRACE_SEC = 120
+# Seuls les programmes qui tiennent la cle sont arretes (jamais la voix) : le
+# reste de la chaine (sox, decodeurs, multimon-ng) se termine faute d'entree.
+DONGLE_PROGRAMS = ("rtl_sdr", "rtl_fm", "rtl_433", "rtl_airband", "dump1090", "dumpvdl2", "acarsdec", "dec406")
+_window = {"nom": None, "fin": 0.0}
+
+
+def _descendants(pid):
+    children = {}
+    for entry in os.listdir("/proc"):
+        if not entry.isdigit():
+            continue
+        try:
+            with open(f"/proc/{entry}/stat") as f:
+                ppid = int(f.read().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            continue
+        children.setdefault(ppid, []).append(int(entry))
+    found, todo = [], [pid]
+    while todo:
+        for child in children.get(todo.pop(), []):
+            found.append(child)
+            todo.append(child)
+    return found
+
+
+def _comm(pid):
+    try:
+        with open(f"/proc/{pid}/comm") as f:
+            return f.read().strip()
+    except OSError:
+        return ""
+
+
+def _window_watchdog():
+    while True:
+        time.sleep(10)
+        name, end = _window["nom"], _window["fin"]
+        if name is None or time.time() < end + WINDOW_GRACE_SEC:
+            continue
+        stuck = [pid for pid in _descendants(os.getpid()) if _comm(pid).startswith(DONGLE_PROGRAMS)]
+        print(f"[radio_watch] fenetre {name} bloquee depuis {round(time.time() - end)} s : "
+              f"arret de {len(stuck)} programme(s) radio")
+        for pid in stuck:
+            try:
+                os.kill(pid, signal.SIGKILL)
+            except OSError:
+                pass
+        _window["fin"] = time.time()  # nouvel essai dans WINDOW_GRACE_SEC si rien ne bouge
+
+
+def _guarded(name, scan):
+    def run(dwell_sec, **kwargs):
+        _window.update(nom=name, fin=time.time() + dwell_sec)
+        try:
+            return scan(dwell_sec=dwell_sec, **kwargs)
+        finally:
+            _window.update(nom=None, fin=0.0)
+    return run
+
+
+DATA_SCANNERS = {name: _guarded(name, scan) for name, scan in {
     "acars": acars_watch.scan_window,
     "vdl2": vdl2_watch.scan_window,
     "aprs": aprs_watch.scan_window,
@@ -1335,7 +1401,7 @@ DATA_SCANNERS = {
     "balises": balises_watch.scan_window,
     "sondes": sondes_watch.scan_window,
     "lora": lora_watch.scan_window,
-}
+}.items()}
 
 
 def _speech_detector():
@@ -1693,6 +1759,7 @@ def _speak_pause(message, sound=None):
 
 def main():
     print("[radio_watch] demarrage de la veille radio")
+    threading.Thread(target=_window_watchdog, daemon=True).start()
     radio_log.start_purge_scheduler()
     _publish_plages()
     manual_stream = ManualStream()  # touche F = RTLSDR-Airband, voir manual_tuner.py

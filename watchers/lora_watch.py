@@ -17,6 +17,7 @@ import time
 import numpy as np
 
 import veille_donnees as vd
+from lecture_flux import lire
 
 PROFILES = [
     {"nom": "meshtastic", "freq": 869_525_000, "largeur": 250_000},
@@ -77,8 +78,10 @@ def scan_window(dwell_sec=30):
     try:
         end = time.time() + dwell_sec
         while time.time() < end:
-            raw = proc.stdout.read(BLOCK * 2)
+            raw = lire(proc.stdout, BLOCK * 2)
             if len(raw) < BLOCK * 2:
+                if not raw:
+                    print(f"[lora_watch] {profile['nom']} : la cle n'envoie plus rien, fenetre abandonnee")
                 break
             block = np.frombuffer(raw, dtype=np.uint8)
             p = _band_power(block, profile["largeur"])

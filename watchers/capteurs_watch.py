@@ -23,7 +23,6 @@ import veille_donnees as vd
 import voitures
 from sound_paths import RADIO_SCANER_DIR
 from phrases import Etiquettes, dire
-from phrases import dire
 
 FREQUENCIES = ["433.92M", "868.3M"]
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")

@@ -25,8 +25,7 @@ import time
 
 import numpy as np
 
-from phrases import Etiquettes
-from phrases import dire
+from phrases import Etiquettes, dire
 
 STORE_PATH = "/home/vador/autopilot/stations_probables.json"
 LOCK_PATH = "/tmp/stations_probables.lock"
