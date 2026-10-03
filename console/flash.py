@@ -13,7 +13,7 @@ sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import arbre  # noqa: E402
 import flash_info  # noqa: E402
 import matcher  # noqa: E402
-from phrases import dire  # noqa: E402
+from phrases import dire, nombre  # noqa: E402
 
 DETAIL_WORDS = {"detail", "details", "detaille", "rubrique", "rubriques", "sujets"}
 RUBRIQUE_ORDER = ["À la une", "Faits divers et justice", "Politique et société", "Économie",
@@ -21,7 +21,7 @@ RUBRIQUE_ORDER = ["À la une", "Faits divers et justice", "Politique et sociét�
 
 
 def _media_count(n):
-    return f"{n} média{'s' if n > 1 else ''}"
+    return nombre(n, "média")
 
 
 def _details(built, key_source, say, out):
@@ -32,7 +32,7 @@ def _details(built, key_source, say, out):
     index = []
     for story in stories:
         articles = [arbre.Node(
-            f"{a['source']}, il y a {flash_info._hours_ago(a['date'])} : {a['titre']}."
+            dire("flash.article", source=a['source'], depuis=flash_info._hours_ago(a['date']), titre=a['titre'])
             + (f" {a['resume']}" if a["resume"] else ""))
             for a in sorted(story["articles"], key=lambda a: -a["date"])]
         node = arbre.Node(f"{story['titre']}, {_media_count(story['medias'])}",
@@ -61,5 +61,5 @@ def run(line, key_source, say, out):
         return _details(built, key_source, say, out)
     text = built["texte"]
     if built["remarque"]:
-        text += dire("flash.flash_lu_sans_redaction", remarque=built['remarque'])
+        text += " " + dire("flash.flash_lu_sans_redaction", remarque=built['remarque'])
     return text

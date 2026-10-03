@@ -143,6 +143,94 @@ def dire(cle, **variables_):
             return neutral
 
 
+def _unite_cle(mot):
+    import unicodedata
+    plain = unicodedata.normalize("NFKD", mot).encode("ascii", "ignore").decode().lower()
+    return "unite." + re.sub(r"[^a-z0-9]+", "_", plain).strip("_")
+
+
 def nombre(n, singulier, pluriel=None):
-    """"1 note", "5 notes" : les nombres arrivent deja accordes dans les phrases."""
-    return f"{n} {singulier if n <= 1 else (pluriel or singulier + 's')}"
+    """"1 note", "5 notes" : les nombres arrivent deja accordes dans les phrases.
+    Le mot est traduit par la section [unite.<mot>] de la langue, sous la forme
+    "singulier|pluriel" (jamais reecrite par la personnalite) ; sans section,
+    le mot francais donne ici sert tel quel."""
+    entry = base().get(_unite_cle(singulier))
+    if entry and "|" in entry["texte"]:
+        singulier, pluriel = (w.strip() for w in entry["texte"].split("|", 1))
+    return f"{n} {singulier if abs(n) <= 1 else (pluriel or singulier + 's')}"
+
+
+# --- tableaux d'etiquettes (2026-10-03) ---------------------------------------
+# Les listes de choix (modes radio, champs de la grille de notation, debits de
+# la voix...) gardent leurs codes dans le programme ; leurs libelles passent par
+# la langue : section [<groupe>.<code>] (et [<groupe>.<code>.<valeur>] pour les
+# choix d'un champ). Sans section, le libelle francais du programme sert tel
+# quel. Jamais reecrits par la personnalite (ce sont des noms, pas des phrases).
+# tools/phrases_convertir.py etiquettes : ecrit les sections manquantes.
+
+import collections.abc
+
+REGISTRE = []   # tous les tableaux, pour l'outil qui ecrit les sections
+
+
+def _code(code):
+    import unicodedata
+    plain = unicodedata.normalize("NFKD", str(code)).encode("ascii", "ignore").decode().lower()
+    return re.sub(r"[^a-z0-9]+", "_", plain).strip("_") or "x"
+
+
+def etiquette(cle, defaut=None):
+    entry = base().get(cle)
+    return entry["texte"] if entry else (cle if defaut is None else defaut)
+
+
+class Etiquettes(collections.abc.Mapping):
+    """{code: libelle} traduit a la lecture : MODES["nfm"] -> "FM étroite"."""
+
+    def __init__(self, groupe, libelles, contexte=""):
+        self.groupe, self._raw, self.contexte = groupe, dict(libelles), contexte
+        REGISTRE.append(self)
+
+    def cle(self, code):
+        return f"{self.groupe}.{_code(code)}"
+
+    def __getitem__(self, code):
+        return etiquette(self.cle(code), self._raw[code])
+
+    def __iter__(self):
+        return iter(self._raw)
+
+    def __len__(self):
+        return len(self._raw)
+
+    def sections(self):
+        return [(self.cle(c), v, self.contexte) for c, v in self._raw.items()]
+
+
+class Champs(collections.abc.Sequence):
+    """Grille de questions [(code, question, [(valeur, libelle)...], defaut)],
+    traduite a la lecture ; les codes ne changent jamais (ils sont enregistres)."""
+
+    def __init__(self, groupe, champs, contexte=""):
+        self.groupe, self._raw, self.contexte = groupe, list(champs), contexte
+        REGISTRE.append(self)
+
+    def _cles(self, code, value=None):
+        return f"{self.groupe}.{_code(code)}" + ("" if value is None else f".{_code(value)}")
+
+    def __getitem__(self, i):
+        if isinstance(i, slice):
+            return [self[j] for j in range(*i.indices(len(self)))]
+        code, question, options, *rest = self._raw[i]
+        return (code, etiquette(self._cles(code), question),
+                [(v, etiquette(self._cles(code, v), label)) for v, label in options], *rest)
+
+    def __len__(self):
+        return len(self._raw)
+
+    def sections(self):
+        out = []
+        for code, question, options, *_ in self._raw:
+            out.append((self._cles(code), question, self.contexte))
+            out += [(self._cles(code, v), label, f"{self.contexte}, choix de {question}") for v, label in options]
+        return out

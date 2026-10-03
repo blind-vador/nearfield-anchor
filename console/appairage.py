@@ -41,7 +41,7 @@ def run(key_source, say, out):
             answer = found.get("answer") or compagnon.pairing_answer()
             if answer and "answer" not in found:
                 found["answer"] = answer
-                caps = ", ".join(answer.get("capacites") or []) or "rien pour l'instant"
+                caps = ", ".join(answer.get("capacites") or []) or dire("appairage.aucune_capacite")
                 tell(dire("appairage.reponse", nom=answer.get("nom", "inconnue"), code=_spoken_code(answer["code"]),
                           capacites=caps))
                 return

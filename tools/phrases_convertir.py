@@ -21,7 +21,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 INI = os.path.join(ROOT, "phrases", "fr.ini")
-FR = re.compile(r"[éèàùâêîôûç]|\b(le|la|les|des|une|est|pas|pour|sur|dans|du|aucun|vers)\b", re.I)
+FR = re.compile(r"[éèàùâêîôûç]|\b(le|la|les|des|une|est|pas|pour|sur|dans|du|aucun|vers|quel|quelle|favori|"
+                r"tableau|et|ou|au|aux|en|un|de|il|elle|je|tu|on|son|sa|ses|mon|ma|mes|plus|moins|rien)\b", re.I)
 
 
 def _docstrings(tree):
@@ -60,7 +61,13 @@ def candidates(src):
             continue  # morceau d'une f-string : c'est la f-string entiere qui compte
         if isinstance(node, ast.JoinedStr) or (isinstance(node, ast.Constant) and isinstance(node.value, str)):
             text = _text_of(node)
-            if len(text) >= 4 and " " in text.strip() and FR.search(text) and not text.lstrip().startswith(("[", "{", "/")):
+            t = text.strip()
+            phrase = (len(t) >= 4 and (" " in t or t.endswith((" :", "?"))) and FR.search(t))
+            # forme de phrase : majuscule au debut, ponctuation a la fin ("Annulé.", "Gare : {…}.")
+            forme = (len(t) >= 4 and (t[0].isupper() or t.startswith("{…} ")) and t[-1] in ".?!:" and not t.isupper()
+                     and re.search(r"[a-zéèàùâêîôûç]{2}", t))
+            code = t.startswith(("[", "/")) or (t.startswith("{") and not t.startswith("{…}"))
+            if (phrase or forme) and not code:
                 out.append((node.lineno, node.end_lineno, text, node))
     return sorted(out, key=lambda c: (c[0], c[3].col_offset))
 
@@ -202,6 +209,10 @@ def convert(path, prefix, spec, fixe=False):
         existing.add(key)
         template, args = _convert(node, src)
         call = f'dire("{key}"' + "".join(f", {n}={e}" for n, e in args) + ")"
+        # l'INI perd les espaces du bord ("Fin de liste, " + nom) : ils restent dans le code
+        if template != template.strip():
+            call = ("(" + ('" " + ' if template[0].isspace() else "") + call
+                    + (' + " "' if template[-1].isspace() else "") + ")")
         start = offsets[node.lineno - 1] + node.col_offset
         stop = offsets[node.end_lineno - 1] + node.end_col_offset
         edits.append((start, stop, call))
@@ -287,7 +298,40 @@ def constants(path, prefix, names):
     print(f"{len(entries)} constantes converties dans {path}")
 
 
+def etiquettes(modules):
+    """Sections manquantes des tableaux Etiquettes/Champs (lib/phrases.py) des
+    modules donnes ; les libelles sont des noms, jamais reecrits (fixe)."""
+    sys.path[:0] = [os.path.join(ROOT, "lib"), os.path.join(ROOT, "console"), os.path.join(ROOT, "watchers")]
+    import importlib
+    import phrases
+    from unittest import mock
+    for name in modules.split(","):
+        for _ in range(30):  # modules absents de la machine de developpement : remplaces par des leurres
+            try:
+                importlib.import_module(name)
+                break
+            except ModuleNotFoundError as exc:
+                sys.modules[exc.name] = mock.MagicMock()
+    parser = configparser.RawConfigParser(interpolation=None)
+    parser.optionxform = str
+    parser.read(INI, encoding="utf-8")
+    existing = set(parser.sections())
+    new = []
+    for table in phrases.REGISTRE:
+        for key, text, ctx in table.sections():
+            if key not in existing:
+                existing.add(key)
+                new.append((key, text, ctx))
+    with open(INI, "a", encoding="utf-8") as f:
+        for key, text, ctx in new:
+            f.write(f"\n[{key}]\ntexte = {text}\ncontexte = {ctx}\nfixe = oui\n")
+    print(f"{len(new)} etiquettes ajoutees")
+
+
 if __name__ == "__main__":
+    if sys.argv[1] == "etiquettes":
+        etiquettes(sys.argv[2])
+        sys.exit(0)
     if sys.argv[1] == "constantes":
         constants(sys.argv[2], sys.argv[3], sys.argv[4].split(","))
         sys.exit(0)

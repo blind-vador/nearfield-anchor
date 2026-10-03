@@ -22,6 +22,7 @@ import arbre  # noqa: E402
 import matcher  # noqa: E402
 import reglages  # noqa: E402
 import sources  # noqa: E402
+from phrases import dire  # noqa: E402
 
 NAVITIA_URL = "https://api.sncf.com/v1/coverage/sncf/stop_areas/stop_area:SNCF:{uic}/{kind}"
 AIRLABS_URL = "https://airlabs.co/api/v9/schedules"
@@ -35,8 +36,7 @@ TIMEOUT = 15
 TRAIN_UNIT = ("train", "trains")
 FLIGHT_UNIT = ("vol", "vols")
 TRAIN_MODE_LABELS = {"REGIONAURA": "TER", "TGV INOUI": "TGV Inouï", "OUIGO": "Ouigo"}
-FLIGHT_STATUS = {"scheduled": "prévu", "active": "en vol", "landed": "atterri",
-                 "cancelled": "annulé", "diverted": "dérouté"}
+FLIGHT_STATUS = ("scheduled", "active", "landed", "cancelled", "diverted")  # phrases tableaux.vol_<statut>
 
 _flight_cache = {}
 
@@ -77,17 +77,17 @@ def _train_row(entry, departures, origins, cancelled):
     mode = TRAIN_MODE_LABELS.get(mode.upper(), mode)
     number = info.get("trip_short_name") or info.get("headsign") or ""
     if departures:
-        place = f"vers {_clean_place(info.get('direction'))}"
+        place = dire("tableaux.vers", v1=_clean_place(info.get('direction')))
     else:
         origin = next((origins.get(l.get("id")) for l in info.get("links") or []
                        if l.get("category") == "origin"), None)
-        place = f"de {_clean_place(origin)}" if origin else "origine inconnue"
+        place = dire("tableaux.phrase", v1=_clean_place(origin)) if origin else "origine inconnue"
     links = (entry.get("links") or []) + (info.get("links") or [])
     if any(l.get("id") in cancelled for l in links):
         status = "supprimé"
     else:
         delay = int((real - base).total_seconds() // 60)
-        status = f"retard {delay} minute{'s' if delay > 1 else ''}" if delay > 0 else "à l'heure"
+        status = f"retard {delay} minute{'s' if delay > 1 else ''}" if delay > 0 else dire("tableaux.heure")
     label = f"{_spoken_time(base)}, {mode} {number}".rstrip() + f", {place}, {status}"
     return arbre.Node(label)
 
@@ -95,19 +95,19 @@ def _train_row(entry, departures, origins, cancelled):
 def train_board(uic, departures):
     key = reglages.cle("sncf")
     if not key:
-        raise arbre.LoadError("Clé SNCF absente : colle-la dans le fichier sncf point txt des réglages.")
+        raise arbre.LoadError(dire("tableaux.cle_sncf_absente_colle"))
     kind = "departures" if departures else "arrivals"
     try:
         resp = requests.get(NAVITIA_URL.format(uic=uic, kind=kind), auth=(key, ""), timeout=TIMEOUT,
                             params={"count": TRAIN_COUNT, "data_freshness": "realtime"})
     except requests.RequestException:
-        raise arbre.LoadError("L'API SNCF ne répond pas.")
+        raise arbre.LoadError(dire("tableaux.api_sncf_repond"))
     if resp.status_code in (401, 403):
-        raise arbre.LoadError("L'API SNCF refuse la clé.")
+        raise arbre.LoadError(dire("tableaux.api_sncf_refuse_cle"))
     if resp.status_code == 404:
-        raise arbre.LoadError("L'API SNCF ne connaît pas de tableau pour cette gare.")
+        raise arbre.LoadError(dire("tableaux.api_sncf_connait_tableau"))
     if not resp.ok:
-        raise arbre.LoadError(f"L'API SNCF répond une erreur {resp.status_code}.")
+        raise arbre.LoadError(dire("tableaux.api_sncf_repond_erreur", status_code=resp.status_code))
     data = resp.json()
     origins = {o["id"]: o.get("name") for o in data.get("origins") or [] if "id" in o}
     cancelled = _no_service_ids(data)
@@ -129,9 +129,9 @@ def station_node(gare, prefix="", board=True):
     uic = gare["uic"]
     return arbre.Node(label, item=gare, fav=uic, children=[
         arbre.Node("Départs", loader=lambda: train_board(uic, True), unit=TRAIN_UNIT,
-                   empty="Aucun départ annoncé."),
+                   empty=dire("tableaux.aucun_depart_annonce")),
         arbre.Node("Arrivées", loader=lambda: train_board(uic, False), unit=TRAIN_UNIT,
-                   empty="Aucune arrivée annoncée."),
+                   empty=dire("tableaux.aucune_arrivee_annoncee")),
     ])
 
 
@@ -161,7 +161,7 @@ def _flight_rows(rows, departures):
             continue
         other = r.get("arr_iata" if departures else "dep_iata") or ""
         place = names.get(other) or " ".join(other) or "destination inconnue"
-        status = FLIGHT_STATUS.get(r.get("status"), "")
+        status = dire(f"tableaux.vol_{r['status']}") if r.get("status") in FLIGHT_STATUS else ""
         delay = r.get(f"{field}_delayed") or r.get("delayed")
         if status not in ("annulé", "atterri") and isinstance(delay, (int, float)) and delay > 0:
             status = f"retard {int(delay)} minutes"
@@ -176,7 +176,7 @@ def _flight_rows(rows, departures):
 def flight_board(iata, departures):
     key = reglages.cle("airlabs")
     if not key:
-        raise arbre.LoadError("Clé AirLabs absente : colle-la dans le fichier airlabs point txt des réglages.")
+        raise arbre.LoadError(dire("tableaux.cle_airlabs_absente_colle"))
     cache_key = (iata, departures)
     cached = _flight_cache.get(cache_key)
     if cached and time.time() - cached[0] < FLIGHT_CACHE_SEC:
@@ -187,10 +187,10 @@ def flight_board(iata, departures):
                 "api_key": key, ("dep_iata" if departures else "arr_iata"): iata})
             data = resp.json()
         except (requests.RequestException, ValueError):
-            raise arbre.LoadError("AirLabs ne répond pas.")
+            raise arbre.LoadError(dire("tableaux.airlabs_repond"))
         if data.get("error"):
             message = (data["error"] or {}).get("message") or "erreur inconnue"
-            raise arbre.LoadError(f"AirLabs refuse la demande : {message}.")
+            raise arbre.LoadError(dire("tableaux.airlabs_refuse_demande", message=message))
         rows = data.get("response") or []
         _flight_cache[cache_key] = (time.time(), rows)
     return _flight_rows(rows, departures)
@@ -204,12 +204,12 @@ def airport_node(a, prefix="", board=True):
         return arbre.Node(f"{label}, {' '.join(a['oaci'])}", item=a, fav=a["oaci"])
     iata = a.get("iata")
     if not iata:
-        return arbre.Node(f"{label}, pas de vols commerciaux", item=a, fav=a["oaci"])
+        return arbre.Node(dire("tableaux.pas_vols_commerciaux", aeroport=label), item=a, fav=a["oaci"])
     return arbre.Node(label, item=a, fav=a["oaci"], children=[
         arbre.Node("Départs", loader=lambda: flight_board(iata, True), unit=FLIGHT_UNIT,
-                   empty="Aucun départ annoncé."),
+                   empty=dire("tableaux.aucun_depart_annonce_2")),
         arbre.Node("Arrivées", loader=lambda: flight_board(iata, False), unit=FLIGHT_UNIT,
-                   empty="Aucune arrivée annoncée."),
+                   empty=dire("tableaux.aucune_arrivee_annoncee_2")),
     ])
 
 
@@ -221,13 +221,13 @@ def _toggle(kind, node):
     name = node.item["nom"]
     if node.fav in ids:
         ids.remove(node.fav)
-        text = f"Retiré des favoris : {name}."
+        text = dire("tableaux.retire_favoris", name=name)
     else:
         ids.append(node.fav)
-        text = f"Ajouté aux favoris : {name}."
+        text = dire("tableaux.ajoute_aux_favoris", name=name)
     favoris[kind] = ids
     if not reglages.save("favoris", favoris):
-        return "Le disque du NAS est inaccessible : favori non enregistré."
+        return dire("tableaux.disque_nas_inaccessible_favori")
     return text
 
 
@@ -245,11 +245,11 @@ def station_navigator(board, select=None):
         followed = reglages.get("trains")
         if board:
             gare = by_uic.get(str(followed["uic"])) or {"nom": followed["gare"], "uic": str(followed["uic"])}
-            head.append(station_node(gare, "Gare suivie : ", board))
+            head.append(station_node(gare, dire("tableaux.gare_suivie") + " ", board))
         shown = {node.fav for node in head}
         for uic in reglages.get("favoris").get("gares") or []:
             if uic in by_uic and uic not in shown:
-                head.append(station_node(by_uic[uic], "Favori : ", board))
+                head.append(station_node(by_uic[uic], dire("tableaux.favori") + " ", board))
         return head + letters
 
     return arbre.Navigator(roots, index, select=select,
@@ -270,22 +270,20 @@ def airport_navigator(board, select=None):
         head = []
         if board:
             avions = reglages.get("avions")
-            for role, prefix in (("proche", "Aéroport proche : "), ("grand", "Grand aéroport : ")):
+            for role, prefix in (("proche", dire("tableaux.aeroport_proche") + " "), ("grand", dire("tableaux.grand_aeroport") + " ")):
                 a = by_oaci.get(avions[role]["oaci"])
                 if a:
                     head.append(airport_node(a, prefix, board))
         shown = {node.fav for node in head}
         for oaci in reglages.get("favoris").get("aeroports") or []:
             if oaci in by_oaci and oaci not in shown:
-                head.append(airport_node(by_oaci[oaci], "Favori : ", board))
+                head.append(airport_node(by_oaci[oaci], dire("tableaux.favori_2") + " ", board))
         return head + letters
 
     return arbre.Navigator(roots, index, select=select,
                            toggle_favorite=lambda node: _toggle("aeroports", node))
 
 
-BOARD_KEYS = ("Droite déplie, gauche replie, haut et bas pour parcourir, tape des lettres pour chercher, "
-              "étoile pour les favoris, échap pour fermer. F1 redit ces touches.")
 
 
 def run(line, key_source, say, out):
@@ -295,19 +293,19 @@ def run(line, key_source, say, out):
     elif words & {"aeroport", "aeroports", "avion", "avions", "vol", "vols", "aerodrome"}:
         kind = "aeroport"
     else:
-        index = arbre.run_list(["Tableau des gares", "Tableau des aéroports"], key_source, say, out,
-                               "Quel tableau ?")
+        index = arbre.run_list([dire("tableaux.tableau_gares"), dire("tableaux.tableau_aeroports")], key_source, say, out,
+                               dire("tableaux.quel_tableau"))
         if index is None:
-            return "Tableau fermé."
+            return dire("tableaux.tableau_ferme")
         kind = ("gare", "aeroport")[index]
-    say("Chargement de la liste.")
+    say(dire("tableaux.chargement_liste"))
     if kind == "gare":
         nav = station_navigator(board=True)
-        title = "Tableau des gares : départs et arrivées."
+        title = dire("tableaux.tableau_gares_departs_arrivees")
     else:
         nav = airport_navigator(board=True)
-        title = "Tableau des aéroports : départs et arrivées."
+        title = dire("tableaux.tableau_aeroports_departs_arrivees")
     if nav is None:
-        return "Liste indisponible : pas de réseau et pas de copie sur le NAS."
-    arbre.run(nav, key_source, say, out, title, BOARD_KEYS, "tableau")
-    return "Tableau fermé."
+        return dire("tableaux.liste_indisponible_reseau_copie")
+    arbre.run(nav, key_source, say, out, title, dire("tableaux.board_keys"), "tableau")
+    return dire("tableaux.tableau_ferme_2")

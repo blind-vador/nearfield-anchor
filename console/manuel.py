@@ -30,10 +30,10 @@ import threading  # noqa: E402
 import noise_signatures as ns  # noqa: E402
 import conseils  # noqa: E402
 import notation  # noqa: E402
-from phrases import dire, nombre  # noqa: E402
+from phrases import Etiquettes, dire, nombre  # noqa: E402
 
 BIG_STEP = 10
-MODES = {"nfm": "FM étroite", "wfm": "FM large", "am": "AM"}
+MODES = Etiquettes("mode", {"nfm": "FM étroite", "wfm": "FM large", "am": "AM"}, "mode de réception radio")
 
 
 def stations_plage():
@@ -46,7 +46,7 @@ def stations_plage():
         return None
     if not found:
         return None
-    return {"source": "rtl_fm", "target": "stations", "mode": found[0]["mode"], "label": "stations repérées",
+    return {"source": "rtl_fm", "target": "stations", "mode": found[0]["mode"], "label": dire("manuel.plage_stations"),
             "low_hz": None, "high_hz": None, "step_hz": None, "channels": [s["freq_hz"] for s in found],
             "stations": found}
 
@@ -145,7 +145,7 @@ class Tuner:
         station = self.station()
         if station:
             return {"source": "rtl_fm", "freq_hz": self.freq, "mode": station["mode"],
-                    "label": station.get("label") or "station repérée", "target": station.get("bande"),
+                    "label": station.get("label") or dire("manuel.station_reperee"), "target": station.get("bande"),
                     "log_path": None, "fingerprint": None, "time": 0, "filter": self.filtered}
         return {"source": plage["source"], "freq_hz": self.freq, "mode": plage["mode"],
                 "label": plage["label"], "target": plage["target"], "log_path": None,

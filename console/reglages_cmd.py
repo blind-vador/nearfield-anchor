@@ -15,14 +15,16 @@ import reglages  # noqa: E402
 import sources  # noqa: E402
 import tableaux  # noqa: E402
 import veilles  # noqa: E402
+from phrases import dire, nombre  # noqa: E402
 
 VILLE_WORDS = {"ville", "commune"}
-AIRPORT_ROLES = {"proche": "Aéroport proche", "grand": "Grand aéroport"}
+AIRPORT_ROLES = ("proche", "grand")
 # Les frequences radio tour et approche restent celles de ces deux-la.
 RADIO_AIRPORTS = {"LFMH", "LFLL"}
-CHOOSE_KEYS = ("Droite déplie une lettre, gauche la replie, tape des lettres pour chercher, "
-               "étoile pour les favoris, entrée choisit, échap annule. F1 redit ces touches.")
-NO_NAS = "Le disque du NAS est inaccessible : rien n'a été enregistré."
+
+
+def _role(role):
+    return dire(f"reglages.role_{role}")
 
 
 def _restart(units):
@@ -38,21 +40,18 @@ def status():
     keys = reglages.keys_status()
     missing = [reglages.KEYS[k][1] for k, ok in keys.items() if not ok]
     parts = [
-        f"Commune : {lieu['commune']}, {lieu['departement_nom']}.",
-        f"Gare : {gare['gare']}.",
-        f"Aéroport proche : {avions['proche']['nom']}. Grand aéroport : {avions['grand']['nom']}.",
-        ("Toutes les clés sont présentes." if not missing
-         else f"Clés présentes : {len(keys) - len(missing)} sur {len(keys)}. "
-              f"Manquantes : {', '.join(missing)}."),
+        dire("reglages.commune", commune=lieu['commune'], departement=lieu['departement_nom']),
+        dire("reglages.gare", gare=gare['gare']),
+        dire("reglages.aeroport_proche_grand_aeroport", nom=avions['proche']['nom'], nom2=avions['grand']['nom']),
+        (dire("reglages.toutes_cles_sont_presentes") if not missing
+         else dire("reglages.cles_presentes_manquantes", v1=len(keys) - len(missing), len=len(keys), join=', '.join(missing))),
     ]
     if migrated:
-        parts.append(f"{len(migrated)} clé{'s' if len(migrated) > 1 else ''} "
-                     "recopiée" + ("s" if len(migrated) > 1 else "") + " depuis l'ancien fichier credentials.")
+        parts.append(dire("reglages.cles_recopiees", cles=nombre(len(migrated), "clé recopiée", "clés recopiées")))
     if migrated is None:
-        parts.append("Attention, le dossier de réglages du NAS est inaccessible, "
-                     "valeurs lues depuis la copie du Pi.")
+        parts.append(dire("reglages.attention_dossier_reglages_nas"))
     else:
-        parts.append("Les fichiers sont dans le partage server, dossier nearfield-anchor-settings.")
+        parts.append(dire("reglages.fichiers_sont_partage_server"))
     return " ".join(parts)
 
 
@@ -64,49 +63,48 @@ def _commune_label(c):
 def ville(line, key_source, say, out, read_line):
     query = " ".join(w for w in line.split() if matcher.normalize(w) not in VILLE_WORDS).strip()
     if not query:
-        prompt = conseils.intro("ville", "Nom de ta commune ?", "Tape-le puis entrée ; entrée seule pour annuler.")
+        prompt = conseils.intro("ville", dire("reglages.nom_ta_commune"), dire("reglages.tape_puis_entree_entree"))
         out(prompt + "\n? ")
         say(prompt, lock=True)
         query = read_line(key_source).strip()
         if not query:
-            return "Annulé."
-    say(f"Recherche de {query}.")
+            return dire("commun.annule")
+    say(dire("reglages.recherche", query=query))
     found = sources.communes(query)
     if found is None:
-        return "Le service des communes ne répond pas. Vérifie le réseau."
+        return dire("reglages.service_communes_repond_verifie")
     if not found:
-        return f"Aucune commune trouvée pour {query}."
+        return dire("reglages.aucune_commune_trouvee", query=query)
     if len(found) == 1:
-        title = "Une commune trouvée."
+        title = dire("reglages.commune_trouvee")
     else:
-        title = f"{len(found)} communes trouvées, les plus peuplées d'abord."
+        title = dire("reglages.communes_trouvees", communes=nombre(len(found), "commune trouvée", "communes trouvées"))
     index = arbre.run_list([_commune_label(c) for c in found], key_source, say, out, title)
     if index is None:
-        return "Annulé, commune inchangée."
+        return dire("reglages.annule_commune_inchangee")
     c = found[index]
     ok = reglages.save("lieu", {"commune": c["nom"], "code_insee": c["code_insee"],
                                 "departement": c["departement"], "departement_nom": c["departement_nom"],
                                 "lat": c["lat"], "lon": c["lon"]})
     if not ok:
-        return NO_NAS
-    return (f"Commune enregistrée : {c['nom']}. La vigilance météo suit maintenant "
-            f"le département {c['departement_nom'] or c['departement']}."
+        return dire("reglages.no_nas")
+    return (dire("reglages.commune_enregistree_vigilance_meteo", nom=c['nom'], v1=c['departement_nom'] or c['departement'])
             + _restart(["meteo-watch", "adsb-watch"]))
 
 
 def gare(key_source, say, out):
-    say("Chargement de la liste des gares.")
+    say(dire("reglages.chargement_liste_gares"))
     nav = tableaux.station_navigator(board=False, select=lambda node: node.item)
     if nav is None:
-        return "Liste des gares indisponible : pas de réseau et pas de copie sur le NAS."
+        return dire("reglages.liste_gares_indisponible_reseau")
     current = reglages.get("trains")["gare"]
-    title = f"Gares, favoris en tête puis par ordre alphabétique. Gare actuelle : {current}."
-    chosen = arbre.run(nav, key_source, say, out, title, CHOOSE_KEYS, "choix_gare")
+    title = dire("reglages.gares_favoris_tete_puis", current=current)
+    chosen = arbre.run(nav, key_source, say, out, title, dire("reglages.choose_keys"), "choix_gare")
     if chosen is None:
-        return "Annulé, gare inchangée."
+        return dire("reglages.annule_gare_inchangee")
     if not reglages.save("trains", {"gare": chosen["nom"], "uic": chosen["uic"]}):
-        return NO_NAS
-    return f"Gare enregistrée : {chosen['nom']}." + _restart(["sncf-watch"])
+        return dire("reglages.no_nas")
+    return dire("reglages.gare_enregistree", nom=chosen['nom']) + _restart(["sncf-watch"])
 
 
 def aeroport(line, key_source, say, out):
@@ -118,26 +116,24 @@ def aeroport(line, key_source, say, out):
         role = "proche"
     else:
         roles = list(AIRPORT_ROLES)
-        labels = [f"{AIRPORT_ROLES[r]}, actuellement {avions[r]['nom']}" for r in roles]
-        index = arbre.run_list(labels, key_source, say, out, "Quel aéroport changer ?")
+        labels = [dire("reglages.role_actuellement", role=_role(r), nom=avions[r]['nom']) for r in roles]
+        index = arbre.run_list(labels, key_source, say, out, dire("reglages.quel_aeroport_changer"))
         if index is None:
-            return "Annulé, aéroports inchangés."
+            return dire("reglages.annule_aeroports_inchanges")
         role = roles[index]
-    say("Chargement de la liste des aérodromes.")
+    say(dire("reglages.chargement_liste_aerodromes"))
     nav = tableaux.airport_navigator(board=False, select=lambda node: node.item)
     if nav is None:
-        return "Liste des aérodromes indisponible : pas de réseau et pas de copie sur le NAS."
-    title = (f"{AIRPORT_ROLES[role]}, actuellement {avions[role]['nom']}. Aérodromes français, "
-             "favoris en tête puis par ordre alphabétique.")
-    chosen = arbre.run(nav, key_source, say, out, title, CHOOSE_KEYS, "choix_aeroport")
+        return dire("reglages.liste_aerodromes_indisponible_reseau")
+    title = dire("reglages.choix_aeroport_titre", role=_role(role), nom=avions[role]['nom'])
+    chosen = arbre.run(nav, key_source, say, out, title, dire("reglages.choose_keys"), "choix_aeroport")
     if chosen is None:
-        return "Annulé, aéroport inchangé."
+        return dire("reglages.annule_aeroport_inchange")
     avions[role] = {"nom": chosen["nom"], "oaci": chosen["oaci"],
                     "lat": chosen["lat"], "lon": chosen["lon"]}
     if not reglages.save("avions", avions):
-        return NO_NAS
-    text = f"{AIRPORT_ROLES[role]} enregistré : {chosen['nom']}."
+        return dire("reglages.no_nas")
+    text = dire("reglages.aeroport_enregistre", role=_role(role), nom=chosen['nom'])
     if chosen["oaci"] not in RADIO_AIRPORTS:
-        text += (" Le contexte aérien le suit, mais le scanner écoute encore "
-                 "les fréquences de Saint-Étienne et Lyon.")
+        text += (" " + dire("reglages.contexte_aerien_suit_mais"))
     return text + _restart(["adsb-watch"])

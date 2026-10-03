@@ -34,13 +34,13 @@ def _reply(answers, quick):
     total, level, reasons = meteo_obs.record(answers, quick=quick)
     text = dire("observation.note_observation_au_total", spoken=meteo_obs.spoken(answers), total=total, v1='s' if total > 1 else '')
     if level >= 2:
-        text += dire("observation.niveau_vigilance_pi", v1=meteo_locale.LEVEL_NAMES[level])
+        text += " " + dire("observation.niveau_vigilance_pi", v1=meteo_locale.LEVEL_NAMES[level])
         text += (f", {', '.join(reasons)}." if reasons else ".")
-        text += dire("observation.ecoute_davantage_stations_meteo")
+        text += " " + dire("observation.ecoute_davantage_stations_meteo")
     if answers.get("orage") in ("proche", "tout_pres"):
         text += " " + dire("observation.safety")
     if quick:
-        text += dire("observation.dis_observation_preciser_reste")
+        text += " " + dire("observation.dis_observation_preciser_reste")
     return text
 
 

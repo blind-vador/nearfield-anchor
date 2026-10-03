@@ -37,9 +37,9 @@ class Node:
     ("train", "trains") pour annoncer le nombre d'entrees a l'ouverture."""
 
     def __init__(self, label, children=None, loader=None, item=None, fav=None,
-                 unit=None, empty="Rien ici."):
+                 unit=None, empty=None):
         self.label, self.loader, self.item, self.fav = label, loader, item, fav
-        self.unit, self.empty = unit, empty
+        self.unit, self.empty = unit, empty  # None : "Rien ici." dans la langue
         self.parent = None
         self._children = None
         if children is not None:
@@ -87,7 +87,7 @@ def alphabet(items, make_node, unit, aliases=None):
         groups.setdefault(first if first.isalpha() else "#", []).append(node)
     letters = []
     for letter in sorted(groups, key=lambda l: (l == "#", l)):
-        name = "chiffres et symboles" if letter == "#" else letter
+        name = dire("arbre.chiffres_symboles") if letter == "#" else letter
         nodes = groups[letter]
         letters.append(Node(f"{name}, {_count(len(nodes), unit)}", children=nodes))
     return letters, index
@@ -125,13 +125,13 @@ class Navigator:
     def expand(self):
         node = self.node
         if not node.expandable:
-            return f"{node.label}. Rien à déplier."
+            return dire("arbre.rien_a_deplier", nom=node.label)
         try:
             children = node.open()
         except LoadError as exc:
             return str(exc)
         if not children:
-            return node.empty
+            return node.empty or dire("arbre.rien_ici")
         self.node = children[0]
         head = _count(len(children), node.unit) if node.unit else "déplié"
         return f"{head}. {self.current()}"
@@ -245,7 +245,7 @@ def run_list(labels, key_source, say, out, title, consigne=None, feature="liste"
         if key in (UP, DOWN):
             wanted = index + (-1 if key == UP else 1)
             index = min(max(wanted, 0), len(labels) - 1)
-            text = (dire("arbre.debut_liste") if wanted < 0 else "Fin de liste, " if wanted != index else "") + labels[index]
+            text = (dire("arbre.debut_liste") + " " if wanted < 0 else dire("commun.fin_liste") + " " if wanted != index else "") + labels[index]
         elif conseils.is_help(key):
             text = consigne
         else:

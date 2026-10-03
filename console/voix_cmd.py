@@ -17,12 +17,12 @@ import keys  # noqa: E402
 import reglages  # noqa: E402
 import voix  # noqa: E402
 from speak import EDGE_TTS_VOICES  # noqa: E402  (les voix deja retenues pour les annonces)
-from phrases import dire
+from phrases import Etiquettes, dire
 
 UP, DOWN, ENTER, ESCAPE = "\x1b[A", "\x1b[B", ("\r", "\n"), "\x1b"
-COUNTRIES = {"FR": "France", "BE": "Belgique", "CA": "Canada", "CH": "Suisse"}
-RATES = [("normal", "+0%"), ("un peu rapide", "+15%"), ("rapide", "+30%"),
-         ("très rapide", "+50%"), ("extrêmement rapide", "+80%")]
+COUNTRIES = Etiquettes("pays", {"FR": "France", "BE": "Belgique", "CA": "Canada", "CH": "Suisse"}, "pays d'une voix")
+RATES = Etiquettes("debit", {"+0%": "normal", "+15%": "un peu rapide", "+30%": "rapide",
+                             "+50%": "très rapide", "+80%": "extrêmement rapide"}, "débit de la voix")
 ECHO_BOOST = 30   # points de debit en plus pour les touches et la navigation
 ECHO_MAX = 100
 
@@ -33,7 +33,7 @@ def voice_label(voice):
     _, country, name = voice.split("-", 2)
     multi = "Multilingual" in name
     name = name.replace("MultilingualNeural", "").replace("Neural", "")
-    return f"{name}, {COUNTRIES.get(country, country)}" + (", multilingue" if multi else "")
+    return f"{name}, {COUNTRIES.get(country, country)}" + (dire("voix.multilingue") if multi else "")
 
 
 def _pct(rate):
@@ -65,7 +65,7 @@ def _choose(labels, start, speak, key_source, out, title, feature):
         if key in (UP, DOWN):
             wanted = index + (-1 if key == UP else 1)
             index = min(max(wanted, 0), len(labels) - 1)
-            edge = "" if wanted == index else (dire("voix.debut_liste") if key == UP else "Fin de liste, ")
+            edge = "" if wanted == index else (dire("voix.debut_liste") + " " if key == UP else dire("commun.fin_liste") + " ")
             text = edge + labels[index]
         elif conseils.is_help(key):
             text = dire("voix.consigne")
@@ -90,11 +90,11 @@ def run(key_source, say, out):
     if voice == voix.ESPEAK:
         new_rate = rate
     else:
-        rate_labels = [label for label, _ in RATES]
-        rates = [r for _, r in RATES]
+        rate_labels = list(RATES.values())
+        rates = list(RATES)
         start = rates.index(rate) if rate in rates else 0
         chosen = _choose(rate_labels, start,
-                         lambda i, text: voix.preview(f"{text}. Voici comment je lirai les réponses.", voice, rates[i]),
+                         lambda i, text: voix.preview(dire("voix.apercu_debit", debit=text), voice, rates[i]),
                          key_source, out, dire("voix.debit_lecture"), "voix_debit")
         if chosen is None:
             return dire("voix.annule_voix_inchangee_2")
@@ -109,5 +109,5 @@ def run(key_source, say, out):
     todo = voix.prewarm(echo_texts())
     text = dire("voix.voix_enregistree", voice_label=voice_label(voice))
     if todo:
-        text += (dire("voix.prepare_sons_touches_arriere", todo=todo, max=max(1, todo // 120), v1='s' if todo >= 240 else ''))
+        text += (" " + dire("voix.prepare_sons_touches_arriere", todo=todo, max=max(1, todo // 120), v1='s' if todo >= 240 else ''))
     return text

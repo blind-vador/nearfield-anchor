@@ -27,6 +27,7 @@ from datetime import datetime
 
 import meteo_locale
 import reglages
+from phrases import Champs
 
 OBS_PATH = "/media/nas/nd1/server/meteo_observations.json"
 OBS_LOCAL = "/home/vador/autopilot/meteo_observations.json"
@@ -37,7 +38,7 @@ SIGN_FOLLOW_SEC = 2 * 3600
 MIN_SAMPLES = 5
 
 # (code, question, [(code, valeur dite)], defaut)
-FIELDS = [
+FIELDS = Champs("observation", [
     ("precip", "Précipitations", [("aucune", "aucune"), ("bruine", "bruine"), ("faible", "pluie faible"),
                                   ("moderee", "pluie modérée"), ("forte", "forte pluie"),
                                   ("violente", "averse violente"), ("grele", "grêle"), ("neige", "neige")], 0),
@@ -56,7 +57,7 @@ FIELDS = [
     ("odeur", "Odeur", [("aucune", "aucune"), ("pluie", "odeur de pluie"), ("ozone", "odeur d'ozone")], 0),
     ("direction", "Direction", [("inconnue", "inconnue")] + [(d, d) for d in meteo_locale.DIRECTIONS], 0),
     ("certitude", "Certitude", [("sur", "sûr"), ("hesitant", "hésitant")], 0),
-]
+], "grille d'observation météo")
 RAINY = {"bruine", "faible", "moderee", "forte", "violente", "grele", "neige"}
 HEAVY = {"forte", "violente", "grele"}
 PROB_BUCKETS = [(0, 20), (20, 40), (40, 60), (60, 80), (80, 101)]

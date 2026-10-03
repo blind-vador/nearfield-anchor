@@ -28,6 +28,8 @@ import threading
 import time
 import uuid
 
+from phrases import Etiquettes
+
 REGISTRY = "/tmp/audio_arbitre.json"
 REGISTRY_LOCK = "/tmp/audio_arbitre.lock"
 SETTINGS = "/media/nas/nd1/server/nearfield-anchor-settings/priorites.json"
@@ -42,7 +44,7 @@ GAIN_REFRESH_SEC = 0.2
 SETTINGS_REFRESH_SEC = 10
 ENTRY_MAX_AGE_SEC = 3600
 
-SOURCES = {
+SOURCES = Etiquettes("source", {
     "alertes": "alertes météo et crues",
     "console": "console",
     "trains": "trains",
@@ -51,11 +53,12 @@ SOURCES = {
     "donnees": "données radio : APRS, ACARS, capteurs, pagers, planeurs",
     "bus": "bus et tram",
     "disques": "disques",
-}
+}, "nom d'une source de son, réglage des priorités")
 DEFAULT_ORDER = list(SOURCES)
 DEFAULT_MODES = {s: "attend" for s in SOURCES}
 DEFAULT_MODES["radio"] = "attenue"   # une capture continue en fond sous une annonce
-MODES = {"attend": "attend son tour", "attenue": "joue atténuée", "abandonne": "abandonne si occupé"}
+MODES = Etiquettes("priorite", {"attend": "attend son tour", "attenue": "joue atténuée",
+                                "abandonne": "abandonne si occupé"}, "comportement d'une source quand une autre parle")
 DEFAULT_VOLUME = 0.3
 
 # Script -> source, pour les appelants qui ne la precisent pas.

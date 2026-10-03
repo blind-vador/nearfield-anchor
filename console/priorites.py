@@ -91,7 +91,7 @@ def run(key_source, say, out):
                 i = j
                 text = _label(order, modes, i)
             else:
-                text = (dire("priorites.debut_liste") if j < 0 else "Fin de liste, ") + _label(order, modes, i)
+                text = (dire("priorites.debut_liste") + " " if j < 0 else dire("commun.fin_liste") + " ") + _label(order, modes, i)
         elif key in (LEFT, RIGHT):
             source = order[i]
             k = MODE_ORDER.index(modes[source]) + (1 if key == RIGHT else -1)

@@ -222,7 +222,7 @@ def run_command(line, key_source, last_response):
         return veilles.handle(*request)
     cmd, score = _match(line)
     if cmd is None:
-        return f"Commande non reconnue : {line}."
+        return dire("console.commande_non_reconnue", commande=line)
     if cmd.busy:
         state = cmd.busy()
         if state:
@@ -231,7 +231,7 @@ def run_command(line, key_source, last_response):
         out(f"{cmd.confirm}\n? ")
         voix.say(cmd.confirm, lock=True)
         if matcher.normalize(read_line(key_source)) != "oui":
-            return "Annulé."
+            return dire("commun.annule")
         def announce(text):
             out(f"{text}\n")
             voix.say_and_wait(text)

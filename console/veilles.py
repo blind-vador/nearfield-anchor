@@ -107,7 +107,7 @@ def _describe(unit):
     if sub == "auto-restart" or active == "activating":
         return False, dire("veilles.redemarre_boucle_fois", restarts=restarts)
     if active == "failed":
-        return False, f"en panne {_since(info.get('InactiveEnterTimestamp', ''))}"
+        return False, dire("veilles.en_panne", depuis=_since(info.get('InactiveEnterTimestamp', '')))
     return False, (dire("veilles.arretee", v1=_since(info.get('InactiveEnterTimestamp', '')))
                    + ("" if at_boot else dire("veilles.repartira_au_demarrage")))
 
@@ -117,8 +117,8 @@ def status_text():
     ok_count = sum(1 for _, ok, _ in states if ok)
     total = len(states)
     summary = (dire("veilles.veilles_tournent_normalement", total=total) if ok_count == total
-               else f"{ok_count} veilles sur {total} tournent normalement.")
-    details = " ".join(f"{name.capitalize()} : {text}." for name, _, text in states)
+               else dire("veilles.partiel", ok=ok_count, total=total))
+    details = " ".join(dire("veilles.etat", nom=name.capitalize(), etat=text) for name, _, text in states)
     return f"{summary} {details}"
 
 
@@ -140,11 +140,10 @@ def handle(action, units):
         else:
             ok = _systemctl("restart", unit)
         (done if ok else failed).append(names[unit])
-    verb = {"stop": "arrêtée", "start": "reprise", "restart": "relancée"}[action]
-    plural = "s" if len(done) > 1 else ""
-    text = f"Veille{plural} {verb}{plural} : {', '.join(done)}." if done else ""
+    plural = "pluriel" if len(done) > 1 else "singulier"
+    text = dire(f"veilles.{action}_{plural}", veilles=", ".join(done)) if done else ""
     if action == "stop" and done:
-        text += " Elle" + ("s restent" if plural else " reste") + " arrêtée" + plural + dire("veilles.meme_apres_redemarrage")
+        text += " " + dire(f"veilles.reste_arretee_{plural}")
     if failed:
-        text += dire("veilles.echec_console_droits", join=', '.join(failed))
+        text += " " + dire("veilles.echec_console_droits", join=', '.join(failed))
     return text.strip()

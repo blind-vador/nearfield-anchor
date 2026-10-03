@@ -24,7 +24,7 @@ sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import noise_signatures as ns  # noqa: E402
 import conseils  # noqa: E402
-from phrases import dire, nombre  # noqa: E402
+from phrases import Champs, dire, nombre  # noqa: E402
 
 NOTES_PATH = "/media/nas/nd1/server/radio_notes.json"  # jamais purge (le journal, lui, l'est a 48 h)
 
@@ -32,7 +32,7 @@ NOTES_PATH = "/media/nas/nd1/server/radio_notes.json"  # jamais purge (le journa
 INTERFERENCES = [("sifflement", "Sifflement"), ("bourdonnement", "Bourdonnement"),
                  ("autre_station", "Autre station"), ("crachotements", "Crachotements")]
 
-FIELDS = [
+FIELDS = Champs("grille", [
     ("contenu", "Contenu", [("voix", "voix"), ("musique", "musique"), ("tonalites", "tonalités, bips ou DTMF"),
                             ("donnees", "données numériques"), ("rien", "rien d'identifiable")], 0),
     ("lisibilite", "Lisibilité", [(n, f"{n} sur 5") for n in range(1, 6)], 2),
@@ -52,7 +52,7 @@ FIELDS = [
     ("fin", "Fin", [("coupee", "coupée trop tôt"), ("correcte", "correcte"), ("longue", "trop longue")], 1),
     ("merite", "Méritait d'être annoncé", [("oui", "oui"), ("bof", "bof"), ("non", "non")], 0),
     ("certitude", "Certitude", [("sur", "sûr"), ("hesitant", "hésitant")], 0),
-]
+], "grille de notation radio")
 OK_INDEX = len(FIELDS)
 EXAMPLES_DIR = "/home/vador/autopilot/exemples_notation"
 F2 = ("\x1b[[B", "\x1bOQ", "\x1b[12~")

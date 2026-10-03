@@ -41,7 +41,7 @@ import time
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import journaux  # noqa: E402
-from phrases import dire, nombre  # noqa: E402
+from phrases import Etiquettes, dire, nombre  # noqa: E402
 import keys  # noqa: E402
 import noise_signatures as ns  # noqa: E402
 import notation  # noqa: E402
@@ -66,6 +66,9 @@ RE_DAY_DIR = re.compile("^" + _DAY + "$")
 RE_TIME_ONLY = re.compile("_" + _TIME)
 
 # Phrases dites : lib/phrases.py (fichier phrases/<langue>.ini, personnalite du jour).
+
+MODES = Etiquettes("mode", {"nfm": "FM étroite", "wfm": "FM large", "am": "AM", "usb": "BLU haute",
+                             "lsb": "BLU basse"}, "mode de réception radio")
 
 
 def _date(day, month_name, year):
@@ -235,8 +238,7 @@ def info_text(path):
     if not info.get("freq_hz"):
         return dire("journal.pas_info")
     mhz = f"{info['freq_hz'] / 1e6:.4f}".rstrip("0").replace(".", ",")
-    modes = {"nfm": "FM étroite", "wfm": "FM large", "am": "AM", "usb": "BLU haute", "lsb": "BLU basse"}
-    text = dire("journal.info", frequence=mhz, mode=modes.get(info.get("mode"), info.get("mode") or "mode inconnu"),
+    text = dire("journal.info", frequence=mhz, mode=MODES.get(info.get("mode"), info.get("mode") or dire("journal.mode_inconnu")),
                 libelle=info.get("label") or "bande inconnue")
     analysis = (info.get("metrics") or {}).get("analyse")
     if analysis:
