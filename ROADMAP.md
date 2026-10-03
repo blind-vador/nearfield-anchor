@@ -5742,3 +5742,26 @@ tant que le Mac repond.
   seismes, air, sondes, routes Bison Fute, trains, bus) puis mise en forme
   (build). En arriere-plan comme la meteo (main._scan_then) ; "flash
   details" reste immediat. Essai reel : 19 s de collecte hors balayage.
+
+## 2026-10-03 (suite) : interets, LoRa reellement detecte, tout ce qui est capte est dit
+
+- CENTRES D'INTERET (lib/interets.py, commande "interets") : 9 categories
+  (talkies, aviation, radioamateurs, CB, meteo, secours, marine,
+  professionnels, FM commerciale), niveaux aucun / faible / normal / fort /
+  passion = x0,1 / 0,4 / 1 / 1,8 / 2,5 sur la piqure (attention.pressure).
+  FM commerciale "faible" par defaut (bandes de verification, du trafic en
+  permanence). Plancher d'exploration et recentrage des stations inchanges.
+  Forme directe : "interet avions fort". Reglage "interets" sur le NAS.
+- LORA : la chaine pont -> Mac -> decodage marchait, mais la detection par
+  energie gardait les capteurs 433,92 voisins (0 trame sur toutes les
+  rafales) et ratait le vrai LoRa (sous le bruit). Detection par dechirp :
+  preambule aligne sur 4 symboles. Valide : trames synthetiques gr-lora_sdr
+  (APRS SF12, Meshtastic SF11) decodees CRC bon par lora_decode.py ;
+  detection jusqu'a ~-21 dB (SF12) ; fausses rafales et bruit : 0 ou 1.
+  La piqure LoRa ne vient plus que d'une trame decodee.
+- ANNONCES : capteurs meteo dits a chaque passage en une phrase groupee
+  (un capteur redit apres 30 min, ou s'il bouge de 1 degre / 5 %) ;
+  atypiques (cuisson, piscine, frigo, sol...) avec une blague Gemini ;
+  pagers sans texte et numeriques ; trames VDL2 sans texte resumees par
+  avion nouveau (30 min). Constat 30 h : toutes les fenetres de donnees
+  visitees a chaque cycle ; APRS 144,800 sans paquet capte.
