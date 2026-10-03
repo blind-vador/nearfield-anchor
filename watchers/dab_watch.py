@@ -43,7 +43,7 @@ DEFAULT_BANNED = [
     # grandes radios nationales, publiques ou non
     "rfi", "radio classique", "europe 1", "europe1", "rtl", "rmc", "bfm", "sud radio", "radio nova", "tsf jazz",
     "jazz radio", "skyrock", "fun radio", "virgin", "rfm", "nrj", "nostalgie", "cherie", "rire et chansons",
-    "rire & chansons", "oui fm", "m radio", "latina", "africa radio", "radio fg", "voltage", "radio ado", "swigg",
+    "rire & chansons", "oui fm", "m radio", "latina", "africa radio", "radio fg", "fg", "voltage", "radio ado", "ado", "swigg",
     "chante france", "radio orient", "beur fm", "radio monaco", "melody",
     # reseaux commerciaux regionaux
     "radio scoop", "tonic radio", "alouette", "hit west", "contact fm", "radio espace", "forum", "vibration",
