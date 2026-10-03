@@ -31,6 +31,8 @@ import sound_player
 from sound_paths import RADIO_LOG_DIR
 
 SYNTH_TIMEOUT_SEC = 25
+NOTICE_EVERY_SEC = 60      # avis "captation ajoutee au journal" : une fois par minute au plus
+_notice = {"t": 0.0}
 _queue = queue.Queue()
 _worker = None
 _worker_lock = threading.Lock()
@@ -118,7 +120,9 @@ def play(path, label):
             sound_player.play_sound_effect(path, timeout_sec=600, label=label)
     finally:
         audio_lock.release(lock)
-    if getattr(lock, "silent", False):  # journal ouvert : enregistree sans bruit, un mot pour prevenir
+    if getattr(lock, "silent", False) and time.time() - _notice["t"] >= NOTICE_EVERY_SEC:
+        # journal ouvert : enregistree sans bruit, un mot pour prevenir (pas a chaque releve)
+        _notice["t"] = time.time()
         import speak
         speak.journal_notice()
 

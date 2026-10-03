@@ -5902,3 +5902,25 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
   bruit apprise pour le balayage). Teste : vraie voix 446 ouverte en 0,6 s ;
   parasite bref et bruit ecartes ; une capture 446 de 8 s du journal
   (proba voix max 0,31, 73 % semblable a un parasite connu) serait ecartee.
+
+## 2026-10-03 (soir) : panne DAB, capteurs d'interieur, phrase des avions
+
+- PANNE : en reecrivant la liste noire DAB+, des constantes de
+  dab_watch.py (CAROUSEL, SOUND, _memory...) ont ete effacees ; radio-watch
+  plantait a chaque fenetre DAB et systemd le relancait (9 fois en 20 min,
+  le cycle reprenait par les capteurs : "scanner bloque sur les capteurs").
+  Corrige ; radio_watch._guarded isole desormais chaque fenetre (erreur
+  notee, cycle continue). Avant tout deploiement : pyflakes (noms non
+  definis) et controle de passage satellite BLOQUANT.
+- Capteurs : valeurs identiques a celles deja dites tues ; thermometres
+  d'interieur probables (lib/capteurs_interieurs.py : 24 h de releves
+  bruts, amplitude faible ET niveau ecarte de 3 C des autres ; la nuit,
+  18-26 C et 4 C au-dessus des autres) ecartes de la meteo, annonces
+  "capteur d'interieur probable" (Acurite 606TX et inFactory TH a 22 C) ;
+  la routine d'un capteur ne pique plus l'attention.
+- Messages d'avions : "Un appareil modele X, <description alternative>,
+  immatricule Y, envoie le message suivant : <donnees>, signifiant que
+  <traduction>." Gemini rend description / donnees / sens en JSON, la
+  phrase est assemblee par le programme (avion.phrase, elision qu'il) ;
+  secours : sens fixe par nature de trame (vdl2.sens). Mode S idem.
+- Journal ouvert : avis "captation ajoutee au journal" une fois par minute.
