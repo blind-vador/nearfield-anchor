@@ -18,6 +18,7 @@ une nouvelle.
 """
 import conseils
 import matcher
+from phrases import dire
 
 UP, DOWN, RIGHT, LEFT = "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D"
 PAGE_UP, PAGE_DOWN = "\x1b[5~", "\x1b[6~"
@@ -137,9 +138,9 @@ class Navigator:
 
     def collapse(self):
         if self.node.parent is None:
-            return f"Déjà au premier niveau. {self.current()}"
+            return dire("arbre.deja_au_premier_niveau", current=self.current())
         self.node = self.node.parent
-        return f"Replié. {self.current()}"
+        return dire("arbre.replie", current=self.current())
 
     def _search(self):
         q = matcher.normalize(self.query)
@@ -159,20 +160,20 @@ class Navigator:
         if self._search():
             return self.current()
         typed, self.query = self.query, self.query[:-1]
-        return f"Rien pour {typed}."
+        return dire("arbre.rien", typed=typed)
 
     def erase(self):
         if not self.query:
-            return "Pas de recherche en cours."
+            return dire("arbre.recherche_cours")
         self.query = self.query[:-1]
         if not self.query:
-            return "Recherche effacée."
+            return dire("arbre.recherche_effacee")
         self._search()
         return f"{self.query} : {self.current()}"
 
     def favorite(self):
         if self.node.fav is None or self.toggle_favorite is None:
-            return "Cette entrée ne peut pas être mise en favori."
+            return dire("arbre.cette_entree_peut_etre")
         text = self.toggle_favorite(self.node)
         was_root = self.node.parent is None
         self.roots = self.build_roots()
@@ -212,7 +213,7 @@ def run(nav, key_source, say, out, title, consigne="", feature=None):
                 step = PAGE if key in (PAGE_UP, PAGE_DOWN) else 1
                 text = nav.move(-step if key in (UP, PAGE_UP) else step)
         elif conseils.is_help(key):
-            text = consigne or "Pas de consigne pour ce dialogue."
+            text = consigne or dire("arbre.consigne_dialogue")
         elif key in BACKSPACE:
             text = nav.erase()
         elif key == FAVORITE:
@@ -220,18 +221,18 @@ def run(nav, key_source, say, out, title, consigne="", feature=None):
         elif len(key) == 1 and key.isprintable():
             text = nav.type_char(key)
         else:
-            text = "Flèches, lettres pour chercher, étoile pour les favoris, échap pour fermer."
+            text = dire("arbre.fleches_lettres_chercher_etoile")
         out(f"[{text}]\n")
         say(text)
     return None
 
 
-LIST_CONSIGNE = "Flèches haut et bas pour parcourir, entrée pour choisir, échap pour annuler."
 
 
-def run_list(labels, key_source, say, out, title, consigne=LIST_CONSIGNE, feature="liste"):
+def run_list(labels, key_source, say, out, title, consigne=None, feature="liste"):
     """Liste simple : haut / bas, Entree choisit, Echap annule. Rend
     l'indice choisi ou None."""
+    consigne = consigne or dire("arbre.list_consigne")
     index = 0
     intro = conseils.intro(feature, title, consigne)
     out(intro + "\n")
@@ -244,11 +245,11 @@ def run_list(labels, key_source, say, out, title, consigne=LIST_CONSIGNE, featur
         if key in (UP, DOWN):
             wanted = index + (-1 if key == UP else 1)
             index = min(max(wanted, 0), len(labels) - 1)
-            text = ("Début de liste, " if wanted < 0 else "Fin de liste, " if wanted != index else "") + labels[index]
+            text = (dire("arbre.debut_liste") if wanted < 0 else "Fin de liste, " if wanted != index else "") + labels[index]
         elif conseils.is_help(key):
             text = consigne
         else:
-            text = "Flèches haut et bas, entrée pour choisir, échap pour annuler."
+            text = dire("arbre.fleches_haut_bas_entree")
         out(f"[{text}]\n")
         say(text)
     return None

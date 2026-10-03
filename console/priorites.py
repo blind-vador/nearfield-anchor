@@ -21,14 +21,11 @@ sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import audio_lock  # noqa: E402
 import conseils  # noqa: E402
+from phrases import dire  # noqa: E402
 
 UP, DOWN, RIGHT, LEFT = "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D"
 PAGE_UP, PAGE_DOWN = "\x1b[5~", "\x1b[6~"
 MODE_ORDER = ["attend", "attenue", "abandonne"]
-TITLE = "Priorités des haut-parleurs, de la plus importante à la moins importante."
-CONSIGNE = ("Flèches haut et bas pour parcourir. Majuscule plus flèche, ou page haut et page bas, "
-            "pour monter ou descendre la source. Gauche et droite : son comportement quand une source "
-            "plus importante parle. Entrée enregistre, échap annule. F1 redit ces touches.")
 SHIFT_CODES = None
 
 
@@ -63,18 +60,18 @@ def run(key_source, say, out):
     order = list(conf["ordre"])
     modes = dict(conf["comportements"])
     i = 0
-    intro = conseils.intro("priorites", TITLE, CONSIGNE)
+    intro = conseils.intro("priorites", dire("priorites.title"), dire("priorites.consigne"))
     out(intro + "\n")
     say(f"{intro} {_label(order, modes, i)}")
     for key in key_source:
         if key == "\x1b":
-            return "Annulé, priorités inchangées."
+            return dire("priorites.annule_priorites_inchangees")
         if key in ("\r", "\n"):
             data = {"ordre": order, "comportements": modes, "volume_attenue": conf["volume_attenue"]}
             if not audio_lock.save_settings(data):
-                return "Le disque du NAS est inaccessible : priorités gardées sur le Pi seulement."
+                return dire("priorites.disque_nas_inaccessible_priorites")
             first = audio_lock.SOURCES[order[0]]
-            return f"Priorités enregistrées. La plus importante : {first}."
+            return dire("priorites.priorites_enregistrees_plus_importante", first=first)
         move = 0
         if key in (PAGE_UP, PAGE_DOWN):
             move = -1 if key == PAGE_UP else 1
@@ -87,23 +84,23 @@ def run(key_source, say, out):
                 i = j
                 text = f"{'Monte' if move < 0 else 'Descend'} : {_label(order, modes, i)}"
             else:
-                text = "Déjà tout en haut." if move < 0 else "Déjà tout en bas."
+                text = dire("priorites.deja_tout_haut") if move < 0 else dire("priorites.deja_tout_bas")
         elif key in (UP, DOWN):
             j = i + (-1 if key == UP else 1)
             if 0 <= j < len(order):
                 i = j
                 text = _label(order, modes, i)
             else:
-                text = ("Début de liste, " if j < 0 else "Fin de liste, ") + _label(order, modes, i)
+                text = (dire("priorites.debut_liste") if j < 0 else "Fin de liste, ") + _label(order, modes, i)
         elif key in (LEFT, RIGHT):
             source = order[i]
             k = MODE_ORDER.index(modes[source]) + (1 if key == RIGHT else -1)
             modes[source] = MODE_ORDER[k % len(MODE_ORDER)]
             text = audio_lock.MODES[modes[source]]
         elif conseils.is_help(key):
-            text = CONSIGNE
+            text = dire("priorites.consigne")
         else:
-            text = "Flèches, majuscule plus flèche, entrée ou échap. F1 pour l'aide."
+            text = dire("priorites.fleches_majuscule_plus_fleche")
         out(f"[{text}]\n")
         say(text)
-    return "Priorités fermées."
+    return dire("priorites.priorites_fermees")

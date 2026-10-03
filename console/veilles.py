@@ -17,6 +17,7 @@ generee par install.sh).
 import subprocess
 
 import matcher
+from phrases import dire
 
 # (unite systemd, nom parle, mots qui la designent)
 WATCHERS = [
@@ -75,10 +76,10 @@ def _since(timestamp):
         seconds = time.time() - int(timestamp.lstrip("@"))
     except ValueError:
         # Pas d'horodatage : l'unite n'a pas change d'etat depuis le demarrage.
-        return "depuis le démarrage du Pi"
+        return dire("veilles.depuis_demarrage_pi")
     minutes = int(seconds // 60)
     if minutes < 1:
-        return "depuis moins d'une minute"
+        return dire("veilles.depuis_moins_minute")
     if minutes < 60:
         return f"depuis {minutes} minute{'s' if minutes > 1 else ''}"
     hours, minutes = divmod(minutes, 60)
@@ -101,21 +102,21 @@ def _describe(unit):
     if active == "active":
         since = _since(info.get("ActiveEnterTimestamp", ""))
         if restarts >= UNSTABLE_RESTARTS:
-            return False, f"active {since}, mais a redémarré {restarts} fois : instable"
+            return False, dire("veilles.active_mais_redemarre_fois", since=since, restarts=restarts)
         return True, f"active {since}"
     if sub == "auto-restart" or active == "activating":
-        return False, f"redémarre en boucle, {restarts} fois"
+        return False, dire("veilles.redemarre_boucle_fois", restarts=restarts)
     if active == "failed":
         return False, f"en panne {_since(info.get('InactiveEnterTimestamp', ''))}"
-    return False, (f"arrêtée {_since(info.get('InactiveEnterTimestamp', ''))}"
-                   + ("" if at_boot else ", ne repartira pas au démarrage"))
+    return False, (dire("veilles.arretee", v1=_since(info.get('InactiveEnterTimestamp', '')))
+                   + ("" if at_boot else dire("veilles.repartira_au_demarrage")))
 
 
 def status_text():
     states = [(name, *_describe(unit)) for unit, name, _ in WATCHERS]
     ok_count = sum(1 for _, ok, _ in states if ok)
     total = len(states)
-    summary = (f"Les {total} veilles tournent normalement." if ok_count == total
+    summary = (dire("veilles.veilles_tournent_normalement", total=total) if ok_count == total
                else f"{ok_count} veilles sur {total} tournent normalement.")
     details = " ".join(f"{name.capitalize()} : {text}." for name, _, text in states)
     return f"{summary} {details}"
@@ -143,7 +144,7 @@ def handle(action, units):
     plural = "s" if len(done) > 1 else ""
     text = f"Veille{plural} {verb}{plural} : {', '.join(done)}." if done else ""
     if action == "stop" and done:
-        text += " Elle" + ("s restent" if plural else " reste") + " arrêtée" + plural + " même après un redémarrage."
+        text += " Elle" + ("s restent" if plural else " reste") + " arrêtée" + plural + dire("veilles.meme_apres_redemarrage")
     if failed:
-        text += f" Échec pour : {', '.join(failed)}, la console n'a pas les droits."
+        text += dire("veilles.echec_console_droits", join=', '.join(failed))
     return text.strip()

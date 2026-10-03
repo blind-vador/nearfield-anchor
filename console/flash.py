@@ -13,6 +13,7 @@ sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import arbre  # noqa: E402
 import flash_info  # noqa: E402
 import matcher  # noqa: E402
+from phrases import dire  # noqa: E402
 
 DETAIL_WORDS = {"detail", "details", "detaille", "rubrique", "rubriques", "sujets"}
 RUBRIQUE_ORDER = ["À la une", "Faits divers et justice", "Politique et société", "Économie",
@@ -26,7 +27,7 @@ def _media_count(n):
 def _details(built, key_source, say, out):
     stories = built["sujets"]
     if not stories:
-        return "Aucun sujet local depuis hier."
+        return dire("flash.aucun_sujet_local_depuis")
     groups = {}
     index = []
     for story in stories:
@@ -43,23 +44,22 @@ def _details(built, key_source, say, out):
                         children=groups[r], unit=("sujet", "sujets")) for r in order]
     index.sort(key=lambda p: p[0])
     nav = arbre.Navigator(lambda: roots, index)
-    arbre.run(nav, key_source, say, out, "Sujets du jour par rubrique.",
-              "Droite déplie, gauche replie, haut et bas pour parcourir, tape des mots pour chercher "
-              "un sujet, échap pour fermer. F1 redit ces touches.", "flash_details")
-    return "Détails fermés."
+    arbre.run(nav, key_source, say, out, dire("flash.sujets_jour_rubrique"),
+              dire("flash.droite_deplie_gauche_replie"), "flash_details")
+    return dire("flash.details_fermes")
 
 
 def run(line, key_source, say, out):
     words = set(matcher.normalize(line).split())
-    say("Je prépare le flash info.")
+    say(dire("flash.prepare_flash_info"))
     try:
         built = flash_info.build()
     except Exception as exc:  # une source au format inattendu ne doit pas tuer la console
         print(f"[console] flash : {exc!r}", file=sys.stderr)
-        return "Le flash info a échoué sur une erreur inattendue."
+        return dire("flash.flash_info_echoue_erreur")
     if words & DETAIL_WORDS:
         return _details(built, key_source, say, out)
     text = built["texte"]
     if built["remarque"]:
-        text += f" Flash lu sans rédaction : {built['remarque']}."
+        text += dire("flash.flash_lu_sans_redaction", remarque=built['remarque'])
     return text

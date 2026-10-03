@@ -17,6 +17,7 @@ import keys  # noqa: E402
 import reglages  # noqa: E402
 import voix  # noqa: E402
 from speak import EDGE_TTS_VOICES  # noqa: E402  (les voix deja retenues pour les annonces)
+from phrases import dire
 
 UP, DOWN, ENTER, ESCAPE = "\x1b[A", "\x1b[B", ("\r", "\n"), "\x1b"
 COUNTRIES = {"FR": "France", "BE": "Belgique", "CA": "Canada", "CH": "Suisse"}
@@ -24,12 +25,11 @@ RATES = [("normal", "+0%"), ("un peu rapide", "+15%"), ("rapide", "+30%"),
          ("très rapide", "+50%"), ("extrêmement rapide", "+80%")]
 ECHO_BOOST = 30   # points de debit en plus pour les touches et la navigation
 ECHO_MAX = 100
-ESPEAK_LABEL = "Voix locale espeak, sans internet"
 
 
 def voice_label(voice):
     if voice == voix.ESPEAK:
-        return ESPEAK_LABEL
+        return dire("voix.espeak_label")
     _, country, name = voice.split("-", 2)
     multi = "Multilingual" in name
     name = name.replace("MultilingualNeural", "").replace("Neural", "")
@@ -50,12 +50,11 @@ def echo_texts():
     return texts
 
 
-CONSIGNE = "Flèches haut et bas pour écouter, entrée pour choisir, échap pour annuler. F1 redit ces touches."
 
 
 def _choose(labels, start, speak, key_source, out, title, feature):
     index = start
-    intro = conseils.intro(feature, title, CONSIGNE)
+    intro = conseils.intro(feature, title, dire("voix.consigne"))
     out(intro + "\n")
     speak(index, f"{intro} {labels[index]}")
     for key in key_source:
@@ -66,12 +65,12 @@ def _choose(labels, start, speak, key_source, out, title, feature):
         if key in (UP, DOWN):
             wanted = index + (-1 if key == UP else 1)
             index = min(max(wanted, 0), len(labels) - 1)
-            edge = "" if wanted == index else ("Début de liste, " if key == UP else "Fin de liste, ")
+            edge = "" if wanted == index else (dire("voix.debut_liste") if key == UP else "Fin de liste, ")
             text = edge + labels[index]
         elif conseils.is_help(key):
-            text = CONSIGNE
+            text = dire("voix.consigne")
         else:
-            text = "Flèches haut et bas, entrée ou échap. F1 pour l'aide."
+            text = dire("voix.fleches_haut_bas_entree")
         out(f"[{text}]\n")
         speak(index, text)
     return None
@@ -84,9 +83,9 @@ def run(key_source, say, out):
     start = voices.index(current["voix"]) if current["voix"] in voices else 0
     rate = current.get("debit", "+20%")
     index = _choose(labels, start, lambda i, text: voix.preview(text, voices[i], rate), key_source, out,
-                    "Choix de la voix de la console. Chaque voix se présente elle-même.", "voix")
+                    dire("voix.choix_voix_console_chaque"), "voix")
     if index is None:
-        return "Annulé, voix inchangée."
+        return dire("voix.annule_voix_inchangee")
     voice = voices[index]
     if voice == voix.ESPEAK:
         new_rate = rate
@@ -96,20 +95,19 @@ def run(key_source, say, out):
         start = rates.index(rate) if rate in rates else 0
         chosen = _choose(rate_labels, start,
                          lambda i, text: voix.preview(f"{text}. Voici comment je lirai les réponses.", voice, rates[i]),
-                         key_source, out, "Débit de lecture.", "voix_debit")
+                         key_source, out, dire("voix.debit_lecture"), "voix_debit")
         if chosen is None:
-            return "Annulé, voix inchangée."
+            return dire("voix.annule_voix_inchangee_2")
         new_rate = rates[chosen]
     echo_rate = f"+{min(ECHO_MAX, _pct(new_rate) + ECHO_BOOST)}%"
     settings = dict(reglages.get("console"), voix=voice, debit=new_rate, debit_echo=echo_rate)
     if not reglages.save("console", settings):
-        return "Le disque du NAS est inaccessible : voix non enregistrée."
+        return dire("voix.disque_nas_inaccessible_voix")
     voix.reload()
     if voice == voix.ESPEAK:
-        return "Voix locale espeak enregistrée."
+        return dire("voix.voix_locale_espeak_enregistree")
     todo = voix.prewarm(echo_texts())
-    text = f"Voix enregistrée : {voice_label(voice)}."
+    text = dire("voix.voix_enregistree", voice_label=voice_label(voice))
     if todo:
-        text += (f" Je prépare {todo} sons de touches en arrière-plan, environ "
-                 f"{max(1, todo // 120)} minute{'s' if todo >= 240 else ''} ; espeak les dit en attendant.")
+        text += (dire("voix.prepare_sons_touches_arriere", todo=todo, max=max(1, todo // 120), v1='s' if todo >= 240 else ''))
     return text

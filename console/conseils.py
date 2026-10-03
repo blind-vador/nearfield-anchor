@@ -14,6 +14,7 @@ import sys
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import reglages  # noqa: E402
+from phrases import dire  # noqa: E402
 
 F1 = ("\x1b[[A", "\x1bOP", "\x1b[11~")
 ALWAYS = "toujours"
@@ -52,19 +53,17 @@ def command(line):
     if words & {"zero", "reinitialise", "reinitialiser", "remise", "oublie"}:
         settings["conseils_vus"] = []
         reglages.save("console", settings)
-        return "Consignes remises à zéro : chaque fonction redonnera ses consignes à sa prochaine ouverture."
+        return dire("conseils.consignes_remises_zero_chaque")
     if words & {"desactive", "desactives", "desactivee", "desactivees", "desactiver", "sans", "expert",
                  "off", "coupe", "arrete", "moins"}:
         settings["conseils"] = FIRST_TIME
         reglages.save("console", settings)
-        return ("Mode sans conseils : les consignes ne sont dites que la première fois qu'on utilise "
-                "une fonction. F1 les redit à tout moment dans un dialogue.")
+        return (dire("conseils.mode_sans_conseils_consignes"))
     if words & {"active", "actives", "activee", "activees", "activer", "toujours", "guide", "on",
                  "debutant", "remets"}:
         settings["conseils"] = ALWAYS
         reglages.save("console", settings)
-        return "Mode guidé : les consignes sont dites à chaque ouverture d'un dialogue."
-    current = "guidé, consignes à chaque fois" if settings.get("conseils", ALWAYS) == ALWAYS else \
-        "sans conseils, consignes à la première utilisation seulement"
-    return (f"Mode actuel : {current}. Dis conseils activés, conseils désactivés, "
-            "ou conseils remise à zéro. F1 redit les consignes dans un dialogue.")
+        return dire("conseils.mode_guide_consignes_sont")
+    current = dire("conseils.guide_consignes_chaque_fois") if settings.get("conseils", ALWAYS) == ALWAYS else \
+        dire("conseils.sans_conseils_consignes_premiere")
+    return (dire("conseils.mode_actuel_dis_conseils", current=current))

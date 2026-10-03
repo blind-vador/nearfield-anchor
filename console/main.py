@@ -43,10 +43,8 @@ import simulation  # noqa: E402
 import veilles  # noqa: E402
 import vision  # noqa: E402
 import voix  # noqa: E402
+from phrases import dire  # noqa: E402
 
-WELCOME = "Console vocale du Pi prête."
-WELCOME_CONSIGNE = ("Tape aide pour la liste des commandes. Dans un dialogue, F1 redit ses touches. "
-                    "Tape conseils désactivés pour ne plus entendre ces consignes.")
 ESCAPE_TIMEOUT_SEC = 0.05
 KEYTEST_EXIT_ESCAPES = 3
 
@@ -108,9 +106,8 @@ def read_keys(fd=0):
 
 def keytest(key_source):
     """Mode reperage : annonce chaque touche sans rien executer."""
-    intro = conseils.intro("touches", "Mode repérage des touches.",
-                           f"Chaque touche est annoncée, rien n'est exécuté. "
-                           f"Appuie {KEYTEST_EXIT_ESCAPES} fois sur échap pour quitter.")
+    intro = conseils.intro("touches", dire("console.mode_reperage_touches"),
+                           dire("console.chaque_touche_annoncee_rien", KEYTEST_EXIT_ESCAPES=KEYTEST_EXIT_ESCAPES))
     out(intro + "\n")
     voix.say(intro)
     announcer = keys.ModifierAnnouncer(voix.say)
@@ -129,7 +126,7 @@ def keytest(key_source):
             voix.say(name)
     finally:
         announcer.stop()
-    return "Fin du repérage des touches."
+    return dire("console.fin_reperage_touches")
 
 
 def read_line(key_source):
@@ -152,7 +149,7 @@ def read_line(key_source):
             if line:
                 out("\r\x1b[K> ")
                 line = ""
-            voix.say("ligne effacée")
+            voix.say(dire("console.ligne_effacee"))
         elif key in ("\t", "\x1b[A"):
             voix.say(line if line.strip() else "ligne vide")
         elif len(key) == 1 and key.isprintable():
@@ -188,19 +185,18 @@ def meteo_cmd(line):
             text = meteo_locale.bulletin(scan=scan, scan_failed=(reason or True) if scan is None else None)
         except Exception as exc:  # une source au format inattendu ne doit pas tuer la console
             print(f"[console] meteo : {exc!r}", file=sys.stderr)
-            text = "Le bulletin météo a échoué sur une erreur inattendue."
+            text = dire("console.bulletin_meteo_echoue_erreur")
         _async_response.update(text=text, t=time.time())
         out(f"{text}\n> ")
         voix.say_and_wait(text)
 
     threading.Thread(target=run, daemon=True).start()
     if busy:
-        return f"Je prépare le bulletin météo ; pas de balayage radio, {busy}."
+        return dire("console.prepare_bulletin_meteo_balayage", busy=busy)
     # Le scanner finit d'abord son etape en cours (balayage d'une bande large,
     # captation) : mesure reelle 2026-10-01, 3 min d'attente + 2 min 30 de balayage.
     low, high = max(3, round(seconds / 60) + 1), max(5, round(seconds / 60) + 3)
-    return (f"Je balaie d'abord le panel radio météo local, {low} à {high} minutes selon ce que fait "
-            "le scanner ; le bulletin complet suivra. Le clavier reste libre en attendant.")
+    return (dire("console.balaie_abord_panel_radio", low=low, high=high))
 
 
 def _match(line):
@@ -261,14 +257,13 @@ def run_command(line, key_source, last_response):
     if cmd.name == "réglage précédent":
         import reglages_audio
         what = reglages_audio.previous()
-        return f"Revenu à la version d'avant : annulé « {what} »." if what else "Aucun réglage à annuler : tout est d'origine."
+        return dire("console.revenu_version_avant_annule", what=what) if what else dire("console.aucun_reglage_annuler_tout")
     if cmd.name == "réglages automatiques":
         import reglages_audio
         words = set(matcher.normalize(line).split())
         on = not (words & {"non", "arrete", "arreter", "desactive", "desactiver", "stop", "coupe"})
         reglages_audio.set_auto(on)
-        return ("Réglages automatiques activés : après chaque note, je règle la bande, et j'annule un réglage "
-                "qui fait baisser tes notes." if on else "Réglages automatiques désactivés : le bilan propose seulement.")
+        return (dire("console.reglages_automatiques_actives_apres") if on else dire("console.reglages_automatiques_desactives_bilan"))
     if cmd.name == "réglages audio":
         return bilan.settings_text()
     if cmd.name == "réapprendre":
@@ -300,11 +295,11 @@ def run_command(line, key_source, last_response):
         return satellites.spoken_list()
     if cmd.name == "trafic":
         import trafic
-        voix.say("Je regarde l'état des routes.")
+        voix.say(dire("console.regarde_etat_routes"))
         return trafic.summary()
     if cmd.name == "environnement":
         import donnees_ouvertes
-        voix.say("Je rassemble les données.")
+        voix.say(dire("console.rassemble_donnees"))
         return donnees_ouvertes.summary()
     if cmd.name == "observation":
         if matcher.normalize(line) in ("observation", "observer", "observation meteo"):
@@ -333,12 +328,12 @@ def run_command(line, key_source, last_response):
             return _async_response["text"]
         return last_response
     if cmd.name == "radio":
-        voix.say_and_wait("Scan de la bande FM, environ dix secondes.")
+        voix.say_and_wait(dire("console.scan_bande_fm_environ"))
     try:
         return cmd.handler()
     except Exception as exc:  # une commande qui plante ne doit pas tuer la console
         print(f"[console] erreur dans {cmd.name} : {exc!r}", file=sys.stderr)
-        return f"Erreur pendant la commande {cmd.name}."
+        return dire("console.erreur_pendant_commande", name=cmd.name)
 
 
 def main():
@@ -347,7 +342,7 @@ def main():
     signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
     tty.setraw(fd)
     try:
-        welcome = conseils.intro("accueil", WELCOME, WELCOME_CONSIGNE)
+        welcome = conseils.intro("accueil", dire("console.accueil"), dire("console.accueil_consigne"))
         out(f"\n{welcome}\n> ")
         voix.say_and_wait(welcome)
         # Noms de touches dans la voix choisie, prepares en fond (espeak en attendant).
