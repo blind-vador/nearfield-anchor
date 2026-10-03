@@ -43,7 +43,7 @@ def _range(values, unit):
 def _hour(t):
     d = datetime.datetime.fromtimestamp(t)
     hour = dire("capteurs.minuit") if d.hour == 0 else dire("capteurs.midi") if d.hour == 12 \
-        else dire("capteurs.heures", heures=d.hour)
+        else dire("capteurs.heures", heures=nombre(d.hour, "heure"))
     return f"{hour} {d.minute:02d}"
 
 
