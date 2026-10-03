@@ -41,6 +41,8 @@ DEFAULTS = {
     "favoris": {"gares": [], "aeroports": []},
     # debit : reponses ; debit_echo : touches et navigation (plus rapide).
     # conseils : "toujours" ou "premiere_fois" (console/conseils.py).
+    # centres d'interet du scanner (lib/interets.py) : {categorie: niveau}
+    "interets": {},
     "console": {"voix": "fr-FR-DeniseNeural", "debit": "+20%", "debit_echo": "+50%",
                 "conseils": "toujours", "conseils_vus": []},
 }

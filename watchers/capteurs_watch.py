@@ -8,6 +8,12 @@ Une frequence par passage, en alternance. Annonces :
 - sonnettes et boutons : a chaque appui (BUTTON_EVERY_SEC) ;
 - capteur jamais vu depuis NEW_EVERY_SEC : presente une fois, avec ses
   valeurs ;
+- releves (demande utilisateur 2026-10-03 : "on doit etre informe vocalement
+  quand le Pi capte quelque chose") : a chaque passage, une phrase groupee
+  des capteurs meteo entendus ; un capteur n'est redit qu'apres
+  READING_REPEAT_SEC, ou plus tot si sa valeur bouge (TEMP_STEP_C,
+  HUMIDITY_STEP) ; capteurs atypiques (cuisson, piscine, frigo, sol...) :
+  meme rythme, chacun avec une petite blague de Gemini sur ses donnees ;
 - capteurs de pneus (voitures qui passent) : jamais annonces, archives.
 Les derniers releves sont publies (READINGS_PATH) pour la console et le
 flash ; tout est archive.
@@ -32,6 +38,9 @@ NEW_EVERY_SEC = 7 * 86400
 ALARM_EVERY_SEC = 120
 BUTTON_EVERY_SEC = 60
 READINGS_KEEP_SEC = 6 * 3600
+READING_REPEAT_SEC = 1800
+TEMP_STEP_C = 1.0
+HUMIDITY_STEP = 5
 
 # Thermometres qui ne mesurent PAS l'air exterieur (2026-10-01 : un
 # thermometre de barbecue voisin, "GT-TMBBQ05", a 75 degres, s'etait glisse
@@ -55,6 +64,7 @@ IGNORED_KEYS = {"time", "model", "id", "channel", "mic", "mod", "freq", "freq1",
 
 _memory = vd.Memory(STATE_PATH)
 _next = 0
+_heard = {}   # releves du passage en cours, annonces en fin de passage : {cle: (evenement, genre)}
 # Une meme emission peut etre reconnue par plusieurs decodeurs de rtl_433
 # (2026-10-01 : "Rubicson-Temperature" et "Solight-TE44", meme identifiant,
 # canal et temperature, a la meme seconde : UN thermometre annonce deux
@@ -79,7 +89,7 @@ def _values(event):
     if event.get("rain_mm") is not None:
         parts.append(dire("capteur.pluie_cumulee_millimetres", fr_number=vd.fr_number(event['rain_mm'], 1)))
     if event.get("battery_ok") == 0:
-        parts.append("pile faible")
+        parts.append(dire("capteurs.pile_faible"))
     return ", ".join(parts)
 
 
@@ -178,7 +188,10 @@ def _process(event, freq, tpms, at):
         text = plain if kind == "meteo" else (_fun_explanation(event, what, freq_txt) or plain)
         _memory.due(f"bouton|{key}", BUTTON_EVERY_SEC)  # le premier appui est deja raconte
         vd.announce(text, SOUND, f"capteur_nouveau_{key}", "capteurs_watch")
+        _said(key, event)
         return True
+    if kind not in ("alarme", "bouton", "pneu"):
+        _heard[key] = (event, kind)
     if kind == "bouton" and _memory.due(f"bouton|{key}", BUTTON_EVERY_SEC):
         vd.announce(dire("capteur.appui_sonnette_telecommande_sans", v1=_name(event)), SOUND,
                     f"capteur_bouton_{key}", "capteurs_watch")
@@ -200,6 +213,75 @@ Commence par : Nouveau {what} capté en {freq} mégahertz.
 Données décodées (format rtl_433) :
 {data}
 """
+
+
+def _said(key, event):
+    _memory.data.setdefault("_dits", {})[key] = {"t": time.time(), "temp": event.get("temperature_C"),
+                                                "hum": event.get("humidity")}
+
+
+def _worth_saying(key, event):
+    """Releve a dire ? Jamais dit, dit il y a plus de READING_REPEAT_SEC, ou
+    valeur qui a bouge depuis."""
+    last = _memory.data.get("_dits", {}).get(key)
+    if not last or time.time() - last["t"] >= READING_REPEAT_SEC:
+        return True
+    temp, hum = event.get("temperature_C"), event.get("humidity")
+    return ((temp is not None and last.get("temp") is not None and abs(temp - last["temp"]) >= TEMP_STEP_C)
+            or (hum is not None and last.get("hum") is not None and abs(hum - last["hum"]) >= HUMIDITY_STEP))
+
+
+FUN_AGAIN_PROMPT = """Tu es la voix d'un récepteur radio domestique, au ton amusé et bienveillant.
+Il capte de nouveau un appareil sans fil chez un voisin : {what}, modèle {model}. Dis à une
+personne aveugle ce que disent ses données maintenant, en 1 ou 2 phrases courtes à lire à voix
+haute, avec une petite blague liée au contexte (heure : {heure}, valeurs ci-dessous). N'invente
+aucune donnée, ne porte aucun jugement sur le voisin. Pas de markdown, pas d'emoji, pas de liste.
+
+Données décodées (format rtl_433) :
+{data}
+"""
+
+
+def _announce_readings(freq):
+    """Fin de passage : capteurs meteo groupes en une phrase, atypiques un par un avec une blague."""
+    heard, weather, said = dict(_heard), [], False
+    _heard.clear()
+    for key, (event, kind) in heard.items():
+        if not _worth_saying(key, event):
+            continue
+        values = _values(event)
+        if kind == "meteo":
+            if values:
+                weather.append(dire("capteur.releve", nom=_name(event), valeurs=values))
+                _said(key, event)
+            continue
+        what = KIND_NAMES.get(kind) or dire("capteur.type_inconnu")
+        plain = dire("capteur.releve_atypique", what=what, nom=_name(event), valeurs=values or dire("capteur.sans_valeur"))
+        text = _fun_again(event, what) or plain
+        vd.announce(text, SOUND, f"capteur_{key}", "capteurs_watch")
+        _said(key, event)
+        said = True
+    if weather:
+        vd.announce(dire("capteur.releves_meteo", releves=" ; ".join(weather)), SOUND, "capteurs_meteo",
+                    "capteurs_watch")
+    return said or bool(weather)
+
+
+def _fun_again(event, what):
+    try:
+        import gemini
+        data = json.dumps({k: v for k, v in event.items() if k not in ("time", "rssi", "snr", "noise", "freq",
+                                                                    "freq1", "freq2", "mod")},
+                          ensure_ascii=False)
+        text, problem = gemini.ask(FUN_AGAIN_PROMPT.format(what=what, model=_name(event), data=data,
+                                                           heure=datetime.now().strftime("%H:%M")))
+    except Exception as exc:
+        text, problem = None, repr(exc)
+    if problem:
+        print(f"[capteurs_watch] blague Gemini indisponible : {problem}")
+        return None
+    vd.archive("capteurs_gemini", {"modele": event.get("model"), "texte": text})
+    return text
 
 
 def _fun_explanation(event, what, freq_txt):
@@ -286,6 +368,11 @@ def scan_window(dwell_sec=30):
                 announced = True
         if _cars(tpms, freq, min(dwell_sec, time.time() - started)):
             announced = True
+        try:
+            if _announce_readings(freq):
+                announced = True
+        except Exception as exc:  # une annonce ratee n'arrete pas la veille
+            print(f"[capteurs_watch] annonce des releves : {exc!r}")
         _memory.save()
     if count:
         print(f"[capteurs_watch] {count} trame(s) capteurs sur {freq}")

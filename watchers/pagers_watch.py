@@ -25,6 +25,8 @@ MIN_LETTERS = 6            # en dessous : numerique, bruit ou trame de service
 # POCSAG : "POCSAG1200: Address: 123456  Function: 3  Alpha:   texte"
 # FLEX   : "FLEX|date|1600/2/K/A|12.345|000123456|ALN|texte"
 ALPHA = re.compile(r"Alpha:\s*(.*)$|\|ALN\|(.*)$")
+NUMERIC = re.compile(r"Numeric:\s*(.*)$|\|NUM\|(.*)$")
+ADDRESS = re.compile(r"Address:\s*(\d+)|\|0*(\d+)\|(?:ALN|NUM|TON)")
 
 _memory = vd.Memory(STATE_PATH)
 _next = 0
@@ -35,6 +37,26 @@ def _readable(text):
     text = " ".join(text.split())
     letters = sum(c.isalpha() for c in text)
     return text if letters >= MIN_LETTERS and letters >= len(text) * 0.5 else ""
+
+
+def _other_page(line, freq):
+    """Appel sans texte (bip) ou message numerique : dit aussi, une fois par
+    adresse et par REPEAT_SEC (demande utilisateur : tout ce qui est capte)."""
+    m = ADDRESS.search(line)
+    if not m:
+        return False
+    address = (m.group(1) or m.group(2)).lstrip("0") or "0"
+    mhz = f"{freq / 1e6:.4f}".rstrip("0").replace(".", ",")
+    n = NUMERIC.search(line)
+    digits = " ".join((n.group(1) or n.group(2) or "").split()) if n else ""
+    if not _memory.due(f"pager_adresse|{address}|{digits}", REPEAT_SEC):
+        return False
+    if digits:
+        text = dire("pager.numerique", chiffres=digits, adresse=address, frequence=mhz)
+    else:
+        text = dire("pager.appel_sans_texte", adresse=address, frequence=mhz)
+    vd.announce(text, SOUND, "pager", "pagers_watch")
+    return True
 
 
 def _reader(proc, lines):
@@ -73,6 +95,8 @@ def scan_window(dwell_sec=30):
                 text = _readable(m.group(1) or m.group(2) or "") if m else ""
                 if text and _memory.due(f"pager|{text[:80]}", REPEAT_SEC):
                     vd.announce(dire("pager.message_pager", text=text), SOUND, "pager", "pagers_watch")
+                    announced = True
+                elif not text and _other_page(line, freq):  # appel sans texte ou numerique (2026-10-03)
                     announced = True
     finally:
         for p in (rtl, mm):

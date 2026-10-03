@@ -17,10 +17,14 @@ import time
 
 import acars_watch
 import veille_donnees as vd
+from phrases import dire, nombre
 
 VDL2_FREQUENCIES = ["136725000", "136775000", "136875000", "136975000"]
 LOCAL_BINARY = "/home/vador/autopilot/bin/dumpvdl2"
 GAIN_DB = "40"
+SOUND = acars_watch.ACARS_SOUND
+AIRCRAFT_REPEAT_SEC = 1800   # un avion deja signale n'est redit qu'apres 30 min
+_memory = vd.Memory("/tmp/vdl2_watch_state.json")
 
 
 def _binary():
@@ -59,6 +63,7 @@ def scan_window(dwell_sec=30):
     threading.Thread(target=_reader, args=(proc, frames), daemon=True).start()
     announced = False
     count = 0
+    silent = {}   # trames d'avions sans message texte : {adresse: nombre}
     try:
         deadline = time.time() + dwell_sec
         while time.time() < deadline:
@@ -73,6 +78,10 @@ def scan_window(dwell_sec=30):
                 msg = _to_acars(frame)
                 if msg and acars_watch._process_message(msg):
                     announced = True
+                elif not msg:
+                    src = ((frame.get("vdl2") or {}).get("avlc") or {}).get("src") or {}
+                    if src.get("type") == "Aircraft" and src.get("addr"):
+                        silent[src["addr"]] = silent.get(src["addr"], 0) + 1
     finally:
         if proc.poll() is None:
             proc.terminate()
@@ -82,4 +91,13 @@ def scan_window(dwell_sec=30):
             proc.kill()
     if count:
         print(f"[vdl2_watch] {count} trame(s) VDL2 en {dwell_sec:.0f} s")
+    # Tout ce qui est capte est dit (demande utilisateur 2026-10-03) : les trames
+    # de liaison sans texte en une phrase, pour les avions pas encore signales.
+    new = [a for a in silent if _memory.due(f"avion|{a}", AIRCRAFT_REPEAT_SEC)]
+    if new:
+        frames_n = sum(silent[a] for a in new)
+        vd.announce(dire("vdl2.liaison", trames=nombre(frames_n, "trame"), avions=nombre(len(new), "avion")),
+                    SOUND, "vdl2", "vdl2_watch")
+        announced = True
+    _memory.save()
     return announced

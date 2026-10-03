@@ -158,10 +158,16 @@ def air_context(now=None):
 
 
 def pressure(target, state, ctx):
-    """(piqure totale, part activite, part avions) d'une cible."""
+    """(piqure totale, part activite, part avions) d'une cible, ponderees par
+    l'interet de l'utilisateur pour sa categorie (lib/interets.py)."""
     entry = state.get(target, {})
-    activity = _decayed(entry, time.time())
-    air = ctx.get("cibles", {}).get(target, 0.0) * _receivability(entry)
+    try:
+        import interets
+        interest = interets.weight(target)
+    except Exception:
+        interest = 1.0
+    activity = _decayed(entry, time.time()) * interest
+    air = ctx.get("cibles", {}).get(target, 0.0) * _receivability(entry) * interest
     return activity + air, activity, air
 
 

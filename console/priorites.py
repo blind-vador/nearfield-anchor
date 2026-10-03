@@ -82,7 +82,7 @@ def run(key_source, say, out):
             if 0 <= j < len(order):
                 order[i], order[j] = order[j], order[i]
                 i = j
-                text = f"{'Monte' if move < 0 else 'Descend'} : {_label(order, modes, i)}"
+                text = dire("priorites.monte" if move < 0 else "priorites.descend", source=_label(order, modes, i))
             else:
                 text = dire("priorites.deja_tout_haut") if move < 0 else dire("priorites.deja_tout_bas")
         elif key in (UP, DOWN):

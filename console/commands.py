@@ -586,6 +586,10 @@ COMMANDS = [
             keywords=["journal", "journal radio", "enregistrements", "enregistrement", "captures",
                       "log", "logs radio"],
             examples=["écouter les enregistrements", "ce que la radio a capté", "les réceptions de la nuit"]),
+    # Avant "attention" (dont un mot-cle est "priorites") : centres d'interet de l'utilisateur.
+    Command("intérêts", "tes centres d'intérêt : ce qui doit attirer le scanner en priorité ; intérêt avions fort, par exemple", None,
+            keywords=["interets", "interet", "centres d interet", "centre d interet", "mes interets"],
+            examples=["je m'intéresse surtout aux avions", "moins de radio fm", "ce qui m'intéresse"]),
     Command("attention", "où le scanner concentre son écoute, et pourquoi", attention_status,
             keywords=["attention", "piqure", "piqures", "priorites", "ou ecoutes tu", "ou tu ecoutes"],
             examples=["qu'est-ce qui t'intéresse en ce moment", "où tu écoutes le plus"]),
