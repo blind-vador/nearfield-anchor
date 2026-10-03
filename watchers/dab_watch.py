@@ -19,7 +19,6 @@ import time
 
 import requests
 
-import filtre_pollution
 import veille_donnees as vd
 from phrases import dire
 
@@ -30,6 +29,12 @@ URL = f"http://127.0.0.1:{PORT}"
 PROBE_SEC = 9              # le temps qu'un ensemble se fasse reconnaitre
 PROBES_PER_VISIT = 4
 RESCAN_SEC = 30 * 86400
+# Stations gardees (2026-10-03, demande utilisateur) : les radios commerciales
+# ne diffusent que de l'habillage (slogans, titres, visuels d'emission) ; on ne
+# garde que les stations publiques et celles ajoutees au reglage "dab"
+# (cle "stations", NAS), comparees sans accents ni casse, par morceau de nom.
+DEFAULT_KEPT = ["france inter", "france culture", "france musique", "franceinfo", "france info", "fip", "mouv",
+                "ici ", "france bleu"]
 CAROUSEL = "1"             # une station decodee a la fois : le DAB+ chauffe le Pi (76 C le 2026-10-03)
 SOUND = "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3"
 TEXT_REPEAT_SEC = 1800     # le meme texte de la meme station : redit apres 30 min
@@ -126,16 +131,12 @@ def _say_text(channel, ensemble, service, text):
     key = f"dls|{service}|{text[:100]}"
     if not _memory.due(key, TEXT_REPEAT_SEC):
         return False
-    if not filtre_pollution.text_ok(f"dab|{service}", text, station=service):  # habillage commercial
-        return False
     fiche = {"protocole": "DAB+", "source": f"{service}, {ensemble}", "canal": channel, "texte_original": text}
     vd.announce(dire("dab.texte", station=service, texte=text), SOUND, "message_dab", "dab_watch", fiche=fiche)
     return True
 
 
 def _say_slide(channel, ensemble, service, sid):
-    if filtre_pollution.images_muted(f"dab|{service}"):
-        return False
     try:
         image = requests.get(f"{URL}/slide/{sid}", timeout=3).content
     except requests.RequestException:
@@ -166,12 +167,6 @@ def _say_slide(channel, ensemble, service, sid):
         if problem or not described:
             print(f"[dab_watch] image : {problem}")
             return None  # pas de description : rien a dire (souvent de la publicite)
-        is_ad = described.strip().upper().strip(" .").startswith("PUB")
-        filtre_pollution.image_verdict(f"dab|{service}", is_ad)
-        if is_ad:
-            vd.archive("filtre_pollution", {"source": service, "image": path, "raison": "image publicitaire"})
-            print(f"[filtre_pollution] image publicitaire ecartee : {service}")
-            return None
         return dire("dab.image", station=service, description=" ".join(described.split()))
 
     vd.announce(text, SOUND, "message_dab_image", "dab_watch", fiche=fiche)
@@ -190,6 +185,9 @@ def _listen(channel, ensemble, dwell_sec):
                 continue
             for svc in mux.get("services") or []:
                 name = _label(svc.get("label")) or str(svc.get("sid"))
+                _note_station(channel, name)
+                if not _kept(name):
+                    continue  # station commerciale : rien n'est dit, aucun appel a Gemini
                 dls = _label(svc.get("dls"))
                 if dls and _say_text(channel, ensemble, name, dls):
                     said += 1
@@ -201,6 +199,32 @@ def _listen(channel, ensemble, dwell_sec):
         _stop(proc)
         _memory.save()
     return said
+
+
+def _plain(text):
+    import unicodedata
+    return " ".join(unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower().split()) + " "
+
+
+def kept_stations():
+    try:
+        import reglages
+        extra = (reglages.get("dab") or {}).get("stations") or []
+    except Exception:
+        extra = []
+    return DEFAULT_KEPT + [_plain(x).strip() for x in extra]
+
+
+def _kept(name):
+    plain = _plain(name)
+    return any(_plain(k).strip() in plain if not k.endswith(" ") else plain.startswith(_plain(k)) for k in kept_stations())
+
+
+def _note_station(channel, name):
+    """Stations vues par ensemble (pour choisir lesquelles garder)."""
+    stations = _memory.data.setdefault("stations", {}).setdefault(channel, [])
+    if name not in stations:
+        stations.append(name)
 
 
 def scan_window(dwell_sec=45):

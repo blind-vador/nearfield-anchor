@@ -43,6 +43,9 @@ DEFAULTS = {
     # conseils : "toujours" ou "premiere_fois" (console/conseils.py).
     # centres d'interet du scanner (lib/interets.py) : {categorie: niveau}
     "interets": {},
+    # radio numerique DAB+ (watchers/dab_watch.py) : stations a garder en plus
+    # des radios publiques, ex. ["RCF", "Radio Dio"]
+    "dab": {"stations": []},
     "console": {"voix": "fr-FR-DeniseNeural", "debit": "+20%", "debit_echo": "+50%",
                 "conseils": "toujours", "conseils_vus": []},
 }
