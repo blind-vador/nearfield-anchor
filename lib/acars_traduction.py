@@ -59,7 +59,10 @@ fiche ci-dessous, dis en 2 ou 3 phrases courtes, à lire à voix haute pour une 
 qui est l'appareil et à quoi il ressemble si c'est indiqué, où il en est de son vol, et ce que ses
 messages veulent dire en clair. Explique simplement les sigles. Ton léger mais sérieux.
 N'invente rien qui ne soit pas dans la fiche ; si le sens exact d'un message n'est pas certain,
-dis-le simplement. Pas de markdown, pas d'emoji, pas de liste, pas de codes bruts épelés inutilement.
+dis-le simplement. Ne parle de la phase de vol que si la fiche la donne. Altitudes en mètres
+(convertis les pieds : 1 pied = 0,3 mètre, arrondi à la centaine). Commence directement par
+l'appareil, sans formule d'introduction. Pas de markdown, pas d'emoji, pas de liste, pas de codes
+bruts épelés inutilement.
 Langue de la réponse : {langue}.
 
 Fiche :
@@ -157,9 +160,10 @@ def substantive(kind, detail):
 # --- phrases -------------------------------------------------------------------------
 
 def _who(card):
-    parts = [card.get("modele") or dire("acars.un_avion")]
+    parts = [dire("acars.un_modele", modele=card["modele"]) if card.get("modele") else dire("acars.un_avion")]
     if card.get("compagnie"):
-        parts.append(dire("acars.de_compagnie", compagnie=card["compagnie"]))
+        elided = card["compagnie"][:1].lower() in "aeiouyéèêh"
+        parts.append(dire("acars.d_compagnie" if elided else "acars.de_compagnie", compagnie=card["compagnie"]))
     if card.get("immatriculation"):
         parts.append(dire("acars.immatricule", immatriculation=card["immatriculation"]))
     return " ".join(parts)
