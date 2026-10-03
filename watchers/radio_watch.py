@@ -36,6 +36,7 @@ import aprs_watch
 import balises_watch
 import capteurs_watch
 import lora_watch
+import dab_watch
 import pagers_watch
 import sondes_watch
 import vdl2_watch
@@ -1327,7 +1328,8 @@ def _save_raw(path):
 WINDOW_GRACE_SEC = 120
 # Seuls les programmes qui tiennent la cle sont arretes (jamais la voix) : le
 # reste de la chaine (sox, decodeurs, multimon-ng) se termine faute d'entree.
-DONGLE_PROGRAMS = ("rtl_sdr", "rtl_fm", "rtl_433", "rtl_airband", "dump1090", "dumpvdl2", "acarsdec", "dec406")
+DONGLE_PROGRAMS = ("rtl_sdr", "rtl_fm", "rtl_433", "rtl_airband", "dump1090", "dumpvdl2", "acarsdec", "dec406",
+                   "welle-cli")
 _window = {"nom": None, "fin": 0.0}
 
 
@@ -1395,6 +1397,7 @@ DATA_SCANNERS = {name: _guarded(name, scan) for name, scan in {
     "balises": balises_watch.scan_window,
     "sondes": sondes_watch.scan_window,
     "lora": lora_watch.scan_window,
+    "dab": dab_watch.scan_window,
 }.items()}
 
 

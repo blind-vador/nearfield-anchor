@@ -34,7 +34,7 @@ PREFIXES = {
 WORDS = {
     "satellites": ("satellite", "satellites", "meteor", "spatial"),
     "capteurs": ("capteur", "capteurs", "voiture", "voitures", "sonde", "sondes", "thermometre", "thermometres"),
-    "messages": ("message", "messages", "acars", "vdl2", "avion", "avions", "bipeur", "bipeurs", "pager", "pagers",
+    "messages": ("message", "messages", "acars", "vdl2", "avion", "avions", "bipeur", "bipeurs", "pager", "pagers", "dab",
                  "meshtastic"),
     "donnees": ("donnee", "donnees", "data", "aprs", "lora", "planeur", "planeurs", "balise", "balises"),
     "radio": ("radio", "voix"),

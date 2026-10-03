@@ -27,7 +27,7 @@ WORDS = {"talkie": "talkies", "talkies": "talkies", "446": "talkies", "pmr": "ta
          "cb": "cb", "cibi": "cb", "meteo": "meteo", "capteurs": "meteo", "sondes": "meteo",
          "secours": "secours", "pagers": "secours", "balises": "secours", "pompiers": "secours",
          "marine": "marine", "bateaux": "marine", "pro": "professionnels", "professionnels": "professionnels",
-         "fm": "fm", "commerciale": "fm", "commerciales": "fm"}
+         "fm": "fm", "commerciale": "fm", "commerciales": "fm", "dab": "dab", "numerique": "dab"}
 
 
 def _label(cats, values, i):

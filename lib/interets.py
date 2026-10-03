@@ -33,6 +33,7 @@ CATEGORIES = {
     "marine": (["marine_vhf"], "normal"),
     "professionnels": (["uhf_business", "vhf_business", "vhf_80", "uhf_410", "vhf_low", "pmse"], "normal"),
     "fm": (["fm_diffusion"], "faible"),   # bandes de verification : du trafic tout le temps
+    "dab": (["dab"], "normal"),
 }
 CATEGORY_NAMES = Etiquettes("interet.categorie", {
     "talkies": "talkies-walkies 446 et LPD",
@@ -44,6 +45,7 @@ CATEGORY_NAMES = Etiquettes("interet.categorie", {
     "marine": "VHF marine",
     "professionnels": "radios professionnelles et micros sans fil",
     "fm": "radio FM commerciale",
+    "dab": "radio numérique DAB+ : textes et images des stations",
 }, "catégorie d'écoute du scanner, dans la commande intérêts")
 CACHE_SEC = 30
 _cache = {"t": 0.0, "niveaux": None}
