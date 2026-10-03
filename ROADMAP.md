@@ -5924,3 +5924,16 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
   phrase est assemblee par le programme (avion.phrase, elision qu'il) ;
   secours : sens fixe par nature de trame (vdl2.sens). Mode S idem.
 - Journal ouvert : avis "captation ajoutee au journal" une fois par minute.
+- Voix Microsoft qui passaient a l'anglais : edge-tts 7.2.8 ecrit en dur
+  xml:lang='en-US' et n'a pas de parametre de langue ; les voix
+  "Multilingual" devinent la langue phrase par phrase. La balise <lang>
+  prevue par Microsoft est REFUSEE par le service gratuit de Edge (aucun son
+  renvoye, essai reel). Donc : voix multilingues retirees (speak.
+  EDGE_TTS_VOICES, choix de la console ; une voix multilingue reglee est
+  remplacee par Denise), requete en fr-FR (lib/edge_langue.py, mkssml
+  remplace), 48 echantillons multilingues purges du cache tts_cache.
+  nas-watch non redemarre (gestion des disques) : prend le correctif a son
+  prochain redemarrage.
+- Quota gratuit de gemini-2.5-flash epuise le 2026-10-03 au soir (429) :
+  gemini.ask bascule sur les autres modeles ; surveiller la personnalite
+  de minuit.
