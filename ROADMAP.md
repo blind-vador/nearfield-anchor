@@ -5884,3 +5884,20 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
 - DMR : DSD_FME_IDLE_SEC 3 -> 10 s, DSD_FME_MAX_SEC 60 -> 300 s (QSO avec
   le Quebec capte puis coupe entre deux interlocuteurs). Debut manque :
   inherent au balayage.
+
+## 2026-10-03 : DAB+ par station, pre-ecoute avant d'ouvrir le son
+
+- DAB+ : le filtre de contenu (lib/filtre_pollution.py) ne marchait pas et
+  consommait Gemini : supprime. On filtre par STATION (le nom est dans le
+  multiplex) : seules les radios publiques (France Inter, Culture, Musique,
+  franceinfo, FIP, Mouv', ici / France Bleu) et celles du reglage "dab"
+  (cle "stations", NAS) sont dites ; les commerciales sont ignorees sans
+  aucun appel a Gemini. Stations vues par ensemble : /tmp/dab_watch.json.
+- PRE-ECOUTE (balayage : radio_watch._prelisten ; Airband/446 :
+  airband_bridge._prelisten, detecteur RNNoise fourni par radio_watch) :
+  jusqu'a 6 s d'ecoute silencieuse ; voix reconnue sur 0,6 s d'affilee (ou
+  message de donnees lisible) = on annonce, on ouvre, on rejoue le tampon
+  puis le direct ; sinon rien n'est joue ni range au journal (empreinte de
+  bruit apprise pour le balayage). Teste : vraie voix 446 ouverte en 0,6 s ;
+  parasite bref et bruit ecartes ; une capture 446 de 8 s du journal
+  (proba voix max 0,31, 73 % semblable a un parasite connu) serait ecartee.
