@@ -40,6 +40,8 @@ import reglages  # noqa: E402
 
 try:
     import edge_tts
+    import edge_langue
+    edge_langue.force_language()  # requete en francais (edge-tts l'ecrit en anglais)
 except ImportError:  # sans le module : espeak seul, la console reste utilisable
     edge_tts = None
 
@@ -88,6 +90,8 @@ def reload():
 
 def _cloud_voice():
     voice = settings().get("voix") or ESPEAK
+    if "Multilingual" in voice:  # bascule en anglais toute seule (2026-10-03) : voix francaise a la place
+        voice = "fr-FR-DeniseNeural"
     if voice == ESPEAK or edge_tts is None or time.time() < _cloud_down_until:
         return None
     return voice

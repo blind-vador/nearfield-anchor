@@ -12,6 +12,10 @@ import threading
 
 import edge_tts
 
+import edge_langue
+
+edge_langue.force_language()  # requete en francais (edge-tts l'ecrit en anglais)
+
 from sound_player import play_sound_effect
 from sound_paths import TTS_CACHE_DIR
 from phrases import dire
@@ -36,9 +40,11 @@ from phrases import dire
 # l'habituation acoustique (une voix fixe et previsible) irait a l'encontre
 # de cet objectif, ou l'imprevisibilite est justement recherchee. Toutes
 # les variantes francophones retenues (France, Belgique, Canada, Suisse).
+# Sans les voix "Multilingual" (Vivienne, Remy) depuis le 2026-10-03 : elles
+# devinent la langue phrase par phrase et basculent en anglais au premier mot
+# anglais ; le service gratuit de Edge refuse la balise <lang> qui fixerait
+# leur langue (essai reel : aucun son renvoye). Voir lib/edge_langue.py.
 EDGE_TTS_VOICES = [
-    "fr-FR-VivienneMultilingualNeural",
-    "fr-FR-RemyMultilingualNeural",
     "fr-FR-DeniseNeural",
     "fr-FR-EloiseNeural",
     "fr-FR-HenriNeural",

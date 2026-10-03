@@ -42,7 +42,9 @@ _worker_lock = threading.Lock()
 
 def _edge(text, path):
     import edge_tts
+    import edge_langue
     import speak
+    edge_langue.force_language()
     voice = random.choice(speak.EDGE_TTS_VOICES)
 
     async def run():

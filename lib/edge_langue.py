@@ -35,11 +35,9 @@ def force_language():
         lang = locale()
         return (f"<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='{lang}'>"
                 f"<voice name='{tc.voice}'>"
-                f"<lang xml:lang='{lang}'>"
                 f"<prosody pitch='{tc.pitch}' rate='{tc.rate}' volume='{tc.volume}'>"
                 f"{escaped_text}"
                 "</prosody>"
-                "</lang>"
                 "</voice>"
                 "</speak>")
 
