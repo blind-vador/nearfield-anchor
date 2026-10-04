@@ -1541,11 +1541,52 @@ def _meteo_scan_if_requested(max_temp=None):
 _meteo_pause = {"last_watch": 0.0, "announced": False}
 
 
+# Ecoute manuelle pendant une pause thermique (2026-10-04 : mode manuel muet,
+# sans explication, pendant toute une pause) : une seule reception, peu de
+# calcul, demandee par l'utilisateur -- permise tant que le Pi reste sous
+# MANUAL_HEAT_MAX_C ; au-dessus, coupee et la console dit pourquoi.
+MANUAL_HEAT_MAX_C = 70.0
+_manual = {"stream": None, "voulu": None, "depuis": 0.0, "averti": None}
+
+
+def _manual_during_pause():
+    """Rend True si l'utilisateur ecoute en manuel (attente courte)."""
+    stream = _manual["stream"]
+    request = noise_signatures.manual_request()
+    if stream is None or not request:
+        if stream is not None:
+            stream.stop()
+        _manual["averti"] = None
+        return False
+    temp = _get_cpu_temp_c()
+    if temp is not None and temp > MANUAL_HEAT_MAX_C:
+        stream.stop()
+        if _manual["averti"] != "chaud":
+            _manual["averti"] = "chaud"
+            import manual_tuner
+            manual_tuner.event(dire("manuel.trop_chaud", temp=format(temp, ".0f"), max=format(MANUAL_HEAT_MAX_C, ".0f")))
+        return True
+    if _manual["averti"] == "chaud":
+        import manual_tuner
+        manual_tuner.event(dire("manuel.reprise_apres_chaleur"))
+    _manual["averti"] = "ok"
+    wanted = (request["freq_hz"], request["mode"], request.get("filter", False), request.get("target"))
+    if wanted != _manual["voulu"]:
+        _manual["voulu"], _manual["depuis"] = wanted, time.time()
+    elif time.time() - _manual["depuis"] >= MANUAL_SETTLE_SEC:
+        stream.tune(*wanted)
+    return True
+
+
 def _thermal_pause_wait(duration):
     """Attente pendant la pause thermique, avec la veille meteo sous chaleur
-    (voir METEO_PAUSE_MAX_C) : rien d'autre que les fenetres meteo."""
+    (voir METEO_PAUSE_MAX_C) : rien d'autre que les fenetres meteo, et
+    l'ecoute manuelle tant que le Pi le supporte (_manual_during_pause)."""
     end = time.time() + duration
     while time.time() < end:
+        if _manual_during_pause():
+            time.sleep(0.1)
+            continue
         limit, level = _meteo_temp_limit()
         allowed = not _too_hot(limit)
         meteo_locale.set_scanner_state("pause_thermique_meteo" if allowed else "pause_thermique")
@@ -1840,6 +1881,7 @@ def main():
     radio_log.start_purge_scheduler()
     _publish_plages()
     manual_stream = ManualStream()  # touche F = RTLSDR-Airband, voir manual_tuner.py
+    _manual["stream"] = manual_stream  # aussi pendant une pause thermique (_manual_during_pause)
     manual_pending = (None, 0.0)  # (frequence, mode) demandee, et depuis quand
     fm_bands = [b for b in BANDS if b["type"] == "fm_channels"]
     sweep_bands = [b for b in BANDS if b["type"] == "sweep"]
