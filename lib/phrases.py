@@ -27,8 +27,23 @@ import string
 BASE_DIR = "/home/vador/autopilot/phrases"           # fichiers de langue (copies du depot)
 PERSONA_DIR = "/home/vador/autopilot/phrases"        # phrases du jour, sur la carte SD
 DEFAULT_LANG = "fr"
-MAX_GROWTH = 1.8      # une phrase du jour au plus 1,8 fois plus longue (synthese vocale)
-MAX_EXTRA_CHARS = 90
+MAX_GROWTH = 1.35     # une petite touche de ton, pas une reecriture (2026-10-04)
+MAX_EXTRA_CHARS = 30
+# Perimetre de la personnalite (2026-10-04, demande utilisateur) : seules les
+# phrases d'interface courtes des dialogues de la console ; jamais les
+# annonces (radio, avions, capteurs, meteo, trains, DAB+, messages...), ni les
+# reponses informatives des commandes, l'aide ou le flash. Applique aussi a la
+# lecture : un vieux fichier du jour ne peut plus toucher une annonce.
+PERSONA_FAMILIES = {"appairage", "arbre", "archives", "commun", "conseils", "console", "interets", "journal",
+                    "manuel", "nav", "notation", "observation", "personnalite", "priorites", "reglages",
+                    "veilles", "voix", "maj", "vision", "simulation"}
+PERSONA_MAX_LEN = 140
+
+
+def rewritable(cle, entry):
+    """Cette phrase peut-elle recevoir la touche de la personnalite ?"""
+    return (not entry["fixe"] and cle.split(".")[0] in PERSONA_FAMILIES
+            and len(entry["texte"]) <= PERSONA_MAX_LEN)
 
 _cache = {}
 _settings = {"t": 0.0, "data": {}}
@@ -120,7 +135,7 @@ def texte(cle, lang=None):
     if neutral is None:
         print(f"[phrases] cle inconnue : {cle}")
         return None
-    if persona_active() and not neutral["fixe"]:
+    if persona_active() and rewritable(cle, neutral):
         daily = _read(persona_path(lang)).get(cle)
         if daily and valid(neutral, daily["texte"]) is None:
             return daily["texte"]

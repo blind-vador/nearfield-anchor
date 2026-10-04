@@ -37,11 +37,14 @@ aux commandes de sa console.
 
 {demande}
 
-Date : {date}. Mot d'inspiration du jour : {graine}.
+Date : {date}. Mot d'inspiration du jour (pour l'humeur seulement) : {graine}.
 
+La personnalité ne change que le TON des petites phrases d'interface : chaleur, familiarité,
+enthousiasme, humour léger. Elle ne change jamais le vocabulaire utile, la clarté ni la longueur.
+Pas de thème filé (musique, mer, cosmos...), pas de métaphore, pas de formule de vœux.
 Écris la fiche de style de cette voix pour aujourd'hui. Réponds uniquement par un objet JSON :
 {{"resume": "une phrase courte qui décrit la personnalité du jour, à lire à voix haute",
-  "fiche": "5 à 8 règles de ton concrètes : vocabulaire, longueur des phrases, tics de langage, humour"}}
+  "fiche": "3 à 5 règles de ton concrètes et sobres (exclamations courtes possibles, familiarité...)"}}
 Contraintes : rester bienveillant, clair et compréhensible à l'oral ; pas d'emoji, pas de markdown."""
 
 USER_DEMAND = "La personne a décrit la personnalité voulue ainsi : « {prompt} ». Respecte-la."
@@ -55,14 +58,24 @@ Personnalité du jour : {resume}
 Fiche de style :
 {fiche}
 
+Il s'agit d'une PETITE TOUCHE DE TON, pas d'une réécriture. Exemple :
+  neutre : "L'enregistrement a été validé comme station probable."
+  bon (informel joyeux) : "L'enregistrement est validé comme station probable, il est parfait, waouh !"
+  mauvais : "La vibration cosmique de ce moment a été suivie par l'apprentissage musical, que
+  l'harmonie demeure." (sens perdu, métaphore, formule de vœux, trop long)
+
 Règles impératives, pour chaque phrase :
-1. Garde exactement le même sens et toutes les informations ; ne supprime aucune consigne.
-2. Garde exactement les variables entre accolades, écrites à l'identique ({{nom}} reste {{nom}}),
+1. Garde la phrase d'origine presque mot pour mot : change au plus quelques mots, ou ajoute une
+   courte exclamation (deux à quatre mots). Laisse certaines phrases telles quelles.
+2. Garde exactement le même sens, toutes les informations et toutes les consignes.
+3. Garde exactement les variables entre accolades, écrites à l'identique ({{nom}} reste {{nom}}),
    et n'en ajoute aucune.
-3. Garde tels quels les mots de la liste "garder" (noms de touches, commandes à taper).
-4. Une seule ligne, phrase faite pour être lue à voix haute ; au plus {croissance} fois la longueur
-   d'origine ; pas d'emoji, pas de markdown, pas de guillemets décoratifs, pas d'astérisques.
-5. Écris en {langue}.
+4. Garde tels quels les mots de la liste "garder" (noms de touches, commandes à taper).
+5. Au plus {croissance} fois la longueur d'origine ; une seule ligne ; pas d'emoji, pas de markdown.
+6. Interdit : formule de vœux ou de conclusion ("que votre journée...", "que l'harmonie..."),
+   métaphore, référence à un thème (musique, cosmos, mer...), répétition d'une même tournure ou
+   d'une même exclamation dans plusieurs phrases.
+7. Écris en {langue}.
 
 Phrases à réécrire (JSON) :
 {bloc}
@@ -133,6 +146,32 @@ def _write_ini(path, entries, header):
     os.replace(tmp, path)
 
 
+LEITMOTIF_MAX = 3   # une tournure inventee (3 mots) dans plus de 3 phrases : tic de langage
+
+
+def _drop_leitmotifs(new, base, log):
+    """Tics de langage (2026-10-04 : "que l'harmonie demeure" dans 39 phrases) :
+    une suite de trois mots absente des phrases neutres et presente dans plus
+    de LEITMOTIF_MAX phrases du jour fait revenir ces phrases au neutre."""
+    import collections
+    import re
+
+    def grams(text):
+        words = re.findall(r"\w+", text.lower())
+        return {" ".join(words[i:i + 3]) for i in range(len(words) - 2)}
+    neutral = set()
+    for entry in base.values():
+        neutral |= grams(entry["texte"])
+    counts = collections.Counter(g for text in new.values() for g in grams(text) - neutral)
+    tics = {g for g, n in counts.items() if n > LEITMOTIF_MAX}
+    dropped = [k for k, text in new.items() if grams(text) & tics]
+    for key in dropped:
+        del new[key]
+    if tics:
+        log(f"[personnalite] tics ecartes : {sorted(tics)[:6]} ({len(dropped)} phrases au neutre)")
+    return len(dropped)
+
+
 def generate(log=print):
     """Reecrit les phrases du jour ; rend (resultat, None) ou (None, raison)."""
     cfg = settings()
@@ -150,7 +189,7 @@ def generate(log=print):
         return None, problem or dire("personnalite.fiche_style_vide")
     resume, fiche = " ".join(str(style["resume"]).split()), str(style.get("fiche", ""))
     log(f"[personnalite] voix du jour : {resume}")
-    todo = [(k, v) for k, v in base.items() if not v["fixe"]]
+    todo = [(k, v) for k, v in base.items() if phrases.rewritable(k, v)]
     new, kept = {}, 0
     for start in range(0, len(todo), BLOCK_SIZE):
         block = todo[start:start + BLOCK_SIZE]
@@ -172,6 +211,7 @@ def generate(log=print):
                 else:
                     new[key] = text
         time.sleep(PAUSE_SEC)
+    kept += _drop_leitmotifs(new, base, log)
     if not new:
         return None, dire("personnalite.aucune_phrase_reecrite_correctement")
     path = phrases.persona_path(lang)
