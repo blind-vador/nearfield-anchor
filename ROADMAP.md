@@ -5962,3 +5962,10 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
   phrase neutre ; "journal" ne devient jamais "partition"). Longueur 1,6x.
   Essai : philosophe de l'agora, 163 phrases colorees ("Point de commune
   trouvee pour {query} dans l'immensite."), tics "par Zeus" ecartes.
+- Mode manuel muet (4 octobre, 13 h 03 - 13 h 41) : pause thermique (75 C
+  pendant un deploiement + generation de la personnalite) ; la securite
+  coupait aussi l'ecoute manuelle sans rien dire, et la reprise attendait
+  60 C ou un plateau de 20 min. Desormais radio_watch._manual_during_pause :
+  ecoute manuelle permise pendant la pause sous MANUAL_HEAT_MAX_C (70 C),
+  sinon message dans le mode manuel (manuel.trop_chaud) ; fleches
+  reactives (0,1 s) pendant la pause.
