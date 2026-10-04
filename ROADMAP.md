@@ -5937,3 +5937,20 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
 - Quota gratuit de gemini-2.5-flash epuise le 2026-10-03 au soir (429) :
   gemini.ask bascule sur les autres modeles ; surveiller la personnalite
   de minuit.
+
+## 2026-10-04 : personnalite encadree
+
+- La nuit du 3 au 4, Gemini avait reecrit 604 phrases, annonces comprises,
+  avec des tics ("que votre journee resonne en parfaite harmonie" x40,
+  "que l'harmonie demeure" x39), des references musicales partout et la
+  phrase des avions cassee ("L'appareil {appareil}..." = "L'appareil Un
+  appareil modele...").
+- Desormais : perimetre = petites phrases d'interface des dialogues
+  (phrases.PERSONA_FAMILIES, <= 140 caracteres ; 266 phrases), applique
+  aussi a la lecture (phrases.rewritable dans texte()) : aucune annonce ne
+  peut plus etre touchee. Consignes : petite touche de ton (exemple
+  utilisateur "valide comme station probable, il est parfait, waouh !"),
+  pas de voeux, de metaphores, de themes ; longueur 1,35x (+30 car.) ;
+  tics (3 mots inventes dans plus de 3 phrases) ramenes au neutre.
+- Regeneree le 4 a midi : 207 phrases, ex. "Cette entree ne peut pas etre
+  mise en favori, helas."
