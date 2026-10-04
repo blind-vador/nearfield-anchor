@@ -37,55 +37,62 @@ aux commandes de sa console.
 
 {demande}
 
-Date : {date}. Mot d'inspiration du jour (pour l'humeur seulement) : {graine}.
+Donne-lui une PERSONA, un personnage avec un caractère : sa façon de parler, ses expressions, son
+humeur, et son univers d'où viennent des clins d'œil et des références (personnage populaire,
+figure littéraire, métier, archétype...). Ce personnage colore seulement les petites phrases
+d'interface, qui doivent rester claires et garder leurs mots utiles.
+Date : {date}.
 
-La personnalité ne change que le TON des petites phrases d'interface : chaleur, familiarité,
-enthousiasme, humour léger. Elle ne change jamais le vocabulaire utile, la clarté ni la longueur.
-Pas de thème filé (musique, mer, cosmos...), pas de métaphore, pas de formule de vœux.
-Écris la fiche de style de cette voix pour aujourd'hui. Réponds uniquement par un objet JSON :
-{{"resume": "une phrase courte qui décrit la personnalité du jour, à lire à voix haute",
-  "fiche": "3 à 5 règles de ton concrètes et sobres (exclamations courtes possibles, familiarité...)"}}
-Contraintes : rester bienveillant, clair et compréhensible à l'oral ; pas d'emoji, pas de markdown."""
+Réponds uniquement par un objet JSON :
+{{"resume": "une phrase courte, à lire à voix haute, qui présente le personnage du jour",
+  "fiche": "4 à 6 règles concrètes : façon de parler, expressions typiques (plusieurs, à varier),
+            univers des clins d'œil, humeur"}}
+Contraintes : rester bienveillant envers l'utilisateur, clair à l'oral ; pas d'emoji, pas de markdown."""
 
 USER_DEMAND = "La personne a décrit la personnalité voulue ainsi : « {prompt} ». Respecte-la."
-SURPRISE_DEMAND = ("La personne veut une personnalité SURPRISE, différente chaque jour : invente-la toi-même, "
-                   "originale et attachante (un personnage, une humeur, une époque, un métier...).")
+SURPRISE_DEMAND = ("La personne veut un personnage SURPRISE, différent chaque jour : invente-le toi-même, "
+                   "original et attachant. Pour t'inspirer seulement (tu peux t'en écarter) : {archetype}.")
 
-BLOCK_PROMPT = """Tu réécris les phrases d'interface d'un petit ordinateur domestique qui parle à une
-personne aveugle par synthèse vocale, en {langue}, avec la personnalité du jour.
+BLOCK_PROMPT = """Tu colores les phrases d'interface d'un petit ordinateur domestique qui parle à une
+personne aveugle par synthèse vocale, en {langue}, avec le personnage du jour.
 
-Personnalité du jour : {resume}
-Fiche de style :
+Personnage du jour : {resume}
+Fiche du personnage :
 {fiche}
 
-Il s'agit d'une PETITE TOUCHE DE TON, pas d'une réécriture. Exemple :
+Garde les mots centraux qui font comprendre la phrase (journal, archives, station, note, favori,
+noms de touches, commandes...) : on ne remplace jamais "journal" par "partition". Colore le tour de
+la phrase avec la façon de parler du personnage, une expression à lui, un clin d'œil à son univers.
+Exemple, personnage "petit robot espiègle et amusé" :
   neutre : "L'enregistrement a été validé comme station probable."
-  bon (informel joyeux) : "L'enregistrement est validé comme station probable, il est parfait, waouh !"
+  bon : "Bip ! L'enregistrement est validé comme station probable, il est parfait, waouh !"
   mauvais : "La vibration cosmique de ce moment a été suivie par l'apprentissage musical, que
-  l'harmonie demeure." (sens perdu, métaphore, formule de vœux, trop long)
+  l'harmonie demeure." (mots centraux perdus, sens flou, formule de vœux)
 
 Règles impératives, pour chaque phrase :
-1. Garde la phrase d'origine presque mot pour mot : change au plus quelques mots, ou ajoute une
-   courte exclamation (deux à quatre mots). Laisse certaines phrases telles quelles.
-2. Garde exactement le même sens, toutes les informations et toutes les consignes.
-3. Garde exactement les variables entre accolades, écrites à l'identique ({{nom}} reste {{nom}}),
+1. Même sens, toutes les informations et toutes les consignes ; mots centraux gardés.
+2. Garde exactement les variables entre accolades, écrites à l'identique ({{nom}} reste {{nom}}),
    et n'en ajoute aucune.
-4. Garde tels quels les mots de la liste "garder" (noms de touches, commandes à taper).
-5. Au plus {croissance} fois la longueur d'origine ; une seule ligne ; pas d'emoji, pas de markdown.
-6. Interdit : formule de vœux ou de conclusion ("que votre journée...", "que l'harmonie..."),
-   métaphore, référence à un thème (musique, cosmos, mer...), répétition d'une même tournure ou
-   d'une même exclamation dans plusieurs phrases.
-7. Écris en {langue}.
+3. Garde tels quels les mots de la liste "garder" (noms de touches, commandes à taper).
+4. Au plus {croissance} fois la longueur d'origine ; une seule ligne ; pas d'emoji, pas de markdown.
+5. Varie : ne répète pas la même expression ou le même clin d'œil d'une phrase à l'autre ; pas de
+   formule de vœux ou de conclusion plaquée en fin de phrase.
+6. Écris en {langue}.
 
-Phrases à réécrire (JSON) :
+Phrases à colorer (JSON) :
 {bloc}
 
 Réponds uniquement par un objet JSON dont les clés sont exactement les clés reçues et les valeurs
-les phrases réécrites : {{"cle": "phrase réécrite", ...}}"""
+les phrases colorées : {{"cle": "phrase colorée", ...}}"""
 
-GRAINES = ["marée", "lanterne", "boussole", "jazz", "brocante", "astronome", "facteur", "volcan", "théière",
-           "phare", "chaton", "explorateur", "orage", "piano", "bibliothèque", "cosmonaute", "jardinier",
-           "corsaire", "horloger", "funambule", "météorite", "accordéon", "renard", "sorcier", "détective"]
+# Archetypes pour le personnage surprise (inspiration seulement, Gemini invente).
+ARCHETYPES = ["un petit robot espiègle et amusé", "un militant marxiste dépité", "un patron de banque pressé",
+              "un détective de roman noir", "un majordome anglais imperturbable", "un pirate bougon",
+              "une vieille institutrice exigeante mais tendre", "un capitaine de vaisseau spatial",
+              "un commentateur sportif survolté", "un professeur distrait", "un chevalier de la Table ronde",
+              "un chef cuisinier colérique", "un poète romantique tourmenté", "un agent secret blasé",
+              "une diva capricieuse", "un vendeur de grand magasin trop enthousiaste", "un chat qui parle",
+              "un fonctionnaire tatillon", "un explorateur du dix-neuvième siècle", "un philosophe grec"]
 LANGUES = {"fr": "français", "en": "anglais"}
 
 
@@ -146,6 +153,27 @@ def _write_ini(path, entries, header):
     os.replace(tmp, path)
 
 
+CENTRAL_KEEP = 0.6   # part des mots porteurs de sens (5 lettres et plus) a garder
+
+_STOP = {"votre", "notre", "leurs", "cette", "comme", "aussi", "avant", "apres", "depuis", "encore", "toutes",
+         "toute", "alors", "entre", "pendant", "selon", "quand", "rien", "plus"}
+
+
+def _central_words_lost(neutral, text):
+    """Mots centraux de la phrase neutre absents de la phrase coloree ? (raison ou None)"""
+    import re
+    import unicodedata
+
+    def words(t):
+        t = unicodedata.normalize("NFKD", re.sub(r"\{[^}]*\}", " ", t)).encode("ascii", "ignore").decode().lower()
+        return {w for w in re.findall(r"[a-z]{5,}", t) if w not in _STOP}
+    central = words(neutral)
+    if not central:
+        return None
+    kept = len(central & words(text)) / len(central)
+    return None if kept >= CENTRAL_KEEP else f"mots centraux perdus ({kept:.0%})"
+
+
 LEITMOTIF_MAX = 3   # une tournure inventee (3 mots) dans plus de 3 phrases : tic de langage
 
 
@@ -182,9 +210,10 @@ def generate(log=print):
     base = phrases.base(lang)
     if not base:
         return None, dire("personnalite.fichier_phrases_introuvable")
-    demand = SURPRISE_DEMAND if cfg.get("surprise") else USER_DEMAND.format(prompt=cfg.get("prompt", ""))
-    style, problem = _ask_json(STYLE_PROMPT.format(langue=langue, demande=demand, date=datetime.date.today().isoformat(),
-                                                    graine=random.choice(GRAINES)), temperature=1.0)
+    demand = (SURPRISE_DEMAND.format(archetype=random.choice(ARCHETYPES)) if cfg.get("surprise")
+              else USER_DEMAND.format(prompt=cfg.get("prompt", "")))
+    style, problem = _ask_json(STYLE_PROMPT.format(langue=langue, demande=demand, date=datetime.date.today().isoformat()),
+                                 temperature=1.0)
     if problem or not style.get("resume"):
         return None, problem or dire("personnalite.fiche_style_vide")
     resume, fiche = " ".join(str(style["resume"]).split()), str(style.get("fiche", ""))
@@ -204,7 +233,7 @@ def generate(log=print):
         else:
             for key, entry in block:
                 text = " ".join(str(answer.get(key, "")).split())
-                reason = phrases.valid(entry, text)
+                reason = phrases.valid(entry, text) or _central_words_lost(entry["texte"], text)
                 if reason:
                     kept += 1
                     log(f"[personnalite] {key} garde neutre : {reason}")
