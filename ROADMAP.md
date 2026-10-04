@@ -5954,3 +5954,11 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
   tics (3 mots inventes dans plus de 3 phrases) ramenes au neutre.
 - Regeneree le 4 a midi : 207 phrases, ex. "Cette entree ne peut pas etre
   mise en favori, helas."
+- Precision utilisateur (4 au soir) : pas un theme mais une PERSONA (dictee
+  ou surprise), avec clins d'oeil et references a son univers. Surprise :
+  inspiree d'un archetype tire au hasard (personnalite.ARCHETYPES : petit
+  robot espiegle, marxiste depite, patron de banque, detective...). Mots
+  centraux gardes (controle : 60 % des mots de 5 lettres et plus de la
+  phrase neutre ; "journal" ne devient jamais "partition"). Longueur 1,6x.
+  Essai : philosophe de l'agora, 163 phrases colorees ("Point de commune
+  trouvee pour {query} dans l'immensite."), tics "par Zeus" ecartes.
