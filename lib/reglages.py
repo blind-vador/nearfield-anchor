@@ -46,6 +46,8 @@ DEFAULTS = {
     # radio numerique DAB+ (watchers/dab_watch.py) : stations interdites en plus
     # des grandes radios et des commerciales, ex. ["Radio Truc"]
     "dab": {"interdites": []},
+    # plantes de l'utilisateur (lib/plantes.py, commande "plantes")
+    "plantes": {"plantes": []},
     "console": {"voix": "fr-FR-DeniseNeural", "debit": "+20%", "debit_echo": "+50%",
                 "conseils": "toujours", "conseils_vus": []},
 }

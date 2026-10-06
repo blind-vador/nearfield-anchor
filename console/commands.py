@@ -586,6 +586,10 @@ COMMANDS = [
             keywords=["journal", "journal radio", "enregistrements", "enregistrement", "captures",
                       "log", "logs radio"],
             examples=["écouter les enregistrements", "ce que la radio a capté", "les réceptions de la nuit"]),
+    Command("plantes", "tes plantes : les ajouter, noter leur stade, l'arrosage, si elles sont rentrées ; "
+            "plante basilic arrosée, par exemple", None,
+            keywords=["plantes", "plante", "mes plantes", "botanique", "jardinage"],
+            examples=["ajouter une plante", "j'ai arrosé le basilic", "mes plantes vertes"]),
     Command("liste noire", "stations DAB interdites : la parcourir et en effacer, ou liste noire éditer pour en ajouter", None,
             keywords=["liste noire", "blacklist", "black list", "stations interdites", "radios interdites",
                       "liste des interdites", "interdites"],
