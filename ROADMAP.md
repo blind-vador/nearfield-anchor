@@ -6048,3 +6048,19 @@ console/plantes_cmd.py (liste + ajout, formes directes "plante basilic
 arrosee / rentree / fleurie"). Lettres I A R E reservees (pas de saut
 sur ces lettres). plantes.complete_missing() refera les fiches manquantes
 (a appeler depuis l'etape 2).
+
+## 2026-10-06 (nuit) : plantes, etape 2 (calendrier de vie)
+
+- lib/plantes_calendrier.py : prochain evenement par stade (seme -> levee,
+  germe -> premieres vraies feuilles, pousses/developpee -> premieres fleurs
+  comptees depuis la levee, fleurs -> fruits). Ancre = date reelle du stade
+  (historique), sinon levee estimee depuis le semis ou les premieres
+  feuilles ; une plante "developpee" sans autre stade connu n'a pas de
+  prevision. Plante dehors : moyenne 7 jours Open-Meteo (cache 3 h) ; sous
+  le minimum de croissance + 3 C, fenetre x1,5 ; sous le minimum, rien.
+- Thread de meteo_watch toutes les 30 min : ouverture de fenetre annoncee
+  une fois (prise "plante_calendrier", journal "plantes"), rappel unique
+  3 jours apres la fin ; silence 22 h - 7 h ; fiches manquantes refaites
+  une fois par jour. Etat : ~/autopilot/plantes_calendrier.json (SD).
+- Touche I du dialogue plantes : fiche + prochaine etape et ses dates.
+- Phrases sans accord (pluriels "les premieres vraies feuilles").
