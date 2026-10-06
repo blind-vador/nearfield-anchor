@@ -185,13 +185,14 @@ def due_messages(plants, state, mean_temp, today=None):
             continue
         base = f"{plant['id']}|{ev['evenement']}|{ev['ancre']}"
         what = _event_name(ev["evenement"])
-        hint = dire("plantes.calendrier_dis", nom=plant["nom"].lower(), mot=dire(f"plantes.mot_{ev['stade']}"))
+        word = dire(f"plantes.mot_{ev['stade']}")
         if ev["debut"] <= today <= ev["fin"] and base not in said:
-            out.append((base, dire("plantes.annonce_fenetre", nom=plant["nom"], evenement=what,
-                                   fin=spoken_date(ev["fin"])) + " " + hint))
+            out.append((base, dire("plantes.annonce_fenetre", nom=plant["nom"], evenement=what, fin=spoken_date(ev["fin"]))
+                        + " " + dire("plantes.calendrier_dis", nom=plant["nom"].lower(), mot=word)))
         elif today > ev["fin"] + datetime.timedelta(days=LATE_DAYS) and base + "|retard" not in said:
             out.append((base + "|retard", dire("plantes.annonce_retard", nom=plant["nom"], evenement=what,
-                                               fin=spoken_date(ev["fin"])) + " " + hint))
+                                               fin=spoken_date(ev["fin"]))
+                        + " " + dire("plantes.calendrier_dis_fait", nom=plant["nom"].lower(), mot=word)))
     return out
 
 
