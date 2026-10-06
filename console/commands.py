@@ -586,6 +586,9 @@ COMMANDS = [
             keywords=["journal", "journal radio", "enregistrements", "enregistrement", "captures",
                       "log", "logs radio"],
             examples=["écouter les enregistrements", "ce que la radio a capté", "les réceptions de la nuit"]),
+    Command("compris", "fait taire les alertes en cours pour tes plantes (gel, vent, chaleur, soif)", None,
+            keywords=["compris", "ok", "okay", "bien recu", "bien pris", "c est note", "d accord", "j ai compris"],
+            examples=["c'est bon j'ai compris", "message reçu"]),
     Command("plantes", "tes plantes : les ajouter, noter leur stade, l'arrosage, si elles sont rentrées ; "
             "plante basilic arrosée, par exemple", None,
             keywords=["plantes", "plante", "mes plantes", "botanique", "jardinage"],

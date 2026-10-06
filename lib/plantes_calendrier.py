@@ -221,10 +221,21 @@ def run_once(announce=None):
     return messages
 
 
+def _alerts(announce=None):
+    """Etape 3 : alertes redites jusqu'au "compris" (lib/plantes_alertes.py).
+    Tourne aussi la nuit, en silence, pour suivre les situations."""
+    import plantes_alertes
+    if announce is None:
+        import veille_donnees as vd
+        announce = lambda text: vd.announce(text, plantes_alertes.SOUND, "plante_alerte", "plantes")  # noqa: E731
+    return plantes_alertes.run_once(plantes.load(), _quiet(), announce)
+
+
 def watch():
     while True:
-        try:
-            run_once()
-        except Exception as exc:  # une panne ne doit pas arreter meteo_watch
-            print(f"[plantes_calendrier] {exc!r}")
+        for job in (run_once, _alerts):
+            try:
+                job()
+            except Exception as exc:  # une panne ne doit pas arreter meteo_watch
+                print(f"[plantes_calendrier] {job.__name__} : {exc!r}")
         time.sleep(POLL_SEC)

@@ -43,7 +43,7 @@ import simulation  # noqa: E402
 import veilles  # noqa: E402
 import vision  # noqa: E402
 import voix  # noqa: E402
-from phrases import dire  # noqa: E402
+from phrases import dire, nombre  # noqa: E402
 
 ESCAPE_TIMEOUT_SEC = 0.05
 KEYTEST_EXIT_ESCAPES = 3
@@ -325,6 +325,12 @@ def run_command(line, key_source, last_response):
         return observation.quick(line) or observation.run(line, key_source, voix.say, out)
     if cmd.name == "notifications":
         return journal.notifications()
+    if cmd.name == "compris":
+        import plantes_alertes
+        silenced = plantes_alertes.ack()
+        if not silenced:
+            return dire("plantes.compris_rien")
+        return dire("plantes.compris", nombre=nombre(len(silenced), "alerte"))
     if cmd.name == "plantes":
         import plantes_cmd
         return plantes_cmd.run(line, key_source, voix.say, out)
