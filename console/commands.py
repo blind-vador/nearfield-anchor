@@ -591,7 +591,7 @@ COMMANDS = [
             keywords=["interets", "interet", "centres d interet", "centre d interet", "mes interets"],
             examples=["je m'intéresse surtout aux avions", "moins de radio fm", "ce qui m'intéresse"]),
     Command("notifications", "combien de nouvelles entrées, pas encore écoutées, dans chaque journal", None,
-            keywords=["notification", "notifications", "nouveautes", "quoi de neuf", "du nouveau"],
+            keywords=["notification", "notifications", "nouveautes", "du nouveau"],
             examples=["qu'est-ce qu'il y a de nouveau", "des nouvelles entrées ?"]),
     Command("attention", "où le scanner concentre son écoute, et pourquoi", attention_status,
             keywords=["attention", "piqure", "piqures", "priorites", "ou ecoutes tu", "ou tu ecoutes"],

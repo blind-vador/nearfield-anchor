@@ -1,7 +1,8 @@
 """Enregistrements deja ecoutes dans les journaux (2026-10-06) : la commande
 "notifications" compte ce qui n'a pas encore ete ecoute. Fichier sur la carte
-SD, une entree par enregistrement (nom de fichier -> instant), oubliee apres
-KEEP_SEC (les journaux eux-memes ne gardent que 48 heures)."""
+SD : {"depuis": instant du premier usage, "ecoutes": {nom de fichier:
+instant}} ; ce qui existait avant le premier usage n'est pas "nouveau" ; une
+ecoute est oubliee apres KEEP_SEC (les journaux ne gardent que 48 heures)."""
 import json
 import os
 import time
@@ -13,25 +14,39 @@ KEEP_SEC = 7 * 86400
 def _load():
     try:
         with open(PATH, encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
     except (OSError, ValueError):
-        return {}
+        data = {}
+    if "ecoutes" not in data:
+        data = {"depuis": time.time(), "ecoutes": {}}
+        _save(data)
+    return data
 
 
-def mark(path):
-    """Enregistrement joue dans un journal : il n'est plus nouveau."""
-    heard = _load()
-    now = time.time()
-    heard[os.path.basename(path)] = now
-    heard = {k: t for k, t in heard.items() if now - t < KEEP_SEC}
+def _save(data):
     try:
         tmp = PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(heard, f)
+            json.dump(data, f)
         os.replace(tmp, PATH)
     except OSError as exc:
         print(f"[journal_vus] non ecrit : {exc}")
 
 
-def heard_names():
-    return set(_load())
+def mark(path):
+    """Enregistrement joue dans un journal : il n'est plus nouveau."""
+    data = _load()
+    now = time.time()
+    data["ecoutes"][os.path.basename(path)] = now
+    data["ecoutes"] = {k: t for k, t in data["ecoutes"].items() if now - t < KEEP_SEC}
+    _save(data)
+
+
+def is_new(path):
+    data = _load()
+    if os.path.basename(path) in data["ecoutes"]:
+        return False
+    try:
+        return os.path.getmtime(path) >= data["depuis"]
+    except OSError:
+        return False

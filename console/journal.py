@@ -299,11 +299,10 @@ def alt_held():
 def unheard_counts():
     """{journal: entrees pas encore ecoutees} (commande "notifications")."""
     import journal_vus
-    heard = journal_vus.heard_names()
     counts = {}
     for category in journaux.ORDER:
         n = sum(1 for recs in scan_recordings(category).values() for _, path, text in recs
-                if path and text is None and os.path.basename(path) not in heard)
+                if path and text is None and journal_vus.is_new(path))
         if n:
             counts[category] = n
     return counts
