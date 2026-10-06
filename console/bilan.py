@@ -4,9 +4,12 @@ reglages proposes, appliques, annules (2026-10-02).
 Confronte ce que l'utilisateur a entendu (notes du journal, touches N et V)
 aux reglages audio de chaque bande (lib/reglages_audio.py) :
 - une QUALITE de 0 a 1 par note, calculee sur tous les champs ;
-- des PROPOSITIONS chiffrees par bande, sur les notes arrivees depuis le
-  dernier changement de cette bande (au moins MIN_NOTES) : un reglage n'est
-  juge que sur ce qu'on a entendu apres lui, on ne tourne pas en rond ;
+- des PROPOSITIONS chiffrees par bande, sur les captures FAITES depuis le
+  dernier changement de cette bande (heure de capture, pas de notation) :
+  un reglage n'est juge que sur ce qu'on a entendu avec lui. MIN_NOTES est
+  un plancher ; on attend en plus que TOUTES les captures faites avec le
+  reglage en cours soient notees (2026-10-07, demande utilisateur : des
+  prises de 14 h notees a 16 h jugeaient deja un reglage plus recent) ;
 - un reglage CONTRE-PRODUCTIF : qualite moyenne en baisse de REGRESSION
   apres lui (au moins MIN_AFTER notes) -> le dire ; en mode automatique,
   l'annuler tout seul.
@@ -51,11 +54,30 @@ def _weight(note):
     return 0.5 if note.get("reponses", {}).get("certitude") == "hesitant" else 1.0
 
 
-def _note_time(note):
-    try:
-        return time.mktime(time.strptime(note["note_le"], "%Y-%m-%dT%H:%M:%S"))
-    except (KeyError, ValueError):
-        return 0.0
+def _capture_time(note):
+    """Heure de la capture notee (sinon de la note, pour les plus anciennes)."""
+    for key in ("capture_le", "note_le"):
+        try:
+            return time.mktime(time.strptime(note[key][:19], "%Y-%m-%dT%H:%M:%S"))
+        except (KeyError, ValueError, TypeError):
+            continue
+    return 0.0
+
+
+def _unrated_since(band, since, rated):
+    """Captures de cette bande faites depuis since et pas encore notees
+    (encore au journal : un enregistrement rejete ou purge ne compte plus)."""
+    import os
+    import journal
+    import noise_signatures as ns
+    count = 0
+    for recs in journal.scan_recordings("radio").values():
+        for stamp, path, text in recs:
+            if not path or text is not None or stamp.timestamp() <= since or os.path.basename(path) in rated:
+                continue
+            if (ns.capture_info(path) or {}).get("target") == band:
+                count += 1
+    return count
 
 
 def _radio_notes():
@@ -132,20 +154,28 @@ def suggestions(band_notes, settings):
 def analyse():
     """Par bande : {libelle, notes, depuis, qualite, changements, raisons, regression}."""
     out = {}
-    for band, notes in _by_band(_radio_notes()).items():
+    all_notes = _radio_notes()
+    rated = {n.get("fichier") for n in notation.load_notes()}
+    for band, notes in _by_band(all_notes).items():
         since = ra.last_change(band)
-        after = [n for n in notes if _note_time(n) > since]
-        before = [n for n in notes if _note_time(n) <= since][-15:]
+        notes = sorted(notes, key=_capture_time)
+        after = [n for n in notes if _capture_time(n) > since]
+        before = [n for n in notes if _capture_time(n) <= since][-15:]
         settings = ra.get(band)
         entry = {"libelle": notes[-1].get("label") or band, "notes": len(notes), "depuis": len(after),
                  "qualite": sum(quality(n) for n in after or notes) / len(after or notes),
-                 "changements": {}, "raisons": [], "regression": None}
+                 "changements": {}, "raisons": [], "regression": None, "a_noter": 0}
         if since and len(after) >= MIN_AFTER and before:
             q_before = sum(quality(n) for n in before) / len(before)
             q_after = sum(quality(n) for n in after) / len(after)
             if q_after < q_before - REGRESSION:
                 entry["regression"] = (q_before, q_after)
-        if len(after) >= MIN_NOTES and not entry["regression"]:
+        if len(after) >= MIN_NOTES or entry["regression"]:
+            try:
+                entry["a_noter"] = _unrated_since(band, since, rated)
+            except Exception as exc:  # journal illisible : on ne bloque pas le bilan
+                print(f"[bilan] captures non notees : {exc!r}")
+        if len(after) >= MIN_NOTES and not entry["regression"] and not entry["a_noter"]:
             entry["changements"], entry["raisons"] = suggestions(after, settings)
         out[band] = entry
     return out
@@ -167,7 +197,9 @@ def summary():
                   bandes=nombre(len(data), "bande"))]
     for band, e in sorted(data.items(), key=lambda kv: -kv[1]["notes"]):
         line = dire("bilan.qualite_bande", bande=e['libelle'], qualite=round(100 * e['qualite']))
-        if e["regression"]:
+        if e["a_noter"]:
+            line += dire("bilan.encore_a_noter", prises=nombre(e["a_noter"], "prise", "prises"))
+        elif e["regression"]:
             line += (dire("bilan.baisse_depuis_dernier_reglage", round=round(100 * e['regression'][0]), round2=round(100 * e['regression'][1])))
         elif e["changements"]:
             line += dire("bilan.propose", v1=_spoken_changes(band, e['changements']), join=', '.join(e['raisons']))
@@ -202,6 +234,8 @@ def auto_step(band):
     e = analyse().get(band)
     if not e:
         return ""
+    if e["a_noter"]:
+        return ""  # des captures faites avec ce reglage attendent encore leur note
     if e["regression"]:
         what = ra.revert_band(band)
         return " " + dire("bilan.reglage_automatique_annule_notes", libelle=e['libelle'], what=what) if what else ""
