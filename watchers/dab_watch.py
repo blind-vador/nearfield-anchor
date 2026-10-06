@@ -19,6 +19,7 @@ import time
 
 import requests
 
+import dab_liste
 import veille_donnees as vd
 from phrases import dire
 
@@ -29,26 +30,8 @@ URL = f"http://127.0.0.1:{PORT}"
 PROBE_SEC = 9              # le temps qu'un ensemble se fasse reconnaitre
 PROBES_PER_VISIT = 4
 RESCAN_SEC = 30 * 86400
-# Stations INTERDITES (2026-10-03, demande utilisateur) : on ne cherche que ce
-# qui est peu connu ou inconnu (radios locales, associatives...). Sont
-# ignorees, sans aucun appel a Gemini : Radio France, les grandes radios
-# nationales et les reseaux commerciaux (liste ci-dessous), plus celles du
-# reglage "dab" (cle "interdites", NAS). Comparaison sans accents ni casse,
-# par mot ou groupe de mots entier ("rtl" interdit RTL et RTL2, pas RTLB).
-# Reseau "ici" de Radio France : "ici" suivi d'un lieu (ICI_PLACES).
-DEFAULT_BANNED = [
-    # Radio France
-    "france inter", "france culture", "france musique", "franceinfo", "france info", "fip", "mouv",
-    "france bleu",
-    # grandes radios nationales, publiques ou non
-    "rfi", "radio classique", "europe 1", "europe1", "rtl", "rmc", "bfm", "sud radio", "radio nova", "tsf jazz",
-    "jazz radio", "skyrock", "fun radio", "virgin", "rfm", "nrj", "nostalgie", "cherie", "rire et chansons",
-    "rire & chansons", "oui fm", "m radio", "latina", "africa radio", "radio fg", "fg", "voltage", "radio ado", "ado", "swigg",
-    "chante france", "radio orient", "beur fm", "radio monaco", "melody",
-    # reseaux commerciaux regionaux
-    "radio scoop", "tonic radio", "alouette", "hit west", "contact fm", "radio espace", "forum", "vibration",
-    "nostalgie", "jordanne", "totem", "radio star",
-]
+# Stations interdites : lib/dab_liste.py (liste de base + reglage "dab" du NAS,
+# commande "liste noire" de la console, fleche gauche dans le journal).
 CAROUSEL = "1"             # une station decodee a la fois : le DAB+ chauffe le Pi (76 C le 2026-10-03)
 SOUND = "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3"
 TEXT_REPEAT_SEC = 1800     # le meme texte de la meme station : redit apres 30 min
@@ -200,7 +183,7 @@ def _listen(channel, ensemble, dwell_sec):
             for svc in mux.get("services") or []:
                 name = _label(svc.get("label")) or str(svc.get("sid"))
                 _note_station(channel, name)
-                if not _kept(name):
+                if not dab_liste.kept(name):
                     continue  # station interdite (grande radio, commerciale) : rien n'est dit, aucun appel a Gemini
                 dls = _label(svc.get("dls"))
                 if dls and _say_text(channel, ensemble, name, dls):
@@ -213,38 +196,6 @@ def _listen(channel, ensemble, dwell_sec):
         _stop(proc)
         _memory.save()
     return said
-
-
-def _plain(text):
-    import unicodedata
-    return " ".join(unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower().split()) + " "
-
-
-def banned_stations():
-    try:
-        import reglages
-        extra = (reglages.get("dab") or {}).get("interdites") or []
-    except Exception:
-        extra = []
-    return DEFAULT_BANNED + [_plain(x).strip() for x in extra]
-
-
-ICI_PLACES = ("saint", "st ", "loire", "lyon", "rhone", "isere", "auvergne", "drome", "ardeche", "haute",
-              "pays", "paris", "provence", "alsace", "nord", "sud")
-
-
-def _matches(plain, part):
-    import re
-    part = _plain(part).strip()
-    return re.search(rf"(^| ){re.escape(part)}(?![a-z])", plain) is not None
-
-
-def _kept(name):
-    """Station a ecouter : tout ce qui n'est pas interdit."""
-    plain = _plain(name)
-    if plain.startswith("ici ") and plain[4:].startswith(ICI_PLACES):  # reseau ici (Radio France)
-        return False
-    return not any(_matches(plain, part) for part in banned_stations())
 
 
 def _note_station(channel, name):

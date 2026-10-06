@@ -586,6 +586,10 @@ COMMANDS = [
             keywords=["journal", "journal radio", "enregistrements", "enregistrement", "captures",
                       "log", "logs radio"],
             examples=["écouter les enregistrements", "ce que la radio a capté", "les réceptions de la nuit"]),
+    Command("liste noire", "stations DAB interdites : la parcourir et en effacer, ou liste noire éditer pour en ajouter", None,
+            keywords=["liste noire", "blacklist", "black list", "stations interdites", "radios interdites",
+                      "liste des interdites", "interdites"],
+            examples=["les stations que j'ai bannies", "ajouter une radio à la liste noire", "débannir une station"]),
     # Avant "attention" (dont un mot-cle est "priorites") : centres d'interet de l'utilisateur.
     Command("intérêts", "tes centres d'intérêt : ce qui doit attirer le scanner en priorité ; intérêt avions fort, par exemple", None,
             keywords=["interets", "interet", "centres d interet", "centre d interet", "mes interets"],

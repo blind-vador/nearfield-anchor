@@ -274,16 +274,14 @@ def _ban_dab_station(fiche):
     """Message DAB+ rejete : sa station rejoint les interdites (2026-10-06,
     demande utilisateur : ecarter une radio commerciale depuis le journal).
     Rend la phrase a dire."""
-    import reglages
+    import dab_liste
     station = (fiche.get("station") or fiche.get("source", "").rsplit(", ", 1)[0]).strip()
     if not station:
         return dire("journal.rejete_supprime")
-    settings = reglages.get("dab")
-    banned = settings.setdefault("interdites", [])
-    if station.casefold() in (s.casefold() for s in banned):
+    status, _ = dab_liste.add(station)
+    if status == "deja":
         return dire("journal.dab_deja_interdite", station=station)
-    banned.append(station)
-    if not reglages.save("dab", settings):
+    if status == "nas":
         return dire("journal.dab_interdite_echec", station=station)
     return dire("journal.dab_interdite", station=station)
 
