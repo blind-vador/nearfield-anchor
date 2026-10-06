@@ -217,7 +217,8 @@ def run(line, key_source, say, out):
     adding = bool(set(matcher.normalize(line).split()) & ADD_WORDS) or not plants
     i = 0
     undo = []
-    intro = conseils.intro("plantes", dire("plantes.titre", nombre=nombre(len(plants), "plante")), dire("plantes.consigne"))
+    title = dire("plantes.titre", nombre=nombre(len(plants), "plante")) if plants else dire("plantes.titre_vide")
+    intro = conseils.intro("plantes", title, dire("plantes.consigne"))
     out(intro + "\n")
     say(intro)
     if not adding and plants:
@@ -244,6 +245,19 @@ def run(line, key_source, say, out):
             continue
         if conseils.is_help(key):
             text = dire("plantes.consigne")
+        elif key == CTRL_Z:
+            if not undo:
+                text = dire("plantes.rien_a_annuler")
+            else:
+                at, back = undo.pop()
+                plants.insert(at, back)
+                if not plantes.save(plants):
+                    plants.pop(at)
+                    undo.append((at, back))
+                    text = dire("plantes.nas_inaccessible")
+                else:
+                    i = at
+                    text = dire("plantes.remise", nom=back["nom"])
         elif not plants:
             text = dire("plantes.aucune")
         elif key in (UP, DOWN):
@@ -289,19 +303,6 @@ def run(line, key_source, say, out):
                 undo.append((i, gone))
                 i = min(i, max(len(plants) - 1, 0))
                 text = dire("plantes.retiree", nom=gone["nom"]) + " " + (plantes.line(plants[i]) if plants else dire("plantes.aucune"))
-        elif key == CTRL_Z:
-            if not undo:
-                text = dire("plantes.rien_a_annuler")
-            else:
-                at, back = undo.pop()
-                plants.insert(at, back)
-                if not plantes.save(plants):
-                    plants.pop(at)
-                    undo.append((at, back))
-                    text = dire("plantes.nas_inaccessible")
-                else:
-                    i = at
-                    text = dire("plantes.remise", nom=back["nom"])
         elif len(key) == 1 and key.isalnum():
             letter = matcher.normalize(key)
             order = plants[i + 1:] + plants[:i + 1]

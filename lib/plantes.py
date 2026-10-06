@@ -27,7 +27,7 @@ from phrases import Etiquettes, dire
 
 STAGES = ["seme", "germe", "pousses", "developpee", "fleurs", "fruits", "repos"]
 STAGE_NAMES = Etiquettes("plantes.stade", {
-    "seme": "graines semées", "germe": "germée", "pousses": "jeunes pousses", "developpee": "développée",
+    "seme": "graines semées", "germe": "en germination", "pousses": "jeunes pousses", "developpee": "plante développée",
     "fleurs": "en fleurs", "fruits": "en fruits", "repos": "au repos"}, "stade d'une plante")
 # "depuis quand" a l'ajout : (libelle, jours)
 SINCE = [("aujourd_hui", 0), ("quelques_jours", 3), ("une_semaine", 7), ("deux_semaines", 14),
