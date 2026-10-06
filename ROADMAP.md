@@ -5993,3 +5993,16 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
   (bilan._unrated_since, via journal.scan_recordings + empreintes) ; chaque
   note au-dela du minimum compte en bonus. Le bilan dit "N prises faites
   avec les reglages actuels a noter avant de proposer".
+
+## 2026-10-06 : rejeter un message DAB+ interdit sa station
+
+- Journal "messages", fleche gauche sur un message DAB+ : la prise et sa
+  fiche sont supprimees, et la station (fiche "station", sinon debut de
+  "source") est ajoutee a dab.json "interdites" sur le NAS ; dab_watch la
+  relit a chaque station, sans redemarrage. Phrases journal.dab_interdite,
+  dab_deja_interdite, dab_interdite_echec (NAS absent).
+- Avant, le rejet laissait la fiche .json orpheline (19 fiches DAB du
+  3 octobre sans son). Encore autorisees parmi elles : RADIO ONDAINE,
+  EUROPE 2 DAB+, FUEGO, ACTIV DAB+ (decision utilisateur en attente).
+- dab_watch.py copie dans ~/autopilot/pi_console mais radio-watch pas
+  redemarre : le champ "station" arrivera au prochain redemarrage.
