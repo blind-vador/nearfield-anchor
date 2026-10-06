@@ -5981,3 +5981,15 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
 - Journal : Alt + fleche bas / haut = entree suivante / precedente sans
   note (notation.load_notes, par nom de fichier), en continuant sur les
   jours suivants dans l'ordre de Tab ; Alt lu par evdev comme Ctrl.
+
+## 2026-10-06 : bilan, attendre que tout soit note
+
+- Le Pi ajustait parfois une bande alors que des prises restaient a noter.
+  Les notes sont maintenant rattachees au reglage en vigueur a l'heure de
+  CAPTURE (capture_le), plus a l'heure de notation. MIN_NOTES (8) n'est
+  qu'un plancher : proposition et ajustement automatique (y compris
+  l'annulation pour regression) attendent que toutes les captures de la
+  bande faites depuis son dernier changement soient notees
+  (bilan._unrated_since, via journal.scan_recordings + empreintes) ; chaque
+  note au-dela du minimum compte en bonus. Le bilan dit "N prises faites
+  avec les reglages actuels a noter avant de proposer".
