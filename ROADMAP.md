@@ -6019,3 +6019,32 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
   dit si la station a deja ete captee (canal) ou si le nom est deja couvert.
 - L'utilisateur a deja interdit ACTIV DAB+ et RADIO ONDAINE depuis le
   journal. radio-watch et pi-console redemarres (aucun passage proche).
+
+## 2026-10-06 : plantes, etape 1 (commande "plantes")
+
+Plan valide par l'utilisateur, 6 etapes : 1) commande plantes ; 2) calendrier
+de vie (fenetres min-max, recalees sur les stades constates) et journal
+"plantes" ; 3) alertes (gel, vent, chaleur, soif) redites toutes les 30 min
+jusqu'a "compris / ok / bien recu / bien pris", silence 22 h - 7 h par
+defaut (reglable), simples nouvelles de croissance dites une fois ;
+4) flash : conseils meteo par plante, ravageurs du mois a Saint-Etienne et
+traitements ecoresponsables (fiche Gemini mensuelle + declencheurs meteo),
+quoi planter ce mois-ci (pot, balcon, jardin) ; 5) photos : travail dans
+server/plantes/<plante>/ (+ "a identifier"), description datee en texte
+gardee pour toujours dans storage/plantes (nd2), comparaison aux
+descriptions passees ; les PHOTOS ne sont archivees que manuellement
+(evenement marquant) ; 6) sondes de sol Ecowitt WH51 / Froggit DP100
+(868 ou 433 MHz, rtl_433 Fineoffset-WH51) avec appairage : pause scanner
+5 min, pile, nouvel identifiant, verre d'eau = confirmation + etalonnage
+sec / mouille, rattachement a une plante.
+L'utilisateur n'a AUCUN thermometre : les capteurs d'interieur entendus
+sont a un voisin.
+
+Etape 1 faite : lib/plantes.py (reglage "plantes" du NAS ; emplacement en
+4 axes : dedans/dehors, balcon/jardin, pot/pleine terre, abri de la pluie ;
+fiche Gemini JSON faite une fois a l'ajout : durees min-max, seuils gel /
+croissance / chaleur, vent, eau, jours sans eau en pot l'ete, conseils),
+console/plantes_cmd.py (liste + ajout, formes directes "plante basilic
+arrosee / rentree / fleurie"). Lettres I A R E reservees (pas de saut
+sur ces lettres). plantes.complete_missing() refera les fiches manquantes
+(a appeler depuis l'etape 2).
