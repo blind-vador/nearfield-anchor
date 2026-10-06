@@ -15,14 +15,17 @@ ses propres archives (extraits gardes, fleche droite).
               par capteur et par jour, meme ceux ecartes du bulletin meteo
               (console/journal_capteurs.py)
   satellites  passages et images de satellites
+  plantes     calendrier de vie et conseils pour les plantes de l'utilisateur
+              (lib/plantes_calendrier.py, 2026-10-06)
 """
 import os
 
 KEEP_DIR = "/media/nas/nd2/storage/radio"
-ORDER = ["radio", "messages", "donnees", "capteurs", "satellites"]
+ORDER = ["radio", "messages", "donnees", "capteurs", "satellites", "plantes"]
 NAMES = {"radio": "radio", "messages": "messages", "donnees": "données", "capteurs": "capteurs",
-         "satellites": "satellites"}
+         "satellites": "satellites", "plantes": "plantes"}
 PREFIXES = {
+    "plantes": ("plante_",),
     "satellites": ("passage_", "satellite", "meteor"),
     "capteurs": ("voiture", "capteur_", "capteurs_", "sonde_"),
     # anciens noms (avant le 2026-10-03) : ACARS, vdl2, pager, meshtastic -> messages
@@ -38,6 +41,7 @@ WORDS = {
                  "meshtastic"),
     "donnees": ("donnee", "donnees", "data", "aprs", "lora", "planeur", "planeurs", "balise", "balises"),
     "radio": ("radio", "voix"),
+    "plantes": ("plante", "plantes", "jardin", "jardinage"),
 }
 
 
@@ -52,7 +56,7 @@ def category_of(filename):
 def from_words(normalized_text):
     """Journal designe dans une commande deja normalisee ; radio par defaut."""
     words = set(normalized_text.split())
-    for category in ("satellites", "capteurs", "messages", "donnees", "radio"):
+    for category in ("satellites", "capteurs", "messages", "donnees", "plantes", "radio"):
         if words & set(WORDS[category]):
             return category
     return "radio"

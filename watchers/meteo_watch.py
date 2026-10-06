@@ -480,6 +480,8 @@ def main():
     threading.Thread(target=stats_locales.watch, daemon=True).start()
     import compagnon_serveur  # liaison avec les machines compagnes (calculs lourds)
     threading.Thread(target=compagnon_serveur.run, daemon=True).start()
+    import plantes_calendrier  # evenements de vie des plantes (journal "plantes")
+    threading.Thread(target=plantes_calendrier.watch, daemon=True).start()
     _vigilance_watcher()
 
 

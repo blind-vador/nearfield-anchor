@@ -276,7 +276,13 @@ def run(line, key_source, say, out):
             else:
                 text = dire("plantes.stade_bout")
         elif key in ("i", "I"):
+            import plantes_calendrier
             text = plantes.card(plants[i])
+            try:
+                temp = None if plants[i].get("dedans") else plantes_calendrier.outdoor_mean_temp()
+                text = (text + " " + plantes_calendrier.describe(plants[i], temp)).strip()
+            except Exception as exc:  # pas de reseau : la fiche suffit
+                print(f"[plantes] calendrier : {exc!r}")
         elif key in ("a", "A"):
             text = _apply(plants[i], "arrosee")
             if not plantes.save(plants):
