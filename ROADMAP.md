@@ -5969,3 +5969,15 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
   ecoute manuelle permise pendant la pause sous MANUAL_HEAT_MAX_C (70 C),
   sinon message dans le mode manuel (manuel.trop_chaud) ; fleches
   reactives (0,1 s) pendant la pause.
+
+## 2026-10-06 : notifications, Alt + fleche dans le journal
+
+- Commande "notifications" (mots-cles : notification, nouveautes, du
+  nouveau) : nombre d'entrees pas encore ecoutees, journal par journal ;
+  "Aucune nouvelle entree" sinon. Suivi : lib/journal_vus.py (carte SD,
+  ~/autopilot/journal_ecoutes.json) ; chaque enregistrement joue dans un
+  journal est marque ecoute ; ce qui existait au premier usage (6 octobre,
+  18 h 38) n'est pas compte.
+- Journal : Alt + fleche bas / haut = entree suivante / precedente sans
+  note (notation.load_notes, par nom de fichier), en continuant sur les
+  jours suivants dans l'ordre de Tab ; Alt lu par evdev comme Ctrl.
