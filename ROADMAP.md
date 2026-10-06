@@ -6006,3 +6006,16 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
   EUROPE 2 DAB+, FUEGO, ACTIV DAB+ (decision utilisateur en attente).
 - dab_watch.py copie dans ~/autopilot/pi_console mais radio-watch pas
   redemarre : le champ "station" arrivera au prochain redemarrage.
+
+## 2026-10-06 : commande "liste noire" (stations DAB+)
+
+- lib/dab_liste.py : liste de base (ex dab_watch.DEFAULT_BANNED) + reglage
+  dab.json "interdites" (ajouts) et "retirees" (entrees de base enlevees).
+  Partagee par dab_watch (kept), le journal (fleche gauche) et la console.
+- console/liste_noire_cmd.py, commande "liste noire" (blacklist, stations
+  interdites). Mode liste : haut/bas, lettre = saut, Retour arriere efface
+  l'entree, Ctrl+A puis Retour arriere efface tout, Ctrl+Z annule. Mode
+  edition ("liste noire editer" ou Tab) : taper un nom, Entree l'ajoute ;
+  dit si la station a deja ete captee (canal) ou si le nom est deja couvert.
+- L'utilisateur a deja interdit ACTIV DAB+ et RADIO ONDAINE depuis le
+  journal. radio-watch et pi-console redemarres (aucun passage proche).
