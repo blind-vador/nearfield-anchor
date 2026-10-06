@@ -145,7 +145,7 @@ def _say_text(channel, ensemble, service, text):
     key = f"dls|{service}|{text[:100]}"
     if not _memory.due(key, TEXT_REPEAT_SEC):
         return False
-    fiche = {"protocole": "DAB+", "source": f"{service}, {ensemble}", "canal": channel, "texte_original": text}
+    fiche = {"protocole": "DAB+", "source": f"{service}, {ensemble}", "station": service, "canal": channel, "texte_original": text}
     vd.announce(dire("dab.texte", station=service, texte=text), SOUND, "message_dab", "dab_watch", fiche=fiche)
     return True
 
@@ -170,7 +170,7 @@ def _say_slide(channel, ensemble, service, sid):
     path = os.path.join(folder, f"{time.strftime('%Y-%m-%d_%H%M%S')}_{digest}.jpg")
     with open(path, "wb") as f:
         f.write(image)
-    fiche = {"protocole": "DAB+", "source": f"{service}, {ensemble}", "canal": channel, "image": path}
+    fiche = {"protocole": "DAB+", "source": f"{service}, {ensemble}", "station": service, "canal": channel, "image": path}
 
     def text():  # dans la file d'annonces : Gemini sans bloquer l'ecoute
         try:

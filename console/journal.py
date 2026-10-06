@@ -12,7 +12,9 @@ satellites -- "journal capteurs", "journal satellites"...
   fleche droite            garde : copie dans les extraits interessants
                            (storage/radio), nommee par sa date de capture
   fleche gauche            rejette : meme procedure que "parasite"
-                           (supprime + apprend l'empreinte si elle existe)
+                           (supprime + apprend l'empreinte si elle existe) ;
+                           un message DAB+ rejete interdit sa station
+                           (reglage dab, "interdites", lu par dab_watch)
   I                        informations : frequence, mode, et pour la CB et
                            le 10 m le verdict "vraie emission ou artefact"
   B                        ecoute le son brut, avant nettoyage (journal
@@ -268,11 +270,37 @@ def raw_path(path):
     return candidate if candidate and os.path.exists(candidate) else None
 
 
+def _ban_dab_station(fiche):
+    """Message DAB+ rejete : sa station rejoint les interdites (2026-10-06,
+    demande utilisateur : ecarter une radio commerciale depuis le journal).
+    Rend la phrase a dire."""
+    import reglages
+    station = (fiche.get("station") or fiche.get("source", "").rsplit(", ", 1)[0]).strip()
+    if not station:
+        return dire("journal.rejete_supprime")
+    settings = reglages.get("dab")
+    banned = settings.setdefault("interdites", [])
+    if station.casefold() in (s.casefold() for s in banned):
+        return dire("journal.dab_deja_interdite", station=station)
+    banned.append(station)
+    if not reglages.save("dab", settings):
+        return dire("journal.dab_interdite_echec", station=station)
+    return dire("journal.dab_interdite", station=station)
+
+
 def _reject(path):
     info = ns.capture_info(path)
+    fiche = _message_card(path)
     os.remove(path)
     if raw_path(path):
         os.remove(raw_path(path))
+    if fiche is not None:
+        try:
+            os.remove(path[:-4] + ".json")
+        except OSError:
+            pass
+        if fiche.get("protocole") == "DAB+":
+            return _ban_dab_station(fiche)
     ns.forget_capture(path)
     last = ns.last_capture()
     if last and last.get("log_path") == path:
