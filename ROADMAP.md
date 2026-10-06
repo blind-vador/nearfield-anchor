@@ -6064,3 +6064,20 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   une fois par jour. Etat : ~/autopilot/plantes_calendrier.json (SD).
 - Touche I du dialogue plantes : fiche + prochaine etape et ses dates.
 - Phrases sans accord (pluriels "les premieres vraies feuilles").
+
+## 2026-10-07 : plantes, etape 3 (alertes)
+
+- lib/plantes_alertes.py, appele par la boucle de plantes_calendrier
+  (meteo_watch, 30 min) : gel (min de la nuit <= temp_gel_c, +2 C en pot,
+  a partir de 17 h), rentrer (plante "a rentrer l'hiver", nuit <= 5 C),
+  vent (rafales 18 h : fragile 35, moyen 55, robuste 75 km/h), chaleur
+  (max 24 h >= temp_max_c), soif (ET0 FAO Open-Meteo depuis le dernier
+  arrosage dit, x0,3 dedans, moins la pluie si exposee ; reserve =
+  jours_sans_eau_pot_ete x 5 mm, x3 en pleine terre ; 8 h - 21 h).
+- Redite toutes les 30 min tant que la situation dure ("Rappel."), muette
+  22 h - 7 h ; commande console "compris" / "ok" / "bien recu" / "bien
+  pris" : ack() -> ~/autopilot/plantes_acquit.json, une alerte nee apres
+  reste a dire. Etat : ~/autopilot/plantes_alertes.json.
+- Premiere plante reelle : Citronnier caviar (balcon, pot, abrite, gel
+  -3 C, vent fragile, a rentrer l'hiver). arrosee_le encore vide : la soif
+  n'est suivie qu'apres un premier "arrosee".
