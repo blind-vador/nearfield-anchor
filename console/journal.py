@@ -292,6 +292,34 @@ def ctrl_held():
     return keys.modifier_held("ctrl")
 
 
+def alt_held():
+    return keys.modifier_held("alt")
+
+
+def unheard_counts():
+    """{journal: entrees pas encore ecoutees} (commande "notifications")."""
+    import journal_vus
+    heard = journal_vus.heard_names()
+    counts = {}
+    for category in journaux.ORDER:
+        n = sum(1 for recs in scan_recordings(category).values() for _, path, text in recs
+                if path and text is None and os.path.basename(path) not in heard)
+        if n:
+            counts[category] = n
+    return counts
+
+
+def notifications():
+    if not os.path.ismount("/media/nas/nd1"):
+        return dire("notifications.disque_absent")
+    counts = unheard_counts()
+    if not counts:
+        return dire("notifications.rien")
+    parts = [dire("notifications.journal", entrees=nombre(n, "nouvelle entrée", "nouvelles entrées"),
+                  nom=journaux.NAMES[c]) for c, n in counts.items()]
+    return dire("notifications.liste", liste=" ; ".join(parts))
+
+
 def run(key_source, say, out, category="radio"):
     name = journaux.NAMES[category]
     if not os.path.ismount("/media/nas/nd1"):
@@ -338,6 +366,27 @@ def run(key_source, say, out, category="radio"):
         else:
             player.play(path)
             out(f"[{os.path.basename(path)}]\n")
+            try:
+                import journal_vus
+                journal_vus.mark(path)  # n'est plus nouveau (commande "notifications")
+            except Exception as exc:
+                print(f"[journal] ecoute non notee : {exc!r}")
+
+    def next_unrated(step):
+        """(jour, rang) de la prochaine entree sans note dans le sens step, ou None."""
+        rated = {n.get("fichier") for n in notation.load_notes()}
+        d, i = day_i, rec_i
+        for _ in range(sum(len(v) for v in days.values()) + 1):
+            i += step
+            if not 0 <= i < len(days[order[d]]):
+                d += 1 if step > 0 else -1  # jour suivant dans l'ordre de Tab (plus ancien)
+                if not 0 <= d < len(order):
+                    return None
+                i = 0 if step > 0 else len(days[order[d]]) - 1
+            _, path, text = days[order[d]][i]
+            if path and text is None and os.path.basename(path) not in rated:
+                return d, i
+        return None
 
     try:
         intro = conseils.intro("journal", title, consigne)
@@ -357,6 +406,17 @@ def run(key_source, say, out, category="radio"):
                 day_i = (day_i + (1 if key == "\t" else -1)) % len(order)
                 rec_i = -1
                 text = announce_day()
+            elif key in ("\x1b[A", "\x1b[B") and alt_held():
+                # Alt + fleche : prochaine (ou precedente) entree pas encore notee.
+                found = next_unrated(1 if key == "\x1b[B" else -1)
+                if found is None:
+                    text = dire("journal.plus_de_non_notee")
+                else:
+                    if found[0] != day_i:
+                        day_i = found[0]
+                        voix.say_blocking(announce_day())
+                    rec_i = found[1]
+                    play(rec_i)
             elif key in ("\x1b[A", "\x1b[B") and ctrl_held():
                 # Ctrl + fleche : premier ou dernier du jour, joue aussitot.
                 rec_i = 0 if key == "\x1b[A" else len(recs) - 1

@@ -323,6 +323,8 @@ def run_command(line, key_source, last_response):
         if matcher.normalize(line) in ("observation", "observer", "observation meteo"):
             return observation.run(line, key_source, voix.say, out)
         return observation.quick(line) or observation.run(line, key_source, voix.say, out)
+    if cmd.name == "notifications":
+        return journal.notifications()
     if cmd.name == "intérêts":
         import interets_cmd
         return interets_cmd.run(line, key_source, voix.say, out)
