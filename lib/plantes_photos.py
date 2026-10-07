@@ -63,10 +63,10 @@ Description precedente ({date_precedente}) : {precedente}
 Dernieres evolutions notees :
 {evolutions}
 
-Reponds en JSON strict :
+Reponds en francais correctement accentue, en JSON strict :
 {{
  "description": "etat actuel, facon texte alternatif, 3 phrases au plus : taille et port, feuilles (nombre approximatif, forme, aspect), fleurs, fruits",
- "evolution": "ce qui a change depuis la description precedente, une phrase ; si pas de description precedente : premier etat note",
+ "evolution": "ce qui a change depuis la description precedente, une phrase ; si pas de description precedente : « Premier état noté. »",
  "stade": "seme" | "germe" | "pousses" | "developpee" | "fleurs" | "fruits" | "repos",
  "problemes": "signes visibles de maladie, ravageur, manque ou exces d'eau, brulure ; chaine vide si rien"
 }}
@@ -164,7 +164,7 @@ def _analyse(plant, path, stamp):
     # 1) la liste datee des evolutions, sur le stockage
     archive = os.path.join(ARCHIVE_DIR, slug(plant["nom"]))
     os.makedirs(archive, exist_ok=True)
-    line = f"{day} : {evolution}" + (f" Probleme : {problems}" if problems else "")
+    line = f"{day} : {evolution}" + (f" Problème : {problems}" if problems else "")
     with open(os.path.join(archive, EVOLUTION), "a", encoding="utf-8") as f:
         f.write(line + "\n")
     # 2) la nouvelle description remplace l'ancienne, desormais agregee

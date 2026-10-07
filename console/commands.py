@@ -591,7 +591,8 @@ COMMANDS = [
             examples=["c'est bon j'ai compris", "message reçu"]),
     Command("plantes", "tes plantes : les ajouter, noter leur stade, l'arrosage, si elles sont rentrées ; "
             "plante basilic arrosée, par exemple", None,
-            keywords=["plantes", "plante", "mes plantes", "botanique", "jardinage"],
+            keywords=["plantes", "plante", "mes plantes", "botanique", "jardinage", "plante photo", "plantes photo",
+                      "plante photos", "photos des plantes", "photo de plante"],
             examples=["ajouter une plante", "j'ai arrosé le basilic", "mes plantes vertes"]),
     Command("liste noire", "stations DAB interdites : la parcourir et en effacer, ou liste noire éditer pour en ajouter", None,
             keywords=["liste noire", "blacklist", "black list", "stations interdites", "radios interdites",
