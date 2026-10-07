@@ -6121,3 +6121,9 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   gemini.ask accepte mime (HEIC de l'iPhone).
 - main._match : une ligne qui commence par "plante(s)" va aux plantes
   ("plante photo" partait vers decris).
+- 2026-10-07, premieres vraies photos (HEIC, citronnier et feijoa) : le Pi
+  ne disait que "Premier etat note" -> la description est maintenant dite
+  en entier (photo_premiere / photo_nouvelle) ; Gemini recoit le portrait
+  de la plante (description du registre) et sait qu'un pot peut contenir
+  plusieurs plantes : le citronnier, d'abord "introuvable", est repere.
+  Les deux photos ont ete re-analysees (anciens resultats effaces).
