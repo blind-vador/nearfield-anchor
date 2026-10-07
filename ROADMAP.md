@@ -6213,3 +6213,27 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
 - A faire : lire SIRI / SIRI Lite (85 + 21 reseaux, dont IDFM via PRIM
   avec cle), annonces au fil de l'eau des alertes GTFS-RT des autres
   reseaux (stas_watch ne couvre que la STAS).
+
+## 2026-10-07 : SIRI Lite, cle PRIM, veille de tous les reseaux, module central
+
+- lib/siri_lite.py : general-message et situation-exchange, JSON ou XML
+  (from_xml), variantes InfoMessage / GeneralMessage, shortMessage /
+  SHORT_MESSAGE ; LineRef reduits a leur code. Teste : Bordeaux (117
+  messages), SNCF (618 situations).
+- transports.discover note les services SIRI Lite d'apres original_url
+  (url = redirection data.gouv) et MEME "indisponibles" (401 sans cle au
+  controle du PAN). KEYED_HOSTS : prim.iledefrance-mobilites.fr ->
+  cles/prim.txt, en-tete apiKey. 401/403 sans cle connue -> "acces
+  refuse" (Strasbourg CTS, Lyon TCL : identifiants propres a demander).
+  Jamais "aucune perturbation" quand une source est inaccessible.
+- Cle PRIM : reglages.KEYS["prim"], prim.txt vide cree, LISEZMOI a jour.
+- watchers/stas_watch.py devient la veille de TOUS les reseaux actifs
+  (page STAS + GTFS-RT + SIRI Lite) : annonces par vd.announce (prise
+  vocale, journal "transports", prefixe transport_), 1 fois, silence
+  22 h - 7 h (dit au matin si toujours d'actualite), premier passage
+  silencieux ; etat ~/autopilot/transports_vus.json.
+- Module central de parole : phrases.rewritable accepte "personnalite =
+  oui" ; 63 phrases d'interface des dialogues plantes, liste noire, mes
+  capteurs, transports reseaux y sont ouvertes (annonces et reponses
+  informatives restent hors personnalite). Francais en dur supprime
+  (canal, et, lignes de la liste des evolutions des plantes).
