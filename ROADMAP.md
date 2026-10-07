@@ -6320,3 +6320,25 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   LoRa (programme rtl tue sans vider le tuyau). A corriger avec
   lecture_flux.arreter. Webcam OctoPi non correlee. Correctif LoRa deja
   en place : ~1 reset / 40 min contre 1 / 27 min avant.
+
+## 2026-10-07 (soir) : donnees en clair ajoutees (points 1 et 2)
+
+- Point 1 fait et deploye : codes transpondeur d'urgence avions
+  (7500 detournement, 7600 panne radio, 7700 urgence) lus dans l'ADS-B/
+  Mode S deja recu (OpenSky index 14 + squawk capte aussi en direct par
+  adsb_local). adsb_watch._check_emergencies : annonce prioritaire (son
+  scaner_error), 1 fois par appareil et par code (EMERGENCY_FORGET_SEC
+  1800 s). Teste en silence (7700/7600/7500). En service.
+- Point 2 fait et deploye : ATIS (meteo aero en boucle, AM, en clair).
+  lib/atis.py capture rtl_fm -M am ~40 s -> ogg/opus 12k -> gemini.ask
+  (audio ajoute a l'API) en JSON (lettre, resume, piste, vent, QNH,
+  avertissements). Frequences : LFMH 132,800 ; LFLL 126,175. Store
+  ~/autopilot/atis.json, rafraichi par la fenetre "atis" du cycle
+  (attention, min 1200 s, interet aviation) sans TTS. Commande console
+  "atis" (+ "atis lyon/saint-etienne") et rubrique flash (flash.atis).
+  Gemini appele au plus 1 fois / 25 min / aeroport (REFRESH_SEC).
+  Validation en situ en cours (1re capture Lyon).
+- Reste a faire : point 4 (presence/sante reseau cellulaire, gr-gsm),
+  point 3 (FR-Alert cell broadcast, a tester), point 5 (presence/activite
+  TETRA). Plus A1/A2/A4/A5 du doc, et corriger balises_watch (meme arret
+  de tuyau que LoRa, derniere cause de reset de la cle).
