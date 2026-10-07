@@ -6187,3 +6187,29 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   anemometre / girouette / pluviometre a interrupteurs sur GPIO),
   passerelle Ecowitt (envoi local vers le Pi), capteurs a soi dans
   l'agregat meteo (poids fort).
+
+## 2026-10-07 : transports en commun de la commune (bus, tram, metro...)
+
+- lib/transports.py : decouverte par le Point d'Acces National
+  (transport.data.gouv.fr/api : aoms/{insee}, datasets ; geo.api.gouv.fr
+  pour EPCI / departement / region). Local = commune, EPCI, AOM, ou
+  proprietaire = AOM de la commune (IDFM declare sur la region) : actifs ;
+  departement / region : inactifs (sauf sans reseau local) ; agregats
+  jamais d'office. Reglage "transports" du NAS ; liste nationale (2,5 Mo)
+  gardee 7 jours sur la SD.
+- Lignes : routes.txt du GTFS (famille par route_type, etendu compris),
+  copie SD 7 jours ; lecture PARTIELLE HTTP Range quand le serveur
+  l'accepte (IDFM 244 Mo -> 4,5 s), sinon telechargement <= 80 Mo (STAS 9 Mo).
+- Temps reel : lib/gtfs_rt.py, decodeur protobuf sans dependance (retards,
+  annulations, alertes). Perturbations : alertes GTFS-RT et page STAS
+  (stas_watch), classees par famille via les numeros de ligne des titres.
+- Console : "bus" (trolleybus compris), "tram", "metro", "transports"
+  (toutes les familles ; "transports funiculaire"...), "transports
+  reseaux" (choix, details, R = chercher de nouveau). Commande "ville" :
+  recherche des reseaux en arriere-plan. Flash : rubrique generique
+  (remplace stas_text). stas_watch se tait si la STAS n'est plus active.
+- Teste : Saint-Etienne (STAS bus / trolleybus / tram, temps reel),
+  Clermont (T2C), Paris (IDFM : familles ok, pas de temps reel lisible).
+- A faire : lire SIRI / SIRI Lite (85 + 21 reseaux, dont IDFM via PRIM
+  avec cle), annonces au fil de l'eau des alertes GTFS-RT des autres
+  reseaux (stas_watch ne couvre que la STAS).
