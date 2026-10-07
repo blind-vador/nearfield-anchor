@@ -128,6 +128,13 @@ TEMP_RESUME_C = 60.0  # hysteresis : attend d'etre redescendu sous ce seuil
 PLATEAU_WINDOW_SEC = 1200       # 20 min sans baisse = plancher atteint
 PLATEAU_TOLERANCE_C = 1.5       # ecart max sur la fenetre (bruit de mesure du capteur)
 PLATEAU_RESUME_MAX_C = 68.0     # borne haute de la reprise sur plateau
+# Soupape (2026-10-07) : le seuil de reprise normal (TEMP_RESUME_C 60 C) est
+# sous la temperature de repos du Pi (~65 C), donc souvent inatteignable ; la
+# reprise ne tient plus qu'au plateau (20 min tres stables), fragile. Au-dela
+# de MAX_PAUSE_SEC, si le Pi est simplement tiede (<= PLATEAU_RESUME_MAX_C,
+# bien sous la base de coupure 72 C et le plafond 82 C), on reprend : un
+# redemarrage a chaud ne doit pas figer le scanner une demi-heure.
+MAX_PAUSE_SEC = 900
 
 # Marge adaptative additionnelle (2026-08-30, demande explicite) : si les
 # pauses thermiques se rapprochent dans le temps (intervalle actif entre
@@ -2111,6 +2118,11 @@ def main():
                     recent_temps.append((now, temp))
                     while recent_temps and now - recent_temps[0][0] > PLATEAU_WINDOW_SEC:
                         recent_temps.popleft()
+                    if now - pause_actual_start >= MAX_PAUSE_SEC and temp <= PLATEAU_RESUME_MAX_C:
+                        plateau_resume = True
+                        print(f"[radio_watch] pause prolongee ({(now - pause_actual_start) / 60:.0f} min) et "
+                              f"temperature tiede ({temp:.1f}C <= {PLATEAU_RESUME_MAX_C:.0f}C) -- reprise")
+                        break
                     window_full = now - pause_actual_start >= PLATEAU_WINDOW_SEC
                     values = [t for _, t in recent_temps]
                     if window_full and max(values) - min(values) <= PLATEAU_TOLERANCE_C:
