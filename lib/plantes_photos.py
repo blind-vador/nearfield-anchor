@@ -89,7 +89,7 @@ Reponds en francais correctement accentue, en JSON strict :
 }}
 "voisines" : TOUTES les autres plantes visibles (meme pot, pots voisins, arriere-plan), une entree par espece,
 meme avec une certitude faible (dis-le dans "certitude") ; observe bien les fleurs et les formes de feuilles pour
-les distinguer. Plantes deja connues de la personne, a ne pas confondre entre elles : {connues}.
+les distinguer.
 "observations" : seulement ce qui merite une verification au toucher (fruits, fleurs, boutons, maladie, ravageur,
 manque ou exces d'eau, brulure, photo qui ne montre pas cette plante) ; liste vide si rien de notable.
 Les lignes "Vérifié au toucher" et "Signalé faux" des dernieres evolutions font foi : ne redonne pas une observation
@@ -176,7 +176,6 @@ def _analyse(plant, path, stamp):
     result, reason = _ask_photo(DESCRIBE_PROMPT.format(
         nom=plant["nom"], latin=plant.get("latin") or "?", stade=plantes.STAGE_NAMES[plant["stade"]],
         portrait=plant.get("description") or "pas de portrait",
-        connues=", ".join(p["nom"] for p in plantes.load()) or "aucune",
         lieu=plantes.place_text(plant).capitalize(), date_precedente=previous_date or "aucune",
         precedente=previous_text or "aucune, c'est la premiere photo",
         evolutions="\n".join(evolution_lines(plant, EVOLUTION_CONTEXT)) or "aucune"), path)
