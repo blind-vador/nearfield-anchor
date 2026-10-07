@@ -402,9 +402,12 @@ def status(group, lieu=None, short=False):
 
 
 def _short_name(title):
-    """ "Reseau urbain STAS" -> "STAS" """
+    """ "Reseau urbain STAS" -> "STAS" ; "... Mobilites (IDFM)" -> "IDFM" """
+    acronym = re.search(r"\(([A-Z][A-Za-z0-9 -]{1,12})\)\s*$", title)
+    if acronym:
+        return acronym.group(1)
     return re.sub(r"^(réseau|reseau)\s+(urbain|interurbain|départemental|regional|régional)?\s*(et\s+\w+\s+)?", "",
-                  title, flags=re.I).strip() or title
+                  title, flags=re.I).strip(" -") or title
 
 
 def available_groups(lieu=None):
