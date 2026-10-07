@@ -6149,3 +6149,14 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   le piment (35-50 j) et le poivron (50-70 j).
 - Citronnier : 1re analyse "jeunes fruits", 2e analyse aucun fruit -> a
   verifier au toucher par l'utilisateur.
+- 2026-10-07, suggestions : l'analyse d'une photo rend aussi "voisines"
+  (toutes les autres plantes visibles, meme incertaines) ; le Pi ecarte
+  celles deja dans la liste (plantes.find, cle genre + espece du latin),
+  deja proposees ou refusees, et garde les autres dans le reglage
+  "plantes_suggestions" avec l'emplacement de la plante photographiee.
+  La liste des plantes connues N'EST PLUS dans la consigne : Gemini y
+  ramenait tout (belle-de-nuit jamais vue avec, 2 fois sur 3 sans).
+  Photo du dossier a_identifier -> suggestion aussi. Dialogue : touche S,
+  Entree ajoute (fiche Gemini faite), Retour arriere refuse pour toujours.
+  Premieres suggestions reelles : Belle de nuit (Mirabilis jalapa),
+  Faux-acacia (Robinia, certitude faible).
