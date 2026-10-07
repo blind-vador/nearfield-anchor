@@ -6133,3 +6133,19 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   de la plante (description du registre) et sait qu'un pot peut contenir
   plusieurs plantes : le citronnier, d'abord "introuvable", est repere.
   Les deux photos ont ete re-analysees (anciens resultats effaces).
+- 2026-10-07, prudence (demande utilisateur) : une photo ne change plus le
+  stade. Gemini rend des "observations" (fruits, fleurs, boutons, probleme)
+  avec OU les chercher a la main depuis le pot (tige, hauteur, cote) ; elles
+  vont dans plante["a_confirmer"] (une nouvelle photo remplace celles sans
+  reponse). Dialogue : C confirme (le stade suit ; fruits -> conseil de
+  maturite), H signale une hallucination ; formes directes "plante X
+  confirme / faux". Ligne datee "Vérifié au toucher" / "Signalé faux" dans
+  evolution.txt, que Gemini doit tenir pour vraie aux photos suivantes.
+  Phrase joyeuse (3 variantes) quand des fruits sont vus.
+- Maturite : fiche["maturite"] (reconnaitre un fruit mur au toucher, a
+  l'odeur, a la facon dont il se detache) + jours_maturite, demandes a
+  Gemini quand la plante est en fruits ; evenement de calendrier
+  "maturite" ; flash complet toujours, court dans la fenetre. Faites pour
+  le piment (35-50 j) et le poivron (50-70 j).
+- Citronnier : 1re analyse "jeunes fruits", 2e analyse aucun fruit -> a
+  verifier au toucher par l'utilisateur.
