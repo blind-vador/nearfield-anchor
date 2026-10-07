@@ -131,6 +131,9 @@ def make_fiche(plant):
         fiche = json.loads(answer) if answer else None
     except ValueError:
         return None
+    if isinstance(fiche, dict) and fiche.get("maturite"):
+        tip = str(fiche["maturite"]).strip()
+        fiche["maturite"] = tip[:1].lower() + tip[1:]
     return fiche if isinstance(fiche, dict) else None
 
 
@@ -167,7 +170,8 @@ def ensure_maturity(plant):
         return False
     if not isinstance(data, dict) or not data.get("maturite"):
         return False
-    fiche["maturite"] = str(data["maturite"]).strip()
+    tip = str(data["maturite"]).strip()
+    fiche["maturite"] = tip[:1].lower() + tip[1:]  # dit apres "Pour reconnaitre un fruit mur :"
     if isinstance(data.get("jours_maturite"), list):
         fiche["jours_maturite"] = data["jours_maturite"]
     return True
