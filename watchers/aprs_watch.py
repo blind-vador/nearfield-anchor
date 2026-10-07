@@ -249,14 +249,18 @@ def scan_window(dwell_sec=30, freq_hz=APRS_FREQ_HZ, via=None):
                     announced = True
     finally:
         _via.update(nom=None)
-        for p in (rtl, mm):
-            if p.poll() is None:
-                p.terminate()
-        for p in (rtl, mm):
-            try:
-                p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                p.kill()
+        # Arret propre (2026-10-07) : d'abord le decodeur, puis rtl_fm en
+        # vidant le tuyau (lecture_flux.arreter) -- sinon rtl_fm bloque en
+        # ecriture est tue en plein transfert USB et la cle est reinitialisee
+        # a l'ouverture suivante (meme motif que LoRa).
+        from lecture_flux import arreter
+        if mm.poll() is None:
+            mm.terminate()
+        try:
+            mm.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            mm.kill()
+        arreter(rtl, "rtl_fm (aprs)")
         while packets:  # recus pendant l'arret
             count += 1
             if _process(packets.pop(0)):

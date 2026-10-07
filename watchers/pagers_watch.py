@@ -101,14 +101,16 @@ def scan_window(dwell_sec=30):
                 elif not text and _other_page(line, freq):  # appel sans texte ou numerique (2026-10-03)
                     announced = True
     finally:
-        for p in (rtl, mm):
-            if p.poll() is None:
-                p.terminate()
-        for p in (rtl, mm):
-            try:
-                p.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                p.kill()
+        # Arret propre (2026-10-07) : decodeur d'abord, puis rtl_fm en vidant
+        # le tuyau (voir aprs_watch) -- evite la reinitialisation de la cle.
+        from lecture_flux import arreter
+        if mm.poll() is None:
+            mm.terminate()
+        try:
+            mm.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            mm.kill()
+        arreter(rtl, "rtl_fm (pagers)")
         _memory.save()
     if count:
         print(f"[pagers_watch] {count} trame(s) sur {freq / 1e6:.5f} MHz")
