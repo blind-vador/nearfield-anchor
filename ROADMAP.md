@@ -6237,3 +6237,20 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   capteurs, transports reseaux y sont ouvertes (annonces et reponses
   informatives restent hors personnalite). Francais en dur supprime
   (canal, et, lignes de la liste des evolutions des plantes).
+
+## 2026-10-07 : Ctrl / Alt + fleches, commande "qui es-tu"
+
+- Bug : Ctrl + fleche (et Alt) souvent rates dans le journal depuis
+  l'ajout d'Alt. modifier_held lisait l'etat du clavier APRES la fleche
+  (~45 ms par lecture, Alt puis Ctrl : ~100 ms) : appui rapide, Ctrl deja
+  relache. Et la table de la console (dumpkeys) avale Alt + haut
+  (KeyboardSignal) ; Alt + gauche / droite changent de console virtuelle.
+- keys._Tracker (demarre par main) : fil evdev permanent, note les
+  modificateurs tenus a l'instant ou une touche est enfoncee (valable
+  1,5 s) ; Alt + haut vu sur le clavier -> keys.ALT_UP injecte dans la
+  lecture (reveil WAKE, pop_injected). Teste : Ctrl+haut / Ctrl+bas /
+  Alt+bas relaches avant lecture, Alt+haut transmise, re-scan.
+- Commande "qui es-tu" (quelle est ta personnalite, presente-toi...) :
+  personnalite.who_am_i(), resume du jour (console.json), origine
+  (cette nuit, surprise ou demande), "en detail" = fiche de style lue en
+  tete de personnalite_<langue>.ini.
