@@ -6374,3 +6374,18 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   aeroport redevient audible. ATIS = source secondaire (deja par internet).
 - Point 4 (reseau cellulaire, gr-gsm) : en attente d'un creneau pour
   immobiliser la cle (apt install + test exclusif), Pi refroidi.
+
+## 2026-10-07 (fin de session) : ATIS ecoute-directe, regression corrigee
+- ATIS : module Gemini retire (la fenetre airband aviation_atis capte deja
+  la voix au journal). Ajout fenetre locale aviation_atis_st_etienne
+  (132,800 MHz) : balayee sans erreur, voix au journal, zero Gemini.
+- Regression corrigee : lecture_flux.arreter plantait (fileno sur stdout
+  deja ferme) -> fenetres pagers et aprs en erreur. arreter tolere
+  desormais un stdout ferme. Deploye.
+- A VERIFIER plus tard : comme aprs/pagers ferment rtl.stdout cote parent,
+  arreter ne peut PAS vider leur tuyau (fallback terminate+kill). Recontroler
+  que les resets de la cle restent a 0 ; sinon, ne plus fermer rtl.stdout
+  pour que le drain opere (comme LoRa).
+- NON FAIT (limite d'usage) : point 4 reseau cellulaire. gr-gsm installable
+  par apt (dry-run : 25 paquets, ~GNU Radio osmocom). Necessite d'immobiliser
+  la cle (stopper radio-watch) pour le test. A faire Pi refroidi.
