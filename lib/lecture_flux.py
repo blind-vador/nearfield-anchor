@@ -30,3 +30,36 @@ def lire(stream, n, silence_s=5.0):
         got += len(data)
         last = time.time()
     return b"".join(chunks)
+
+
+def arreter(proc, nom="programme radio", delai_s=5.0):
+    """Arrete proprement un programme radio qui ecrit dans un tuyau (2026-10-07).
+    Sans lecteur, le tuyau se remplit en quelques millisecondes : le programme
+    reste bloque en ecriture, ne traite plus la demande d'arret, et il fallait
+    le tuer en plein transfert USB -- le noyau reinitialisait alors la cle a
+    l'ouverture suivante (toutes les ~27 min, au rythme des fenetres LoRa).
+    On vide donc le tuyau pendant qu'il s'arrete ; tue seulement en dernier
+    recours, et c'est dit. Rend True si l'arret a ete propre."""
+    import subprocess
+    if proc.poll() is None:
+        proc.terminate()
+    end = time.time() + delai_s
+    fd = proc.stdout.fileno() if proc.stdout else None
+    while proc.poll() is None and time.time() < end and fd is not None:
+        ready, _, _ = select.select([fd], [], [], 0.2)
+        if ready:
+            try:
+                if not os.read(fd, 1 << 16):
+                    break
+            except BlockingIOError:
+                continue
+            except OSError:
+                break
+    try:
+        proc.wait(timeout=max(0.1, end - time.time()))
+        return True
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
+        print(f"[lecture_flux] {nom} ne s'arretait pas : tue (la cle sera reinitialisee)")
+        return False

@@ -162,7 +162,8 @@ def _snapshot(freq_hz, gain=30):
     parasite au centre du tuner), jamais plus de 5 s."""
     tune = int(freq_hz + CENTER_OFFSET_HZ)
     try:
-        proc = subprocess.Popen(["rtl_sdr", "-f", str(tune), "-s", str(CENTER_RATE), "-g", str(gain), "-"],
+        proc = subprocess.Popen(["rtl_sdr", "-f", str(tune), "-s", str(CENTER_RATE), "-g", str(gain),
+                                 "-n", str(CENTER_RATE // 2 + CENTER_SAMPLES + CENTER_RATE // 4), "-"],
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except OSError:
         return None
@@ -177,11 +178,8 @@ def _snapshot(freq_hz, gain=30):
             else:
                 time.sleep(0.02)
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=3)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        from lecture_flux import arreter
+        arreter(proc, "rtl_sdr (recentrage)")
     raw = raw[skip:]
     if len(raw) < 2 * CENTER_SAMPLES:
         return None

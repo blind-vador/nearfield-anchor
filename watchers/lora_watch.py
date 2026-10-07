@@ -27,7 +27,7 @@ import time
 import numpy as np
 
 import veille_donnees as vd
-from lecture_flux import lire
+from lecture_flux import arreter, lire
 
 PROFILES = [
     {"nom": "meshtastic", "freq": 869_525_000, "largeur": 250_000, "sf": 11, "apres_s": 2.5},
@@ -91,7 +91,10 @@ def scan_window(dwell_sec=30):
     ref = _downchirp(profile)
     sym_bytes = 2 * len(ref)
     keep = int(BEFORE_S * RATE * 2 / sym_bytes) + 1
-    proc = subprocess.Popen(["rtl_sdr", "-f", str(profile["freq"]), "-s", str(RATE), "-g", "40", "-"],
+    # -n : rtl_sdr s'arrete de lui-meme apres la fenetre (+ reglage du tuner et
+    # fin d'une trame tardive) ; pas besoin de l'interrompre (2026-10-07).
+    samples = int((dwell_sec + 0.25 + profile["apres_s"] + 1) * RATE)
+    proc = subprocess.Popen(["rtl_sdr", "-f", str(profile["freq"]), "-s", str(RATE), "-g", "40", "-n", str(samples), "-"],
                             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     history, run, prev, saved, best = [], 0, None, 0, 0.0
     try:
@@ -116,10 +119,6 @@ def scan_window(dwell_sec=30):
                 saved += 1
                 history, run, prev = [], 0, None
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
+        arreter(proc, f"rtl_sdr ({profile['nom']})")
     print(f"[lora_watch] {profile['nom']} : {saved} trame(s) LoRa reperee(s), pic max {best:.0f}")
     return False
