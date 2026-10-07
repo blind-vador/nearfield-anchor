@@ -6279,3 +6279,33 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   musique (borne haute du passe-bas 4500 Hz). Bilan : "canal station
   probable" attend 1 prise a noter (regle du 6 octobre en action).
 - Phrase corrigee : bilan.encore_a_noter (accord).
+
+## 2026-10-07 (apres-midi) : cle reinitialisee, veille DMR
+
+- Cle NESDR remise a zero ~27 min : rtl_sdr de la fenetre LoRa (et du
+  recentrage, lib/stations.py) etait arrete (SIGTERM) SANS que le tuyau
+  soit lu : bloque en ecriture, il ne traitait plus l'arret et etait tue
+  apres 5 s en plein transfert USB -> reset a l'ouverture suivante. Les
+  autres fenetres (rtl_433 -T, welle-cli sans tuyau) n'ont pas ce probleme.
+  lecture_flux.arreter() vide le tuyau pendant l'arret (tue en dernier
+  recours, c'est dit) ; rtl_sdr -n (s'arrete seul). Deploye 12 h 16.
+- Prise DMR du 6/10 12 h 43 : 467,2408 MHz, relais (IDLE, Activity
+  Update, SLCO), code couleur 1, intervalle 1, groupes 109 (emetteurs 99,
+  302) et 107 (113, 177, 183), en clair. Relecture de 10 jours de
+  journal : 19 sessions DMR, 5 frequences dont 467,2408 (14 fois, surtout
+  vers 0 h et 3 h), 467,4006 (relais, groupe 101), 145,2875 (relais
+  radioamateur, groupe 208101).
+- lib/dmr_registre.py : registre SD (dmr_frequences.json, pas 6,25 kHz) :
+  codes couleur, intervalles, groupes -> emetteurs, relais, systeme
+  (Capacity Plus...), appels prives / chiffres, histogramme horaire ;
+  score de retour (recence demi-vie 7 j, heure habituelle, relais) ;
+  seed() relit le journal systeme (annonces neutralisees).
+- decodeurs.dsd_line -> dmr_registre.line. Regle utilisateur : appel prive
+  ou chiffre -> son coupe, rien enregistre (session jetee), donnees seules.
+- Fenetre "dmr" (attention.DATA_WINDOWS, 20 s, interet "professionnels") :
+  radio_watch._dmr_window ecoute en dsd-fme -fs (DMR seul, plus de fausses
+  synchros M17) les 4 frequences les plus prometteuses a tour de role,
+  avec le meme habillage qu'une capture (journal radio, cible "dmr").
+  Premiere fenetre : appel en cours sur 467,2408 capte (nouvel emetteur 183).
+- Annonces (journal messages) : nouvelle frequence DMR, nouveau groupe.
+- Console "dmr" (resume des frequences) et "dmr explications" (glossaire).
