@@ -19,6 +19,7 @@ import gemini
 STORE_PATH = "/home/vador/autopilot/atis.json"
 CAPTURE_SEC = 40          # une boucle ATIS complete tient en general sous 40 s
 REFRESH_SEC = 1500        # pas plus d'un appel Gemini par aeroport toutes les 25 min
+MAX_BACKOFF_SEC = 6 * 3600  # aeroport muet : retente au plus toutes les 6 h
 RATE = 12000
 
 # Aeroports suivis : OACI -> (nom parle, frequence Hz). Les deux locaux
@@ -97,6 +98,15 @@ def capture(freq_hz, seconds=CAPTURE_SEC):
     return bytes(audio) or None
 
 
+def _interval(entry):
+    """Delai avant un nouvel essai. Espacement progressif quand l'aeroport est
+    muet (2026-10-07) : certains n'emettent qu'aux heures ouvrables ou sont
+    trop loin pour notre antenne -- inutile de rappeler Gemini toutes les
+    20 min pour rien. Double a chaque echec, plafonne a MAX_BACKOFF_SEC."""
+    fails = entry.get("echecs", 0)
+    return min(REFRESH_SEC * (2 ** fails), MAX_BACKOFF_SEC)
+
+
 def refresh_one(oaci, force=False):
     """Capture + transcription de cet aeroport si du (ou force). Rend le dict stocke, ou None."""
     if oaci not in AIRPORTS:
@@ -104,7 +114,7 @@ def refresh_one(oaci, force=False):
     name, freq = AIRPORTS[oaci]
     data = _load()
     prev = data.get(oaci) or {}
-    if not force and time.time() - _touched(prev) < REFRESH_SEC:
+    if not force and time.time() - _touched(prev) < _interval(prev):
         return prev or None
     audio = capture(freq)
     if not audio:
@@ -119,12 +129,14 @@ def refresh_one(oaci, force=False):
         print(f"[atis] {oaci} : {reason or 'reponse illisible'}")
         return prev or None
     if not result.get("entendu"):
-        # Rien de lisible : on note l'essai sans ecraser un bulletin encore valable.
+        # Rien de lisible : on note l'essai (et on espace les suivants) sans
+        # ecraser un bulletin encore valable.
         prev["dernier_essai"] = time.time()
+        prev["echecs"] = prev.get("echecs", 0) + 1
         data[oaci] = prev
         _save(data)
         return prev or None
-    result.update(oaci=oaci, aeroport=name, frequence_hz=freq, t=time.time(), dernier_essai=time.time())
+    result.update(oaci=oaci, aeroport=name, frequence_hz=freq, t=time.time(), dernier_essai=time.time(), echecs=0)
     data[oaci] = result
     _save(data)
     return result
@@ -137,8 +149,14 @@ def due_airport():
 
 
 def refresh_due():
-    """Un aeroport du, pour la fenetre du scanner. Rend le dict ou None."""
-    return refresh_one(due_airport())
+    """Un aeroport du, pour la fenetre du scanner. Ne capte (cle) que si un
+    aeroport a reellement depasse son delai -- sinon rien, pour ne pas
+    mobiliser la cle ni Gemini en vain. Rend le dict ou None."""
+    data = _load()
+    oaci = due_airport()
+    if time.time() - _touched(data.get(oaci) or {}) < _interval(data.get(oaci) or {}):
+        return None
+    return refresh_one(oaci)
 
 
 def latest(oaci=None, max_age_sec=4 * 3600):
