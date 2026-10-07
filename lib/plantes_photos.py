@@ -87,8 +87,9 @@ Reponds en francais correctement accentue, en JSON strict :
      "ou": "ou elle est par rapport a {nom} (meme pot, pot voisin a gauche...)"}}
  ]
 }}
-"voisines" : les AUTRES plantes visibles que tu peux identifier, sauf celles deja connues de la personne :
-{connues}. Liste vide si aucune n'est identifiable.
+"voisines" : TOUTES les autres plantes visibles (meme pot, pots voisins, arriere-plan), une entree par espece,
+meme avec une certitude faible (dis-le dans "certitude") ; observe bien les fleurs et les formes de feuilles pour
+les distinguer. Plantes deja connues de la personne, a ne pas confondre entre elles : {connues}.
 "observations" : seulement ce qui merite une verification au toucher (fruits, fleurs, boutons, maladie, ravageur,
 manque ou exces d'eau, brulure, photo qui ne montre pas cette plante) ; liste vide si rien de notable.
 Les lignes "Vérifié au toucher" et "Signalé faux" des dernieres evolutions font foi : ne redonne pas une observation
