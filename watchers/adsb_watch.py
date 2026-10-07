@@ -7,7 +7,7 @@ import requests
 
 from speak import speak, speak_with_lead_sound
 import audio_lock
-from sound_paths import FLIGHT_SCANER_DIR
+from sound_paths import FLIGHT_SCANER_DIR, RADIO_SCANER_DIR
 import reglages
 import adsb_local_watch
 import ogn_watch
@@ -107,6 +107,7 @@ FLYBY_SOUND = f"{FLIGHT_SCANER_DIR}/flyer_by.mp3"  # chemin de base centralise d
 # Son court joue AVANT l'annonce d'un avion detecte dans la zone de veille
 # (pas un survol direct, qui a deja son propre son FLYBY_SOUND).
 SIMPLE_CONTACT_SOUND = f"{FLIGHT_SCANER_DIR}/simple_contact.mp3"
+EMERGENCY_SOUND = f"{RADIO_SCANER_DIR}/scaner_error.mp3"  # son d'alerte des urgences avion
 
 # Intervalle entre deux interrogations. Relache volontairement en session
 # (2026-08-30) : 30s jugee trop frequente/gourmande en CPU pour une veille
@@ -129,6 +130,7 @@ IDX_BARO_ALTITUDE = 7
 IDX_ON_GROUND = 8
 IDX_CATEGORY = 17
 IDX_VERTICAL_RATE = 11
+IDX_SQUAWK = 14
 
 # Contexte aerien pour le systeme d'attention du scanner radio (2026-10-01) :
 # calcule sur TOUS les avions de la zone interrogee (qui couvre les deux aeroports),
@@ -277,6 +279,12 @@ def _announce_flyby(callsign):
 # Un appareil disparu moins longtemps que ca n'est pas re-annonce : les
 # donnees de l'antenne (fenetre du scanner) arrivent par a-coups.
 FORGET_SEC = 600
+# Codes transpondeur d'urgence, standard ICAO, diffuses en clair par tout
+# avion (2026-10-07) : signaux ouverts, aucun contenu prive. Annonces en
+# priorite des qu'ils apparaissent, ou qu'ils soient dans la zone recue,
+# une fois par appareil tant que le code dure.
+EMERGENCY_SQUAWKS = {"7500": "detournement", "7600": "panne_radio", "7700": "urgence"}
+EMERGENCY_FORGET_SEC = 1800
 
 
 def _merge(remote, local):
@@ -285,6 +293,38 @@ def _merge(remote, local):
     seen = {s[0] for s in remote}
     local_only = {s[0] for s in local if s[0] not in seen}
     return remote + [s for s in local if s[0] in local_only], local_only
+
+
+def _check_emergencies(states, emergencies, now):
+    """Avions en code d'urgence (7500/7600/7700). Annonce en priorite, une
+    fois par appareil et par code (anti-repetition EMERGENCY_FORGET_SEC)."""
+    for state in states:
+        squawk = state[IDX_SQUAWK] if len(state) > IDX_SQUAWK else None
+        kind = EMERGENCY_SQUAWKS.get(str(squawk).strip() if squawk else "")
+        if not kind:
+            continue
+        icao24 = state[IDX_ICAO24]
+        key = (icao24, str(squawk))
+        if now - emergencies.get(key, 0) <= EMERGENCY_FORGET_SEC:
+            continue
+        emergencies[key] = now
+        callsign = (state[IDX_CALLSIGN] or "").strip() or dire("avion.indicatif_inconnu")
+        parts = [dire(f"avion.urgence_{kind}", callsign=callsign)]
+        lat, lon = state[IDX_LATITUDE], state[IDX_LONGITUDE]
+        if lat is not None and lon is not None:
+            dist = _distance_km(REF_LAT, REF_LON, lat, lon)
+            parts.append(dire("avion.distance_kilometres", dist=format(dist, ".0f")))
+        alt = state[IDX_BARO_ALTITUDE]
+        if alt:
+            parts.append(dire("avion.altitude_metres", altitude_m=format(alt, ".0f")))
+        lock = audio_lock.acquire()
+        try:
+            speak_with_lead_sound(EMERGENCY_SOUND, " ".join(parts), label="adsb_watch")
+        finally:
+            audio_lock.release(lock)
+        print(f"[adsb_watch] URGENCE {squawk} : {callsign} ({icao24})")
+    for key in [k for k, t in emergencies.items() if now - t > EMERGENCY_FORGET_SEC]:
+        del emergencies[key]
 
 
 def main():
@@ -298,6 +338,7 @@ def main():
     # deja vu et toujours present reste muet tant qu'il ne disparait pas et
     # ne revient pas.
     known_aircraft = {}  # icao24 -> dernier instant vu
+    emergencies = {}  # (icao24, squawk) -> dernier instant vu : anti-repetition
     # Appareils pour lesquels le son de survol a deja ete joue -- persiste
     # entre les passages (contrairement a known_aircraft) pour ne jouer le
     # son qu'une fois par passage au-dessus, meme sur plusieurs sondages
@@ -314,6 +355,7 @@ def main():
         now = time.time()
 
         _publish_air_context(states)
+        _check_emergencies(states, emergencies, now)
         current_aircraft = {}
         for state in states:
             if state[IDX_ON_GROUND]:
@@ -327,7 +369,7 @@ def main():
                 continue  # hors du rayon de veille reel
 
             icao24 = state[IDX_ICAO24]
-            callsign = (state[IDX_CALLSIGN] or "").strip() or "indicatif inconnu"
+            callsign = (state[IDX_CALLSIGN] or "").strip() or dire("avion.indicatif_inconnu")
             altitude_m = state[IDX_BARO_ALTITUDE]
             category = state[IDX_CATEGORY] if len(state) > IDX_CATEGORY else None
             current_aircraft[icao24] = callsign

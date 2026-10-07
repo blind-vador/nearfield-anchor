@@ -32,6 +32,35 @@ préampli), fil HF + unun 9:1 (Sirio 1,20 m attendue).
 8. **Étalonnage de la clé** sur un émetteur de référence : peut réparer le
    décodage LoRa, améliore le DMR.
 
+## A bis. Donnees en clair a l'interieur de systemes non touches (2026-10-07)
+
+Validees apres la passe "inventaire complet" : ce qui est reellement
+ajoutable dans les regles (clair, agrege, pas d'identifiant de personne,
+pas de dechiffrement, pas de contenu prive). Classe par facilite.
+
+1. **Etats d'urgence avions** (immediat, trames ADS-B/Mode S deja recues) :
+   codes 7700 urgence, 7600 panne radio, 7500 detournement, statut
+   d'urgence ; categorie militaire / medicalise / SAR / pompiers. On fait
+   remonter ce qui passe deja. PRIORITE 1.
+2. **ATIS / VOLMET** (VHF, immediat) : bulletin meteo automatique en boucle
+   et en clair des aeroports (St-Etienne, Lyon) ; enregistre + transcrit.
+   Meteo locale brute recue en direct. PRIORITE 2.
+3. **FR-Alert (cell broadcast)** : alertes officielles a la population,
+   emises vers tous les telephones = publiques par conception. Facile en
+   2G (qui disparait), dur en 4G. A tester, sans garantie.
+4. **Presence/sante du reseau cellulaire** : identites de cellules
+   diffusees publiquement (operateur, cell ID, voisines) ; detecter panne,
+   nouvelle antenne. Jamais d'identifiant d'abonne ni de contenu
+   (gr-gsm/grgsm_livemon ; PAS d'IMSI catching).
+5. **Presence/activite des reseaux pro chiffres** (TETRA, DMR) : canal de
+   controle en clair -> le reseau est-il la, a quel rythme ? Comptage
+   agrege, jamais d'identifiant ni de voix. Prolonge le registre DMR.
+6. **AIS maritime** : public, mais St-Etienne sans interet (loin de la mer).
+7. **Repeteurs radioamateurs voix** (145/430) : clair, legal ; journaliser
+   et transcrire l'activite.
+
+Ordre : 1 et 2 d'abord (aucune installation), puis 4, puis 3 (test), puis 5.
+
 ## B. Avec antenne bande L
 
 - **Inmarsat** (satellite SE) : ACARS océanique ; messages de sécurité

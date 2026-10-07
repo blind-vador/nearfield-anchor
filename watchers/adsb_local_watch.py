@@ -86,6 +86,7 @@ def scan_window(dwell_sec=30):
                  "lat": a["lat"], "lon": a["lon"], "on_ground": on_ground,
                  "alt_m": None if on_ground or altitude is None else altitude * FEET_TO_M,
                  "vrate": (a.get("vert_rate") or 0) * FPM_TO_MS, "category": a.get("category"),
+                 "squawk": str(a.get("squawk")) if a.get("squawk") else None,
                  "t": now - a.get("seen_pos", 0)}
         known[entry["icao24"]] = entry
         if not on_ground and (entry["alt_m"] or 0) < LOW_ALT_M and vd.distance_km(a["lat"], a["lon"]) < NEAR_KM:
@@ -156,5 +157,6 @@ def as_states(max_age_sec=KEEP_SEC):
         s[0], s[1] = e["icao24"], e["callsign"] or None
         s[5], s[6], s[7], s[8] = e["lon"], e["lat"], e["alt_m"], e["on_ground"]
         s[11] = e["vrate"]
+        s[14] = e.get("squawk")  # code transpondeur (urgences 7500/7600/7700)
         states.append(s)
     return states
