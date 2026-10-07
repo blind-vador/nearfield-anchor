@@ -224,6 +224,8 @@ def _match(line):
     if first in ("journal", "journaux", "archives", "archive"):
         name = "journal" if first.startswith("journ") else "archives"
         return next(c for c in commands.COMMANDS if c.name == name), 100
+    if first in ("plante", "plantes"):  # "plante photo" : pas la commande decris
+        return next(c for c in commands.COMMANDS if c.name == "plantes"), 100
     return matcher.match(line, commands.COMMANDS)
 
 
