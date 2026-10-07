@@ -170,7 +170,7 @@ def modifier_held(name):
     derniere touche a ete enfoncee (suivi permanent), sinon s'il l'est
     maintenant : la console envoie la meme sequence pour une fleche seule
     ou avec Ctrl, son etat se lit donc sur le materiel (evdev)."""
-    if _tracker is not None and _tracker.devices:
+    if _tracker is not None and (_tracker.devices or _tracker.last[0]):  # pendant un re-scan : sa memoire reste bonne
         mods = _tracker.recent()
         if mods is None:  # le fil n'a peut-etre pas encore vu l'appui
             time.sleep(0.05)
