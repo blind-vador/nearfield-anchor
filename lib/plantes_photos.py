@@ -25,10 +25,12 @@ photo gardee (touche G) part avec la description actuelle.
 import datetime
 import json
 import os
+import random
 import re
 import shutil
 import time
 import unicodedata
+import uuid
 
 import gemini
 import plantes
@@ -42,7 +44,8 @@ STATE = ".suivi.json"            # photos deja traitees, dans chaque dossier
 EVOLUTION = "evolution.txt"
 EVOLUTION_CONTEXT = 5
 PHOTO_KEEP_DAYS = 30
-MAX_PER_RUN = 6                  # Gemini : au plus 6 photos par passage
+MAX_PER_RUN = 6
+JOY_KEYS = ("plantes.joie_fruits_1", "plantes.joie_fruits_2", "plantes.joie_fruits_3")                  # Gemini : au plus 6 photos par passage
 MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
         ".heic": "image/heic", ".heif": "image/heif"}
 README = """Photos des plantes (nearfield anchor, deepspace9)
@@ -71,10 +74,17 @@ Reponds en francais correctement accentue, en JSON strict :
 {{
  "description": "etat actuel, facon texte alternatif riche, 4 a 6 phrases : ou elle est sur la photo et avec quelles voisines, taille et port, tiges, feuilles (nombre approximatif, forme, aspect, couleur avec un repere tactile ou de comparaison), fleurs ou boutons, fruits, pot et support",
  "evolution": "ce qui a change depuis la description precedente, une phrase ; si pas de description precedente : « Premier état noté. »",
- "stade": "seme" | "germe" | "pousses" | "developpee" | "fleurs" | "fruits" | "repos",
- "problemes": "signes visibles de maladie, ravageur, manque ou exces d'eau, brulure ; chaine vide si rien"
+ "observations": [
+   {{"quoi": "fruits" | "fleurs" | "boutons" | "probleme" | "autre",
+     "detail": "ce qui est vu, une phrase ; 'probablement' si tu n'es pas sur",
+     "ou": "OU sur la plante, avec des reperes qu'une personne aveugle peut suivre a la main en partant du pot : quelle tige ou branche (premiere, deuxieme... en partant du bas, ou la plus haute), hauteur (bas, mi-hauteur, sommet), cote (vers la fenetre, le mur, la gauche ou la droite de la photo), vers l'interieur ou le bout des rameaux",
+     "stade": "fleurs" | "fruits" | null}}
+ ]
 }}
-N'invente rien que la photo ne montre pas. Si la photo ne montre pas cette plante, dis-le dans "problemes"."""
+"observations" : seulement ce qui merite une verification au toucher (fruits, fleurs, boutons, maladie, ravageur,
+manque ou exces d'eau, brulure, photo qui ne montre pas cette plante) ; liste vide si rien de notable.
+Les lignes "Vérifié au toucher" et "Signalé faux" des dernieres evolutions font foi : ne redonne pas une observation
+signalee fausse, sauf si elle est nettement visible. N'invente rien que la photo ne montre pas."""
 
 IDENTIFY_PROMPT = """Photo d'une plante a identifier, pour une personne aveugle. Reponds en JSON strict :
 {{"nom": "nom courant le plus probable", "latin": "nom latin", "certitude": "forte" | "moyenne" | "faible",
@@ -165,27 +175,38 @@ def _analyse(plant, path, stamp):
     day = datetime.date.fromtimestamp(stamp).isoformat()
     description = str(result.get("description") or "").strip()
     evolution = str(result.get("evolution") or "").strip()
-    problems = str(result.get("problemes") or "").strip()
-    # 1) la liste datee des evolutions, sur le stockage
-    archive = os.path.join(ARCHIVE_DIR, slug(plant["nom"]))
-    os.makedirs(archive, exist_ok=True)
-    line = f"{day} : {evolution}" + (f" Problème : {problems}" if problems else "")
-    with open(os.path.join(archive, EVOLUTION), "a", encoding="utf-8") as f:
-        f.write(line + "\n")
+    observations = []
+    for o in result.get("observations") or []:
+        if isinstance(o, dict) and o.get("detail"):
+            observations.append({"id": uuid.uuid4().hex[:6], "date": day, "quoi": str(o.get("quoi") or "autre"),
+                                 "detail": str(o["detail"]).strip().rstrip("."), "ou": str(o.get("ou") or "").strip().rstrip("."),
+                                 "stade": o.get("stade") if o.get("stade") in plantes.STAGES else None})
+    # 1) la liste datee des evolutions, sur le stockage (observations : a confirmer au toucher)
+    line = f"{day} : {evolution}" + "".join(f" À confirmer : {o['detail']}." for o in observations)
+    append_evolution(plant, line)
+    plant["_a_confirmer"] = observations  # enregistre par run_once, sur la liste relue
     # 2) la nouvelle description remplace l'ancienne, desormais agregee
     _write(current, f"{day} : {description}\n")
     if previous_text:  # dit en entier (2026-10-07 : "ne decrit pas l'image")
         said = [dire("plantes.photo_nouvelle", nom=plant["nom"], description=description, evolution=evolution)]
     else:
         said = [dire("plantes.photo_premiere", nom=plant["nom"], description=description)]
-    if problems:
-        said.append(dire("plantes.photo_probleme", probleme=problems))
-    stage = result.get("stade")
-    if stage in plantes.STAGES and plantes.STAGES.index(stage) > plantes.STAGES.index(plant["stade"]) \
-            and plant["stade"] != "repos" and stage != "repos":
-        plant["_stade_photo"] = stage  # la photo montre un stade plus avance (enregistre par run_once)
-        said.append(dire("plantes.photo_stade", nom=plant["nom"], stade=plantes.STAGE_NAMES[stage]))
+    if any(o["quoi"] == "fruits" for o in observations):
+        said.append(dire(random.choice(JOY_KEYS)))
+    for o in observations:
+        said.append(dire("plantes.photo_observation", detail=o["detail"], ou=o["ou"]) if o["ou"]
+                    else dire("plantes.photo_observation_sans_lieu", detail=o["detail"]))
+    if observations:
+        said.append(dire("plantes.photo_a_confirmer"))
     return said
+
+
+def append_evolution(plant, line):
+    """Ajoute une ligne datee a la liste des evolutions (stockage)."""
+    archive = os.path.join(ARCHIVE_DIR, slug(plant["nom"]))
+    os.makedirs(archive, exist_ok=True)
+    with open(os.path.join(archive, EVOLUTION), "a", encoding="utf-8") as f:
+        f.write(line.strip() + "\n")
 
 
 def _identify(path):
@@ -215,7 +236,7 @@ def run_once():
     plants = plantes.load()
     ensure_folders(plants)
     said = []
-    stages = {}
+    pending = {}
     budget = MAX_PER_RUN
     folders = [(p, os.path.join(WORK_DIR, slug(p["nom"]))) for p in plants] + [(None, os.path.join(WORK_DIR, UNKNOWN))]
     for plant, folder in folders:
@@ -234,17 +255,17 @@ def run_once():
                 continue  # Gemini indisponible : nouvel essai au prochain passage
             said += result
             done.add(name)
-            if plant is not None and plant.get("_stade_photo"):
-                stages[plant["id"]] = plant.pop("_stade_photo")
+            if plant is not None and "_a_confirmer" in plant:
+                pending[plant["id"]] = plant.pop("_a_confirmer")
         present = {os.path.basename(p) for p, _ in _photos(folder)}
         state["traitees"] = sorted(done & present) if present else []
         _write(state_path, json.dumps(state, ensure_ascii=False))
         _clean(folder)
-    if stages:  # sur la liste relue : une modification faite depuis la console n'est pas ecrasee
+    if pending:  # sur la liste relue : une modification faite depuis la console n'est pas ecrasee
         fresh = plantes.load()
         for p in fresh:
-            if p["id"] in stages:
-                plantes.set_stage(p, stages[p["id"]])
+            if p["id"] in pending:  # la nouvelle photo remplace les observations restees sans reponse
+                p["a_confirmer"] = pending[p["id"]]
         plantes.save(fresh)
     return said
 

@@ -10,6 +10,8 @@ Liste
   R                         rentree / sortie
   E                         changer l'emplacement (memes questions qu'a l'ajout)
   G                         garder la derniere photo analysee (storage/plantes)
+  C / H                     observation d'une photo verifiee au toucher : C la
+                            confirme (le stade suit), H la signale fausse
   Retour arriere            retire la plante ; Ctrl + Z annule
 Ajout ("plantes ajouter")
   taper un nom, meme approximatif, Entree : Gemini propose jusqu'a 5
@@ -43,7 +45,9 @@ QUICK = {"arrosee": "arrosee", "arrose": "arrosee", "arroser": "arrosee", "arros
          "sortie": "dehors", "sorti": "dehors", "sorties": "dehors", "dehors": "dehors", "exterieur": "dehors",
          "semee": "seme", "semees": "seme", "germee": "germe", "levee": "germe", "pousses": "pousses",
          "developpee": "developpee", "fleurie": "fleurs", "fleurs": "fleurs", "fleur": "fleurs",
-         "fruits": "fruits", "fruit": "fruits", "repos": "repos"}
+         "fruits": "fruits", "fruit": "fruits", "repos": "repos",
+         "confirme": "confirmer", "confirmee": "confirmer", "confirmer": "confirmer", "vrai": "confirmer",
+         "hallucination": "infirmer", "faux": "infirmer", "fausse": "infirmer", "erreur": "infirmer"}
 
 
 class Closed(Exception):
@@ -197,6 +201,10 @@ def quick(line):
 
 
 def _apply(plant, action):
+    if action == "confirmer":
+        return plantes.confirm(plant)
+    if action == "infirmer":
+        return plantes.refute(plant)
     if action == "arrosee":
         plant["arrosee_le"] = plantes._today()
         return dire("plantes.note_arrosee", nom=plant["nom"])
@@ -311,6 +319,10 @@ def run(line, key_source, say, out):
                 text = dire("plantes.nas_inaccessible")
         elif key in ("r", "R"):
             text = _apply(plants[i], "dehors" if plants[i].get("dedans") else "dedans")
+            if not plantes.save(plants):
+                text = dire("plantes.nas_inaccessible")
+        elif key in ("c", "C", "h", "H"):
+            text = _apply(plants[i], "confirmer" if key in ("c", "C") else "infirmer")
             if not plantes.save(plants):
                 text = dire("plantes.nas_inaccessible")
         elif key in ("g", "G"):

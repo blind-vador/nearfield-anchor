@@ -12,7 +12,12 @@ Gemini. Reglage "plantes" sur le NAS (reglages.py), une entree par plante :
                                 dessus, auvent...) ; toujours vrai dedans
   arrosee_le                    AAAA-MM-JJ du dernier arrosage dit, ou None
   fiche                         donnees moyennes rendues par Gemini (FICHE_PROMPT),
-                                None tant qu'elle n'a pas pu etre faite
+                                None tant qu'elle n'a pas pu etre faite ; "maturite" et
+                                "jours_maturite" ajoutes quand la plante porte des fruits
+  a_confirmer                   observations d'une photo (fruits, fleurs, probleme...),
+                                avec l'endroit ou les chercher : l'utilisateur les
+                                confirme au toucher (C) ou les signale fausses (H) ;
+                                rien ne change de stade sans sa confirmation
 
 Gemini n'est appele qu'a l'ajout d'une plante (recherche, puis fiche) :
 tous les conseils sont ensuite calcules sur le Pi a partir de la fiche.
@@ -23,7 +28,7 @@ import uuid
 
 import gemini
 import reglages
-from phrases import Etiquettes, dire
+from phrases import Etiquettes, dire, nombre
 
 STAGES = ["seme", "germe", "pousses", "developpee", "fleurs", "fruits", "repos"]
 STAGE_NAMES = Etiquettes("plantes.stade", {
@@ -58,8 +63,15 @@ Donne des donnees MOYENNES de culture, prudentes (minimums realistes), en JSON s
  "jours_sans_eau_pot_ete": nombre,         // en pot dehors, par temps chaud et sec
  "vivace": true | false,
  "rentrer_l_hiver": true | false,
- "conseils": "2 phrases au plus : ce qui compte le plus pour la reussir"
+ "conseils": "2 phrases au plus : ce qui compte le plus pour la reussir",
+ "jours_maturite": [min, max],             // des premiers petits fruits a la maturite ; null sinon
+ "maturite": "comment une personne aveugle reconnait un fruit mur : au toucher (fermete, souplesse), a l'odeur, au poids, a la facon dont il se detache ; 2 phrases ; chaine vide si pas de fruit"
 }}"""
+
+MATURITY_PROMPT = """Plante : {nom} ({latin}), cultivee a {commune}. Ses fruits sont en train de se former.
+Pour une personne aveugle, en JSON strict :
+{{"jours_maturite": [min, max],   // des premiers petits fruits a la maturite
+ "maturite": "comment reconnaitre un fruit mur au toucher (fermete, souplesse, peau), a l'odeur, au poids, a la facon dont il se detache de la plante ; ce qu'il ne faut pas confondre ; 2 a 3 phrases"}}"""
 
 
 def join_names(names):
@@ -139,6 +151,79 @@ def new_plant(candidate, stage, days_ago, dedans, emplacement, contenant, abri_p
             "ajoutee_le": _today(), "fiche": None}
 
 
+def ensure_maturity(plant):
+    """Conseils de maturite des fruits dans la fiche (Gemini, une fois). Rend
+    True si la fiche a change."""
+    fiche = plant.get("fiche")
+    if not fiche or fiche.get("maturite"):
+        return False
+    lieu = reglages.get("lieu")
+    answer, _ = gemini.ask(MATURITY_PROMPT.format(nom=plant["nom"], latin=plant.get("latin") or "?",
+                                                  commune=lieu.get("commune", "Saint-Étienne")),
+                           temperature=0.2, json_mode=True)
+    try:
+        data = json.loads(answer) if answer else None
+    except ValueError:
+        return False
+    if not isinstance(data, dict) or not data.get("maturite"):
+        return False
+    fiche["maturite"] = str(data["maturite"]).strip()
+    if isinstance(data.get("jours_maturite"), list):
+        fiche["jours_maturite"] = data["jours_maturite"]
+    return True
+
+
+def _verdict(plant, confirmed):
+    """C ou H sur la premiere observation en attente. Rend la phrase (rien
+    n'est enregistre ici : save() par l'appelant)."""
+    pending = plant.get("a_confirmer") or []
+    if not pending:
+        return dire("plantes.rien_a_confirmer", nom=plant["nom"])
+    item = pending.pop(0)
+    plant["a_confirmer"] = pending
+    import plantes_photos
+    today = _today()
+    if confirmed:
+        line = f"{today} : Vérifié au toucher : {item['detail']}."
+        text = dire("plantes.confirme", detail=item["detail"])
+        stage = item.get("stade")
+        if stage in STAGES and stage != plant["stade"] and STAGES.index(stage) > STAGES.index(plant["stade"]):
+            set_stage(plant, stage)
+            text += " " + dire("plantes.note_stade", nom=plant["nom"], stade=STAGE_NAMES[stage])
+        if plant["stade"] == "fruits":
+            ensure_maturity(plant)
+            if (plant.get("fiche") or {}).get("maturite"):
+                text += " " + dire("plantes.maturite_conseil", conseil=plant["fiche"]["maturite"])
+    else:
+        line = f"{today} : Signalé faux après vérification au toucher : {item['detail']}."
+        text = dire("plantes.infirme", detail=item["detail"])
+    try:
+        plantes_photos.append_evolution(plant, line)
+    except OSError:
+        pass  # le stockage decroche : la decision est quand meme gardee dans le registre
+    if pending:
+        text += " " + pending_text(plant)
+    return text
+
+
+def confirm(plant):
+    return _verdict(plant, True)
+
+
+def refute(plant):
+    return _verdict(plant, False)
+
+
+def pending_text(plant):
+    """La prochaine observation a verifier, avec l'endroit ou chercher."""
+    pending = plant.get("a_confirmer") or []
+    if not pending:
+        return ""
+    o = pending[0]
+    where = dire("plantes.a_verifier_ou", ou=o["ou"]) if o.get("ou") else ""
+    return dire("plantes.a_verifier", detail=o["detail"], ou=where).strip()
+
+
 def set_stage(plant, stage):
     plant["stade"], plant["stade_depuis"] = stage, _today()
     plant.setdefault("historique", []).append({"stade": stage, "date": _today()})
@@ -166,7 +251,10 @@ def days_since(iso):
 
 
 def line(plant):
-    return dire("plantes.ligne", nom=plant["nom"], stade=STAGE_NAMES[plant["stade"]], lieu=place_text(plant))
+    text = dire("plantes.ligne", nom=plant["nom"], stade=STAGE_NAMES[plant["stade"]], lieu=place_text(plant))
+    if plant.get("a_confirmer"):
+        text += ", " + dire("plantes.observations_en_attente", nombre=nombre(len(plant["a_confirmer"]), "observation"))
+    return text
 
 
 def card(plant):
@@ -186,6 +274,10 @@ def card(plant):
         parts.append(str(fiche["conseils"]))
     elif not fiche:
         parts.append(dire("plantes.fiche_manquante"))
+    if plant["stade"] == "fruits" and fiche and fiche.get("maturite"):
+        parts.append(dire("plantes.maturite_conseil", conseil=fiche["maturite"]))
+    if plant.get("a_confirmer"):
+        parts.append(pending_text(plant))
     return " ".join(parts)
 
 
@@ -198,6 +290,8 @@ def complete_missing():
         if not plant.get("fiche"):
             plant["fiche"] = make_fiche(plant)
             done += bool(plant["fiche"])
+        elif plant.get("stade") == "fruits":
+            done += ensure_maturity(plant)
     if done:
         save(plants)
     return done

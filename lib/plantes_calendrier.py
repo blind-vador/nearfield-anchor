@@ -32,7 +32,8 @@ LATE_DAYS = 3
 TEMP_CACHE_SEC = 3 * 3600
 # evenement : (cle de duree dans la fiche, stade qui le constate)
 EVENTS = {"levee": ("jours_germination", "germe"), "feuilles": ("jours_premieres_feuilles", "pousses"),
-          "fleurs": ("jours_floraison", "fleurs"), "fruits": ("jours_fruits", "fruits")}
+          "fleurs": ("jours_floraison", "fleurs"), "fruits": ("jours_fruits", "fruits"),
+          "maturite": ("jours_maturite", None)}  # fruits murs : pas de stade apres, un conseil au toucher
 _temp = {"t": 0, "valeur": None}
 
 
@@ -95,7 +96,7 @@ def next_event(plant, mean_temp=None, today=None):
     {"evenement": None, "froid": True} : trop froid pour promettre quoi que ce soit."""
     fiche = plant.get("fiche") or {}
     stage = plant.get("stade")
-    if not fiche or stage in ("repos", "fruits"):
+    if not fiche or stage == "repos":
         return None
     if stage == "seme":
         event, anchor = "levee", _stage_date(plant, "seme")
@@ -103,8 +104,10 @@ def next_event(plant, mean_temp=None, today=None):
         event, anchor = "feuilles", _stage_date(plant, "germe")
     elif stage in ("pousses", "developpee"):
         event, anchor = "fleurs", _levee(plant, fiche)
-    else:  # fleurs
+    elif stage == "fleurs":
         event, anchor = "fruits", _stage_date(plant, "fleurs")
+    else:  # fruits : la maturite, comptee depuis les premiers fruits
+        event, anchor = "maturite", _stage_date(plant, "fruits")
     span = _span(fiche, EVENTS[event][0])
     if not anchor or not span:
         return None
@@ -144,6 +147,8 @@ def describe(plant, mean_temp=None, today=None):
         text = dire("plantes.calendrier_futur", evenement=what, debut=spoken_date(ev["debut"]), fin=spoken_date(ev["fin"]))
     elif today <= ev["fin"]:
         text = dire("plantes.calendrier_en_cours", evenement=what, fin=spoken_date(ev["fin"]))
+    elif ev["stade"] is None:  # maturite
+        text = dire("plantes.calendrier_murs", fin=spoken_date(ev["fin"]))
     else:
         text = dire("plantes.calendrier_retard", evenement=what, fin=spoken_date(ev["fin"]))
     if ev["ralenti"]:
@@ -185,6 +190,13 @@ def due_messages(plants, state, mean_temp, today=None):
             continue
         base = f"{plant['id']}|{ev['evenement']}|{ev['ancre']}"
         what = _event_name(ev["evenement"])
+        if ev["stade"] is None:  # maturite : un conseil au toucher, pas de stade a noter, pas de rappel
+            tip = (plant.get("fiche") or {}).get("maturite")
+            if ev["debut"] <= today <= ev["fin"] and base not in said:
+                out.append((base, dire("plantes.annonce_fenetre", nom=plant["nom"], evenement=what,
+                                       fin=spoken_date(ev["fin"]))
+                            + (" " + dire("plantes.maturite_conseil", conseil=tip) if tip else "")))
+            continue
         word = dire(f"plantes.mot_{ev['stade']}")
         if ev["debut"] <= today <= ev["fin"] and base not in said:
             out.append((base, dire("plantes.annonce_fenetre", nom=plant["nom"], evenement=what, fin=spoken_date(ev["fin"]))

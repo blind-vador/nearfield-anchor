@@ -23,7 +23,7 @@ import plantes
 import plantes_alertes as pa
 import plantes_calendrier as pc
 import reglages
-from phrases import dire, etiquette
+from phrases import dire, etiquette, nombre
 
 MONTH_PATH = os.path.join(reglages.CACHE_DIR, "plantes_mois.json")
 RETRY_SEC = 3600              # Gemini en panne : nouvel essai au plus une fois par heure
@@ -127,7 +127,7 @@ def weather_now(fc, now):
     return out
 
 
-def _weather_lines(plants, fc, now, mean_temp):
+def _weather_lines(plants, fc, now, mean_temp, complet=False):
     """Phrases meteo sur 48 h ; les plantes concernees par la meme chose sont
     nommees ensemble."""
     groups = {}  # genre -> {"noms": [...], valeurs}
@@ -176,9 +176,16 @@ def _weather_lines(plants, fc, now, mean_temp):
         elif balance and balance[1] >= SOON_SHARE * reserve:
             add("soif_bientot", p)
         ev = pc.next_event(p, mean_temp)
-        if ev and ev.get("evenement") and ev["debut"] <= now.date() <= ev["fin"]:
+        ripe_window = bool(ev and ev.get("evenement") and ev["debut"] <= now.date() <= ev["fin"])
+        if ripe_window:
             single.append(dire("plantes.flash_evenement", nom=p["nom"], evenement=pc._event_name(ev["evenement"]),
                                fin=pc.spoken_date(ev["fin"])))
+        # fruits : comment reconnaitre un fruit mur ; flash complet toujours, court dans la fenetre de maturite
+        if p.get("stade") == "fruits" and fiche.get("maturite") and (complet or ripe_window):
+            single.append(dire("plantes.flash_maturite", nom=p["nom"], conseil=str(fiche["maturite"]).strip()))
+        if p.get("a_confirmer"):
+            single.append(dire("plantes.flash_a_confirmer", nom=p["nom"],
+                               nombre=nombre(len(p["a_confirmer"]), "observation")))
     lines = []
     for kind in ("gel", "rentrer", "nuits_fraiches", "vent", "chaleur", "soif_bientot"):
         if kind in groups:
@@ -214,7 +221,7 @@ def text(complet=False, now=None):
         print(f"[plantes_flash] previsions : {exc!r}")
     if fc and plants:
         mean_temp = pc.outdoor_mean_temp() if any(not p.get("dedans") for p in plants) else None
-        parts += _weather_lines(plants, fc, now, mean_temp)
+        parts += _weather_lines(plants, fc, now, mean_temp, complet)
         if complet and not parts:
             parts.append(dire("plantes.flash_rien"))
     fiche = None
