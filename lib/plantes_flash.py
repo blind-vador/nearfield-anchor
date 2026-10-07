@@ -46,7 +46,9 @@ Reponds en JSON strict :
 Ravageurs : seulement ceux reellement actifs en {mois} dans cette region, 2 au plus par plante, aucun si rien n'est a craindre.
 Traitements : uniquement biologiques ou naturels (purin d'ortie ou de consoude, decoction de prele, savon noir, nematodes,
 auxiliaires comme les coccinelles, Bacillus thuringiensis, pieges, paillage, gestes) ; jamais de produit de synthese.
-Semis : 4 idees au plus par emplacement, adaptees a {mois} et a cette altitude ; liste vide si la saison ne s'y prete pas."""
+Semis : ce qu'on peut semer, planter, bouturer ou diviser en {mois} a cette altitude, 2 a 4 idees par emplacement
+(pot, balcon, jardin), independamment des plantes de la personne ; il y a presque toujours quelque chose a faire,
+liste vide seulement si rien n'est possible."""
 
 
 def _load():
@@ -93,9 +95,12 @@ def monthly(plants, today=None):
         print(f"[plantes_flash] fiche du mois : {reason or 'reponse illisible'}")
         _save({"cle": key, "essai": time.time(), "fiche": None})
         return None
-    names = {p["nom"] for p in plants}
-    fiche["ravageurs"] = [r for r in fiche.get("ravageurs") or [] if isinstance(r, dict) and r.get("plante") in names
-                          and r.get("nom") and r.get("favorise_par") in WEATHERS]
+    pests = []
+    for r in fiche.get("ravageurs") or []:  # Gemini ajoute souvent le latin au nom : "Citronnier caviar (Citrus...)"
+        plant = plantes.find(str(r.get("plante") or ""), plants) if isinstance(r, dict) else None
+        if plant and r.get("nom") and r.get("favorise_par") in WEATHERS:
+            pests.append(dict(r, plante=plant["nom"]))
+    fiche["ravageurs"] = pests
     _save({"cle": key, "essai": time.time(), "fiche": fiche})
     return fiche
 
@@ -122,51 +127,65 @@ def weather_now(fc, now):
     return out
 
 
-def _plant_weather(p, fc, now, mean_temp):
-    """Phrases meteo pour une plante sur 48 h."""
-    fiche = p.get("fiche") or {}
-    out = []
+def _weather_lines(plants, fc, now, mean_temp):
+    """Phrases meteo sur 48 h ; les plantes concernees par la meme chose sont
+    nommees ensemble."""
+    groups = {}  # genre -> {"noms": [...], valeurs}
+    single = []
     end = now + datetime.timedelta(hours=48)
-    if not p.get("dedans") and fiche:
-        temps = pa._hours(fc, "temperature_2m", now, end)
-        if temps:
+    temps = pa._hours(fc, "temperature_2m", now, end)
+    gusts = pa._hours(fc, "wind_gusts_10m", now, now + datetime.timedelta(hours=36))
+    days = pa._days(fc)
+
+    def add(kind, plant, **values):
+        groups.setdefault(kind, dict(values, noms=[]))["noms"].append(plant["nom"])
+
+    for p in plants:
+        fiche = p.get("fiche") or {}
+        if not fiche:
+            continue
+        if not p.get("dedans") and temps:
             low_t, low = min(temps, key=lambda x: x[1])
             try:
                 frost = float(fiche["temp_gel_c"]) + (pa.POT_FROST_MARGIN_C if p.get("contenant") == "pot" else 0)
             except (KeyError, TypeError, ValueError):
                 frost = None
             if frost is not None and low <= frost:
-                out.append(dire("plantes.flash_gel", nom=p["nom"], temp=pa._num(low), quand=pa._when(low_t, now)))
+                add("gel", p, temp=pa._num(low), quand=pa._when(low_t, now))
             elif fiche.get("rentrer_l_hiver") and low <= pa.RENTRER_C:
-                out.append(dire("plantes.flash_rentrer", nom=p["nom"], temp=pa._num(low), quand=pa._when(low_t, now)))
+                add("rentrer", p, temp=pa._num(low), quand=pa._when(low_t, now))
             elif fiche.get("rentrer_l_hiver") and low <= FRESH_NIGHT_C:
-                out.append(dire("plantes.flash_nuits_fraiches", nom=p["nom"], temp=pa._num(low)))
+                add("nuits_fraiches", p, temp=pa._num(low))
             high_t, high = max(temps, key=lambda x: x[1])
             try:
                 if high >= float(fiche["temp_max_c"]):
-                    out.append(dire("plantes.flash_chaleur", nom=p["nom"], temp=pa._num(high), quand=pa._when(high_t, now)))
+                    add("chaleur", p, temp=pa._num(high), quand=pa._when(high_t, now))
             except (KeyError, TypeError, ValueError):
                 pass
         limit = pa.GUSTS_KMH.get(fiche.get("vent"))
-        gusts = pa._hours(fc, "wind_gusts_10m", now, now + datetime.timedelta(hours=36))
-        if limit and gusts:
+        if not p.get("dedans") and limit and gusts:
             top_t, top = max(gusts, key=lambda x: x[1])
             if top >= limit:
-                out.append(dire("plantes.flash_vent", nom=p["nom"], vitesse=pa._num(top), quand=pa._when(top_t, now)))
-    if fiche:
-        balance = pa.water_deficit(p, pa._days(fc), now.date())
+                add("vent", p, vitesse=pa._num(top), quand=pa._when(top_t, now))
+        balance = pa.water_deficit(p, days, now.date())
         reserve = max(1.0, float(fiche.get("jours_sans_eau_pot_ete") or 2)) * pa.MM_PER_HOT_DAY
         if p.get("contenant") == "pleine_terre":
             reserve *= pa.GROUND_FACTOR
         if balance and balance[1] >= reserve:
-            out.append(dire("plantes.flash_soif", nom=p["nom"], jours=balance[0]))
+            single.append(dire("plantes.flash_soif", nom=p["nom"], jours=balance[0]))
         elif balance and balance[1] >= SOON_SHARE * reserve:
-            out.append(dire("plantes.flash_soif_bientot", nom=p["nom"]))
-    ev = pc.next_event(p, mean_temp)
-    if ev and ev.get("evenement") and ev["debut"] <= now.date() <= ev["fin"]:
-        out.append(dire("plantes.flash_evenement", nom=p["nom"], evenement=pc._event_name(ev["evenement"]),
-                        fin=pc.spoken_date(ev["fin"])))
-    return out
+            add("soif_bientot", p)
+        ev = pc.next_event(p, mean_temp)
+        if ev and ev.get("evenement") and ev["debut"] <= now.date() <= ev["fin"]:
+            single.append(dire("plantes.flash_evenement", nom=p["nom"], evenement=pc._event_name(ev["evenement"]),
+                               fin=pc.spoken_date(ev["fin"])))
+    lines = []
+    for kind in ("gel", "rentrer", "nuits_fraiches", "vent", "chaleur", "soif_bientot"):
+        if kind in groups:
+            g = groups[kind]
+            values = {k: v for k, v in g.items() if k != "noms"}
+            lines.append(dire(f"plantes.flash_{kind}", noms=plantes.join_names(g["noms"]), **values))
+    return lines + single
 
 
 def _sowing(fiche):
@@ -190,8 +209,7 @@ def text(complet=False, now=None):
         print(f"[plantes_flash] previsions : {exc!r}")
     if fc and plants:
         mean_temp = pc.outdoor_mean_temp() if any(not p.get("dedans") for p in plants) else None
-        for p in plants:
-            parts += _plant_weather(p, fc, now, mean_temp)
+        parts += _weather_lines(plants, fc, now, mean_temp)
         if complet and not parts:
             parts.append(dire("plantes.flash_rien"))
     fiche = None

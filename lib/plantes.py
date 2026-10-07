@@ -62,6 +62,27 @@ Donne des donnees MOYENNES de culture, prudentes (minimums realistes), en JSON s
 }}"""
 
 
+def join_names(names):
+    """ "A, B et C" """
+    names = list(names)
+    if len(names) <= 1:
+        return "".join(names)
+    return ", ".join(names[:-1]) + " " + dire("plantes.et") + " " + names[-1]
+
+
+def find(text, plants):
+    """Plante de la liste designee par un texte libre (nom suivi du latin,
+    guillemets en moins...), ou None. Le nom le plus long gagne."""
+    import unicodedata
+
+    def norm(s):
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower()
+        return " ".join("".join(c if c.isalnum() else " " for c in s).split())
+    t = norm(text)
+    hits = [p for p in plants if norm(p["nom"]) and (norm(p["nom"]) in t or t in norm(p["nom"]))]
+    return max(hits, key=lambda p: len(p["nom"])) if hits else None
+
+
 def _today():
     return datetime.date.today().isoformat()
 

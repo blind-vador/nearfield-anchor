@@ -30,6 +30,7 @@ import requests
 
 import reglages
 from phrases import dire
+from plantes import join_names
 
 STATE_PATH = "/home/vador/autopilot/plantes_alertes.json"
 ACK_PATH = "/home/vador/autopilot/plantes_acquit.json"
@@ -110,41 +111,48 @@ def water_deficit(plant, days, today):
 
 
 def conditions(plants, fc, now=None):
-    """{cle: texte} des situations qui demandent d'agir maintenant."""
+    """{cle: texte} des situations qui demandent d'agir maintenant. Gel,
+    rentree, vent et chaleur : une alerte par situation, qui nomme toutes les
+    plantes concernees (2026-10-07 : 5 plantes = pas 5 alertes identiques) ;
+    soif : une par plante (chacune son arrosage)."""
     now = now or datetime.datetime.now()
     today = now.date()
     days = _days(fc)
+    groups = {}  # (genre, date) -> {"noms": [...], valeurs}
+
+    def add(kind, day, plant, **values):
+        g = groups.setdefault((kind, str(day)), dict(values, noms=[]))
+        g["noms"].append(plant["nom"])
+
+    night_of = None
+    night = []
+    if now.hour >= GEL_FROM_HOUR or now.hour < 7:
+        night_of = today if now.hour >= GEL_FROM_HOUR else today - datetime.timedelta(days=1)
+        night = _hours(fc, "temperature_2m", max(now, datetime.datetime.combine(night_of, datetime.time(18))),
+                       datetime.datetime.combine(night_of + datetime.timedelta(days=1), datetime.time(10)))
+    gusts = _hours(fc, "wind_gusts_10m", now, now + datetime.timedelta(hours=18))
+    heat = _hours(fc, "temperature_2m", now, now + datetime.timedelta(hours=24))
     out = {}
     for p in plants:
         fiche = p.get("fiche") or {}
         if not fiche:
             continue
-        name = p["nom"]
         if not p.get("dedans"):
-            if now.hour >= GEL_FROM_HOUR or now.hour < 7:
-                night_of = today if now.hour >= GEL_FROM_HOUR else today - datetime.timedelta(days=1)
-                night = _hours(fc, "temperature_2m", max(now, datetime.datetime.combine(night_of, datetime.time(18))),
-                               datetime.datetime.combine(night_of + datetime.timedelta(days=1), datetime.time(10)))
-                if night:
-                    low_t, low = min(night, key=lambda x: x[1])
-                    try:
-                        frost = float(fiche["temp_gel_c"]) + (POT_FROST_MARGIN_C if p.get("contenant") == "pot" else 0)
-                    except (KeyError, TypeError, ValueError):
-                        frost = None
-                    if frost is not None and low <= frost:
-                        out[f"{p['id']}|gel|{night_of}"] = dire("plantes.alerte_gel", nom=name, temp=_num(low),
-                                                                quand=_when(low_t, now))
-                    elif fiche.get("rentrer_l_hiver") and low <= RENTRER_C:
-                        out[f"{p['id']}|rentrer|{night_of}"] = dire("plantes.alerte_rentrer", nom=name, temp=_num(low),
-                                                                    quand=_when(low_t, now))
+            if night:
+                low_t, low = min(night, key=lambda x: x[1])
+                try:
+                    frost = float(fiche["temp_gel_c"]) + (POT_FROST_MARGIN_C if p.get("contenant") == "pot" else 0)
+                except (KeyError, TypeError, ValueError):
+                    frost = None
+                if frost is not None and low <= frost:
+                    add("gel", night_of, p, temp=_num(low), quand=_when(low_t, now))
+                elif fiche.get("rentrer_l_hiver") and low <= RENTRER_C:
+                    add("rentrer", night_of, p, temp=_num(low), quand=_when(low_t, now))
             limit = GUSTS_KMH.get(fiche.get("vent"))
-            gusts = _hours(fc, "wind_gusts_10m", now, now + datetime.timedelta(hours=18))
             if limit and gusts:
                 top_t, top = max(gusts, key=lambda x: x[1])
                 if top >= limit:
-                    out[f"{p['id']}|vent|{top_t.date()}"] = dire("plantes.alerte_vent", nom=name, vitesse=_num(top),
-                                                                 quand=_when(top_t, now))
-            heat = _hours(fc, "temperature_2m", now, now + datetime.timedelta(hours=24))
+                    add("vent", top_t.date(), p, vitesse=_num(top), quand=_when(top_t, now))
             try:
                 hot = float(fiche["temp_max_c"])
             except (KeyError, TypeError, ValueError):
@@ -152,8 +160,7 @@ def conditions(plants, fc, now=None):
             if heat and hot is not None:
                 top_t, top = max(heat, key=lambda x: x[1])
                 if top >= hot:
-                    out[f"{p['id']}|chaleur|{top_t.date()}"] = dire("plantes.alerte_chaleur", nom=name, temp=_num(top),
-                                                                    quand=_when(top_t, now))
+                    add("chaleur", top_t.date(), p, temp=_num(top), quand=_when(top_t, now))
         if SOIF_HOURS[0] <= now.hour < SOIF_HOURS[1]:
             balance = water_deficit(p, days, today)
             try:
@@ -164,7 +171,10 @@ def conditions(plants, fc, now=None):
                 reserve *= GROUND_FACTOR
             if balance and balance[1] >= reserve:
                 out[f"{p['id']}|soif|{p.get('arrosee_le')}"] = dire(
-                    "plantes.alerte_soif", nom=name, jours=balance[0], mm=_num(balance[1]), mot=name.lower())
+                    "plantes.alerte_soif", nom=p["nom"], jours=balance[0], mm=_num(balance[1]), mot=p["nom"].lower())
+    for (kind, day), g in groups.items():
+        values = {k: v for k, v in g.items() if k != "noms"}
+        out[f"{kind}|{day}"] = dire(f"plantes.alerte_{kind}", noms=join_names(g["noms"]), **values)
     return out
 
 
