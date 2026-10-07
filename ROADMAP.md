@@ -6127,3 +6127,9 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   de la plante (description du registre) et sait qu'un pot peut contenir
   plusieurs plantes : le citronnier, d'abord "introuvable", est repere.
   Les deux photos ont ete re-analysees (anciens resultats effaces).
+- 2026-10-07, premieres vraies photos (HEIC, citronnier et feijoa) : le Pi
+  ne disait que "Premier etat note" -> la description est maintenant dite
+  en entier (photo_premiere / photo_nouvelle) ; Gemini recoit le portrait
+  de la plante (description du registre) et sait qu'un pot peut contenir
+  plusieurs plantes : le citronnier, d'abord "introuvable", est repere.
+  Les deux photos ont ete re-analysees (anciens resultats effaces).
