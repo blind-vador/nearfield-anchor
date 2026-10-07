@@ -88,8 +88,26 @@ def ville(line, key_source, say, out, read_line):
                                 "lat": c["lat"], "lon": c["lon"]})
     if not ok:
         return dire("reglages.no_nas")
+    _find_transports(say)
     return (dire("reglages.commune_enregistree_vigilance_meteo", nom=c['nom'], v1=c['departement_nom'] or c['departement'])
-            + _restart(["meteo-watch", "adsb-watch"]))
+            + _restart(["meteo-watch", "adsb-watch"]) + " " + dire("reglages.transports_en_recherche"))
+
+
+def _find_transports(say):
+    """Nouvelle commune : ses reseaux de transport (lib/transports.py) sont
+    cherches en arriere-plan, le resultat est dit quand il arrive."""
+    import threading
+
+    def job():
+        try:
+            import transports
+            import transports_cmd
+            transports.discover(reglages.get("lieu"))
+            say(transports_cmd.discovery_summary())
+        except Exception as exc:
+            print(f"[reglages] transports : {exc!r}")
+            say(dire("reglages.transports_echec"))
+    threading.Thread(target=job, daemon=True).start()
 
 
 def gare(key_source, say, out):

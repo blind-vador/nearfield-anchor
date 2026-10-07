@@ -54,10 +54,8 @@ APRS_WX_MAX_KM = 20
 APRS_WX_MAX_AGE_SEC = 2 * 3600
 METEO_STATE = "/tmp/meteo_watch_vigilance_state.json"
 CRUE_STATE = "/tmp/crue_watch_vigilance_state.json"
-STAS_STATE = "/tmp/stas_watch_state.json"
 CRUE_NAMES = Etiquettes("crue.troncon", {"LC126": "la Loire forézienne"}, "nom d'un tronçon de rivière surveillé")
 COLOR_NAMES = Etiquettes("vigilance.couleur", {2: "jaune", 3: "orange", 4: "rouge"}, "couleur de vigilance météo")
-STAS_DEPARTEMENT = "42"
 TRAIN_WINDOW_SEC = 3 * 3600
 
 STOP_WORDS = set("""le la les l un une des de du d a au aux et en dans sur pour par
@@ -409,19 +407,6 @@ def trains_text():
     return (dire("flash.gare", name=name) + " ") + " ; ".join(parts) + "."
 
 
-def stas_text(lieu):
-    if str(lieu["departement"]) != STAS_DEPARTEMENT:
-        return ""
-    titles = _read_json(STAS_STATE)
-    if not isinstance(titles, list):
-        return ""
-    if not titles:
-        return dire("flash.perturbation_signalee_bus_tram")
-    shown = ", ".join(t.split(" : ", 1)[0] if " : " in t else t for t in titles[:3])
-    count = len(titles)
-    return (dire("flash.bus_tram_perturbation_cours", count=count, pluriel='s' if count > 1 else '', shown=shown) if count > 3 else dire("flash.bus_tram", shown=shown))
-
-
 # --- Assemblage -------------------------------------------------------------
 
 def _load_cache():
@@ -474,7 +459,8 @@ def collect(lieu, complet=False, scan=None, scan_failed=None):
     trafic routier, les trains et les bus. Le flash court garde les resumes."""
     import trafic
     import plantes_flash  # rubrique plantes : meteo par plante, ravageurs, semis (2026-10-07)
-    jobs = {"presse": (_press, lieu), "trains": (trains_text,), "bus": (stas_text, lieu),
+    import transports  # bus, tram, metro du reseau de la commune (2026-10-07, remplace la seule STAS)
+    jobs = {"presse": (_press, lieu), "trains": (trains_text,), "bus": (transports.flash_text, lieu, complet),
             "plantes": (plantes_flash.text, complet)}
     if complet:
         import meteo_locale

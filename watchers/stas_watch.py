@@ -81,6 +81,19 @@ def _speak_new_disruptions(new_disruptions):
         audio_lock.release(lock)
 
 
+def _stas_is_mine():
+    """La STAS est-elle un reseau actif de la commune choisie (commande ville,
+    lib/transports.py) ? Sinon on suit toujours la page, en silence."""
+    try:
+        import transports
+        if transports.settings() is None:  # reseaux pas encore cherches : comme avant
+            return True
+        return transports.page_active("stas")
+    except Exception as exc:
+        print(f"[stas_watch] reseaux : {exc!r}")
+        return True
+
+
 def main():
     print("[stas_watch] démarrage de la veille perturbations STAS (Saint-Étienne)")
     known_titles = _load_state()
@@ -92,7 +105,7 @@ def main():
             new_titles = current_titles - known_titles
             new_disruptions = [d for d in disruptions if d["title"] in new_titles]
 
-            if new_disruptions:
+            if new_disruptions and _stas_is_mine():
                 _speak_new_disruptions(new_disruptions)
 
             if current_titles != known_titles:

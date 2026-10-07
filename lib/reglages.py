@@ -52,6 +52,8 @@ DEFAULTS = {
     "plantes_suggestions": {"suggestions": [], "refusees": []},
     # capteurs sans fil de l'utilisateur, appairés (lib/capteurs_miens.py)
     "capteurs": {"miens": []},
+    # reseaux de transport en commun de la commune (lib/transports.py)
+    "transports": {"reseaux": []},
     "console": {"voix": "fr-FR-DeniseNeural", "debit": "+20%", "debit_echo": "+50%",
                 "conseils": "toujours", "conseils_vus": []},
 }
