@@ -166,6 +166,60 @@ def page_active(name):
 
 # --- lignes d'un reseau (GTFS routes.txt) ---
 
+FULL_DOWNLOAD_MAX = 80 * 1024 * 1024   # sans lecture partielle, on ne telecharge pas plus
+
+
+class _RangeFile(io.RawIOBase):
+    """Fichier distant lu par morceaux (HTTP Range) : zipfile n'en lit que le
+    sommaire et routes.txt (2026-10-07 : GTFS IDFM = 244 Mo, routes.txt
+    quelques centaines de Ko)."""
+    BLOCK = 256 * 1024
+
+    def __init__(self, url, size):
+        self.url, self.size, self.pos, self.cache = url, size, 0, {}
+
+    def readable(self):
+        return True
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.pos
+
+    def seek(self, offset, whence=0):
+        self.pos = offset if whence == 0 else self.pos + offset if whence == 1 else self.size + offset
+        return self.pos
+
+    def _block(self, n):
+        if n not in self.cache:
+            start = n * self.BLOCK
+            end = min(self.size, start + self.BLOCK) - 1
+            resp = requests.get(self.url, headers={"Range": f"bytes={start}-{end}"}, timeout=TIMEOUT)
+            if resp.status_code != 206:
+                raise OSError(f"lecture partielle refusee ({resp.status_code})")
+            self.cache[n] = resp.content
+        return self.cache[n]
+
+    def readinto(self, b):
+        if self.pos >= self.size:
+            return 0
+        n, off = divmod(self.pos, self.BLOCK)
+        chunk = self._block(n)[off:off + len(b)]
+        b[:len(chunk)] = chunk
+        self.pos += len(chunk)
+        return len(chunk)
+
+
+def _read_routes(z):
+    out = {}
+    name = next((n for n in z.namelist() if n.endswith("routes.txt")), None)
+    if name:
+        for r in csv.DictReader(io.TextIOWrapper(z.open(name), "utf-8-sig")):
+            out[r.get("route_id", "")] = {"nom": (r.get("route_short_name") or r.get("route_long_name") or "").strip(),
+                                          "famille": group_of(r.get("route_type"))}
+    return out
+
 def routes(network):
     """{route_id: {"nom", "famille"}}, copie de la carte SD refaite chaque semaine."""
     path = os.path.join(reglages.CACHE_DIR, f"transports_lignes_{network['id']}.json")
@@ -177,19 +231,28 @@ def routes(network):
         pass
     if not network.get("gtfs"):
         return {}
-    out = {}
-    with tempfile.TemporaryFile() as tmp:
-        with requests.get(network["gtfs"], stream=True, timeout=TIMEOUT) as resp:
-            resp.raise_for_status()
-            for chunk in resp.iter_content(1 << 16):
-                tmp.write(chunk)
-        tmp.seek(0)
-        with zipfile.ZipFile(tmp) as z:
-            name = next((n for n in z.namelist() if n.endswith("routes.txt")), None)
-            if name:
-                for r in csv.DictReader(io.TextIOWrapper(z.open(name), "utf-8-sig")):
-                    out[r.get("route_id", "")] = {"nom": (r.get("route_short_name") or r.get("route_long_name") or "").strip(),
-                                                  "famille": group_of(r.get("route_type"))}
+    head = requests.head(network["gtfs"], allow_redirects=True, timeout=TIMEOUT)
+    size = int(head.headers.get("Content-Length") or 0)
+    out = None
+    if size and head.headers.get("Accept-Ranges", "").lower() == "bytes":
+        try:
+            with zipfile.ZipFile(_RangeFile(head.url, size)) as z:
+                out = _read_routes(z)
+        except (OSError, zipfile.BadZipFile, requests.RequestException) as exc:
+            print(f"[transports] {network['nom']} lecture partielle : {exc!r}")
+    if out is None:
+        if size > FULL_DOWNLOAD_MAX:
+            raise OSError(f"GTFS de {size // 1_000_000} Mo sans lecture partielle")
+        with tempfile.TemporaryFile() as tmp:
+            with requests.get(network["gtfs"], stream=True, timeout=TIMEOUT) as resp:
+                resp.raise_for_status()
+                for chunk in resp.iter_content(1 << 16):
+                    tmp.write(chunk)
+                    if tmp.tell() > FULL_DOWNLOAD_MAX:
+                        raise OSError("GTFS trop gros")
+            tmp.seek(0)
+            with zipfile.ZipFile(tmp) as z:
+                out = _read_routes(z)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path + ".tmp", "w", encoding="utf-8") as f:
         json.dump(out, f, ensure_ascii=False)
