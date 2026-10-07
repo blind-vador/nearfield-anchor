@@ -6342,3 +6342,20 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   point 3 (FR-Alert cell broadcast, a tester), point 5 (presence/activite
   TETRA). Plus A1/A2/A4/A5 du doc, et corriger balises_watch (meme arret
   de tuyau que LoRa, derniere cause de reset de la cle).
+
+## 2026-10-07 (soir, suite) : resets de la cle, ATIS
+
+- Resets de la cle elucides : surviennent a l'ouverture du device APRES une
+  fenetre qui pipe rtl_fm (APRS, pagers) -> rtl_fm bloque en ecriture (tuyau
+  vers multimon-ng plein) tue en plein transfert USB. Corrige comme LoRa :
+  decodeur arrete d'abord, puis lecture_flux.arreter(rtl) vide le tuyau.
+  (balises : stdout deja draine, PAS le motif ; dec406 non coupable.)
+  Correctif APRS/pagers commite+pousse, pas encore deploye (eviter un
+  redemarrage de plus a chaud ; s'appliquera au prochain).
+- ATIS : chaine validee techniquement (capture AM -> ogg -> Gemini audio ->
+  JSON). LFMH (Saint-Etienne) muet (petit aeroport, hors heures) : store
+  = dernier_essai seul. Rotation corrigee (atis._touched) pour que LFLL
+  (Lyon, ATIS continu) soit tente -> validation en cours.
+- Pi tres sollicite aujourd'hui (nombreux redemarrages, captures AM/DMR) :
+  tourne chaud (74-78C), watch-zone, pas de pause bloquante grace a la
+  soupape. Lever le pied sur les redemarrages.
