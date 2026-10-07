@@ -8,7 +8,9 @@ region de la commune ; l'API du PAN donne l'autorite organisatrice (AOM) et
 tous les reseaux publies, avec la zone qu'ils couvrent. Sont gardes ceux qui
 couvrent la commune, son intercommunalite ou son AOM (portee "locale",
 actifs par defaut), son departement ou sa region (inactifs par defaut,
-sauf s'il n'y a pas de reseau local). Les "agregats" regionaux sont listes
+sauf s'il n'y a pas de reseau local) ; un reseau dont l'AOM de la commune est
+proprietaire est toujours local (Ile-de-France Mobilites couvre la region
+entiere). Les "agregats" regionaux sont listes
 mais jamais actives d'office. Reglage "transports" du NAS.
 
 Par reseau :
@@ -108,7 +110,10 @@ def discover(lieu):
     networks = []
     for d in _datasets():
         scope = None
-        for area in d.get("covered_area") or []:
+        owners = {str(o.get("siren")) for o in d.get("legal_owners") or []}
+        if aom.get("siren") and str(aom["siren"]) in owners:
+            scope = "locale"  # reseau de l'autorite organisatrice de la commune, meme declare sur toute la region (IDFM)
+        for area in [] if scope else d.get("covered_area") or []:
             kind = area.get("type")
             if str(area.get("insee")) in scope_of.get(kind, ()):
                 scope = "locale" if kind in ("commune", "epci", "aom") else kind
@@ -311,7 +316,8 @@ def status(group, lieu=None, short=False):
             parts.append(dire("transport.ponctualite", suivis=p["suivis"], moyenne=_minutes(p["moyenne"]),
                               en_retard=p["en_retard"]))
             if p["pires"]:
-                parts.append(dire("transport.pires_lignes", lignes=" et ".join(p["pires"])))
+                parts.append(dire("transport.pire_ligne" if len(p["pires"]) == 1 else "transport.pires_lignes",
+                                  lignes=" et ".join(p["pires"])))
         if p and p["annules"]:
             parts.append(dire("transport.annules", nombre=nombre(p["annules"], "course annulée", "courses annulées")))
         if rt and rt["horodatage"] and time.time() - rt["horodatage"] > 900:
