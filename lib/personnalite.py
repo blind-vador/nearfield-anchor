@@ -121,6 +121,47 @@ def description():
     return dire("personnalite.surprise_inventee_chaque_nuit") if cfg.get("surprise") else cfg.get("prompt", "")
 
 
+def _style_sheet(lang=None):
+    """Fiche de style du jour, lue en tete du fichier des phrases du jour."""
+    try:
+        with open(phrases.persona_path(lang), encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("# Fiche de style :"):
+                    return line.split(":", 1)[1].strip()
+                if not line.startswith("#"):
+                    break
+    except OSError:
+        pass
+    return ""
+
+
+def who_am_i(detail=False):
+    """Commande "qui es-tu" (2026-10-07) : le personnage du jour choisi par
+    Gemini ; "en detail" ajoute sa fiche de style."""
+    cfg = settings()
+    if not cfg.get("active"):
+        return dire("personnalite.qui_neutre")
+    if not cfg.get("resume"):
+        return dire("personnalite.qui_pas_encore")
+    when = cfg.get("genere_le")
+    day = datetime.date.fromtimestamp(when) if when else None
+    if day == datetime.date.today():
+        origin = dire("personnalite.qui_cette_nuit")
+    elif day:
+        origin = dire("personnalite.qui_depuis", date=f"{day.day}/{day.month}")
+    else:
+        origin = ""
+    source = dire("personnalite.qui_surprise") if cfg.get("surprise") else \
+        dire("personnalite.qui_demande", demande=cfg.get("prompt", ""))
+    text = dire("personnalite.qui_suis_je", resume=cfg["resume"].rstrip("."), origine=origin, source=source)
+    if detail:
+        sheet = _style_sheet()
+        text += " " + (dire("personnalite.qui_fiche", fiche=sheet) if sheet else dire("personnalite.qui_sans_fiche"))
+    else:
+        text += " " + dire("personnalite.qui_detail")
+    return text
+
+
 # --- generation ---------------------------------------------------------------------------
 
 def _ask_json(prompt, temperature):

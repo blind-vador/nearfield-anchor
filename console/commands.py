@@ -467,6 +467,12 @@ COMMANDS = [
             examples=["recommence l'apprentissage à zéro"],
             confirm="Remettre les réglages audio d'origine et repartir de zéro ? Les notes et empreintes de bruit "
                     "seront mises de côté dans des archives. Tape oui puis entrée. Toute autre réponse annule."),
+    # Avant "personnalité" (qui ouvre le reglage) : "quelle est ta personnalite" demande seulement qui parle.
+    Command("qui es-tu", "le personnage du jour, choisi par Gemini, avec lequel le Pi parle ; qui es-tu en détail pour sa fiche",
+            None, keywords=["qui es tu", "tu es qui", "quelle est ta personnalite", "c est quoi ta personnalite",
+                            "ta personnalite du jour", "personnalite du jour", "presente toi", "quel personnage",
+                            "qui parle", "qui est la", "t es qui"],
+            examples=["qui me parle aujourd'hui", "quel est ton personnage", "comment es-tu aujourd'hui"]),
     Command("personnalité", "personnalité du Pi : décris-la, il réécrit ses phrases chaque nuit ; neutre ou surprise", None,
             keywords=["personnalite", "personnalité", "caractere du pi", "ton du pi", "change ta facon de parler",
                       "change ton caractere"],

@@ -273,6 +273,9 @@ def run_command(line, key_source, last_response):
         return meteo_obs.summary()
     if cmd.name == "bilan":
         return bilan.summary()
+    if cmd.name == "qui es-tu":
+        import personnalite
+        return personnalite.who_am_i(detail=bool({"detail", "details", "fiche"} & set(matcher.normalize(line).split())))
     if cmd.name == "personnalité":
         import personnalite_cmd
         return personnalite_cmd.run(key_source, voix.say, out, read_line)
