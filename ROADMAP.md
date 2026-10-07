@@ -6309,3 +6309,14 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   Premiere fenetre : appel en cours sur 467,2408 capte (nouvel emetteur 183).
 - Annonces (journal messages) : nouvelle frequence DMR, nouveau groupe.
 - Console "dmr" (resume des frequences) et "dmr explications" (glossaire).
+
+## 2026-10-07 (fin) : pistes d'ecoute sauvegardees, cle NESDR
+
+- Suggestions radio (decouverte du spectre, DMR ressources partagees,
+  satellites amateur, GRAVES/meteores, brouillage GPS via ADS-B, drones
+  Remote ID, VOR, bande L Inmarsat/Iridium, HF) : docs/ecoutes_a_explorer.md.
+- Enquete cle NESDR (ligne par fenetre du cycle) : reset a 13:29:30 pile a
+  l'ouverture de la fenetre "balises" (dec406, 406 MHz) -> meme motif que
+  LoRa (programme rtl tue sans vider le tuyau). A corriger avec
+  lecture_flux.arreter. Webcam OctoPi non correlee. Correctif LoRa deja
+  en place : ~1 reset / 40 min contre 1 / 27 min avant.
