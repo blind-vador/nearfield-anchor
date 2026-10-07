@@ -2254,6 +2254,9 @@ def main():
                 break
             _meteo_scan_if_requested()  # la console attend son bulletin : on n'attend pas la fin du cycle
             _satellite_pass_if_due()
+            # Une ligne par fenetre (2026-10-07) : retrouver laquelle precede une
+            # remise a zero de la cle par le noyau (journalctl -k).
+            print(f"[radio_watch] fenetre {kind} {target or obj.get('name', '') if isinstance(obj, dict) else target or obj}")
             if kind == "airband":
                 hit = airband_bridge.scan_window(obj, dwell_sec=dwell)
             elif kind == "data":
