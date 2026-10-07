@@ -54,7 +54,7 @@ def forecast():
     lieu = reglages.get("lieu")
     resp = requests.get("https://api.open-meteo.com/v1/forecast", timeout=15, params={
         "latitude": lieu["lat"], "longitude": lieu["lon"], "timezone": "Europe/Paris",
-        "hourly": "temperature_2m,wind_gusts_10m", "daily": "et0_fao_evapotranspiration,precipitation_sum",
+        "hourly": "temperature_2m,wind_gusts_10m,relative_humidity_2m", "daily": "et0_fao_evapotranspiration,precipitation_sum",
         "past_days": 7, "forecast_days": 2})
     resp.raise_for_status()
     data = resp.json()
