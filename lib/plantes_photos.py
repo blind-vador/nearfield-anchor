@@ -58,6 +58,10 @@ G dans le dialogue plantes (elle part dans storage/plantes/<plante>/photos).
 """
 
 DESCRIBE_PROMPT = """Photo d'une plante en pot ou au jardin, pour une personne aveugle qui la cultive : {nom} ({latin}).
+Pour la reconnaitre : {portrait}
+Le pot peut contenir PLUSIEURS plantes, ou d'autres pots etre autour : repere {nom} grace a ce portrait et
+decris-la, elle d'abord ; cite les voisines en une phrase, sans les decrire en detail. Ne dis qu'elle est
+introuvable que si vraiment aucune plante de la photo ne lui ressemble.
 Stade note jusqu'ici : {stade}. {lieu}.
 Description precedente ({date_precedente}) : {precedente}
 Dernieres evolutions notees :
@@ -65,7 +69,7 @@ Dernieres evolutions notees :
 
 Reponds en francais correctement accentue, en JSON strict :
 {{
- "description": "etat actuel, facon texte alternatif, 3 phrases au plus : taille et port, feuilles (nombre approximatif, forme, aspect), fleurs, fruits",
+ "description": "etat actuel, facon texte alternatif riche, 4 a 6 phrases : ou elle est sur la photo et avec quelles voisines, taille et port, tiges, feuilles (nombre approximatif, forme, aspect, couleur avec un repere tactile ou de comparaison), fleurs ou boutons, fruits, pot et support",
  "evolution": "ce qui a change depuis la description precedente, une phrase ; si pas de description precedente : « Premier état noté. »",
  "stade": "seme" | "germe" | "pousses" | "developpee" | "fleurs" | "fruits" | "repos",
  "problemes": "signes visibles de maladie, ravageur, manque ou exces d'eau, brulure ; chaine vide si rien"
@@ -151,6 +155,7 @@ def _analyse(plant, path, stamp):
     previous_date, _, previous_text = previous.partition(" : ")
     result, reason = _ask_photo(DESCRIBE_PROMPT.format(
         nom=plant["nom"], latin=plant.get("latin") or "?", stade=plantes.STAGE_NAMES[plant["stade"]],
+        portrait=plant.get("description") or "pas de portrait",
         lieu=plantes.place_text(plant).capitalize(), date_precedente=previous_date or "aucune",
         precedente=previous_text or "aucune, c'est la premiere photo",
         evolutions="\n".join(evolution_lines(plant, EVOLUTION_CONTEXT)) or "aucune"), path)
@@ -169,7 +174,10 @@ def _analyse(plant, path, stamp):
         f.write(line + "\n")
     # 2) la nouvelle description remplace l'ancienne, desormais agregee
     _write(current, f"{day} : {description}\n")
-    said = [dire("plantes.photo_evolution", nom=plant["nom"], evolution=evolution)]
+    if previous_text:  # dit en entier (2026-10-07 : "ne decrit pas l'image")
+        said = [dire("plantes.photo_nouvelle", nom=plant["nom"], description=description, evolution=evolution)]
+    else:
+        said = [dire("plantes.photo_premiere", nom=plant["nom"], description=description)]
     if problems:
         said.append(dire("plantes.photo_probleme", probleme=problems))
     stage = result.get("stade")
