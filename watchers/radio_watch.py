@@ -806,8 +806,35 @@ def _dmr_window(dwell_sec=20):
         return False
     target = known[_dmr_turn[0] % len(known)]
     _dmr_turn[0] += 1
-    print(f"[radio_watch] veille DMR : {target['freq_hz'] / 1e6:.4f} MHz ({len(known)} frequence(s) suivie(s))")
-    return bool(try_digital_voice_decode(target["freq_hz"], "-fs", dire("dmr.libelle_veille"), probe_sec=dwell_sec))
+    freq = target["freq_hz"]
+    label = dire("dmr.libelle_veille")
+    print(f"[radio_watch] veille DMR : {freq / 1e6:.4f} MHz ({len(known)} frequence(s) suivie(s))")
+    # Meme habillage qu'une capture du balayage (_handle_candidate) : verrou
+    # audio, session du journal radio, son de fin, empreinte de la capture.
+    lock = audio_lock.acquire()
+    log_session = radio_log.RadioLogSession(label)
+    sound_player.set_recording_session(log_session)
+    saved = False
+    try:
+        protocol = try_digital_voice_decode(freq, "-fs", label, probe_sec=dwell_sec)
+        if not protocol:
+            log_session.discard()
+            return False
+        if try_digital_voice_decode.last_muted:  # appel prive ou chiffre : rien n'est garde
+            log_session.discard()
+            return True
+        play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
+        speak(dire("radio.reception_terminee", protocol=protocol))
+        path = log_session.finalize()
+        noise_signatures.record_capture("rtl_fm", freq, "nfm", label, "dmr", path, None,
+                                        {"numerique": True, "veille_dmr": True})
+        saved = True
+        return True
+    finally:
+        sound_player.set_recording_session(None)
+        audio_lock.release(lock)
+        if saved and lock.silent:
+            journal_notice()
 
 
 def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=None):
@@ -911,6 +938,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
             return None
 
         _dmr_learn(stats)
+        try_digital_voice_decode.last_muted = muted
         log_session = sound_player.get_recording_session()
         if log_session is not None and captured_chunks and not muted:
             log_session.add_raw_pcm(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, "s16le",
@@ -936,6 +964,9 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 sock.close()
             except Exception:
                 pass
+
+
+try_digital_voice_decode.last_muted = False  # derniere session : son coupe (appel prive ou chiffre) ?
 
 
 # Nombre minimal de caracteres alphanumeriques utiles pour qu'un message
@@ -1679,6 +1710,9 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     saved = False
     try:
         protocol = try_digital_voice_decode(freq, band_label=band_label) if mode == "nfm" else None
+        if protocol and try_digital_voice_decode.last_muted:  # appel prive ou chiffre : rien n'est garde
+            log_session.discard()
+            return True
         if protocol:
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
             speak(dire("radio.reception_terminee", protocol=protocol))
