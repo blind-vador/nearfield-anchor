@@ -50,6 +50,12 @@ def _load():
         return {}
 
 
+def _touched(entry):
+    """Dernier contact (succes ou simple essai) : pour la rotation entre
+    aeroports et le quota, un aeroport muet ne doit pas monopoliser les essais."""
+    return max(entry.get("t", 0) or 0, entry.get("dernier_essai", 0) or 0)
+
+
 def _save(data):
     tmp = STORE_PATH + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
@@ -98,7 +104,7 @@ def refresh_one(oaci, force=False):
     name, freq = AIRPORTS[oaci]
     data = _load()
     prev = data.get(oaci) or {}
-    if not force and time.time() - prev.get("t", 0) < REFRESH_SEC:
+    if not force and time.time() - _touched(prev) < REFRESH_SEC:
         return prev or None
     audio = capture(freq)
     if not audio:
@@ -127,7 +133,7 @@ def refresh_one(oaci, force=False):
 def due_airport():
     """OACI le plus en retard de rafraichissement (le plus ancien d'abord)."""
     data = _load()
-    return min(AIRPORTS, key=lambda o: (data.get(o) or {}).get("t", 0))
+    return min(AIRPORTS, key=lambda o: _touched(data.get(o) or {}))
 
 
 def refresh_due():
