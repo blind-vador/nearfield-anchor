@@ -6160,3 +6160,30 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   Entree ajoute (fiche Gemini faite), Retour arriere refuse pour toujours.
   Premieres suggestions reelles : Belle de nuit (Mirabilis jalapa),
   Faux-acacia (Robinia, certitude faible).
+
+## 2026-10-07 : capteurs a soi et appairage (plantes etape 6, elargie)
+
+- lib/capteurs_catalogue.py : genre d'un capteur d'apres les grandeurs de
+  sa trame rtl_433 (sol, pluie, station vent/pluie, foudre, particules,
+  CO2, fuite, thermo-hygro, thermo) et geste de preuve (sonde dans un verre
+  d'eau, eau dans le pluviometre, coupelles tournees, main / souffle...).
+- lib/capteurs_miens.py : registre (reglage "capteurs" du NAS), protocole
+  console <-> radio_watch (/tmp/capteurs_appairage.json et .jsonl),
+  Pairing (ecarte les capteurs entendus ces 30 jours = voisins, et les
+  pneus), etalonnage sec / mouille de la sonde WH51 (ad_raw air puis eau).
+- radio_watch : demande d'appairage prise apres le mode manuel (etat
+  "appairage"), _lock_pending l'inclut ; capteurs_watch.pairing_session :
+  rtl_433 -f 433.92M -f 868.3M -H 20. Teste en vrai : prise en 18 s,
+  trames des voisins (Acurite, Oregon, LaCrosse) captees.
+- capteurs_watch : capteurs a soi annonces sous leur nom, sonde de sol
+  muette (plantes), pile faible 1 fois par semaine.
+- console/capteurs_cmd.py, commande "mes capteurs" / "nouveau capteur" /
+  "nouvelle sonde" (avant "appairage" = machine compagne).
+- Plantes : une sonde rattachee remplace l'estimation de soif (seuils 15 /
+  25 / 35 % selon le besoin en eau) ; flash complet dit l'humidite.
+- Teste en simulation (aucun capteur a soi encore) : WH51 annoncee, geste
+  reconnu 2 -> 96 %, rattachee au citronnier, etalonnee 70 / 412.
+- Pistes non faites : capteurs filaires sur le Pi (I2C BME280, kit SparkFun
+  anemometre / girouette / pluviometre a interrupteurs sur GPIO),
+  passerelle Ecowitt (envoi local vers le Pi), capteurs a soi dans
+  l'agregat meteo (poids fort).
