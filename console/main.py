@@ -64,7 +64,11 @@ def read_keys(fd=0):
             ready, _, _ = select.select([fd, keys.WAKE_R], [], [])
             if keys.WAKE_R in ready:
                 os.read(keys.WAKE_R, 64)
-                yield keys.WAKE
+                injected = keys.pop_injected()  # Alt + fleche haut, vue sur le clavier (keys._Tracker)
+                for key in injected:
+                    yield key
+                if not injected:
+                    yield keys.WAKE
                 continue
             data = os.read(fd, 64)
             if not data:
@@ -394,6 +398,7 @@ def main():
         voix.prune_cache()
         voix.prewarm(voix_cmd.echo_texts())
         last_response = welcome
+        keys.start_tracker()  # modificateurs suivis en continu (Ctrl, Alt + fleches)
         key_source = read_keys(fd)
         while True:
             line = read_line(key_source)

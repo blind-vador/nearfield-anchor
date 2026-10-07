@@ -431,7 +431,7 @@ def run(key_source, say, out, category="radio"):
                 day_i = (day_i + (1 if key == "\t" else -1)) % len(order)
                 rec_i = -1
                 text = announce_day()
-            elif key in ("\x1b[A", "\x1b[B") and alt_held():
+            elif key == keys.ALT_UP or (key in ("\x1b[A", "\x1b[B") and alt_held()):
                 # Alt + fleche : prochaine (ou precedente) entree pas encore notee.
                 found = next_unrated(1 if key == "\x1b[B" else -1)
                 if found is None:

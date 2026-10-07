@@ -9,6 +9,7 @@ reperage.
 import os
 import select
 import threading
+import time
 
 import evdev
 
@@ -87,10 +88,100 @@ _MODIFIERS = {"ctrl": ("KEY_LEFTCTRL", "KEY_RIGHTCTRL"), "shift": ("KEY_LEFTSHIF
               "alt": ("KEY_LEFTALT", "KEY_RIGHTALT")}
 
 
+# --- suivi permanent des modificateurs (2026-10-07) ---
+# Lire l'etat du clavier APRES avoir recu la fleche ratait les appuis rapides
+# (45 ms par lecture, Alt puis Ctrl verifies l'un apres l'autre : Ctrl deja
+# relache). Un fil suit le clavier en continu et note, a l'instant ou une
+# touche est enfoncee, les modificateurs tenus. Alt + fleche haut est
+# avalee par le noyau (table de la console : KeyboardSignal) : ce fil la
+# transmet lui-meme a la console (ALT_UP), par le reveil de la lecture.
+ALT_UP = "\x00alt_haut"
+COMBO_MAX_AGE_SEC = 1.5
+_injected = []
+
+
+def inject(key):
+    _injected.append(key)
+    wake()
+
+
+def pop_injected():
+    out = list(_injected)
+    del _injected[:len(out)]
+    return out
+
+
+class _Tracker:
+    NAMES = {code: name for name, codes in _MODIFIERS.items() for code in codes}
+
+    def __init__(self):
+        self.held = set()
+        self.last = (0.0, frozenset())      # (instant, modificateurs) du dernier appui hors modificateur
+        self.devices = []
+        self.thread = threading.Thread(target=self._run, daemon=True)
+
+    def _run(self):
+        while True:
+            if not self.devices:
+                self.devices = _keyboard_devices()
+                if not self.devices:
+                    time.sleep(2)
+                    continue
+            ready, _, _ = select.select(self.devices, [], [], 1.0)
+            for dev in ready:
+                try:
+                    for event in dev.read():
+                        if event.type == evdev.ecodes.EV_KEY:
+                            self._key(event)
+                except OSError:
+                    self.devices = []  # clavier debranche : on re-scannera
+                    break
+
+    def _key(self, event):
+        code = evdev.ecodes.KEY.get(event.code)
+        code = code[0] if isinstance(code, list) else code
+        name = self.NAMES.get(code)
+        if name:
+            (self.held.add if event.value else self.held.discard)(name)
+            return
+        if event.value == 1:
+            mods = frozenset(self.held)
+            self.last = (time.time(), mods)
+            if code == "KEY_UP" and mods == {"alt"}:
+                inject(ALT_UP)
+
+    def recent(self):
+        t, mods = self.last
+        return mods if time.time() - t <= COMBO_MAX_AGE_SEC else None
+
+
+_tracker = None
+
+
+def start_tracker():
+    global _tracker
+    if _tracker is None:
+        _tracker = _Tracker()
+        _tracker.thread.start()
+
+
 def modifier_held(name):
-    """Vrai si ce modificateur ("ctrl", "shift", "alt") est enfonce sur un
-    clavier : la console envoie la meme sequence pour une fleche seule ou
-    avec Ctrl, son etat se lit donc sur le materiel (evdev)."""
+    """Vrai si ce modificateur ("ctrl", "shift", "alt") etait tenu quand la
+    derniere touche a ete enfoncee (suivi permanent), sinon s'il l'est
+    maintenant : la console envoie la meme sequence pour une fleche seule
+    ou avec Ctrl, son etat se lit donc sur le materiel (evdev)."""
+    if _tracker is not None and _tracker.devices:
+        mods = _tracker.recent()
+        if mods is None:  # le fil n'a peut-etre pas encore vu l'appui
+            time.sleep(0.05)
+            mods = _tracker.recent()
+        if mods is not None:
+            return name in mods
+        return name in _tracker.held
+    return _held_now(name)
+
+
+def _held_now(name):
     try:
         codes = {evdev.ecodes.ecodes[c] for c in _MODIFIERS[name]}
         for path in evdev.list_devices():
@@ -117,6 +208,8 @@ def char_name(ch):
 
 def sequence_name(seq):
     """Nom parle d'une saisie brute (caractere, controle ou sequence)."""
+    if seq == ALT_UP:
+        return dire("touches.alt_fleche_haut")
     if seq in ESCAPE_NAMES:
         return ESCAPE_NAMES[seq]
     if seq in CONTROL_NAMES:
