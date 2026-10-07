@@ -10,6 +10,9 @@ Liste
   R                         rentree / sortie
   E                         changer l'emplacement (memes questions qu'a l'ajout)
   G                         garder la derniere photo analysee (storage/plantes)
+  S                         suggestions de Gemini (plantes reconnues sur les photos) :
+                            haut / bas, Entree ajoute avec les informations
+                            pre-remplies, Retour arriere refuse, Echap revient
   C / H                     observation d'une photo verifiee au toucher : C la
                             confirme (le stade suit), H la signale fausse
   Retour arriere            retire la plante ; Ctrl + Z annule
@@ -219,6 +222,45 @@ def _apply(plant, action):
     return dire("plantes.note_stade", nom=plant["nom"], stade=plantes.STAGE_NAMES[action])
 
 
+def _review(key_source, say, out):
+    """Touche S : les plantes reconnues par Gemini, a ajouter ou refuser."""
+    items = plantes.suggestions()
+    if not items:
+        return dire("plantes.aucune_suggestion")
+    j = 0
+    say(dire("plantes.suggestions_titre", nombre=nombre(len(items), "suggestion")) + " "
+        + dire("plantes.suggestions_consigne") + " " + plantes.suggestion_text(items[0]))
+    for key in key_source:
+        voix.stop()
+        if key == ESC:
+            return dire("plantes.mode_liste")
+        if key in (UP, DOWN):
+            k = j + (-1 if key == UP else 1)
+            if 0 <= k < len(items):
+                j = k
+                text = plantes.suggestion_text(items[j])
+            else:
+                text = (dire("commun.debut_liste") if k < 0 else dire("commun.fin_liste")) + " " + plantes.suggestion_text(items[j])
+        elif key in ENTER or key in BACKSPACE:
+            if key in ENTER:
+                say(dire("plantes.prepare_fiche", nom=items[j]["nom"]))
+                _, text = plantes.accept_suggestion(j)
+            else:
+                text = plantes.refuse_suggestion(j)
+            items = plantes.suggestions()
+            if not items:
+                return text + " " + dire("plantes.plus_de_suggestion")
+            j = min(j, len(items) - 1)
+            text += " " + plantes.suggestion_text(items[j])
+        elif conseils.is_help(key):
+            text = dire("plantes.suggestions_consigne")
+        else:
+            text = dire("plantes.touches")
+        out(f"[{text}]\n")
+        say(text)
+    return dire("plantes.mode_liste")
+
+
 def photos_now(say):
     import plantes_photos
     say(dire("plantes.photos_en_cours"))
@@ -240,6 +282,12 @@ def run(line, key_source, say, out):
     i = 0
     undo = []
     title = dire("plantes.titre", nombre=nombre(len(plants), "plante")) if plants else dire("plantes.titre_vide")
+    try:
+        waiting = len(plantes.suggestions())
+    except Exception:
+        waiting = 0
+    if waiting:
+        title += " " + dire("plantes.suggestions_en_attente", nombre=nombre(waiting, "suggestion"))
     intro = conseils.intro("plantes", title, dire("plantes.consigne"))
     out(intro + "\n")
     say(intro)
@@ -325,6 +373,12 @@ def run(line, key_source, say, out):
             text = _apply(plants[i], "confirmer" if key in ("c", "C") else "infirmer")
             if not plantes.save(plants):
                 text = dire("plantes.nas_inaccessible")
+        elif key in ("s", "S"):
+            text = _review(keys_iter, say, out)
+            plants[:] = plantes.load()  # une suggestion acceptee y est
+            i = min(i, max(len(plants) - 1, 0))
+            if plants:
+                text += " " + plantes.line(plants[i])
         elif key in ("g", "G"):
             import plantes_photos
             try:

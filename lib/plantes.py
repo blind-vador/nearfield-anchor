@@ -154,6 +154,109 @@ def new_plant(candidate, stage, days_ago, dedans, emplacement, contenant, abri_p
             "ajoutee_le": _today(), "fiche": None}
 
 
+# --- suggestions (2026-10-07) : plantes reperees par Gemini sur les photos ---
+# (voisines d'une plante photographiee, ou photo du dossier a_identifier),
+# proposees a l'ajout avec leurs informations pre-remplies.
+
+def _key(name, latin):
+    import unicodedata
+    text = (latin or name or "").split("(")[0]
+    text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+    return " ".join("".join(c if c.isalnum() else " " for c in text).split()[:2])  # genre + espece
+
+
+def suggestions():
+    return list(reglages.get("plantes_suggestions").get("suggestions") or [])
+
+
+def _save_suggestions(items, refused=None):
+    data = reglages.get("plantes_suggestions")
+    data["suggestions"] = items
+    if refused is not None:
+        data["refusees"] = refused
+    return reglages.save("plantes_suggestions", data)
+
+
+def usual_place(plants):
+    """Emplacement le plus courant des plantes : (dedans, emplacement, contenant, abri)."""
+    import collections
+    places = collections.Counter((bool(p.get("dedans")), p.get("emplacement"), p.get("contenant") or "pot",
+                                  bool(p.get("abri_pluie"))) for p in plants)
+    return places.most_common(1)[0][0] if places else (True, None, "pot", True)
+
+
+def add_suggestions(found, base=None, source=""):
+    """Enregistre les plantes reperees qui ne sont ni dans la liste, ni deja
+    proposees, ni refusees. found : [{"nom", "latin", "description",
+    "stade", "certitude", "ou"}] ; base : plante photographiee (son
+    emplacement sert de pre-remplissage). Rend les nouvelles suggestions."""
+    plants = load()
+    data = reglages.get("plantes_suggestions")
+    known = {_key(p["nom"], p.get("latin")) for p in plants}
+    known |= {_key(s["nom"], s.get("latin")) for s in data.get("suggestions") or []}
+    known |= set(data.get("refusees") or [])
+    place = ((bool(base.get("dedans")), base.get("emplacement"), base.get("contenant") or "pot", bool(base.get("abri_pluie")))
+             if base else usual_place(plants))
+    new = []
+    for f in found or []:
+        if not isinstance(f, dict) or not f.get("nom"):
+            continue
+        key = _key(f["nom"], f.get("latin"))
+        if not key or key in known or find(f["nom"], plants):
+            continue
+        known.add(key)
+        new.append({"nom": str(f["nom"]).strip(), "latin": str(f.get("latin") or "").strip(),
+                    "description": str(f.get("description") or "").strip(),
+                    "stade": f.get("stade") if f.get("stade") in STAGES else "developpee",
+                    "certitude": str(f.get("certitude") or ""), "ou": str(f.get("ou") or "").strip(),
+                    "dedans": place[0], "emplacement": place[1], "contenant": place[2], "abri_pluie": place[3],
+                    "source": source, "le": _today()})
+    if new:
+        _save_suggestions((data.get("suggestions") or []) + new)
+    return new
+
+
+def suggestion_text(s):
+    """Lecture d'une suggestion : nom, certitude, description, ou, ce qui sera pre-rempli."""
+    plant_like = {"dedans": s["dedans"], "emplacement": s["emplacement"], "contenant": s["contenant"],
+                  "abri_pluie": s["abri_pluie"]}
+    parts = [dire("plantes.suggestion_ligne", nom=s["nom"], latin=s.get("latin") or "?",
+                  certitude=s.get("certitude") or "?")]
+    if s.get("source"):
+        parts.append(dire("plantes.suggestion_source", source=s["source"]))
+    if s.get("description"):
+        parts.append(s["description"])
+    if s.get("ou"):
+        parts.append(dire("plantes.a_verifier_ou", ou=s["ou"].rstrip(".")))
+    parts.append(dire("plantes.suggestion_prerempli", stade=STAGE_NAMES[s["stade"]], lieu=place_text(plant_like)))
+    return " ".join(parts)
+
+
+def accept_suggestion(index):
+    """Ajoute la suggestion a la liste (fiche Gemini comprise). Rend (plante, phrase)."""
+    items = suggestions()
+    s = items.pop(index)
+    plants = load()
+    plant = new_plant(s, s["stade"], 0, s["dedans"], s["emplacement"], s["contenant"], s["abri_pluie"], plants)
+    plant["fiche"] = make_fiche(plant)
+    plants.append(plant)
+    if not save(plants):
+        return None, dire("plantes.nas_inaccessible")
+    _save_suggestions(items)
+    return plant, dire("plantes.suggestion_ajoutee", ligne=line(plant))
+
+
+def refuse_suggestion(index):
+    """Ne plus jamais proposer cette plante. Rend la phrase."""
+    items = suggestions()
+    s = items.pop(index)
+    refused = list(reglages.get("plantes_suggestions").get("refusees") or [])
+    refused.append(_key(s["nom"], s.get("latin")))
+    if not _save_suggestions(items, refused):
+        return dire("plantes.nas_inaccessible")
+    return dire("plantes.suggestion_refusee", nom=s["nom"])
+
+
 def ensure_maturity(plant):
     """Conseils de maturite des fruits dans la fiche (Gemini, une fois). Rend
     True si la fiche a change."""

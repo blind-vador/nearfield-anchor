@@ -79,8 +79,16 @@ Reponds en francais correctement accentue, en JSON strict :
      "detail": "ce qui est vu, une phrase ; 'probablement' si tu n'es pas sur",
      "ou": "OU sur la plante, avec des reperes qu'une personne aveugle peut suivre a la main en partant du pot : quelle tige ou branche (premiere, deuxieme... en partant du bas, ou la plus haute), hauteur (bas, mi-hauteur, sommet), cote (vers la fenetre, le mur, la gauche ou la droite de la photo), vers l'interieur ou le bout des rameaux",
      "stade": "fleurs" | "fruits" | null}}
+ ],
+ "voisines": [
+   {{"nom": "nom courant", "latin": "nom latin", "certitude": "forte" | "moyenne" | "faible",
+     "description": "texte alternatif, 2 phrases : port, feuilles, fleurs ou fruits, pour la reconnaitre sans la voir",
+     "stade": "seme" | "germe" | "pousses" | "developpee" | "fleurs" | "fruits" | "repos",
+     "ou": "ou elle est par rapport a {nom} (meme pot, pot voisin a gauche...)"}}
  ]
 }}
+"voisines" : les AUTRES plantes visibles que tu peux identifier, sauf celles deja connues de la personne :
+{connues}. Liste vide si aucune n'est identifiable.
 "observations" : seulement ce qui merite une verification au toucher (fruits, fleurs, boutons, maladie, ravageur,
 manque ou exces d'eau, brulure, photo qui ne montre pas cette plante) ; liste vide si rien de notable.
 Les lignes "Vérifié au toucher" et "Signalé faux" des dernieres evolutions font foi : ne redonne pas une observation
@@ -88,7 +96,8 @@ signalee fausse, sauf si elle est nettement visible. N'invente rien que la photo
 
 IDENTIFY_PROMPT = """Photo d'une plante a identifier, pour une personne aveugle. Reponds en JSON strict :
 {{"nom": "nom courant le plus probable", "latin": "nom latin", "certitude": "forte" | "moyenne" | "faible",
- "description": "texte alternatif, 2 phrases : port, feuilles, fleurs ou fruits", "conseil": "une phrase d'entretien"}}"""
+ "description": "texte alternatif, 2 phrases : port, feuilles, fleurs ou fruits", "conseil": "une phrase d'entretien",
+ "stade": "seme" | "germe" | "pousses" | "developpee" | "fleurs" | "fruits" | "repos"}}"""
 
 
 def slug(name):
@@ -166,6 +175,7 @@ def _analyse(plant, path, stamp):
     result, reason = _ask_photo(DESCRIBE_PROMPT.format(
         nom=plant["nom"], latin=plant.get("latin") or "?", stade=plantes.STAGE_NAMES[plant["stade"]],
         portrait=plant.get("description") or "pas de portrait",
+        connues=", ".join(p["nom"] for p in plantes.load()) or "aucune",
         lieu=plantes.place_text(plant).capitalize(), date_precedente=previous_date or "aucune",
         precedente=previous_text or "aucune, c'est la premiere photo",
         evolutions="\n".join(evolution_lines(plant, EVOLUTION_CONTEXT)) or "aucune"), path)
@@ -198,6 +208,14 @@ def _analyse(plant, path, stamp):
                     else dire("plantes.photo_observation_sans_lieu", detail=o["detail"]))
     if observations:
         said.append(dire("plantes.photo_a_confirmer"))
+    try:  # plantes voisines reconnues : proposees a l'ajout, pre-remplies (touche S)
+        new = plantes.add_suggestions(result.get("voisines"), base=plant,
+                                      source=dire("plantes.source_photo", nom=plant["nom"]))
+    except Exception as exc:
+        print(f"[plantes_photos] suggestions : {exc!r}")
+        new = []
+    if new:
+        said.append(dire("plantes.suggestions_nouvelles", noms=plantes.join_names(s["nom"] for s in new)))
     return said
 
 
@@ -215,9 +233,16 @@ def _identify(path):
         print(f"[plantes_photos] {path} : {reason}")
         return None
     _write(path + ".txt", json.dumps(result, ensure_ascii=False, indent=1) + "\n")
-    return [dire("plantes.photo_identifiee", nom=result.get("nom") or "?", latin=result.get("latin") or "?",
+    said = [dire("plantes.photo_identifiee", nom=result.get("nom") or "?", latin=result.get("latin") or "?",
                  certitude=result.get("certitude") or "?", description=result.get("description") or "",
                  conseil=result.get("conseil") or "")]
+    try:
+        new = plantes.add_suggestions([result], source=dire("plantes.source_identifier"))
+    except Exception as exc:
+        print(f"[plantes_photos] suggestions : {exc!r}")
+        new = []
+    said.append(dire("plantes.suggestion_identifiee") if new else dire("plantes.identifiee_deja_connue"))
+    return said
 
 
 def _clean(folder, keep_days=PHOTO_KEEP_DAYS):
