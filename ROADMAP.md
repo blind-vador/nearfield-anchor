@@ -6359,3 +6359,18 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
 - Pi tres sollicite aujourd'hui (nombreux redemarrages, captures AM/DMR) :
   tourne chaud (74-78C), watch-zone, pas de pause bloquante grace a la
   soupape. Lever le pied sur les redemarrages.
+
+## 2026-10-07 (soir) : resets de la cle resolus, ATIS cadre
+
+- VALIDE : correctif APRS/pagers (arret propre de rtl_fm) -> 0 reset de la
+  cle en 45 min (contre ~1 / 20-30 min avant). Saga close. Memoire
+  pi-rtl-arret-tuyau.md.
+- ATIS : pas d'empreinte sonore (teste : non fiable, memes mots/voix =
+  spectre quasi identique entre deux lettres, risque de rater un vrai
+  changement). On garde : espacement progressif des aeroports muets
+  (jusqu'a 6 h), intervalle min 25 min, aucune annonce vocale. Les
+  decodeurs locaux (multimon Morse, dsd-fme numerique) ne lisent pas la
+  parole -> Gemini reste le seul transcripteur, appele seulement quand un
+  aeroport redevient audible. ATIS = source secondaire (deja par internet).
+- Point 4 (reseau cellulaire, gr-gsm) : en attente d'un creneau pour
+  immobiliser la cle (apt install + test exclusif), Pi refroidi.
