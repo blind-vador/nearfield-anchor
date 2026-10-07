@@ -188,10 +188,15 @@ def _weather_lines(plants, fc, now, mean_temp):
     return lines + single
 
 
-def _sowing(fiche):
+def _lower_first(text):
+    text = str(text or "").strip().rstrip(". ")
+    return text[:1].lower() + text[1:] if text[:2] != text[:2].upper() else text  # sigle garde tel quel
+
+
+def _sowing(fiche, per_place=4):
     parts = []
     for place, key in (("pot", "plantes.semis_pot"), ("balcon", "plantes.semis_balcon"), ("jardin", "plantes.semis_jardin")):
-        items = [str(x) for x in (fiche.get("semis") or {}).get(place) or [] if x][:4]
+        items = [str(x) for x in (fiche.get("semis") or {}).get(place) or [] if x][:per_place]
         if items:
             parts.append(dire(key, liste=" ; ".join(items)))
     return " ".join(parts)
@@ -225,9 +230,9 @@ def text(complet=False, now=None):
         for r in pests:
             parts.append(dire("plantes.flash_ravageur", ravageur=r["nom"], plante=r["plante"],
                               signes=str(r.get("signes") or "").rstrip(". "),
-                              traitement=str(r.get("traitement") or "").rstrip(". ")))
+                              traitement=_lower_first(r.get("traitement"))))
         if complet or now.day <= SOWING_DAYS:
-            sowing = _sowing(fiche)
+            sowing = _sowing(fiche, 4 if complet else 2)
             if sowing:
                 parts.append(dire("plantes.flash_semis", mois=etiquette(f"mois.{now.month}")) + " " + sowing)
     if not parts:
