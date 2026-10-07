@@ -6081,3 +6081,24 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
 - Premiere plante reelle : Citronnier caviar (balcon, pot, abrite, gel
   -3 C, vent fragile, a rentrer l'hiver). arrosee_le encore vide : la soif
   n'est suivie qu'apres un premier "arrosee".
+
+## 2026-10-07 : plantes, etape 4 (rubrique plantes du flash)
+
+- lib/plantes_flash.py, rubrique apres la meteo (flash court et complet,
+  collectee en parallele dans flash_info.collect) : meteo 48 h groupee par
+  situation (gel, rentrer, nuits fraiches <= 10 C pour les plantes a rentrer
+  l'hiver, vent 36 h, chaleur, bientot soif), soif et evenements de vie par
+  plante ; ravageurs du mois + traitement naturel (fiche Gemini par mois et
+  par liste de plantes, ~/autopilot/reglages_cache/plantes_mois.json,
+  nouvel essai au plus 1 fois par heure) : flash court = ceux que la meteo
+  favorise (pluie, chaud_sec, chaud_humide, froid_humide), 2 au plus ;
+  complet = tous ; semis du mois par pot / balcon / jardin (court : 7
+  premiers jours du mois, 2 idees par lieu ; complet : toujours, 4).
+- Gemini ajoute le latin au nom de la plante : plantes.find() tolerant.
+- Alertes (etape 3) groupees aussi : une alerte par situation qui nomme
+  toutes les plantes (cle "gel|date"...), soif par plante.
+- Plantes de l'utilisateur au 7 octobre : Citronnier caviar, Feijoa
+  'Unique', Manguier commun, Piment Jalapeno, Poivron 'Chocolate Beauty'
+  (toutes sur le balcon).
+- La copie de travail du Mac (/tmp) a disparu au redemarrage : clone
+  desormais dans le dossier de la session (pcw/).
