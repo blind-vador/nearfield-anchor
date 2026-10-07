@@ -100,6 +100,23 @@ AIRBAND_WINDOWS = [
         "dwell_sec": 10,  # boucle continue, pas besoin d'ecouter longtemps pour capter
         "channels": [(126_175_000, 9200)],
     },
+    {
+        # ATIS de l'aeroport local Saint-Etienne Boutheon (132,800 MHz,
+        # 2026-10-07). Meteo d'aeroport en boucle, en clair : le scanner la
+        # capte et la met au journal radio comme toute voix (pas de Gemini,
+        # demande utilisateur : la voix suffit, on l'ecoute). Peut rester
+        # muet hors heures d'ouverture de l'aerodrome. centerfreq decale de
+        # +225 kHz du canal, comme la fenetre ATIS de Lyon.
+        "name": "aviation_atis_st_etienne",
+        "name_spoken": "ATIS Saint-Étienne Bouthéon",
+        "centerfreq_hz": 133_025_000,
+        "mode": "am",
+        "squelch_snr_threshold": 3,
+        "ampfactor": 5.5,
+        "gain": 20,
+        "dwell_sec": 10,
+        "channels": [(132_800_000, 9205)],
+    },
     # Les 4 frequences restantes d'aviation_locale (voir radio_watch.py) :
     # separees en fenetres a un seul canal (pas groupees) -- seul l'offset
     # centerfreq/canal a 225 kHz a ete valide en session (ATIS), regrouper

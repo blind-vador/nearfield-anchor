@@ -24,8 +24,8 @@ LEVEL_NAMES = Etiquettes("interet.niveau", {l: l for l in LEVELS}, "niveau d'int
 # categorie -> (cibles du scanner, niveau par defaut). Prefixes acceptes ("relais_").
 CATEGORIES = {
     "talkies": (["pmr446", "lpd433"], "normal"),
-    "aviation": (["aviation_atis", "aviation_st_etienne", "aviation_tour", "aviation_sol", "aviation_approche",
-                  "aviation", "milair", "acars", "vdl2", "adsb", "atis"], "normal"),
+    "aviation": (["aviation_atis", "aviation_atis_st_etienne", "aviation_st_etienne", "aviation_tour", "aviation_sol", "aviation_approche",
+                  "aviation", "milair", "acars", "vdl2", "adsb"], "normal"),
     "radioamateurs": (["radioamateur_", "relais_", "aprs", "lora"], "normal"),
     "cb": (["cb_am"], "normal"),
     "meteo": (["capteurs", "sondes"], "normal"),

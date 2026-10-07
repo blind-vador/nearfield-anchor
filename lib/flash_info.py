@@ -452,20 +452,6 @@ def _press(lieu):
     return news, rubriques, stories, fresh, remark
 
 
-def _atis_text(complet=False):
-    """Meteo aeroport ATIS pour le flash (lib/atis.py), "" si rien de frais."""
-    try:
-        import atis
-        bulletins = atis.latest()
-    except Exception as exc:
-        print(f"[flash_info] atis : {exc!r}")
-        return ""
-    if not bulletins:
-        return ""
-    items = bulletins if complet else bulletins[:1]
-    return " ".join(dire("flash.atis", aeroport=b["aeroport"], resume=b["resume"].rstrip(".")) for b in items)
-
-
 def collect(lieu, complet=False, scan=None, scan_failed=None):
     """1) On rassemble tout, en parallele : presse, et pour le flash complet
     (demande utilisateur 2026-10-03) le bulletin meteo bati sur l'agregat de
@@ -475,7 +461,7 @@ def collect(lieu, complet=False, scan=None, scan_failed=None):
     import plantes_flash  # rubrique plantes : meteo par plante, ravageurs, semis (2026-10-07)
     import transports  # bus, tram, metro du reseau de la commune (2026-10-07, remplace la seule STAS)
     jobs = {"presse": (_press, lieu), "trains": (trains_text,), "bus": (transports.flash_text, lieu, complet),
-            "plantes": (plantes_flash.text, complet), "atis": (_atis_text, complet)}
+            "plantes": (plantes_flash.text, complet)}
     if complet:
         import meteo_locale
         jobs["meteo"] = (lambda: meteo_locale.bulletin(lieu, scan=scan, scan_failed=scan_failed),)
@@ -502,11 +488,11 @@ def build(complet=False, scan=None, scan_failed=None):
     found = collect(lieu, complet, scan, scan_failed)
     news, rubriques, stories, fresh, remark = found["presse"]
     if complet:
-        sections = [found["meteo"], found.get("atis", ""), found["plantes"],
+        sections = [found["meteo"], found["plantes"],
                     (dire("flash.sur_les_routes") + " " + found["routes"]) if found["routes"] else "",
                     found["trains"], found["bus"]]
     else:
-        sections = [found["alertes"], found["meteo"], found["station"], found.get("atis", ""), found["plantes"], found["trains"], found["bus"]]
+        sections = [found["alertes"], found["meteo"], found["station"], found["plantes"], found["trains"], found["bus"]]
     text = (dire("flash.flash_info", commune=lieu['commune'], v1=_spoken_now(), news=news) + " ") + \
         " ".join(t for t in sections if t)
     for story in stories:

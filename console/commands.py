@@ -505,9 +505,6 @@ COMMANDS = [
                       "qualite de l air", "pollution", "pollen", "pollens", "meteo des aeroports", "crue de la riviere"],
             examples=["la rivière monte-t-elle", "y a-t-il eu un séisme", "comment est l'air"]),
     # Avant "satellites" : "machine compagne" ne doit pas lister les passages.
-    Command("atis", "derniers bulletins météo des aéroports (Saint-Étienne, Lyon), captés en vol ; atis lyon pour un seul", None,
-            keywords=["atis", "meteo aeroport", "meteo des aeroports", "meteo aero", "bulletin aeroport"],
-            examples=["la météo de l'aéroport", "quel temps à l'aéroport de Lyon"]),
     Command("dmr", "ce que le scanner sait des fréquences DMR captées : relais, groupes d'appel, émetteurs ; dmr explications pour les mots",
             None, keywords=["dmr", "radio numerique pro", "groupes d appel", "groupe d appel", "talkgroup", "talkgroups",
                             "frequences dmr"],
