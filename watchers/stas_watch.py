@@ -104,6 +104,10 @@ def _families_text(fams):
     return ", ".join(transports.GROUPS[f] for f in transports.GROUPS if f in fams)
 
 
+def _capital(text):
+    return text[:1].upper() + text[1:]
+
+
 def announce_new(seen, announce=None):
     """Un passage sur les reseaux actifs. Rend les textes annonces."""
     import transports
@@ -129,7 +133,7 @@ def announce_new(seen, announce=None):
             else:
                 text = dire("transport.nouvelles_perturbations", reseau=name,
                             nombre=nombre(len(new), "perturbation"),
-                            liste=" ; ".join(f"{_families_text(i['familles'])}, {i['titre']}" for i in new[:5]))
+                            liste=_capital(" ; ".join(f"{_families_text(i['familles'])}, {i['titre']}" for i in new[:5])))
             announce(text)
             said.append(text)
         if first or not _quiet():  # la nuit, les nouvelles restent a dire au matin

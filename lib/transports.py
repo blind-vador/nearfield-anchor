@@ -132,8 +132,8 @@ def discover(lieu):
         gtfs = next((r["url"] for r in res if r.get("format") == "GTFS"), None)
         rt = [{"url": r["url"], "contenu": r.get("features") or []} for r in res if r.get("format") == "gtfs-rt"]
         siri_lite = []
-        for r in res:
-            url = r.get("url") or ""
+        for r in d.get("resources") or []:  # meme "indisponible" : un service a cle repond 401 au controle du PAN
+            url = r.get("original_url") or r.get("url") or ""  # "url" n'est qu'une redirection data.gouv
             service = next((s for s in SIRI_SERVICES if s in url), None)
             if r.get("format") == "SIRI Lite" and service:
                 host = requests.utils.urlparse(url).netloc
@@ -469,7 +469,7 @@ def status(group, lieu=None, short=False):
         if missing:
             parts.append(dire("transport.cle_manquante", fichier=f"{missing}.txt"))
         texts.append(dire("transport.reseau", famille=GROUPS[group].capitalize(), reseau=_short_name(n["nom"]))
-                     + " " + " ".join(parts))
+                     + " " + (" ".join(parts) or dire("transport.rien_a_signaler")))
     if not texts:
         return dire("transport.pas_de_ce_mode", famille=GROUPS[group], commune=lieu.get("commune"))
     return " ".join(texts)
