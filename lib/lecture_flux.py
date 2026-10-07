@@ -44,7 +44,10 @@ def arreter(proc, nom="programme radio", delai_s=5.0):
     if proc.poll() is None:
         proc.terminate()
     end = time.time() + delai_s
-    fd = proc.stdout.fileno() if proc.stdout else None
+    try:  # stdout deja ferme cote parent (chaines rtl_fm | decodeur ou il est confie au decodeur)
+        fd = proc.stdout.fileno() if proc.stdout and not proc.stdout.closed else None
+    except (ValueError, OSError):
+        fd = None
     while proc.poll() is None and time.time() < end and fd is not None:
         ready, _, _ = select.select([fd], [], [], 0.2)
         if ready:
