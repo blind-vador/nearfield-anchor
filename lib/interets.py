@@ -31,7 +31,7 @@ CATEGORIES = {
     "meteo": (["capteurs", "sondes"], "normal"),
     "secours": (["pagers", "balises"], "normal"),
     "marine": (["marine_vhf"], "normal"),
-    "professionnels": (["uhf_business", "vhf_business", "vhf_80", "uhf_410", "vhf_low", "pmse"], "normal"),
+    "professionnels": (["uhf_business", "vhf_business", "vhf_80", "uhf_410", "vhf_low", "pmse", "dmr"], "normal"),
     "fm": (["fm_diffusion"], "faible"),   # bandes de verification : du trafic tout le temps
     "dab": (["dab"], "normal"),
 }

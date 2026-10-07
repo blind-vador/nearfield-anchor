@@ -505,6 +505,10 @@ COMMANDS = [
                       "qualite de l air", "pollution", "pollen", "pollens", "meteo des aeroports", "crue de la riviere"],
             examples=["la rivière monte-t-elle", "y a-t-il eu un séisme", "comment est l'air"]),
     # Avant "satellites" : "machine compagne" ne doit pas lister les passages.
+    Command("dmr", "ce que le scanner sait des fréquences DMR captées : relais, groupes d'appel, émetteurs ; dmr explications pour les mots",
+            None, keywords=["dmr", "radio numerique pro", "groupes d appel", "groupe d appel", "talkgroup", "talkgroups",
+                            "frequences dmr"],
+            examples=["qu'est-ce qu'on a capté en numérique", "les relais numériques"]),
     # Transports en commun de la commune choisie (lib/transports.py, 2026-10-07).
     Command("bus", "comment roulent les bus de ta ville : retards en temps réel, lignes à la traîne, perturbations", None,
             keywords=["bus", "les bus", "autobus", "trolleybus", "comment roulent les bus", "comment vont les bus",

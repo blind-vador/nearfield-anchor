@@ -771,7 +771,46 @@ def _extra_digital_mode(freq_hz):
     return None
 
 
-def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label=""):
+def _dmr_learn(stats):
+    """Session DMR validee : registre (lib/dmr_registre.py) et annonce d'une
+    frequence ou d'un groupe d'appel nouveaux (journal messages)."""
+    if not stats.get("dmr") or "DMR" not in str(stats.get("protocol") or ""):
+        return
+    try:
+        import dmr_registre
+        import veille_donnees as vd
+        news = dmr_registre.record(stats)
+        mhz = vd.fr_number(stats["freq_hz"] / 1e6, 4)
+        if news["nouvelle_frequence"]:
+            vd.announce(dire("dmr.nouvelle_frequence", frequence=mhz), DECODING_NUMERIC_SOUND, "message_dmr", "radio_watch")
+        elif news["nouveaux_groupes"]:
+            vd.announce(dire("dmr.nouveaux_groupes", frequence=mhz, groupes=", ".join(news["nouveaux_groupes"])),
+                        DECODING_NUMERIC_SOUND, "message_dmr", "radio_watch")
+    except Exception as exc:  # le registre ne doit jamais casser une ecoute
+        print(f"[radio_watch] registre DMR : {exc!r}")
+
+
+# Veille DMR (2026-10-07) : fenetre du cycle qui retourne ecouter les
+# frequences DMR deja captees (registre), les plus prometteuses d'abord
+# (recence, heure habituelle d'activite, relais), en DMR seul (-fs : pas de
+# fausses synchros M17 de l'auto-detection). Un relais n'emet que pendant
+# les appels : on reste a l'ecoute toute la fenetre.
+_dmr_turn = [0]
+DMR_TOP = 4
+
+
+def _dmr_window(dwell_sec=20):
+    import dmr_registre
+    known = dmr_registre.targets()[:DMR_TOP]
+    if not known:
+        return False
+    target = known[_dmr_turn[0] % len(known)]
+    _dmr_turn[0] += 1
+    print(f"[radio_watch] veille DMR : {target['freq_hz'] / 1e6:.4f} MHz ({len(known)} frequence(s) suivie(s))")
+    return bool(try_digital_voice_decode(target["freq_hz"], "-fs", dire("dmr.libelle_veille"), probe_sec=dwell_sec))
+
+
+def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=None):
     """Tente un decodage vocal numerique (DMR/P25/NXDN/D-STAR/YSF/dPMR/X2-TDMA)
     directement depuis le dongle RTL-SDR via dsd-fme. dsd-fme n'a pas de
     sortie ALSA directe -- on le fait sortir en UDP local (PCM brut, voix
@@ -810,7 +849,8 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label=""):
         validated = False
         captured_chunks = []
         start = time.time()
-        deadline = start + DSD_FME_PROBE_SEC
+        deadline = start + (probe_sec or DSD_FME_PROBE_SEC)
+        muted = False  # appel prive ou chiffre : ni joue ni enregistre (regle utilisateur)
         while time.time() < deadline:
             try:
                 data, _ = sock.recvfrom(65536)
@@ -846,6 +886,18 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label=""):
             if not data or not validated:
                 continue
             deadline = min(time.time() + DSD_FME_IDLE_SEC, start + DSD_FME_MAX_SEC)
+            if (stats.get("prive") or stats.get("chiffre")) and not muted:
+                muted = True
+                captured_chunks = []
+                if aplay is not None:
+                    try:
+                        aplay.terminate()
+                    except Exception:
+                        pass
+                print(f"[radio_watch] dsd-fme : appel {'prive' if stats.get('prive') else 'chiffre'}, "
+                      f"son coupe et non enregistre (donnees seulement)")
+            if muted:
+                continue
             captured_chunks.append(data)
             try:
                 aplay.stdin.write(audio_lock.scale(data))
@@ -858,8 +910,9 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label=""):
                       f"({stats['clean']} propres sur {stats['total']})")
             return None
 
+        _dmr_learn(stats)
         log_session = sound_player.get_recording_session()
-        if log_session is not None and captured_chunks:
+        if log_session is not None and captured_chunks and not muted:
             log_session.add_raw_pcm(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, "s16le",
                                     channels=channels)
         print(f"[radio_watch] dsd-fme a decode de l'audio numerique sur {freq_hz/1e6:.4f} MHz")
@@ -1470,6 +1523,7 @@ DATA_SCANNERS = {name: _guarded(name, scan) for name, scan in {
     "acars": acars_watch.scan_window,
     "vdl2": vdl2_watch.scan_window,
     "aprs": aprs_watch.scan_window,
+    "dmr": _dmr_window,
     "capteurs": capteurs_watch.scan_window,
     "pagers": pagers_watch.scan_window,
     "adsb": adsb_local_watch.scan_window,

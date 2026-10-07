@@ -64,6 +64,11 @@ def dsd_line(stats, text):
     """Une ligne de sortie de dsd-fme : compte les synchros propres ou en
     erreur, retient l'emetteur, et fait dire aussitot les textes transportes
     (alias, SMS, textes, GPS) une fois le decodage valide."""
+    try:  # code couleur, intervalles, groupes, emetteurs, appel prive, chiffrement, relais
+        import dmr_registre
+        dmr_registre.line(stats, text)
+    except Exception as exc:
+        print(f"[decodeurs] dmr : {exc!r}")
     m = re.search(r"Sync: [+-]([\w-]+)", text)
     if m:
         stats["total"] += 1

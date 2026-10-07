@@ -334,6 +334,9 @@ def run_command(line, key_source, last_response):
         return observation.quick(line) or observation.run(line, key_source, voix.say, out)
     if cmd.name == "notifications":
         return journal.notifications()
+    if cmd.name == "dmr":
+        import dmr_cmd
+        return dmr_cmd.run(line)
     if cmd.name in ("bus", "tram", "métro", "transports"):
         import transports_cmd
         return transports_cmd.run(cmd.name, line, key_source, voix.say, out)
