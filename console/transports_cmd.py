@@ -86,6 +86,13 @@ def _details(n):
         parts.append(dire("transport.contenu_temps_reel", liste=", ".join(contents)))
     if n.get("page"):
         parts.append(dire("transport.page_exploitant"))
+    if n.get("siri_lite"):
+        services = sorted({s["service"] for s in n["siri_lite"]})
+        parts.append(dire("transport.siri_lite_lu", services=", ".join(services)))
+        for s in n["siri_lite"]:
+            if s.get("cle") and not reglages.cle(s["cle"]):
+                parts.append(dire("transport.cle_manquante", fichier=f"{s['cle']}.txt"))
+                break
     if n.get("siri"):
         parts.append(dire("transport.siri_non_lu"))
     return " ".join(parts)

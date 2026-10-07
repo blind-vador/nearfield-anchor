@@ -92,7 +92,8 @@ meme avec une certitude faible (dis-le dans "certitude") ; observe bien les fleu
 les distinguer.
 "observations" : seulement ce qui merite une verification au toucher (fruits, fleurs, boutons, maladie, ravageur,
 manque ou exces d'eau, brulure, photo qui ne montre pas cette plante) ; liste vide si rien de notable.
-Les lignes "Vérifié au toucher" et "Signalé faux" des dernieres evolutions font foi : ne redonne pas une observation
+Les lignes des dernieres evolutions qui disent qu'une observation a ete verifiee au toucher, confirmee ou
+signalee fausse, font foi : ne redonne pas une observation
 signalee fausse, sauf si elle est nettement visible. N'invente rien que la photo ne montre pas."""
 
 IDENTIFY_PROMPT = """Photo d'une plante a identifier, pour une personne aveugle. Reponds en JSON strict :
@@ -192,7 +193,8 @@ def _analyse(plant, path, stamp):
                                  "detail": str(o["detail"]).strip().rstrip("."), "ou": str(o.get("ou") or "").strip().rstrip("."),
                                  "stade": o.get("stade") if o.get("stade") in plantes.STAGES else None})
     # 1) la liste datee des evolutions, sur le stockage (observations : a confirmer au toucher)
-    line = f"{day} : {evolution}" + "".join(f" À confirmer : {o['detail']}." for o in observations)
+    line = f"{day} : {evolution}" + "".join(" " + dire("plantes.evolution_a_confirmer", detail=o["detail"])
+                                            for o in observations)
     append_evolution(plant, line)
     plant["_a_confirmer"] = observations  # enregistre par run_once, sur la liste relue
     # 2) la nouvelle description remplace l'ancienne, desormais agregee

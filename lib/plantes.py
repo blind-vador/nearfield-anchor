@@ -291,7 +291,7 @@ def _verdict(plant, confirmed):
     import plantes_photos
     today = _today()
     if confirmed:
-        line = f"{today} : Vérifié au toucher : {item['detail']}."
+        line = f"{today} : " + dire("plantes.evolution_verifie", detail=item["detail"])
         text = dire("plantes.confirme", detail=item["detail"])
         stage = item.get("stade")
         if stage in STAGES and stage != plant["stade"] and STAGES.index(stage) > STAGES.index(plant["stade"]):
@@ -302,7 +302,7 @@ def _verdict(plant, confirmed):
             if (plant.get("fiche") or {}).get("maturite"):
                 text += " " + dire("plantes.maturite_conseil", conseil=plant["fiche"]["maturite"])
     else:
-        line = f"{today} : Signalé faux après vérification au toucher : {item['detail']}."
+        line = f"{today} : " + dire("plantes.evolution_faux", detail=item["detail"])
         text = dire("plantes.infirme", detail=item["detail"])
     try:
         plantes_photos.append_evolution(plant, line)

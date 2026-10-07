@@ -17,15 +17,18 @@ ses propres archives (extraits gardes, fleche droite).
   satellites  passages et images de satellites
   plantes     calendrier de vie et conseils pour les plantes de l'utilisateur
               (lib/plantes_calendrier.py, 2026-10-06)
+  transports  perturbations des reseaux de bus, tram, metro de la commune
+              (watchers/stas_watch.py, 2026-10-07)
 """
 import os
 
 KEEP_DIR = "/media/nas/nd2/storage/radio"
-ORDER = ["radio", "messages", "donnees", "capteurs", "satellites", "plantes"]
+ORDER = ["radio", "messages", "donnees", "capteurs", "satellites", "plantes", "transports"]
 NAMES = {"radio": "radio", "messages": "messages", "donnees": "données", "capteurs": "capteurs",
-         "satellites": "satellites", "plantes": "plantes"}
+         "satellites": "satellites", "plantes": "plantes", "transports": "transports"}
 PREFIXES = {
     "plantes": ("plante_",),
+    "transports": ("transport_",),
     "satellites": ("passage_", "satellite", "meteor"),
     "capteurs": ("voiture", "capteur_", "capteurs_", "sonde_"),
     # anciens noms (avant le 2026-10-03) : ACARS, vdl2, pager, meshtastic -> messages
@@ -42,6 +45,7 @@ WORDS = {
     "donnees": ("donnee", "donnees", "data", "aprs", "lora", "planeur", "planeurs", "balise", "balises"),
     "radio": ("radio", "voix"),
     "plantes": ("plante", "plantes", "jardin", "jardinage"),
+    "transports": ("transport", "transports", "bus", "tram", "metro", "perturbation", "perturbations"),
 }
 
 
@@ -56,7 +60,7 @@ def category_of(filename):
 def from_words(normalized_text):
     """Journal designe dans une commande deja normalisee ; radio par defaut."""
     words = set(normalized_text.split())
-    for category in ("satellites", "capteurs", "messages", "donnees", "plantes", "radio"):
+    for category in ("satellites", "capteurs", "messages", "donnees", "plantes", "transports", "radio"):
         if words & set(WORDS[category]):
             return category
     return "radio"

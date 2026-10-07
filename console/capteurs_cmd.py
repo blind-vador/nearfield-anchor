@@ -64,7 +64,8 @@ def _signal(event):
 
 def candidate_text(c):
     e = c["dernier"]
-    number = (f"{e.get('id')}" + (f", canal {e.get('channel')}" if e.get("channel") not in (None, "") else "")) \
+    number = (f"{e.get('id')}" + (", " + dire("capteur.canal", canal=e.get("channel"))
+                                   if e.get("channel") not in (None, "") else "")) \
         if e.get("id") is not None else "?"
     text = dire("capteur.entendu", genre=cat.NAMES[c["genre"]], modele=str(e.get("model")).replace("-", " "),
                 numero=number)

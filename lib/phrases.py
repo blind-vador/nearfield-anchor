@@ -9,6 +9,9 @@ d'ecran : phrases/<langue>.ini (une section par phrase) :
   contexte = dit quand on ferme le journal
   garder = Échap, F1            (mots qui doivent rester tels quels)
   fixe = oui                    (jamais reecrite par la personnalite)
+  personnalite = oui            (phrase d'interface d'un dialogue dont la famille
+                                 n'est pas dans PERSONA_FAMILIES : plantes, liste
+                                 noire, capteurs, transports -- 2026-10-07)
 
 Le fichier de la langue est la VERSION NEUTRE, de reference, jamais modifiee
 par le Pi. Une autre langue = un autre fichier avec les memes cles.
@@ -42,7 +45,7 @@ PERSONA_MAX_LEN = 140
 
 def rewritable(cle, entry):
     """Cette phrase peut-elle recevoir la touche de la personnalite ?"""
-    return (not entry["fixe"] and cle.split(".")[0] in PERSONA_FAMILIES
+    return (not entry["fixe"] and (cle.split(".")[0] in PERSONA_FAMILIES or entry.get("personnalite"))
             and len(entry["texte"]) <= PERSONA_MAX_LEN)
 
 _cache = {}
@@ -88,7 +91,8 @@ def _read(path):
         data[key] = {"texte": " ".join(sec.get("texte", "").split()),
                      "contexte": sec.get("contexte", ""),
                      "garder": [w.strip() for w in sec.get("garder", "").split(",") if w.strip()],
-                     "fixe": sec.get("fixe", "").lower() in ("oui", "yes", "1", "true")}
+                     "fixe": sec.get("fixe", "").lower() in ("oui", "yes", "1", "true"),
+                     "personnalite": sec.get("personnalite", "").lower() in ("oui", "yes", "1", "true")}
     _cache[path] = (mtime, data)
     return data
 

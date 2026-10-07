@@ -66,6 +66,7 @@ KEYS = {
     "gemini": ("GEMINI_API_KEY", "description photo"),
     "octoprint": ("OCTOPRINT_API_KEY", "imprimante"),
     "airlabs": ("AIRLABS_API_KEY", "tableau des aéroports"),
+    "prim": ("PRIM_API_KEY", "perturbations des transports d'Île-de-France"),
 }
 KEY_LABELS = Etiquettes("reglages.cle", {k: v[1] for k, v in KEYS.items()}, "usage d'une clé API, dit quand elle manque")
 
@@ -80,6 +81,11 @@ relisent les clés à chaque usage : rien à redémarrer.
   gemini.txt          Google Gemini (commande décris)
   octoprint.txt       OctoPrint (commande imprimante)
   airlabs.txt         AirLabs, airlabs.co (commande tableau aéroport)
+  prim.txt            Île-de-France Mobilités, plateforme PRIM : perturbations
+                      des bus, trams, métros et RER quand la ville choisie est
+                      en Île-de-France. Compte sur prim.iledefrance-mobilites.fr,
+                      menu personnel, Mon jeton d'API, Générer le jeton d'API
+                      (affiché une seule fois : le coller ici aussitôt).
 
 lieu.json, trains.json, avions.json : se règlent depuis la console avec
 les commandes ville, gare et aéroport. favoris.json : l'étoile dans les

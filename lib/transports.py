@@ -18,7 +18,10 @@ Par reseau :
             nom et mode ; copie sur la carte SD, refaite chaque semaine
   GTFS-RT   temps reel (lib/gtfs_rt.py) : retards, courses annulees,
             alertes de perturbation quand le reseau les publie
-  SIRI      liste mais pas encore lu (85 reseaux en publient)
+  SIRI Lite perturbations (general-message, situation-exchange), lib/siri_lite.py ;
+            cle dans le dossier des cles quand le serveur en demande une
+            (KEYED_HOSTS : PRIM d'Ile-de-France Mobilites -> cles/prim.txt).
+            Le SIRI "classique" (XML sur abonnement, 85 reseaux) n'est que compte.
   page      perturbations publiees seulement sur le site de l'exploitant :
             STAS (page lue par watchers/stas_watch.py)
 """
@@ -35,6 +38,7 @@ import requests
 
 import gtfs_rt
 import reglages
+import siri_lite
 from phrases import Etiquettes, dire, nombre
 
 PAN = "https://transport.data.gouv.fr/api"
@@ -47,6 +51,10 @@ DATASETS_CACHE = os.path.join(reglages.CACHE_DIR, "transports_reseaux_pan.json")
 PAGES = {"244200770": "stas"}     # Saint-Etienne Metropole -> watchers/stas_watch.py
 PAGE_STATES = {"stas": "/tmp/stas_watch_state.json"}
 LATE_SEC = 300
+# serveurs SIRI Lite qui demandent une cle : hote -> (fichier cles/<nom>.txt, en-tete HTTP)
+KEYED_HOSTS = {"prim.iledefrance-mobilites.fr": ("prim", "apiKey")}
+SIRI_SERVICES = ("general-message", "situation-exchange")
+SIRI_CACHE_SEC = 120
 MAX_DELAY_SEC = 3600              # au-dela : donnee aberrante, ignoree
 
 # Familles de modes, telles que l'utilisateur les demande ("les bus" = bus et trolleybus)
@@ -123,10 +131,17 @@ def discover(lieu):
         res = [r for r in d.get("resources") or [] if r.get("is_available", True)]
         gtfs = next((r["url"] for r in res if r.get("format") == "GTFS"), None)
         rt = [{"url": r["url"], "contenu": r.get("features") or []} for r in res if r.get("format") == "gtfs-rt"]
-        siri = len([r for r in res if r.get("format") in ("SIRI", "SIRI Lite")])
+        siri_lite = []
+        for r in res:
+            url = r.get("url") or ""
+            service = next((s for s in SIRI_SERVICES if s in url), None)
+            if r.get("format") == "SIRI Lite" and service:
+                host = requests.utils.urlparse(url).netloc
+                siri_lite.append({"url": url, "service": service, "cle": KEYED_HOSTS.get(host, (None,))[0]})
+        siri = len([r for r in res if r.get("format") == "SIRI"])
         page = next((PAGES[i] for i in local if i in PAGES), None) if scope == "locale" else None
         networks.append({"id": d["id"], "nom": d.get("title") or "?", "portee": scope, "gtfs": gtfs, "temps_reel": rt,
-                         "siri": siri, "page": page, "agregat": (d.get("title") or "").lower().startswith("agr"),
+                         "siri": siri, "siri_lite": siri_lite, "page": page, "agregat": (d.get("title") or "").lower().startswith("agr"),
                          "actif": False})
     has_local = any(n["portee"] == "locale" for n in networks)
     for n in networks:
@@ -278,10 +293,45 @@ def _title_families(title, by_name):
     return fams or {"general"}
 
 
-def disruptions(network, group, feed=None):
-    """Titres des perturbations qui touchent cette famille (ou tout le reseau)."""
+_siri = {}
+
+
+def siri_messages(network):
+    """Perturbations SIRI Lite du reseau ; ([messages], cle manquante ou None)."""
+    out, missing = [], None
+    for src in network.get("siri_lite") or []:
+        headers = {}
+        if src.get("cle"):
+            key = reglages.cle(src["cle"])
+            if not key:
+                missing = src["cle"]
+                continue
+            headers[KEYED_HOSTS[requests.utils.urlparse(src["url"]).netloc][1]] = key
+        cached = _siri.get(src["url"])
+        if cached and time.time() - cached[0] < SIRI_CACHE_SEC:
+            out += cached[1]
+            continue
+        try:
+            resp = requests.get(src["url"], headers=headers, timeout=TIMEOUT)
+            resp.raise_for_status()
+            msgs = siri_lite.parse(resp.content)
+        except (requests.RequestException, ValueError, Exception) as exc:  # XML ou JSON mal formes
+            print(f"[transports] {network['nom']} SIRI {src['service']} : {exc!r}")
+            continue
+        _siri[src["url"]] = (time.time(), msgs)
+        out += msgs
+    return out, missing
+
+
+def items(network, feed=None):
+    """Toutes les perturbations du reseau, de toutes ses sources :
+    [{"id", "titre", "familles"}] ("general" : tout le reseau)."""
     lines = routes(network)
     by_name = {r["nom"].upper(): r["famille"] for r in lines.values() if r["nom"]}
+    by_code = {}
+    for rid, r in lines.items():
+        by_code[rid] = by_code[rid.split(":")[-1]] = r["famille"]
+    now = time.time()
     out = []
     if network.get("page") in PAGE_STATES:
         try:
@@ -290,17 +340,32 @@ def disruptions(network, group, feed=None):
         except (OSError, ValueError):
             titles = []
         for t in titles if isinstance(titles, list) else []:
-            fams = _title_families(t, by_name)
-            if group in fams or "general" in fams:
-                out.append(re.sub(r"^(Temps réel|Manifestation|Travaux)\s+", "", t))
+            out.append({"id": t, "titre": re.sub(r"^(Temps réel|Manifestation|Travaux)\s+", "", t),
+                        "familles": _title_families(t, by_name)})
     for a in (feed or {}).get("alertes") or []:
-        fams = {lines.get(r, {}).get("famille") for r in a["routes"]} | {group_of(t) for t in a["types"]}
-        fams -= {None}
-        if a["fin"] and a["fin"] < time.time():
+        if a["fin"] and a["fin"] < now:
             continue
-        if group in fams or not fams:
-            out.append(a["titre"] or a["texte"][:120])
-    return [t for t in out if t]
+        fams = ({lines.get(r, {}).get("famille") for r in a["routes"]} | {group_of(t) for t in a["types"]}) - {None}
+        title = a["titre"] or a["texte"][:120]
+        out.append({"id": title, "titre": title, "familles": fams or {"general"}})
+    msgs, _ = siri_messages(network)
+    for m in msgs:
+        if m["fin"] and m["fin"] < now:
+            continue
+        fams = {by_code.get(c) for c in m["lignes"]} - {None}
+        title = m["titre"] or m["texte"][:120]
+        out.append({"id": m["id"] or title, "titre": title, "familles": fams or {"general"}})
+    seen, unique = set(), []
+    for i in out:
+        if i["titre"] and i["id"] not in seen:
+            seen.add(i["id"])
+            unique.append(i)
+    return unique
+
+
+def disruptions(network, group, feed=None):
+    """Titres des perturbations qui touchent cette famille (ou tout le reseau)."""
+    return [i["titre"] for i in items(network, feed) if group in i["familles"] or "general" in i["familles"]]
 
 
 FEED_CACHE_SEC = 60
@@ -349,6 +414,12 @@ def punctuality(network, group, data):
             "pires": [lines[k]["nom"] for m, k in worst[:2] if m >= 240 and lines.get(k, {}).get("nom")]}
 
 
+def _join(names):
+    """ "A, B et C", le "et" dans la langue choisie."""
+    names = list(names)
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " " + dire("transport.et") + " " + names[-1]
+
+
 def _minutes(sec):
     m = round(sec / 60)
     return dire("transport.moins_d_une_minute") if m < 1 else nombre(m, "minute")
@@ -380,7 +451,7 @@ def status(group, lieu=None, short=False):
                               en_retard=p["en_retard"]))
             if p["pires"]:
                 parts.append(dire("transport.pire_ligne" if len(p["pires"]) == 1 else "transport.pires_lignes",
-                                  lignes=" et ".join(p["pires"])))
+                                  lignes=_join(p["pires"])))
         if p and p["annules"]:
             parts.append(dire("transport.annules", nombre=nombre(p["annules"], "course annulée", "courses annulées")))
         if rt and rt["horodatage"] and time.time() - rt["horodatage"] > 900:
@@ -392,8 +463,11 @@ def status(group, lieu=None, short=False):
             shown = dis[:2] if short else dis[:4]
             parts.append(dire("transport.perturbations", nombre=nombre(len(dis), "perturbation"),
                               liste=" ; ".join(shown)))
-        elif rt and (rt["alertes"] or n.get("page")):
+        elif rt and (rt["alertes"] or n.get("page")) or n.get("siri_lite"):
             parts.append(dire("transport.aucune_perturbation"))
+        missing = next((s["cle"] for s in n.get("siri_lite") or [] if s.get("cle") and not reglages.cle(s["cle"])), None)
+        if missing:
+            parts.append(dire("transport.cle_manquante", fichier=f"{missing}.txt"))
         texts.append(dire("transport.reseau", famille=GROUPS[group].capitalize(), reseau=_short_name(n["nom"]))
                      + " " + " ".join(parts))
     if not texts:
