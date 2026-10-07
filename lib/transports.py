@@ -313,6 +313,9 @@ def siri_messages(network):
             continue
         try:
             resp = requests.get(src["url"], headers=headers, timeout=TIMEOUT)
+            if resp.status_code in (401, 403):  # source qui demande un acces que le Pi n'a pas
+                missing = missing or (src.get("cle") or "refus")
+                continue
             resp.raise_for_status()
             msgs = siri_lite.parse(resp.content)
         except (requests.RequestException, ValueError, Exception) as exc:  # XML ou JSON mal formes
@@ -463,10 +466,12 @@ def status(group, lieu=None, short=False):
             shown = dis[:2] if short else dis[:4]
             parts.append(dire("transport.perturbations", nombre=nombre(len(dis), "perturbation"),
                               liste=" ; ".join(shown)))
-        elif rt and (rt["alertes"] or n.get("page")) or n.get("siri_lite"):
+        missing = siri_messages(n)[1] if n.get("siri_lite") else None
+        if not dis and not missing and (rt and (rt["alertes"] or n.get("page")) or n.get("siri_lite")):
             parts.append(dire("transport.aucune_perturbation"))
-        missing = next((s["cle"] for s in n.get("siri_lite") or [] if s.get("cle") and not reglages.cle(s["cle"])), None)
-        if missing:
+        if missing == "refus":
+            parts.append(dire("transport.acces_refuse"))
+        elif missing:
             parts.append(dire("transport.cle_manquante", fichier=f"{missing}.txt"))
         texts.append(dire("transport.reseau", famille=GROUPS[group].capitalize(), reseau=_short_name(n["nom"]))
                      + " " + (" ".join(parts) or dire("transport.rien_a_signaler")))
