@@ -25,7 +25,7 @@ LEVEL_NAMES = Etiquettes("interet.niveau", {l: l for l in LEVELS}, "niveau d'int
 CATEGORIES = {
     "talkies": (["pmr446", "lpd433"], "normal"),
     "aviation": (["aviation_atis", "aviation_st_etienne", "aviation_tour", "aviation_sol", "aviation_approche",
-                  "aviation", "milair", "acars", "vdl2", "adsb"], "normal"),
+                  "aviation", "milair", "acars", "vdl2", "adsb", "atis"], "normal"),
     "radioamateurs": (["radioamateur_", "relais_", "aprs", "lora"], "normal"),
     "cb": (["cb_am"], "normal"),
     "meteo": (["capteurs", "sondes"], "normal"),

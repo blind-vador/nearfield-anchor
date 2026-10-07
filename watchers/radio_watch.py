@@ -799,6 +799,19 @@ _dmr_turn = [0]
 DMR_TOP = 4
 
 
+def _atis_window(dwell_sec=40):
+    """Rafraichit le bulletin ATIS d'un aeroport du (lib/atis.py). Silencieux :
+    lu par la commande "atis" et le flash. Rend False (pas de piqure)."""
+    try:
+        import atis
+        r = atis.refresh_due()
+        if r and r.get("resume"):
+            print(f"[radio_watch] ATIS {r.get('oaci')} : {r['resume'][:80]}")
+    except Exception as exc:
+        print(f"[radio_watch] ATIS : {exc!r}")
+    return False
+
+
 def _dmr_window(dwell_sec=20):
     import dmr_registre
     known = dmr_registre.targets()[:DMR_TOP]
@@ -1555,6 +1568,7 @@ DATA_SCANNERS = {name: _guarded(name, scan) for name, scan in {
     "vdl2": vdl2_watch.scan_window,
     "aprs": aprs_watch.scan_window,
     "dmr": _dmr_window,
+    "atis": lambda dwell_sec=40: _atis_window(dwell_sec),
     "capteurs": capteurs_watch.scan_window,
     "pagers": pagers_watch.scan_window,
     "adsb": adsb_local_watch.scan_window,

@@ -11,16 +11,19 @@ MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"]
 TIMEOUT = 30
 
 
-def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT, mime="image/jpeg"):
-    """jpeg : image (octets ; type mime, JPEG par defaut) jointe a la question, pour la description d'images.
-    json_mode : Gemini rend du JSON strict (responseMimeType), rendu tel quel."""
+def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT, mime="image/jpeg", audio=None, audio_mime="audio/ogg"):
+    """jpeg : image (octets ; type mime, JPEG par defaut) jointe a la question.
+    audio : son (octets, type audio_mime) joint, pour transcrire une voix captee
+    (ATIS...). json_mode : Gemini rend du JSON strict (responseMimeType)."""
+    import base64
     key = reglages.cle("gemini")
     if not key:
         return None, dire("gemini.cle_gemini")
     parts = [{"text": prompt}]
     if jpeg is not None:
-        import base64
         parts.append({"inline_data": {"mime_type": mime, "data": base64.b64encode(jpeg).decode()}})
+    if audio is not None:
+        parts.append({"inline_data": {"mime_type": audio_mime, "data": base64.b64encode(audio).decode()}})
     config = {"temperature": temperature}
     if json_mode:
         config["responseMimeType"] = "application/json"
