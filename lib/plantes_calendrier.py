@@ -231,9 +231,29 @@ def _alerts(announce=None):
     return plantes_alertes.run_once(plantes.load(), _quiet(), announce)
 
 
+def _photos(announce=None):
+    """Etape 5 : nouvelles photos des plantes (lib/plantes_photos.py), une
+    fois par heure ; resultats dits hors des heures de silence."""
+    import plantes_photos
+    if time.time() - _photos_last[0] < PHOTOS_EVERY_SEC:
+        return []
+    _photos_last[0] = time.time()
+    said = plantes_photos.run_once()
+    if said and not _quiet():
+        if announce is None:
+            import veille_donnees as vd
+            announce = lambda text: vd.announce(text, SOUND, "plante_photo", "plantes")  # noqa: E731
+        announce(" ".join(said))
+    return said
+
+
+PHOTOS_EVERY_SEC = 3600 - 120
+_photos_last = [0.0]
+
+
 def watch():
     while True:
-        for job in (run_once, _alerts):
+        for job in (run_once, _alerts, _photos):
             try:
                 job()
             except Exception as exc:  # une panne ne doit pas arreter meteo_watch

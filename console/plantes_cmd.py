@@ -9,6 +9,7 @@ Liste
   A                         arrosee aujourd'hui
   R                         rentree / sortie
   E                         changer l'emplacement (memes questions qu'a l'ajout)
+  G                         garder la derniere photo analysee (storage/plantes)
   Retour arriere            retire la plante ; Ctrl + Z annule
 Ajout ("plantes ajouter")
   taper un nom, meme approximatif, Entree : Gemini propose jusqu'a 5
@@ -18,7 +19,8 @@ Ajout ("plantes ajouter")
 Echap ferme (en ajout, efface d'abord la ligne). F1 : les touches.
 
 Formes directes : "plante basilic arrosée", "plante menthe rentrée",
-"plante tomate fleurie".
+"plante tomate fleurie" ; "plantes photos" analyse tout de suite les
+photos deposees (lib/plantes_photos.py).
 """
 import sys
 
@@ -209,7 +211,19 @@ def _apply(plant, action):
     return dire("plantes.note_stade", nom=plant["nom"], stade=plantes.STAGE_NAMES[action])
 
 
+def photos_now(say):
+    import plantes_photos
+    say(dire("plantes.photos_en_cours"))
+    try:
+        said = plantes_photos.run_once()
+    except OSError:
+        return dire("plantes.nas_inaccessible")
+    return " ".join(said) if said else dire("plantes.photos_rien")
+
+
 def run(line, key_source, say, out):
+    if set(matcher.normalize(line).split()) & {"photo", "photos"}:
+        return photos_now(say)
     direct = quick(line)
     if direct:
         return direct
@@ -283,6 +297,14 @@ def run(line, key_source, say, out):
                 text = (text + " " + plantes_calendrier.describe(plants[i], temp)).strip()
             except Exception as exc:  # pas de reseau : la fiche suffit
                 print(f"[plantes] calendrier : {exc!r}")
+            try:
+                import plantes_photos
+                last = plantes_photos.evolution_lines(plants[i], 1)
+                if last:
+                    day, _, what = last[0].partition(" : ")
+                    text += " " + dire("plantes.derniere_observation", date=day, evolution=what)
+            except OSError:
+                pass
         elif key in ("a", "A"):
             text = _apply(plants[i], "arrosee")
             if not plantes.save(plants):
@@ -290,6 +312,12 @@ def run(line, key_source, say, out):
         elif key in ("r", "R"):
             text = _apply(plants[i], "dehors" if plants[i].get("dedans") else "dedans")
             if not plantes.save(plants):
+                text = dire("plantes.nas_inaccessible")
+        elif key in ("g", "G"):
+            import plantes_photos
+            try:
+                text = plantes_photos.keep_latest(plants[i])
+            except OSError:
                 text = dire("plantes.nas_inaccessible")
         elif key in ("e", "E"):
             try:
