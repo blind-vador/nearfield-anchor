@@ -6102,3 +6102,22 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   (toutes sur le balcon).
 - La copie de travail du Mac (/tmp) a disparu au redemarrage : clone
   desormais dans le dossier de la session (pcw/).
+
+## 2026-10-07 : plantes, etape 5 (photos)
+
+- lib/plantes_photos.py. Travail : /media/nas/nd1/server/plantes/<slug>/
+  (un dossier par plante, cree par le Pi, + a_identifier, LISEZ-MOI.txt).
+  Archives : /media/nas/nd2/storage/plantes/<slug>/evolution.txt (UNE
+  liste datee, une ligne par photo, "Probleme : ..." si besoin) et photos/
+  (touche G du dialogue : derniere photo analysee + description actuelle).
+- Agregation (demande utilisateur) : seule description_actuelle.txt reste
+  sur server, remplacee a chaque photo une fois l'evolution ajoutee a la
+  liste ; Gemini recoit photo + description precedente + 5 dernieres
+  lignes : requete de taille constante. Stade avance par la photo ->
+  enregistre sur la liste relue. Photos du dossier de travail effacees
+  apres 30 jours. .suivi.json = photos deja traitees.
+- Passage toutes les heures (boucle de plantes_calendrier, meteo_watch),
+  6 photos max ; commande "plantes photos" pour ne pas attendre.
+  gemini.ask accepte mime (HEIC de l'iPhone).
+- main._match : une ligne qui commence par "plante(s)" va aux plantes
+  ("plante photo" partait vers decris).
