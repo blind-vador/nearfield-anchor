@@ -6254,3 +6254,28 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   personnalite.who_am_i(), resume du jour (console.json), origine
   (cette nuit, surprise ou demande), "en detail" = fiche de style lue en
   tete de personnalite_<langue>.ini.
+
+## 2026-10-07 (midi) : controle general
+
+- Services : tous actifs, 0 redemarrage en boucle ; lighttpd (OctoPi) en
+  echec depuis le demarrage, hors projet. Pi 64 C, throttled=0x0, RAM et
+  disques larges. NAS : remontage auto au demarrage du 6 (disques lents).
+- Journaux 24 h : radio = statistiques dsd-fme (pas d'erreurs), "Failed to
+  set ppm error" sans effet (PPM 0, correct pour la NESDR TCXO ; le -74 ppm
+  de septembre a disparu), aplay interrompu a l'arret d'une lecture ;
+  meteo = delais Hub'Eau / Open-Meteo, liaison Mac retablie a 10 h 53.
+  Quota Gemini : aucun refus (les "429" etaient des frequences).
+- Cle radio (1-1.3.2) remise a zero par le noyau ~ toutes les 27 min, au
+  rythme des fenetres LoRa (lecture brute arretee de force) ; le scanner
+  repart a chaque fois. A surveiller, pas d'action.
+- Couverture : toutes les fenetres visitees dans les dernieres minutes
+  (attention). APRS : visite mais RIEN decode depuis le 1er octobre (10
+  captures avant) -> verifier a l'oreille (mode manuel 144,800 MHz) ou
+  l'antenne.
+- Reglages audio du bilan dans leurs bornes : aviation (AM) passe-bas
+  3500 Hz, souffle -13 dB, +3 dB, fin 4,5 s, marge -1 dB : normaux.
+  FM diffusion : passe-bas 4000 Hz + anti-sifflement + anti-bourdonnement
+  + souffle 13 dB + -6 dB : valables pour la parole, appauvrissent la
+  musique (borne haute du passe-bas 4500 Hz). Bilan : "canal station
+  probable" attend 1 prise a noter (regle du 6 octobre en action).
+- Phrase corrigee : bilan.encore_a_noter (accord).
