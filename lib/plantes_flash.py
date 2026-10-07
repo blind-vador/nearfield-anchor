@@ -171,7 +171,15 @@ def _weather_lines(plants, fc, now, mean_temp, complet=False):
         reserve = max(1.0, float(fiche.get("jours_sans_eau_pot_ete") or 2)) * pa.MM_PER_HOT_DAY
         if p.get("contenant") == "pleine_terre":
             reserve *= pa.GROUND_FACTOR
-        if balance and balance[1] >= reserve:
+        probe = pa.soil_probe(p)
+        if probe:
+            sensor, pct = probe
+            threshold = pa.SOIL_THIRSTY.get(fiche.get("eau"), 25)
+            if pct < threshold:
+                single.append(dire("plantes.flash_soif_sonde", nom=p["nom"], pct=pa._num(pct)))
+            elif complet:
+                single.append(dire("plantes.flash_sonde_ok", nom=p["nom"], pct=pa._num(pct)))
+        elif balance and balance[1] >= reserve:
             single.append(dire("plantes.flash_soif", nom=p["nom"], jours=balance[0]))
         elif balance and balance[1] >= SOON_SHARE * reserve:
             add("soif_bientot", p)

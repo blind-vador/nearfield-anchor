@@ -327,6 +327,9 @@ def run_command(line, key_source, last_response):
         return observation.quick(line) or observation.run(line, key_source, voix.say, out)
     if cmd.name == "notifications":
         return journal.notifications()
+    if cmd.name == "mes capteurs":
+        import capteurs_cmd
+        return capteurs_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "compris":
         import plantes_alertes
         silenced = plantes_alertes.ack()

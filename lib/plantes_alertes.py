@@ -45,6 +45,17 @@ MM_PER_HOT_DAY = 5              # evaporation d'une journee chaude d'ete (ET0)
 INDOOR_ET_FACTOR = 0.3          # a l'interieur, sans soleil ni vent
 GROUND_FACTOR = 3               # la pleine terre garde l'eau bien plus longtemps qu'un pot
 FORECAST_CACHE_SEC = 3600
+SOIL_THIRSTY = {"faible": 15, "moyen": 25, "fort": 35}   # % d'humidite du sol sous lequel la plante a soif
+
+
+def soil_probe(plant):
+    """(sonde, %) si une sonde de sol appairee mesure la terre de cette plante."""
+    try:
+        import capteurs_miens
+        return capteurs_miens.soil_for_plant(plant["id"])
+    except Exception as exc:
+        print(f"[plantes_alertes] sonde : {exc!r}")
+        return None
 _forecast = {"t": 0, "data": None}
 
 
@@ -169,7 +180,13 @@ def conditions(plants, fc, now=None):
                 reserve = 2 * MM_PER_HOT_DAY
             if p.get("contenant") == "pleine_terre":
                 reserve *= GROUND_FACTOR
-            if balance and balance[1] >= reserve:
+            probe = soil_probe(p)
+            if probe:  # une vraie mesure : elle remplace l'estimation (2026-10-07)
+                sensor, pct = probe
+                if pct < SOIL_THIRSTY.get(fiche.get("eau"), 25):
+                    out[f"{p['id']}|soif_sonde|{today}"] = dire("plantes.alerte_soif_sonde", nom=p["nom"],
+                                                                sonde=sensor["nom"], pct=_num(pct), mot=p["nom"].lower())
+            elif balance and balance[1] >= reserve:
                 out[f"{p['id']}|soif|{p.get('arrosee_le')}"] = dire(
                     "plantes.alerte_soif", nom=p["nom"], jours=balance[0], mm=_num(balance[1]), mot=p["nom"].lower())
     for (kind, day), g in groups.items():

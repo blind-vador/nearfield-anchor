@@ -1762,7 +1762,9 @@ def _scan_locked(capture):
 
 
 def _lock_pending():
-    return noise_signatures.lock_request() is not None or noise_signatures.manual_request() is not None
+    import capteurs_miens  # appairage d'un capteur demande par la console : la fenetre en cours s'arrete
+    return noise_signatures.lock_request() is not None or noise_signatures.manual_request() is not None \
+        or capteurs_miens.requested() is not None
 
 
 def _publish_plages():
@@ -2070,6 +2072,23 @@ def main():
             time.sleep(0.1)
             continue
         manual_stream.stop()
+
+        # Appairage d'un capteur (console "nouveau capteur", 2026-10-07) : la
+        # radio des capteurs ecoute 433 et 868 MHz jusqu'a la fin de la demande.
+        import capteurs_miens
+        if capteurs_miens.requested():
+            meteo_locale.set_scanner_state("appairage")
+            current_lock_key = "appairage"
+            _window.update(nom="appairage", fin=capteurs_miens.requested() + 30)
+            try:
+                capteurs_watch.pairing_session()
+            except Exception:
+                import traceback
+                traceback.print_exc()
+                capteurs_miens.stop()
+            finally:
+                _window.update(nom=None, fin=0.0)
+            continue
 
         lock_capture = noise_signatures.lock_request()
         lock_key = (lock_capture["freq_hz"], lock_capture.get("target")) if lock_capture else None

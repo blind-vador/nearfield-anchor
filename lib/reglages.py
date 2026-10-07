@@ -50,6 +50,8 @@ DEFAULTS = {
     "plantes": {"plantes": []},
     # plantes reperees par Gemini sur les photos, proposees a l'ajout (touche S)
     "plantes_suggestions": {"suggestions": [], "refusees": []},
+    # capteurs sans fil de l'utilisateur, appairés (lib/capteurs_miens.py)
+    "capteurs": {"miens": []},
     "console": {"voix": "fr-FR-DeniseNeural", "debit": "+20%", "debit_echo": "+50%",
                 "conseils": "toujours", "conseils_vus": []},
 }

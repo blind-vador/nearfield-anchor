@@ -499,6 +499,12 @@ COMMANDS = [
                       "qualite de l air", "pollution", "pollen", "pollens", "meteo des aeroports", "crue de la riviere"],
             examples=["la rivière monte-t-elle", "y a-t-il eu un séisme", "comment est l'air"]),
     # Avant "satellites" : "machine compagne" ne doit pas lister les passages.
+    # Avant "appairage" (machine compagne) et "capteurs" (releves entendus) : capteurs a soi.
+    Command("mes capteurs", "tes capteurs sans fil : sondes de sol, pluviomètre, station météo ; nouveau capteur pour en appairer un", None,
+            keywords=["mes capteurs", "mes sondes", "nouveau capteur", "nouvelle sonde", "appairer un capteur",
+                      "appairer une sonde", "appairage capteur", "appairage sonde", "appairage d un capteur",
+                      "appairage d une sonde", "ajouter un capteur", "ajouter une sonde"],
+            examples=["j'ai acheté une sonde", "brancher mon pluviomètre", "mes appareils de mesure"]),
     Command("appairage", "relier une machine compagne qui calcule à la place du Pi, les images de satellites météo par exemple", None,
             keywords=["appairage", "appairer", "jumelage", "jumeler", "nouvelle machine compagne", "ajoute une machine"],
             examples=["appaire mon mac", "ajoute une machine compagne"]),

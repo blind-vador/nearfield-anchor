@@ -159,12 +159,40 @@ def _double_decode(event, at):
     return previous is not None and at - previous[0] <= DOUBLE_DECODE_SEC and previous[1] != event.get("model")
 
 
+# Capteurs de l'utilisateur (lib/capteurs_miens.py, 2026-10-07) : relus sur
+# le NAS au plus toutes les MINE_CACHE_SEC ; annonces sous leur nom ; une
+# sonde de sol ne dit pas chaque releve (lib/plantes_alertes.py s'en sert) ;
+# pile faible dite une fois par semaine.
+MINE_CACHE_SEC = 600
+BATTERY_EVERY_SEC = 7 * 86400
+_mine = {"t": 0, "items": {}}
+
+
+def _my_sensor(key):
+    if time.time() - _mine["t"] > MINE_CACHE_SEC:
+        try:
+            import capteurs_miens
+            _mine["items"] = {c["cle"]: c for c in capteurs_miens.load()}
+        except Exception as exc:
+            print(f"[capteurs_watch] mes capteurs : {exc!r}")
+        _mine["t"] = time.time()
+    return _mine["items"].get(key)
+
+
 def _process(event, freq, tpms, at):
     if _double_decode(event, at):
         vd.archive("capteurs", dict(event, bande=freq, doublon=True))
         return False
     vd.archive("capteurs", dict(event, bande=freq))
     key = _key(event)
+    own = _my_sensor(key)
+    if own:
+        _publish(key, event, "mien")
+        if event.get("battery_ok") == 0 and _memory.due(f"pile|{key}", BATTERY_EVERY_SEC):
+            vd.announce(dire("capteur.pile_faible_mien", nom=own["nom"]), SOUND, f"capteur_pile_{key}", "capteurs_watch")
+        if own.get("genre") == "sol":
+            return False
+        return _reading(key, dict(event, model=own["nom"]), "meteo", freq)
     kind = _kind(event)
     if kind == "pneu":
         # Pas d'annonce directe : apprentissage des vehicules (lib/voitures.py).
@@ -316,6 +344,45 @@ def _cars(tpms, freq, listened_sec):
             vd.announce(sentence, SOUND, "voiture", "capteurs_watch")
             announced = True
     return announced
+
+
+def pairing_session():
+    """Appairage demande par la console (lib/capteurs_miens.py) : rtl_433 sur
+    433,92 et 868,3 MHz en alternance, chaque trame ecrite pour la console,
+    jusqu'a la fin de la demande. Appele par la boucle de radio_watch."""
+    import capteurs_miens as cm
+    until = cm.requested()
+    if not until:
+        return False
+    with open(cm.EVENTS_PATH, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"_debut": time.time()}) + "\n")
+    try:
+        proc = subprocess.Popen(["rtl_433", "-d", "0", "-f", "433.92M", "-f", "868.3M", "-H", "20", "-F", "json",
+                                 "-M", "level", "-C", "si"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        print("[capteurs_watch] rtl_433 introuvable")
+        return False
+    events = []
+    reader = threading.Thread(target=_reader, args=(proc, events), daemon=True)
+    reader.start()
+    print("[capteurs_watch] appairage : ecoute 433 et 868 MHz")
+    try:
+        while cm.requested() and proc.poll() is None:
+            time.sleep(0.3)
+            with open(cm.EVENTS_PATH, "a", encoding="utf-8") as f:
+                while events:
+                    at, event = events.pop(0)
+                    f.write(json.dumps(dict(event, _t=at), ensure_ascii=False) + "\n")
+    finally:
+        if proc.poll() is None:
+            proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+        reader.join(timeout=2)
+        print("[capteurs_watch] appairage termine")
+    return True
 
 
 def scan_window(dwell_sec=30):

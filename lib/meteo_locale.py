@@ -500,7 +500,8 @@ SCANNER_STATE_PATH = "/tmp/radio_watch_etat.json"
 # Etats ou le scanner ne peut pas faire le balayage (la console n'attend pas)
 SCANNER_BUSY = Etiquettes("scanner_occupe", {"pause_thermique": "le Pi est trop chaud, même pour l'écoute météo seule",
                                              "manuel": "le scanner est en mode manuel",
-                                             "accroche": "le scanner est accroché sur une fréquence"},
+                                             "accroche": "le scanner est accroché sur une fréquence",
+                                             "appairage": "le scanner appaire un de tes capteurs"},
                           "pourquoi le scanner ne peut pas balayer les stations météo")
 
 
