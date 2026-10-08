@@ -139,9 +139,18 @@ def register_from_note(note):
             station = {"freq_hz": int(freq), "mode": mode, "bande": note.get("bande"), "label": note.get("label"),
                        "cree": time.time(), "centree": False, "captures": [], "visite": 0}
             data["stations"].append(station)
+        if is_digital(note):  # station DMR/numerique : le mode manuel doit decoder, pas ecouter l'analogique
+            station["numerique"] = True
         if t not in station["captures"]:
             station["captures"] = sorted(station["captures"] + [t])[-500:]
     return True
+
+
+def is_digital(entry):
+    """Station ou note en voix numerique (DMR...) : reconnue par la bande
+    "dmr" ou le drapeau metrics "numerique" (2026-10-08)."""
+    return bool(entry.get("numerique") or entry.get("bande") == "dmr"
+                or (entry.get("metrics") or {}).get("numerique"))
 
 
 def record_capture(freq_hz, mode):

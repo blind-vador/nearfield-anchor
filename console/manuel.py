@@ -144,12 +144,14 @@ class Tuner:
         plage = self.plage
         station = self.station()
         if station:
-            return {"source": "rtl_fm", "freq_hz": self.freq, "mode": station["mode"],
+            import stations
+            return {"source": station.get("source", "rtl_fm"), "freq_hz": self.freq, "mode": station["mode"],
                     "label": station.get("label") or dire("manuel.station_reperee"), "target": station.get("bande"),
+                    "numerique": stations.is_digital(station),
                     "log_path": None, "fingerprint": None, "time": 0, "filter": self.filtered}
         return {"source": plage["source"], "freq_hz": self.freq, "mode": plage["mode"],
-                "label": plage["label"], "target": plage["target"], "log_path": None,
-                "fingerprint": None, "time": 0, "filter": self.filtered}
+                "label": plage["label"], "target": plage["target"], "numerique": plage.get("numerique", False),
+                "log_path": None, "fingerprint": None, "time": 0, "filter": self.filtered}
 
     def validate(self):
         """V : bonne reception, meme effet que V dans le journal (note "tout au

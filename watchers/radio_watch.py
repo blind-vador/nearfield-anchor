@@ -1662,7 +1662,8 @@ def _manual_during_pause():
         import manual_tuner
         manual_tuner.event(dire("manuel.reprise_apres_chaleur"))
     _manual["averti"] = "ok"
-    wanted = (request["freq_hz"], request["mode"], request.get("filter", False), request.get("target"))
+    wanted = (request["freq_hz"], request["mode"], request.get("filter", False), request.get("target"),
+              request.get("numerique", False))
     if wanted != _manual["voulu"]:
         _manual["voulu"], _manual["depuis"] = wanted, time.time()
     elif time.time() - _manual["depuis"] >= MANUAL_SETTLE_SEC:
@@ -1874,11 +1875,28 @@ def _publish_plages():
             "low_hz": b.get("low_hz"), "high_hz": b.get("high_hz"), "step_hz": b.get("step_hz"),
             "channels": [] if sweep else list(b["channels"]),
         })
+    # Fenetres RTLSDR-Airband : celles a plusieurs canaux (PMR446...) sont de
+    # vraies plages ; celles a UN seul canal sont en fait des stations connues
+    # (tours, ATIS, sol, approche d'aeroport) -- on les regroupe en une seule
+    # plage "stations aeroport" plutot que d'encombrer la liste (2026-10-08,
+    # demande utilisateur : "ce ne sont pas des plages mais des stations").
+    aero = []
     for w in airband_bridge.AIRBAND_WINDOWS:
+        if len(w["channels"]) > 1:
+            plages.append({
+                "source": "airband", "target": w["name"], "mode": w["mode"], "label": w["name_spoken"],
+                "low_hz": None, "high_hz": None, "step_hz": None,
+                "channels": [f for f, _ in w["channels"]],
+            })
+        else:
+            f = w["channels"][0][0]
+            aero.append({"freq_hz": f, "mode": w["mode"], "label": w["name_spoken"],
+                         "bande": w["name"], "source": "airband"})
+    if aero:
         plages.append({
-            "source": "airband", "target": w["name"], "mode": w["mode"], "label": w["name_spoken"],
-            "low_hz": None, "high_hz": None, "step_hz": None,
-            "channels": [f for f, _ in w["channels"]],
+            "source": "airband", "target": "stations_aero", "mode": aero[0]["mode"],
+            "label": dire("manuel.plage_aeroport"), "low_hz": None, "high_hz": None, "step_hz": None,
+            "channels": [s["freq_hz"] for s in aero], "stations": aero,
         })
     noise_signatures.write_plages(plages)
 
@@ -2164,7 +2182,8 @@ def main():
                 current_lock_key = "manuel"
             # Defilement rapide aux fleches : on attend que la frequence ne
             # bouge plus depuis MANUAL_SETTLE_SEC avant de relancer rtl_fm.
-            wanted = (manual["freq_hz"], manual["mode"], manual.get("filter", False), manual.get("target"))
+            wanted = (manual["freq_hz"], manual["mode"], manual.get("filter", False), manual.get("target"),
+                      manual.get("numerique", False))
             if wanted != manual_pending[0]:
                 manual_pending = (wanted, time.time())
             elif time.time() - manual_pending[1] >= MANUAL_SETTLE_SEC:

@@ -139,14 +139,18 @@ class ManualStream:
         self._dsd_clients = []
         self._multimon = None
         self._digital_until = 0.0
+        self._numerique = False
         self._chime = None
 
-    def tune(self, freq_hz, mode, filtered=False, target=None):
+    def tune(self, freq_hz, mode, filtered=False, target=None, numerique=False):
         """Ecoute freq_hz ; ne fait rien si rien n'a change. target : la bande
-        (reglages appris et filtres de la chaine commune, touche F)."""
-        airband = bool(filtered and mode in ("am", "nfm"))
-        key = (int(freq_hz), mode, airband, target)
-        self._target, self._mode = target, mode
+        (reglages appris et filtres de la chaine commune, touche F). numerique :
+        station DMR connue -> dsd-fme en DMR (-fs) et souffle analogique coupe
+        (2026-10-08) : entre deux communications d'un relais, on veut le silence
+        et la voix decodee, pas le gresillement."""
+        airband = bool(filtered and mode in ("am", "nfm") and not numerique)
+        key = (int(freq_hz), mode, airband, target, numerique)
+        self._target, self._mode, self._numerique = target, mode, numerique
         if key == self._key and self._rx is not None and self._rx.poll() is None:
             return
         self._stop_receiver()
@@ -172,7 +176,7 @@ class ManualStream:
         elif mode == "nfm":
             # 48 kHz : ce que dsd-fme attend (comme SDR++), et la sortie son directe.
             args, in_rate = ["-M", "fm", "-s", str(OUT_RATE), "-l", "0", "-E", "dc"], OUT_RATE
-            self._start_decoders(freq_hz, generation)
+            self._start_decoders(freq_hz, generation, numerique=self._numerique)
         else:
             args, in_rate = ["-M", mode, "-s", str(NARROW_RATE), "-l", "0", "-E", "dc"], NARROW_RATE
         self._rx = subprocess.Popen(["rtl_fm", "-f", str(int(freq_hz))] + args,
@@ -196,16 +200,19 @@ class ManualStream:
                     self._multimon = None
             if in_rate != OUT_RATE:
                 chunk, state = audioop.ratecv(chunk, 2, 1, in_rate, OUT_RATE, state)
-            if time.time() < self._digital_until:
-                continue  # la voix numerique decodee joue a la place du gresillement
+            if self._numerique or time.time() < self._digital_until:
+                continue  # station DMR connue : jamais d'analogique ; sinon la voix
+                # numerique decodee joue a la place du gresillement quand elle arrive
             if not self._write(chunk, generation):
                 return
 
     # --- decodeurs sur le flux de l'ecoute manuelle ---
-    def _start_decoders(self, freq_hz, generation):
-        flags = ["-fa"]
+    def _start_decoders(self, freq_hz, generation, numerique=False):
+        # Station DMR connue : dsd-fme en DMR seul (-fs), qui accroche bien
+        # mieux que l'auto-detection (-fa) sujette aux fausses synchros M17.
+        flags = ["-fs"] if numerique else ["-fa"]
         extra = decodeurs.extra_mode(freq_hz)
-        if extra:
+        if extra and not numerique:
             flags.append(extra[0])
         try:
             server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
