@@ -6404,3 +6404,20 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   plage_aeroport), navigable station par station. pmr446 (16 canaux) reste
   une vraie plage. _publish_plages regroupe ; manuel target() honore
   station["source"] (airband). Verifie : plages regenerees OK.
+
+## 2026-10-08 : point 4 (reseau cellulaire) -- toolchain prete, reception nulle
+- gr-gsm installe (apt ; xtrx-dkms, un pilote d'SDR absent, retire pour
+  garder apt sain). Le module Debian est gnuradio.gsm (pas "grgsm").
+- Invocation qui marche malgre le conflit numpy (pip numpy 2 dans
+  /usr/local casse GNU Radio compile avec numpy 1.x Debian) :
+  PYTHONPATH=/usr/lib/python3/dist-packages /usr/bin/python3 -S
+  /usr/bin/grgsm_scanner -b GSM900 ...  (script : tools/scan_gsm.sh).
+- Teste en vrai (radio-watch arrete) : GSM900 speed 20 et speed 8 verbeux,
+  ~0 cellule detectee. Cause = reception : antenne 446 courte et interieure,
+  mauvaise a 900 MHz, et 2G en declin en France. MEME limite physique que
+  l'ATIS de Lyon / la HF : gate sur une meilleure antenne.
+- PAS de commande ni de fenetre de cycle ajoutee : inutile d'immobiliser la
+  cle pour une source qui ne capte rien aujourd'hui. A retester avec la
+  Sirio / une antenne fenetre via tools/scan_gsm.sh ; si des cellules
+  sortent (MCC 208 = France ; MNC -> operateur), on batira le suivi
+  presence/sante (cellules vues, apparition/disparition), sans IMSI ni contenu.
