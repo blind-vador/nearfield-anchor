@@ -808,10 +808,15 @@ DMR_TOP = 4
 
 def _dmr_window(dwell_sec=20):
     import dmr_registre
-    known = dmr_registre.targets()[:DMR_TOP]
+    # Toutes les frequences DMR connues sont revisitees a tour de role (pas
+    # seulement les mieux notees) : on veut capter TOUT ce qui est ouvert
+    # (2026-10-08). Les plus prometteuses passent plus souvent (DMR_TOP en
+    # tete, puis le reste en rotation).
+    known = dmr_registre.targets()
     if not known:
         return False
-    target = known[_dmr_turn[0] % len(known)]
+    head = known[:DMR_TOP]
+    target = (head + known)[_dmr_turn[0] % (len(head) + len(known))]
     _dmr_turn[0] += 1
     freq = target["freq_hz"]
     label = dire("dmr.libelle_veille")
