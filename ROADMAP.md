@@ -6434,3 +6434,23 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   467,2408 regroupes (groupes 107/108/109 communs).
 - Reel : 145,2875 ham = F4LFY (Nice), F6GLS (Saint-Raphael), VE2FSJ
   (Brossard), F4MXS (Regusse) ; 467 = relais commerciaux (IDs courts).
+
+## 2026-10-08 : integration DMR <-> scanner verifiee (demande utilisateur)
+DMR n'est pas une logique a part, c'est une facette du balayage. Verifie :
+- Interets : "dmr" est dans la categorie "professionnels" (interets.category_of)
+  -> la fenetre dmr ET le balayage uhf_business repondent au meme interet.
+- Decouverte = meme process : _handle_candidate du balayage principal ->
+  try_digital_voice_decode(-fa, tous modes) -> _dmr_learn -> registre ; la
+  fenetre dmr revisite (-fs). Prouve : registre = 6 frequences trouvees par
+  le balayage. Pas deux logiques distinctes.
+- Notation : les captures DMR sont des prises du journal radio, notables
+  comme les autres (18 notes), alimentent l'attention.
+- Bilan CORRIGE : le tri analogique/numerique se fait PAR CAPTURE
+  (mesures.numerique). Une bande mixte (uhf_business, relais_2m) regle son
+  audio sur ses captures analogiques et ignore le DMR ; une bande 100 %
+  numerique (dmr) est "suivie" sans reglage audio (dsd-fme ne passe pas par
+  reglages_audio). Plus de proposition/auto-ajustement analogique absurde.
+- Profondeur : bandes DMR balayees au pas de 12,5 kHz ; chiffre ecarte
+  (dsd echoue + coupure prive/chiffre) ; la veille dmr revisite desormais
+  TOUTES les frequences connues (mieux notees plus souvent), pas seulement
+  le top 4 -> on capte tout le DMR ouvert.
