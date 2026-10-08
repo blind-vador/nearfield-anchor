@@ -6454,3 +6454,21 @@ DMR n'est pas une logique a part, c'est une facette du balayage. Verifie :
   (dsd echoue + coupure prive/chiffre) ; la veille dmr revisite desormais
   TOUTES les frequences connues (mieux notees plus souvent), pas seulement
   le top 4 -> on capte tout le DMR ouvert.
+
+## 2026-10-08 : annonces groupees avions + trains, ambiance gare
+- Avions (adsb_watch) : les nouveaux appareils d'un passage sont annonces
+  en UN message "{n} avions detectes : <av1> <av2>..." (avion.plusieurs_
+  detectes) ; un seul avion garde la phrase habituelle. Urgences et survols
+  restent individuels.
+- Trains (sncf_watch) : annonces GROUPEES. Chaque annonce qui part entre dans
+  un tampon ; apres _GROUP_WINDOW_SEC (4 s) tout est regroupe PAR TYPE et dit
+  ensemble ("2 trains vont etre mis en place : le TER ... et le TGV ..."). Un
+  seul train = phrase habituelle mot pour mot. Depart/terminus/arret groupes
+  separement (verbes differents). Perturbations/suppressions restent
+  individuelles.
+- Sons d'ambiance simultanes : _play_ambient_sound joue SANS verrou exclusif
+  (play_sound_effect -> aplay "default"/dmix mixe), donc une arrivee et un
+  depart au meme instant jouent ensemble.
+- Evenement d'ambiance secondaire : proba AMBIENCE_EXTRA_PROB (0,15) qu'un son
+  de train declenche, en parallele, un train qui passe (ter/tgv_passby) ou un
+  klaxon (horn1.mp3) au hasard -- decoratif, pour faire vivre la gare.
