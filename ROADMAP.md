@@ -6421,3 +6421,16 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
   Sirio / une antenne fenetre via tools/scan_gsm.sh ; si des cellules
   sortent (MCC 208 = France ; MNC -> operateur), on batira le suivi
   presence/sante (cellules vues, apparition/disparition), sans IMSI ni contenu.
+
+## 2026-10-08 : DMR approfondi (choix utilisateur)
+- Emetteurs radioamateurs (>= 6 chiffres) resolus en indicatif + ville via
+  radioid.net (lib/radioamateurs.dmr_id), jamais le nom. A l'affichage de la
+  commande dmr seulement (cache SD ; scanner non ralenti). Les petits
+  identifiants des relais commerciaux 467 restent numeriques.
+- dmr_registre.networks() : regroupe les frequences d'un meme reseau
+  multi-canaux (Capacity Plus...) par GROUPES D'APPEL partages entre
+  frequences a < 5 MHz -- PAS par code couleur (le CC 1 est partout et
+  melait a tort 145 ham et 467 commercial). Verifie : seul 467,2374 +
+  467,2408 regroupes (groupes 107/108/109 communs).
+- Reel : 145,2875 ham = F4LFY (Nice), F6GLS (Saint-Raphael), VE2FSJ
+  (Brossard), F4MXS (Regusse) ; 467 = relais commerciaux (IDs courts).
