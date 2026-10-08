@@ -93,6 +93,15 @@ def _by_band(notes):
     return bands
 
 
+def _is_digital(notes):
+    """Bande en voix numerique (DMR...) : decodee par dsd-fme, elle ne passe
+    PAS par le nettoyage analogique (reglages_audio). Le bilan la suit mais ne
+    propose aucun reglage audio -- passe-bas, souffle, gain n'ont pas de sens
+    ici (2026-10-08, demande utilisateur : DMR integre au meme process, mais
+    sans reglage analogique absurde)."""
+    return any((n.get("mesures") or {}).get("numerique") for n in notes)
+
+
 def _clamp(value, low, high):
     return max(low, min(high, value))
 
@@ -162,21 +171,25 @@ def analyse():
         after = [n for n in notes if _capture_time(n) > since]
         before = [n for n in notes if _capture_time(n) <= since][-15:]
         settings = ra.get(band)
+        digital = _is_digital(notes)
         entry = {"libelle": notes[-1].get("label") or band, "notes": len(notes), "depuis": len(after),
                  "qualite": sum(quality(n) for n in after or notes) / len(after or notes),
-                 "changements": {}, "raisons": [], "regression": None, "a_noter": 0}
-        if since and len(after) >= MIN_AFTER and before:
-            q_before = sum(quality(n) for n in before) / len(before)
-            q_after = sum(quality(n) for n in after) / len(after)
-            if q_after < q_before - REGRESSION:
-                entry["regression"] = (q_before, q_after)
-        if len(after) >= MIN_NOTES or entry["regression"]:
-            try:
-                entry["a_noter"] = _unrated_since(band, since, rated)
-            except Exception as exc:  # journal illisible : on ne bloque pas le bilan
-                print(f"[bilan] captures non notees : {exc!r}")
-        if len(after) >= MIN_NOTES and not entry["regression"] and not entry["a_noter"]:
-            entry["changements"], entry["raisons"] = suggestions(after, settings)
+                 "changements": {}, "raisons": [], "regression": None, "a_noter": 0, "numerique": digital}
+        # Bande numerique (DMR) : decodee par dsd-fme, aucun reglage analogique
+        # a proposer. On la suit (qualite, nombre) sans jamais ajuster l'audio.
+        if not digital:
+            if since and len(after) >= MIN_AFTER and before:
+                q_before = sum(quality(n) for n in before) / len(before)
+                q_after = sum(quality(n) for n in after) / len(after)
+                if q_after < q_before - REGRESSION:
+                    entry["regression"] = (q_before, q_after)
+            if len(after) >= MIN_NOTES or entry["regression"]:
+                try:
+                    entry["a_noter"] = _unrated_since(band, since, rated)
+                except Exception as exc:  # journal illisible : on ne bloque pas le bilan
+                    print(f"[bilan] captures non notees : {exc!r}")
+            if len(after) >= MIN_NOTES and not entry["regression"] and not entry["a_noter"]:
+                entry["changements"], entry["raisons"] = suggestions(after, settings)
         out[band] = entry
     return out
 
@@ -197,7 +210,9 @@ def summary():
                   bandes=nombre(len(data), "bande"))]
     for band, e in sorted(data.items(), key=lambda kv: -kv[1]["notes"]):
         line = dire("bilan.qualite_bande", bande=e['libelle'], qualite=round(100 * e['qualite']))
-        if e["a_noter"]:
+        if e.get("numerique"):
+            line += dire("bilan.numerique_suivi")
+        elif e["a_noter"]:
             line += dire("bilan.encore_a_noter", prises=nombre(e["a_noter"], "prise", "prises"))
         elif e["regression"]:
             line += (dire("bilan.baisse_depuis_dernier_reglage", round=round(100 * e['regression'][0]), round2=round(100 * e['regression'][1])))
