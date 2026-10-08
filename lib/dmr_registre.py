@@ -155,20 +155,36 @@ def main_cc(e):
     return max(cc, key=cc.get) if cc else None
 
 
+NETWORK_SPAN_HZ = 5_000_000   # memes canaux d'un reseau : dans la meme zone de 5 MHz
+
+
 def networks(now=None):
-    """Regroupe les frequences par code couleur dominant : un meme reseau DMR
-    (ex. Capacity Plus) occupe plusieurs frequences avec le MEME code couleur.
-    Rend [{"cc", "freqs_hz": [...], "relais": bool}] pour les codes vus sur
-    plus d'une frequence (2026-10-08)."""
-    groups = {}
-    for e in load().values():
-        cc = main_cc(e)
-        if cc is None:
-            continue
-        g = groups.setdefault(cc, {"cc": cc, "freqs_hz": [], "relais": False})
+    """Regroupe les frequences qui appartiennent au MEME reseau DMR (ex.
+    Capacity Plus qui repartit ses appels sur plusieurs canaux). Critere fiable
+    (2026-10-08) : deux frequences proches (< 5 MHz) qui PARTAGENT au moins un
+    groupe d'appel. Le code couleur seul ne suffit pas -- le CC 1 est partout
+    (il melait a tort le relais radioamateur 145 et les relais 467). Rend
+    [{"cc", "freqs_hz": [...], "relais": bool}] pour les reseaux multi-canaux."""
+    entries = [e for e in load().values() if e.get("groupes")]
+    parent = {e["freq_hz"]: e["freq_hz"] for e in entries}
+
+    def find(f):
+        while parent[f] != f:
+            parent[f] = parent[parent[f]]
+            f = parent[f]
+        return f
+
+    for i, a in enumerate(entries):
+        for b in entries[i + 1:]:
+            if abs(a["freq_hz"] - b["freq_hz"]) < NETWORK_SPAN_HZ and set(a["groupes"]) & set(b["groupes"]):
+                parent[find(a["freq_hz"])] = find(b["freq_hz"])
+    clusters = {}
+    for e in entries:
+        root = find(e["freq_hz"])
+        g = clusters.setdefault(root, {"freqs_hz": [], "cc": main_cc(e), "relais": False})
         g["freqs_hz"].append(e["freq_hz"])
         g["relais"] = g["relais"] or e.get("relais", False)
-    return [g for g in groups.values() if len(g["freqs_hz"]) > 1]
+    return [g for g in clusters.values() if len(g["freqs_hz"]) > 1]
 
 
 def resolve_callsign(src):
