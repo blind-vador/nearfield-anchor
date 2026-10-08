@@ -96,3 +96,40 @@ Après le correctif LoRa (lecture_flux.arreter, rtl_sdr -n), passé de ~1 reset
 13:29:30 pile à l'ouverture de la fenêtre balises → même motif (programme
 rtl tué sans vider le tuyau). À corriger comme LoRa. Webcam OctoPi
 (mjpg_streamer) boucle toutes les 2 min mais N'est PAS corrélée aux resets.
+
+## Audit des modes de modulation / transmission (2026-10-08)
+
+DECODE AUJOURD'HUI (clé NESDR, VHF/UHF) :
+- Voix analogique : AM (aviation, CB, milair, VOLMET/ATIS), NFM (PMR446,
+  marine, pro, relais ham...), WFM (radio FM).
+- Voix numerique (dsd-fme -fa + extra) : DMR, dPMR, NXDN, M17, D-STAR, YSF,
+  P25 phase 1 et 2, X2-TDMA.
+- Texte/donnees (multimon-ng) : POCSAG 512/1200/2400, FLEX, AFSK1200
+  (APRS/AX.25), FSK9600, MORSE_CW, DTMF, selectifs EEA/EIA/CCIR/ZVEI.
+- Texte porte par le numerique : alias, SMS, ISO7/ISO8/Text, GPS (DMR,
+  D-Star, YSF, M17...) -> journal messages (verifie 2026-10-08).
+- Protocoles dedies : ACARS (acarsdec), VDL2 (dumpvdl2), ADS-B/Mode S
+  (dump1090), LoRa/Meshtastic, rtl_433 (capteurs ISM), balises 406 (dec406),
+  OGN/FLARM, radiosondes, DAB+. Images satellites NOAA APT / Meteor LRPT.
+
+GAPS (non decodes) :
+- SSB (USB/LSB) et CW a l'oreille : notes "non demodulables" dans le code.
+  Surtout HF (ham, aero HF, marine HF, CB BLU) -> antenne HF. Quelques
+  segments VHF/UHF ham, rares. rtl_fm ne fait pas la BLU (il faudrait csdr).
+- TETRA (pro/secours ~380-430) : pas de decodeur installe (tetra-rx) ; voix
+  en general chiffree, seule la signalisation serait en clair. TETRAPOL
+  (etat/police FR) : aucun decodeur ouvert n'existe.
+- AIS (marine 162 MHz) : public mais aucun decodeur ; sans interet a
+  Saint-Etienne (pas de trafic maritime).
+- SSTV (images lentes, ham 144/430 et ISS) : decodable (pysstv) +
+  description Gemini ; RECEVABLE avec l'antenne actuelle a 145/435. Seul
+  vrai manque ouvert et captable ici -> candidat a ajouter.
+- HF numerique : NAVTEX, RTTY, FT8/JS8/WSPR, PSK31 -> antenne HF.
+- Telemetrie satellites amateurs (gr-satellites) : non fait (l'utilisateur
+  a prefere le DMR, 2026-10-08).
+- ACARS satellite (Inmarsat/Iridium), HFDL -> antenne bande L / HF.
+
+CONCLUSION : couverture VHF/UHF voix+donnees quasi complete. Les manques
+sont soit chiffres (TETRA/TETRAPOL), soit sans interet local (AIS), soit
+bloques par l'antenne (SSB/CW HF, HF numerique, bande L). Le seul mode
+OUVERT, CAPTABLE MAINTENANT et non couvert est la SSTV (images).
