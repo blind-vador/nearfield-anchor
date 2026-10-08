@@ -93,13 +93,13 @@ def _by_band(notes):
     return bands
 
 
-def _is_digital(notes):
-    """Bande en voix numerique (DMR...) : decodee par dsd-fme, elle ne passe
-    PAS par le nettoyage analogique (reglages_audio). Le bilan la suit mais ne
-    propose aucun reglage audio -- passe-bas, souffle, gain n'ont pas de sens
-    ici (2026-10-08, demande utilisateur : DMR integre au meme process, mais
-    sans reglage analogique absurde)."""
-    return any((n.get("mesures") or {}).get("numerique") for n in notes)
+def _note_digital(note):
+    """Capture en voix numerique (DMR...) : decodee par dsd-fme, elle ne passe
+    PAS par le nettoyage analogique (reglages_audio), donc elle est exclue du
+    reglage audio du bilan (2026-10-08, demande utilisateur : DMR integre au
+    meme process, mais sans reglage analogique absurde). Une bande balayee
+    peut melanger analogique et numerique : le tri se fait par capture."""
+    return bool((note.get("mesures") or {}).get("numerique"))
 
 
 def _clamp(value, low, high):
@@ -165,19 +165,24 @@ def analyse():
     out = {}
     all_notes = _radio_notes()
     rated = {n.get("fichier") for n in notation.load_notes()}
-    for band, notes in _by_band(all_notes).items():
+    for band, all_band in _by_band(all_notes).items():
         since = ra.last_change(band)
-        notes = sorted(notes, key=_capture_time)
+        # Le reglage audio se fait sur les captures ANALOGIQUES seules : une
+        # bande balayee (uhf_business, relais_2m...) peut melanger de
+        # l'analogique et du DMR ; dsd-fme ne passe pas par reglages_audio.
+        notes = sorted((n for n in all_band if not _note_digital(n)), key=_capture_time)
+        fully_digital = not notes  # bande entierement numerique (ex. "dmr")
+        if fully_digital:
+            notes = sorted(all_band, key=_capture_time)
         after = [n for n in notes if _capture_time(n) > since]
         before = [n for n in notes if _capture_time(n) <= since][-15:]
         settings = ra.get(band)
-        digital = _is_digital(notes)
-        entry = {"libelle": notes[-1].get("label") or band, "notes": len(notes), "depuis": len(after),
+        entry = {"libelle": notes[-1].get("label") or band, "notes": len(all_band), "depuis": len(after),
                  "qualite": sum(quality(n) for n in after or notes) / len(after or notes),
-                 "changements": {}, "raisons": [], "regression": None, "a_noter": 0, "numerique": digital}
-        # Bande numerique (DMR) : decodee par dsd-fme, aucun reglage analogique
-        # a proposer. On la suit (qualite, nombre) sans jamais ajuster l'audio.
-        if not digital:
+                 "changements": {}, "raisons": [], "regression": None, "a_noter": 0, "numerique": fully_digital}
+        # Bande entierement numerique (DMR) : decodee par dsd-fme, aucun reglage
+        # analogique a proposer. On la suit (qualite, nombre) sans ajuster l'audio.
+        if not fully_digital:
             if since and len(after) >= MIN_AFTER and before:
                 q_before = sum(quality(n) for n in before) / len(before)
                 q_after = sum(quality(n) for n in after) / len(after)
