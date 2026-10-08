@@ -12,7 +12,7 @@ import audio_lock
 from sound_player import play_sound_effect
 from sound_paths import TRAIN_SCANER_DIR
 import reglages
-from phrases import dire
+from phrases import dire, nombre
 
 # API SNCF (moteur Navitia), gratuite avec compte -- 150 000 requetes/mois
 # (5000/jour). Jeton dans nearfield-anchor-settings/cles/sncf.txt, relu a
@@ -260,23 +260,48 @@ def _probe_duration_sec(path, default=30.0):
         return default
 
 
-def _play_ambient_sound(category, action):
+HORN_SOUND = os.path.join(AMBIANT_SOUND_DIR, "horn1.mp3")
+# Faible proba qu'un son de train declenche un evenement secondaire aleatoire
+# (train qui passe, klaxon), MEME s'il n'est pas reel : colore et fait vivre
+# la gare (2026-10-08, demande utilisateur).
+AMBIENCE_EXTRA_PROB = 0.15
+
+
+def _pick_ambient(category, action):
     folder = os.path.join(AMBIANT_SOUND_DIR, f"{category}_{action}")
     try:
         files = [f for f in os.listdir(folder) if f.lower().endswith((".mp3", ".wav"))]
     except FileNotFoundError:
-        print(f"[sncf_watch] dossier bruitage introuvable : {folder}")
+        return None
+    return os.path.join(folder, random.choice(files)) if files else None
+
+
+def _play_file(path):
+    """Joue un son d'ambiance SANS verrou exclusif : plusieurs sons se mixent
+    sur la carte USB ("default" via dmix), donc une arrivee et un depart
+    simultanes jouent ensemble (2026-10-08, demande utilisateur)."""
+    play_sound_effect(path, timeout_sec=_probe_duration_sec(path) + 5, label="sncf_watch")
+
+
+def _play_random_ambience():
+    """Evenement secondaire d'ambiance : un train qui passe (TER ou TGV) ou un
+    coup de klaxon, au hasard. Decoratif, pas forcement reel."""
+    choix = random.choice(["ter_passby", "tgv_passby", "horn"])
+    path = HORN_SOUND if choix == "horn" else _pick_ambient(choix.split("_")[0], "passby")
+    if path and os.path.exists(path):
+        _play_file(path)
+
+
+def _play_ambient_sound(category, action):
+    path = _pick_ambient(category, action)
+    if not path:
+        print(f"[sncf_watch] dossier bruitage absent ou vide : {category}_{action}")
         return
-    if not files:
-        print(f"[sncf_watch] dossier bruitage vide (en cours de mixage ?) : {folder}")
-        return
-    path = os.path.join(folder, random.choice(files))
-    timeout_sec = _probe_duration_sec(path) + 5
-    lock = audio_lock.acquire()
-    try:
-        play_sound_effect(path, timeout_sec=timeout_sec, label="sncf_watch")
-    finally:
-        audio_lock.release(lock)
+    # Evenement secondaire aleatoire lance EN PARALLELE (il se mixe au son
+    # principal) avec une faible probabilite, pour animer la gare.
+    if random.random() < AMBIENCE_EXTRA_PROB:
+        threading.Timer(random.uniform(1.0, 4.0), _play_random_ambience).start()
+    _play_file(path)
 
 
 def _schedule_ambient_sound(mode, action, event_dt):
@@ -345,10 +370,87 @@ def _schedule_announcement(speak_fn, args, actual_dt, state, vj_id):
     pouvoir l'annuler si le train est supprime avant que l'annonce ne parte
     (voir _process_station)."""
     delay = max(0.0, (actual_dt - datetime.now()).total_seconds() - ANNOUNCEMENT_LEAD_SEC)
-    timer = threading.Timer(delay, speak_fn, args=args)
+    timer = threading.Timer(delay, _enqueue_announcement, args=(speak_fn, args))
     timer.daemon = True
     timer.start()
     state["scheduled_announcements"][vj_id] = timer
+
+
+# --- Annonces GROUPEES (2026-10-08) : plusieurs trains annonces a la suite ou
+# quasi en meme temps sont dits en un seul message ("le TER ... et le TER ...
+# vont etre mis en place") au lieu d'une annonce par train. Chaque annonce qui
+# "part" entre d'abord dans un tampon ; une courte fenetre plus tard, tout ce
+# qui s'est accumule est regroupe par type et enonce ensemble.
+_GROUP_WINDOW_SEC = 4.0
+_pending_ann = []
+_group_timer = None
+_group_lock = threading.Lock()
+# type d'annonce -> (fragment par train, phrase groupee avec le verbe)
+_GROUP_TEMPLATES = {
+    _speak_depart_announcement: ("trains.frag_depart", "trains.groupe_depart"),
+    _speak_terminus_announcement: ("trains.frag_terminus", "trains.groupe_terminus"),
+    _speak_stop_and_go_announcement: ("trains.frag_sag", "trains.groupe_sag"),
+}
+
+
+def _enqueue_announcement(speak_fn, args):
+    global _group_timer
+    with _group_lock:
+        _pending_ann.append((speak_fn, args))
+        if _group_timer is not None:
+            _group_timer.cancel()
+        _group_timer = threading.Timer(_GROUP_WINDOW_SEC, _flush_announcements)
+        _group_timer.daemon = True
+        _group_timer.start()
+
+
+def _flush_announcements():
+    with _group_lock:
+        items = _pending_ann[:]
+        _pending_ann.clear()
+    if not items:
+        return
+    if len(items) == 1:  # un seul train : annonce habituelle, mot pour mot
+        fn, args = items[0]
+        fn(*args)
+        return
+    groups = {}  # speak_fn -> [args, ...] : on regroupe par type d'annonce
+    order = []
+    for fn, args in items:
+        if fn not in groups:
+            groups[fn] = []
+            order.append(fn)
+        groups[fn].append(args)
+    for fn in order:
+        group = groups[fn]
+        if len(group) == 1:
+            fn(*group[0])
+        else:
+            _speak_grouped(fn, group)
+
+
+def _speak_grouped(fn, group):
+    """Un message pour plusieurs trains du MEME type (departs ensemble,
+    arrivees ensemble, arrets ensemble)."""
+    frag_key, verb_key = _GROUP_TEMPLATES[fn]
+    frags = []
+    for args in group:
+        mode, train_number = args[0], args[-1]
+        mode_label = _train_label(mode, train_number)
+        heure = _format_time_spoken(args[-2])
+        if fn is _speak_depart_announcement:          # (mode, destination, scheduled_dt, train_number)
+            frags.append(dire(frag_key, mode_label=mode_label, destination=args[1], v1=heure))
+        elif fn is _speak_terminus_announcement:      # (mode, origin, scheduled_dt, train_number)
+            frags.append(dire(frag_key, mode_label=mode_label, origin=args[1], v1=heure))
+        else:                                         # stop_and_go (mode, origin, destination, scheduled_dt, train_number)
+            frags.append(dire(frag_key, mode_label=mode_label, origin=args[1], destination=args[2], v1=heure))
+    liste = frags[0] if len(frags) == 1 else ", ".join(frags[:-1]) + " " + dire("trains.et") + " " + frags[-1]
+    message = dire(verb_key, nombre=nombre(len(group), "train"), liste=liste)
+    lock = audio_lock.acquire()
+    try:
+        speak_with_lead_sound(SOUND_MODERNE, message, label="sncf_watch")
+    finally:
+        audio_lock.release(lock)
 
 
 def _cancel_scheduled_announcement(state, vj_id):

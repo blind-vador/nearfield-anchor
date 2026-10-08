@@ -11,7 +11,7 @@ from sound_paths import FLIGHT_SCANER_DIR, RADIO_SCANER_DIR
 import reglages
 import adsb_local_watch
 import ogn_watch
-from phrases import Etiquettes, dire
+from phrases import Etiquettes, dire, nombre
 
 # API OpenSky Network. Compte authentifie cree en session (username
 # blind_vador) -- l'API exige desormais OAuth2 (client_credentials).
@@ -357,6 +357,7 @@ def main():
         _publish_air_context(states)
         _check_emergencies(states, emergencies, now)
         current_aircraft = {}
+        nouveaux = []  # appareils nouveaux ce passage : annonce GROUPEE a la fin
         for state in states:
             if state[IDX_ON_GROUND]:
                 continue  # pas interessant pour une veille "dans le ciel"
@@ -375,20 +376,16 @@ def main():
             current_aircraft[icao24] = callsign
 
             if now - known_aircraft.get(icao24, 0) > FORGET_SEC:
-                parts = [dire("avion.avion_detecte", callsign=callsign)]
+                details = []
                 if icao24 in local_only:
-                    parts.append(dire("avion.capte_direct_antenne"))
+                    details.append(dire("avion.capte_direct_antenne"))
                 category_name = CATEGORY_NAMES.get(category)
                 if category_name:
-                    parts.append(f"{category_name.capitalize()}.")
+                    details.append(f"{category_name.capitalize()}.")
                 if altitude_m:
-                    parts.append(dire("avion.altitude_metres", altitude_m=format(altitude_m, ".0f")))
-                parts.append(dire("avion.distance_kilometres", dist=format(dist, ".0f")))
-                lock = audio_lock.acquire()
-                try:
-                    speak_with_lead_sound(SIMPLE_CONTACT_SOUND, " ".join(parts), label="adsb_watch")
-                finally:
-                    audio_lock.release(lock)
+                    details.append(dire("avion.altitude_metres", altitude_m=format(altitude_m, ".0f")))
+                details.append(dire("avion.distance_kilometres", dist=format(dist, ".0f")))
+                nouveaux.append((callsign, details))
                 print(f"[adsb_watch] nouvel appareil : {callsign} ({icao24}), {dist:.0f} km")
 
             if dist <= OVERHEAD_RADIUS_KM:
@@ -398,6 +395,22 @@ def main():
                     print(f"[adsb_watch] survol direct : {callsign} ({icao24}), {dist:.1f} km")
             else:
                 overhead_announced.discard(icao24)
+
+        # Annonce GROUPEE (2026-10-08) : un seul message pour tous les nouveaux
+        # appareils du passage ("3 avions detectes : ..."), au lieu d'une
+        # annonce par avion.
+        if nouveaux:
+            if len(nouveaux) == 1:
+                callsign, details = nouveaux[0]
+                texte = " ".join([dire("avion.avion_detecte", callsign=callsign)] + details)
+            else:
+                entrees = [" ".join([f"{callsign}."] + details) for callsign, details in nouveaux]
+                texte = dire("avion.plusieurs_detectes", nombre=nombre(len(nouveaux), "avion")) + " " + " ".join(entrees)
+            lock = audio_lock.acquire()
+            try:
+                speak_with_lead_sound(SIMPLE_CONTACT_SOUND, texte, label="adsb_watch")
+            finally:
+                audio_lock.release(lock)
 
         for icao24 in current_aircraft:
             known_aircraft[icao24] = now
