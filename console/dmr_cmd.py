@@ -38,6 +38,21 @@ def _join(items):
     return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " " + dire("dmr.et") + " " + items[-1]
 
 
+def _emetteurs(ids):
+    """Liste d'emetteurs : indicatif radioamateur + ville quand on les connait
+    (radioid.net), sinon le numero. Jamais le nom de la personne."""
+    out = []
+    for src in list(ids)[:4]:
+        info = dmr_registre.resolve_callsign(src)
+        if info and info.get("indicatif"):
+            ville = info.get("ville")
+            out.append(dire("dmr.emetteur_connu", indicatif=info["indicatif"], ville=ville) if ville
+                       else info["indicatif"])
+        else:
+            out.append(str(src))
+    return ", ".join(out)
+
+
 def describe(e):
     mhz = f"{e['freq_hz'] / 1e6:.4f}".replace(".", ",")
     parts = [dire("dmr.frequence", frequence=mhz,
@@ -50,7 +65,7 @@ def describe(e):
         parts.append(dire("dmr.systeme", systeme=e["systeme"]))
     groups = sorted((e.get("groupes") or {}).items(), key=lambda kv: kv[1].get("n", 0), reverse=True)
     if groups:
-        listed = [dire("dmr.groupe", groupe=tg, emetteurs=", ".join(g.get("emetteurs", [])[:4]),
+        listed = [dire("dmr.groupe", groupe=tg, emetteurs=_emetteurs(g.get("emetteurs", [])),
                        intervalle=_join(g.get("slots", []) or ["?"]))
                   for tg, g in groups[:MAX_GROUPS]]
         parts.append(dire("dmr.groupes", nombre=nombre(len(groups), "groupe"), liste=" ; ".join(listed)))
@@ -72,5 +87,9 @@ def run(line):
         return dire("dmr.rien")
     texts = [dire("dmr.titre", nombre=nombre(len(known), "fréquence DMR", "fréquences DMR"))]
     texts += [describe(e) for e in known[:MAX_FREQS]]
+    for net in dmr_registre.networks():
+        freqs = _join([f"{f / 1e6:.4f}".replace(".", ",") for f in sorted(net["freqs_hz"])])
+        texts.append(dire("dmr.reseau_multi", couleur=int(net["cc"]),
+                          nombre=nombre(len(net["freqs_hz"]), "fréquence", "fréquences"), freqs=freqs))
     texts.append(dire("dmr.dis_explications"))
     return " ".join(texts)

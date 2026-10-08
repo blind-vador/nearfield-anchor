@@ -155,6 +155,34 @@ def main_cc(e):
     return max(cc, key=cc.get) if cc else None
 
 
+def networks(now=None):
+    """Regroupe les frequences par code couleur dominant : un meme reseau DMR
+    (ex. Capacity Plus) occupe plusieurs frequences avec le MEME code couleur.
+    Rend [{"cc", "freqs_hz": [...], "relais": bool}] pour les codes vus sur
+    plus d'une frequence (2026-10-08)."""
+    groups = {}
+    for e in load().values():
+        cc = main_cc(e)
+        if cc is None:
+            continue
+        g = groups.setdefault(cc, {"cc": cc, "freqs_hz": [], "relais": False})
+        g["freqs_hz"].append(e["freq_hz"])
+        g["relais"] = g["relais"] or e.get("relais", False)
+    return [g for g in groups.values() if len(g["freqs_hz"]) > 1]
+
+
+def resolve_callsign(src):
+    """Indicatif + ville d'un emetteur DMR radioamateur (>= 6 chiffres) via
+    radioid.net ; None pour les petits identifiants (relais commercial) ou si
+    inconnu. Jamais le nom de la personne (lib/radioamateurs.py)."""
+    try:
+        import radioamateurs
+        return radioamateurs.dmr_id(src)
+    except Exception as exc:
+        print(f"[dmr_registre] radioid {src} : {exc!r}")
+        return None
+
+
 def seed(lines):
     """Relit une sortie passee de radio_watch (journal systeme, "horodatage
     texte" par ligne) : chaque session dsd-fme commence a "Dev 0 Freq N".
