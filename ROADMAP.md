@@ -6389,3 +6389,18 @@ sur ces lettres). plantes.complete_missing() refera les fiches manquantes
 - NON FAIT (limite d'usage) : point 4 reseau cellulaire. gr-gsm installable
   par apt (dry-run : 25 paquets, ~GNU Radio osmocom). Necessite d'immobiliser
   la cle (stopper radio-watch) pour le test. A faire Pi refroidi.
+
+## 2026-10-08 : mode manuel, DMR et stations d'aeroport
+- DMR en manuel : une station probable DMR (bande "dmr" ou flag numerique,
+  stations.is_digital) est desormais ecoutee en DMR -- dsd-fme en -fs (DMR
+  seul, accroche mieux que -fa) et souffle analogique coupe (silence entre
+  les communications du relais, voix decodee pendant). Le drapeau numerique
+  passe de stations -> target() -> request_manual -> radio_watch -> 
+  manual_tuner.tune(numerique=). A CONFIRMER a l'oreille sur une vraie
+  transmission DMR.
+- Stations d'aeroport : les 6 fenetres airband a une seule frequence (ATIS
+  Lyon/St-Etienne, St-Etienne, Lyon tour/sol/approche) ne sont plus 6
+  plages separees mais une seule plage "stations d'aeroport" (manuel.
+  plage_aeroport), navigable station par station. pmr446 (16 canaux) reste
+  une vraie plage. _publish_plages regroupe ; manuel target() honore
+  station["source"] (airband). Verifie : plages regenerees OK.
