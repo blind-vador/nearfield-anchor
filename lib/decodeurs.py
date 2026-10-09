@@ -41,6 +41,11 @@ MULTIMON_ARGS = [
 ]
 MULTIMON_RATE = 22050
 MIN_DECODED_MESSAGE_CHARS = 4
+# Texte transporte par la voix numerique (SMS/alias DMR...) : deja protege du
+# bruit par dsd_validated (la voix doit s'etre verrouillee avant), donc on peut
+# etre permissif -- on LIT meme un texte court en clair (2026-10-09, meme
+# principe que le correctif pagers : on ne jette pas un message en clair).
+MIN_TRANSPORTED_TEXT_CHARS = 2
 
 
 # Textes transportes avec la voix (2026-10-03) : lignes de dsd-fme.
@@ -57,7 +62,7 @@ def new_stats(freq_hz=None):
 
 def _readable(value):
     value = " ".join(value.split())
-    return value if sum(c.isalnum() for c in value) >= MIN_DECODED_MESSAGE_CHARS else ""
+    return value if sum(c.isalnum() for c in value) >= MIN_TRANSPORTED_TEXT_CHARS else ""
 
 
 def dsd_line(stats, text):
