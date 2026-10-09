@@ -224,7 +224,12 @@ def _match(line):
     """Commande tapee. "journal ..." et "archives ..." passent avant tout :
     "journal capteurs" ou "archives satellites" ne doivent pas ouvrir la
     commande capteurs ou satellites (lib/journaux.py)."""
-    first = (matcher.normalize(line).split() or [""])[0]
+    tokens = matcher.normalize(line).split()
+    # "journal des rejets" / "rejets" : le journal des candidats ecartes, pas
+    # le journal normal (qui happe tout ce qui commence par "journal").
+    if "rejets" in tokens or "rejet" in tokens:
+        return next(c for c in commands.COMMANDS if c.name == "rejets"), 100
+    first = (tokens or [""])[0]
     if first in ("journal", "journaux", "archives", "archive"):
         name = "journal" if first.startswith("journ") else "archives"
         return next(c for c in commands.COMMANDS if c.name == name), 100
@@ -358,6 +363,9 @@ def run_command(line, key_source, last_response):
     if cmd.name == "filtres":
         import filtres_cmd
         return filtres_cmd.run(line, key_source, voix.say, out)
+    if cmd.name == "rejets":
+        import rejets_cmd
+        return rejets_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "intérêts":
         import interets_cmd
         return interets_cmd.run(line, key_source, voix.say, out)

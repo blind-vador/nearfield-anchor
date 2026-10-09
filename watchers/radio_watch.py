@@ -1762,7 +1762,11 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
                                             _last_stream_fingerprint, metrics)
             saved = True
             return True
-        log_session.discard()
+        # Au lieu de jeter l'audio : on le garde comme extrait de rejet
+        # (journal des rejets, lib/rejets.py) pour un tri humain a l'oreille
+        # et le recalibrage. Si c'etait en fait du numerique (extra ci-dessous),
+        # on efface cet extrait : ce n'etait pas un rejet.
+        reject_path = log_session.finalize(subdir="rejets")
         extra = _extra_digital_mode(freq) if mode == "nfm" else None
         if extra:
             # Ecarte comme voix : peut-etre un mode numerique que -fa ne tente pas.
@@ -1774,10 +1778,21 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
                 path = log_session.finalize()
                 noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
                                                 {"niveau_db": level_db, "numerique": True, "mode_numerique": extra[1]})
+                if reject_path:
+                    try:
+                        os.remove(reject_path)
+                    except OSError:
+                        pass
                 saved = True
                 return True
             log_session.discard()
         print("[radio_watch] candidat ecarte (bruit, pas de signal reel)")
+        if reject_path:  # extrait garde pour le journal des rejets
+            try:
+                import rejets
+                rejets.record(reject_path, freq, band_label, "bruit", _last_stream_fingerprint)
+            except Exception as exc:
+                print(f"[radio_watch] rejet non journalise : {exc!r}")
         # Un candidat ecarte EST un echantillon du bruit de fond de sa bande.
         noise_signatures.add_background(target, freq, _last_stream_fingerprint)
         try:  # et son empreinte de bruit, pour le nettoyage doux

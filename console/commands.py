@@ -636,6 +636,10 @@ COMMANDS = [
             keywords=["filtres", "filtre", "filtres parasites", "gérer les parasites",
                       "gérer les filtres", "activer un filtre", "désactiver un filtre", "débloquer une bande"],
             examples=["montre-moi les filtres parasites", "désactiver le filtre sur le 446", "débloquer la bande 446"]),
+    Command("rejets", "journal des candidats écartés en silence : les écouter et trier, n si c'était un vrai signal, r si c'était du bruit", None,
+            keywords=["rejets", "journal des rejets", "les rejets", "trier les rejets", "candidats rejetés",
+                      "faux rejets", "rejetés"],
+            examples=["ouvre le journal des rejets", "écouter ce qui a été rejeté", "trier les rejets"]),
     # Avant "attention" (dont un mot-cle est "priorites") : centres d'interet de l'utilisateur.
     Command("intérêts", "tes centres d'intérêt : ce qui doit attirer le scanner en priorité ; intérêt avions fort, par exemple", None,
             keywords=["interets", "interet", "centres d interet", "centre d interet", "mes interets"],

@@ -119,23 +119,24 @@ class RadioLogSession:
             except OSError:
                 pass
 
-    def finalize(self):
+    def finalize(self, subdir=None):
         """Concatene tous les segments en un seul fichier MP3 dans
-        RADIO_LOG_DIR, nomme par libelle assaini + horodatage lisible
-        (voir _readable_timestamp). Retourne le chemin final ou None si
-        rien a sauvegarder/echec. Nettoie le dossier temporaire dans tous
-        les cas."""
+        RADIO_LOG_DIR (ou son sous-dossier `subdir`, ex. "rejets"), nomme par
+        libelle assaini + horodatage lisible (voir _readable_timestamp).
+        Retourne le chemin final ou None si rien a sauvegarder/echec. Nettoie
+        le dossier temporaire dans tous les cas."""
         try:
             if not self.segments:
                 return None
-            os.makedirs(RADIO_LOG_DIR, exist_ok=True)
+            out_dir = os.path.join(RADIO_LOG_DIR, subdir) if subdir else RADIO_LOG_DIR
+            os.makedirs(out_dir, exist_ok=True)
             concat_list = os.path.join(self._tmpdir, "concat.txt")
             with open(concat_list, "w", encoding="utf-8") as f:
                 for seg in self.segments:
                     f.write(f"file '{seg}'\n")
             safe_label = "".join(c if c.isalnum() else "_" for c in self.label).strip("_")[:40] or "capture"
             timestamp = _readable_timestamp(datetime.datetime.now())
-            out_path = os.path.join(RADIO_LOG_DIR, f"{safe_label}_{timestamp}.mp3")
+            out_path = os.path.join(out_dir, f"{safe_label}_{timestamp}.mp3")
             result = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                  "-f", "concat", "-safe", "0", "-i", concat_list,
@@ -167,13 +168,20 @@ def purge_old_logs():
             return
         cutoff = time.time() - RETENTION_HOURS * 3600
         removed = 0
-        for path in glob.glob(os.path.join(RADIO_LOG_DIR, "*.mp3")):
+        # RADIO_LOG_DIR/*.mp3 et le sous-dossier rejets/ (journal des rejets)
+        for path in (glob.glob(os.path.join(RADIO_LOG_DIR, "*.mp3"))
+                     + glob.glob(os.path.join(RADIO_LOG_DIR, "rejets", "*.mp3"))):
             try:
                 if os.path.getmtime(path) < cutoff:
                     os.remove(path)
                     removed += 1
             except OSError:
                 pass
+        try:
+            import rejets
+            rejets.purge(cutoff)
+        except Exception:
+            pass
         if removed:
             print(f"[radio_log] purge : {removed} fichier(s) de plus de {RETENTION_HOURS}h supprime(s)")
     except Exception as exc:
