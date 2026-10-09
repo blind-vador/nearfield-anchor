@@ -55,10 +55,19 @@ def run(line, key_source, say, out):
     intro = conseils.intro("proposition", title, dire("proposition.consigne"))
     out(intro + "\n")
 
-    def select(new_i):
+    def play_brut():
+        """Joue l'extrait BRUT de la proposition courante tout de suite (comme
+        le journal : la fleche joue, pas d'annonce verbeuse). i donne le detail."""
+        clip = _clip(items[i].get("brut")) if items else None
+        if clip:
+            player.play(clip)
+        elif items:
+            say(dire("proposition.pas_d_extrait"))
+
+    def goto(new_i):
         nonlocal i, lvl, refused
         i, lvl, refused = new_i, 0, set()
-        return _line(items, i)
+        play_brut()
 
     def advance():
         """Niveau de traitement suivant non refuse (cycle) ; joue et annonce."""
@@ -81,7 +90,8 @@ def run(line, key_source, say, out):
                     break
                 say(dire("proposition.consigne"))
             return dire("proposition.fermee")
-        say(f"{intro} {_line(items, i)}")
+        say(intro)
+        play_brut()  # le 1er brut joue d'emblee, sans attendre Entree
 
         for key in key_source:
             voix.stop()
@@ -92,33 +102,39 @@ def run(line, key_source, say, out):
                 return dire("proposition.fermee")
             elif key in (UP, DOWN):
                 j = i + (-1 if key == UP else 1)
-                text = select(j) if 0 <= j < len(items) else (
-                    dire("commun.debut_liste") if j < 0 else dire("commun.fin_liste"))
-            elif key in ("b", "B"):
-                clip = _clip(items[i].get("brut"))
-                if clip:
-                    player.play(clip)
+                if 0 <= j < len(items):
+                    goto(j)  # navigue ET joue le brut aussitot, aucune annonce
                 else:
-                    text = dire("proposition.pas_d_extrait")
+                    text = dire("commun.debut_liste") if j < 0 else dire("commun.fin_liste")
+            elif key in ("\r", "\n", "b", "B"):
+                play_brut()  # rejoue le brut
             elif key in ("t", "T"):
                 text = advance()
+            elif key in ("i", "I"):
+                text = _line(items, i)  # details a la demande (bande, proba, niveaux)
             elif key in ("c", "C"):
                 traits = _traitements(items[i])
                 action = traits[lvl]["action"] if (traits and lvl < len(traits)) else items[i].get("action")
                 ok, detail = propositions.apply(action)
                 propositions.set_etat(items[i]["id"], "confirme")
                 items.pop(i)
-                text = (dire("proposition.confirmee", detail=detail) if ok
-                        else dire("proposition.confirmee_manuelle", detail=detail))
-                text += " " + (select(min(i, len(items) - 1)) if items else dire("proposition.plus_rien"))
+                say(dire("proposition.confirmee", detail=detail) if ok
+                    else dire("proposition.confirmee_manuelle", detail=detail))
+                if items:
+                    goto(min(i, len(items) - 1))
+                else:
+                    text = dire("proposition.plus_rien")
             elif key in ("r", "R"):
                 traits = _traitements(items[i])
                 refused.add(lvl)
                 if not traits or len(refused) >= len(traits):   # tous les niveaux refuses
                     propositions.set_etat(items[i]["id"], "refuse")
                     items.pop(i)
-                    text = dire("proposition.refusee") + " " + (
-                        select(min(i, len(items) - 1)) if items else dire("proposition.plus_rien"))
+                    say(dire("proposition.refusee"))
+                    if items:
+                        goto(min(i, len(items) - 1))
+                    else:
+                        text = dire("proposition.plus_rien")
                 else:
                     text = dire("proposition.niveau_refuse") + " " + advance()
             else:

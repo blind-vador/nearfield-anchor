@@ -46,23 +46,26 @@ except Exception:
 DEFAULT_BASE = "/Volumes/server/server/radio_log"
 VOICE_LO, VOICE_HI = 300.0, 3400.0     # bande de parole (repli spectral)
 PANNS_SR = 32000                        # PANNs CNN14 attend du 32 kHz mono
-# Classes AudioSet considerees comme de la voix (somme de leurs probas = score).
+# Classes AudioSet : voix (somme des probas) et musique (meilleure proba de la
+# famille musicale -- 'music' attrape Music + genres, + le chant).
 SPEECH_WORDS = ("speech", "speaking", "conversation", "narration")
-# Niveaux de nettoyage, du plus leger au plus agressif (prop_decrease noisereduce)
-NIVEAUX = [("léger", 0.6), ("moyen", 0.85), ("fort", 1.0)]
-# Seuils sur le score PANNs (proba de voix), calibres sur des clips reels
-# (2026-10-10) : une voix noyee dans le souffle a une base TRES basse (0.03-0.1)
-# qui bondit apres nettoyage -> on ne doit PAS ecarter sur base basse, c'est le
-# cas le plus interessant. On creuse tout ce qui n'est pas deja clairement de la
-# voix, et on propose quand le nettoyage fait FRANCHIR le seuil de voix.
-AMBIG_HIGH = 0.50       # base au-dessus : voix deja claire/audible, inutile de proposer
+MUSIC_WORDS = ("music", "singing")
+# Niveaux de nettoyage (prop_decrease noisereduce). VOIX : agressif (reveler une
+# voix noyee). MUSIQUE : DOUX, pour oter le souffle/sifflement SANS defigurer la
+# musique (demande utilisateur : la musique FM faussait les nettoyages trop forts).
+NIVEAUX_VOIX = [("léger", 0.6), ("moyen", 0.85), ("fort", 1.0)]
+NIVEAUX_MUSIQUE = [("léger", 0.3), ("moyen", 0.5), ("fort", 0.7)]
+# Seuils (score PANNs), calibres sur clips reels (2026-10-10).
+AMBIG_HIGH = 0.50       # base voix au-dessus : deja claire/audible, inutile de proposer
 REVEAL_MIN = 0.50       # apres nettoyage, la proba de voix doit atteindre ca
 GAIN_MIN = 0.25         # ET le nettoyage doit avoir fait gagner au moins ca
+MUSIC_HIGH = 0.50       # au-dessus : clip considere MUSIQUE (pas une piste voix)
+HISS_MIN = 0.40         # platitude spectrale HF : au-dessus, souffle/sifflement a nettoyer
 MAX_CLIP_SEC = 20.0
 
 # PANNs CNN14 charge une seule fois (lazy). Repli sur le score spectral si
 # indisponible (modele absent, import casse...).
-_model = {"at": None, "speech_idx": None}
+_model = {"at": None, "speech_idx": None, "music_idx": None}
 
 
 def _panns():
@@ -72,7 +75,10 @@ def _panns():
             _model["at"] = AudioTagging(checkpoint_path=None, device="cpu")
             _model["speech_idx"] = [i for i, l in enumerate(labels)
                                     if any(w in l.lower() for w in SPEECH_WORDS)]
-            print(f"[analyse] PANNs CNN14 chargé ({len(_model['speech_idx'])} classes voix)")
+            _model["music_idx"] = [i for i, l in enumerate(labels)
+                                   if any(w in l.lower() for w in MUSIC_WORDS)]
+            print(f"[analyse] PANNs CNN14 chargé ({len(_model['speech_idx'])} classes voix, "
+                  f"{len(_model['music_idx'])} musique)")
         except Exception as exc:
             print(f"[analyse] PANNs indisponible ({exc}) -> score spectral")
             _model["at"] = False
@@ -103,11 +109,12 @@ def decode_wav(src, dst):
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
-def voice_score(y, sr):
-    """Probabilite de voix 0..1. PANNs CNN14 (somme des classes parole) si
-    disponible, sinon repli spectral deterministe."""
+def classify(y, sr):
+    """(voix, musique) en 0..1, UNE seule inference PANNs. voix = somme des
+    classes parole ; musique = meilleure proba de la famille musicale. Repli
+    spectral (voix seule, musique 0) si PANNs indisponible."""
     if y.size < sr // 4:
-        return 0.0
+        return 0.0, 0.0
     at = _panns()
     if at:
         try:
@@ -117,10 +124,31 @@ def voice_score(y, sr):
                 yf = np.interp(np.linspace(0, len(yf), m, endpoint=False),
                                np.arange(len(yf)), yf).astype(np.float32)
             clip, _ = at.inference(yf[None, :])
-            return float(min(1.0, sum(clip[0][i] for i in _model["speech_idx"])))
+            voix = min(1.0, sum(clip[0][i] for i in _model["speech_idx"]))
+            musique = min(1.0, max(clip[0][i] for i in _model["music_idx"]))
+            return float(voix), float(musique)
         except Exception as exc:
             print(f"[analyse] inférence PANNs : {exc}")
-    return _spectral_score(y, sr)
+    return _spectral_score(y, sr), 0.0
+
+
+def voice_score(y, sr):  # compat / diagnostics
+    return classify(y, sr)[0]
+
+
+def _hf_hiss(y, sr):
+    """Platitude spectrale dans le haut du spectre (5-12 kHz) : eleve = souffle
+    large bande / sifflement a nettoyer ; faible = aigus musicaux propres."""
+    y = y.astype(np.float64)
+    win = min(len(y), 1 << 15)
+    if win < 1024:
+        return 0.0
+    spec = np.abs(np.fft.rfft(y[:win] * np.hanning(win))) ** 2
+    freqs = np.fft.rfftfreq(win, 1.0 / sr)
+    hf = spec[(freqs >= 5000) & (freqs <= min(12000, sr / 2 - 1))] + 1e-12
+    if hf.size < 4:
+        return 0.0
+    return float(np.exp(np.mean(np.log(hf))) / np.mean(hf))
 
 
 def _spectral_score(y, sr):
@@ -195,29 +223,48 @@ def process_clip(src, base, tmpdir, audio_rel_dir, dry):
     if y.ndim > 1:
         y = y.mean(axis=1)
     y = y[: int(sr * MAX_CLIP_SEC)]
-    base_score = voice_score(y, sr)
+    v0, m0 = classify(y, sr)   # voix, musique a l'etat brut
 
-    # Voix deja claire (hors rejet) : audible telle quelle, rien a proposer.
-    if base_score >= AMBIG_HIGH and not is_rejet:
-        return None
+    # Classification du contenu (demande utilisateur) : un clip ou la MUSIQUE
+    # domine n'est pas une piste voix -- ne pas y "reveler" une voix (la musique
+    # faussait les nettoyages trop forts). On lui propose a la place un nettoyage
+    # DOUX du souffle/sifflement, qui preserve la musique, et seulement s'il y a
+    # vraiment du souffle (platitude HF).
+    is_music = m0 >= MUSIC_HIGH and m0 >= v0
+    if not is_music and not is_rejet and v0 >= AMBIG_HIGH:
+        return None  # voix deja claire : audible, rien a proposer
+    if is_music and not is_rejet and _hf_hiss(y, sr) < HISS_MIN:
+        return None  # musique deja propre : pas de souffle a enlever
 
-    # On creuse : 3 niveaux de nettoyage, re-score EN MEMOIRE (on n'ecrit les
-    # wav que si on propose, pour ne pas laisser de clips orphelins sur le NAS).
+    niveaux = NIVEAUX_MUSIQUE if is_music else NIVEAUX_VOIX
     band = band_from_name(name)
     pid = f"{int(time.time()*1000)}_{abs(hash(name)) % 10000}"
-    niveaux_calc, best_cleaned = [], base_score
-    for niveau, prop in NIVEAUX:
+    niveaux_calc, best_v = [], v0
+    for niveau, prop in niveaux:
         yc = clean(y, sr, prop)
-        best_cleaned = max(best_cleaned, voice_score(yc, sr))
+        if not is_music:
+            best_v = max(best_v, classify(yc, sr)[0])
         niveaux_calc.append((niveau, prop, yc))
-    gain = best_cleaned - base_score
 
-    # On propose si le nettoyage REVELE de la voix (franchit REVEAL_MIN avec un
-    # gain net), ou si un rejet sonne deja comme de la voix. L'utilisateur
-    # tranche a l'oreille (b/t/c/r) -- garde-fou anti-artefact.
-    propose = (best_cleaned >= REVEAL_MIN and gain >= GAIN_MIN) or (is_rejet and base_score >= AMBIG_HIGH)
-    if not propose:
-        return None
+    if is_music:
+        # Nettoyage musique : on propose des que la musique est presente et
+        # qu'il y a du souffle (deja verifie). L'utilisateur juge l'amelioration.
+        resume = (f"{band} : musique (proba {m0:.2f}) avec du souffle/sifflement — "
+                  f"nettoyage doux pour l'écoute. À confirmer.")
+        confiance = round(m0, 2)
+    else:
+        gain = best_v - v0
+        propose = (best_v >= REVEAL_MIN and gain >= GAIN_MIN) or (is_rejet and v0 >= AMBIG_HIGH)
+        if not propose:
+            return None
+        musique = f" (musique {m0:.2f} présente)" if m0 >= 0.3 else ""
+        if is_rejet:
+            resume = f"{band} : écarté comme bruit, mais une voix semble présente (proba {v0:.2f}){musique}. À confirmer."
+        else:
+            resume = (f"{band} : voix faible révélée par le nettoyage, de {v0:.2f} à {best_v:.2f}{musique}. "
+                      f"À confirmer à l'oreille.")
+        # Si de la musique traine, la "voix revelee" est plus douteuse : on pondere.
+        confiance = round(best_v * (1.0 - 0.4 * m0), 2)
 
     traitements = []
     for niveau, prop, yc in niveaux_calc:
@@ -228,15 +275,9 @@ def process_clip(src, base, tmpdir, audio_rel_dir, dry):
             sf.write(out, np.clip(yc, -1, 1).astype(np.float32), sr)
         traitements.append({"niveau": niveau, "audio": rel,
                             "action": {"kind": "filtre", "target": band,
-                                       "params": {"prop_decrease": prop}}})
-    if is_rejet:
-        resume = f"{band} : écarté comme bruit, mais une voix semble présente (proba {base_score:.2f}). À confirmer."
-    else:
-        resume = (f"{band} : voix faible révélée par le nettoyage, de {base_score:.2f} à {best_cleaned:.2f}. "
-                  f"À confirmer à l'oreille.")
+                                       "params": {"prop_decrease": prop, "musique": is_music}}})
     brut_rel = os.path.join("rejets", name) if is_rejet else name
-    return {"id": pid, "le": time.time(), "origine": "ia",
-            "confiance": round(best_cleaned, 2),
+    return {"id": pid, "le": time.time(), "origine": "ia", "confiance": confiance,
             "resume": resume, "brut": brut_rel, "traitements": traitements,
             "action": {}, "etat": "attente"}
 
