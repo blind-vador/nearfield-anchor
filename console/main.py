@@ -229,6 +229,9 @@ def _match(line):
     # le journal normal (qui happe tout ce qui commence par "journal").
     if "rejets" in tokens or "rejet" in tokens:
         return next(c for c in commands.COMMANDS if c.name == "rejets"), 100
+    # "journal proposition" / "propositions" : revue des reglages proposes.
+    if "proposition" in tokens or "propositions" in tokens:
+        return next(c for c in commands.COMMANDS if c.name == "proposition"), 100
     first = (tokens or [""])[0]
     if first in ("journal", "journaux", "archives", "archive"):
         name = "journal" if first.startswith("journ") else "archives"
@@ -366,6 +369,9 @@ def run_command(line, key_source, last_response):
     if cmd.name == "rejets":
         import rejets_cmd
         return rejets_cmd.run(line, key_source, voix.say, out)
+    if cmd.name == "proposition":
+        import proposition_cmd
+        return proposition_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "intérêts":
         import interets_cmd
         return interets_cmd.run(line, key_source, voix.say, out)

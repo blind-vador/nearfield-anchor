@@ -640,6 +640,10 @@ COMMANDS = [
             keywords=["rejets", "journal des rejets", "les rejets", "trier les rejets", "candidats rejetés",
                       "faux rejets", "rejetés"],
             examples=["ouvre le journal des rejets", "écouter ce qui a été rejeté", "trier les rejets"]),
+    Command("proposition", "journal des propositions : les réglages suggérés par l'analyse du Mac mini, à écouter et confirmer (c) ou refuser (r) le matin", None,
+            keywords=["proposition", "propositions", "journal proposition", "journal des propositions",
+                      "suggestions de réglages", "propositions du matin"],
+            examples=["journal proposition", "voir les propositions de réglage", "qu'est-ce que le mac propose"]),
     # Avant "attention" (dont un mot-cle est "priorites") : centres d'interet de l'utilisateur.
     Command("intérêts", "tes centres d'intérêt : ce qui doit attirer le scanner en priorité ; intérêt avions fort, par exemple", None,
             keywords=["interets", "interet", "centres d interet", "centre d interet", "mes interets"],
