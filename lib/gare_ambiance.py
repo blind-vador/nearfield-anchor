@@ -18,6 +18,7 @@ rester en fond, sous les annonces et le scanner).
 import os
 import random
 import subprocess
+import threading
 import time
 
 import reglages
@@ -32,6 +33,7 @@ WEATHER_VOLUME = 0.18
 WEATHER_SOURCES = ("pluie", "orage", "neige", "vent")
 WEATHER_CACHE_SEC = 600
 POLL_SEC = 60
+CROSSFADE_SEC = 5.0                  # fondus croises entre boucles (2026-10-09)
 _weather = {"t": 0, "actifs": set()}
 
 
@@ -104,49 +106,127 @@ def _sensor_weather():
         return set()
 
 
+def _duration(path):
+    try:
+        out = subprocess.run(
+            ["ffprobe", "-v", "quiet", "-show_entries", "format=duration", "-of", "csv=p=0", path],
+            capture_output=True, text=True, timeout=10).stdout.strip()
+        return float(out)
+    except Exception:
+        return None
+
+
 class _Bed:
-    """Un lit d'ambiance : ffmpeg(-stream_loop -1) -> aplay sur 'default'."""
+    """Un lit d'ambiance en boucle a FONDUS CROISES (2026-10-09) : chaque
+    segment a un fondu d'ouverture et de fermeture de CROSSFADE_SEC, et le
+    segment suivant est lance CROSSFADE_SEC avant la fin du precedent -- les
+    deux fondus se superposent (dmix mixe), donc aucune couture entre boucles.
+    Un thread dedie enchaine les segments ; chaque segment se termine seul en
+    fin de fichier, au plus deux se recouvrent."""
     def __init__(self, name, volume):
         self.name, self.volume = name, volume
-        self.ff = self.ap = self.path = None
+        self._stop = threading.Event()
+        self._thread = None
+        self._procs = []  # (ffmpeg, aplay) en cours
 
     def running(self):
-        return self.ff is not None and self.ff.poll() is None and self.ap is not None and self.ap.poll() is None
+        return self._thread is not None and self._thread.is_alive()
 
     def start(self):
-        files = _files(self.name)
-        if not files:
+        if not _files(self.name):
             return False
-        self.path = random.choice(files)
-        try:
-            self.ff = subprocess.Popen(
-                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-stream_loop", "-1", "-i", self.path,
-                 "-af", f"volume={self.volume}", "-f", "s16le", "-ar", str(RATE), "-ac", "2", "-"],
-                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-            self.ap = subprocess.Popen(
-                ["aplay", "-q", "-D", "default", "-f", "S16_LE", "-r", str(RATE), "-c", "2"],
-                stdin=self.ff.stdout, stderr=subprocess.DEVNULL)
-            self.ff.stdout.close()  # aplay tient le tube
-            print(f"[gare_ambiance] lit '{self.name}' demarre ({os.path.basename(self.path)}, vol {self.volume})")
+        if self.running():
             return True
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run, name=f"bed-{self.name}", daemon=True)
+        self._thread.start()
+        return True
+
+    def _play_segment(self, path, dur):
+        fade = min(CROSSFADE_SEC, max(0.5, dur / 3.0)) if dur else CROSSFADE_SEC
+        af = f"volume={self.volume},afade=t=in:st=0:d={fade:.2f}"
+        if dur:
+            af += f",afade=t=out:st={max(0.0, dur - fade):.2f}:d={fade:.2f}"
+        try:
+            ff = subprocess.Popen(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+                 "-af", af, "-f", "s16le", "-ar", str(RATE), "-ac", "2", "-"],
+                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            ap = subprocess.Popen(
+                ["aplay", "-q", "-D", "default", "-f", "S16_LE", "-r", str(RATE), "-c", "2"],
+                stdin=ff.stdout, stderr=subprocess.DEVNULL)
+            ff.stdout.close()  # aplay tient le tube
+            self._procs.append((ff, ap))
+            return fade
         except OSError as exc:
             print(f"[gare_ambiance] lit '{self.name}' : {exc!r}")
-            return False
+            return None
 
-    def stop(self):
-        for p in (self.ap, self.ff):
-            if p is not None and p.poll() is None:
-                try:
-                    p.terminate()
-                    p.wait(timeout=3)
-                except Exception:
+    def _prune(self):
+        """Recupere les segments termines (evite les zombies), garde les vivants."""
+        alive = []
+        for ff, ap in self._procs:
+            if ap.poll() is None:
+                alive.append((ff, ap))
+            else:
+                if ff.poll() is None:  # ffmpeg devrait avoir fini (EOF), au cas ou
                     try:
-                        p.kill()
+                        ff.terminate()
                     except Exception:
                         pass
-        if self.ff is not None:
-            print(f"[gare_ambiance] lit '{self.name}' coupe")
-        self.ff = self.ap = None
+                for p in (ff, ap):
+                    try:
+                        p.wait(timeout=1)
+                    except Exception:
+                        pass
+        self._procs = alive
+
+    def _run(self):
+        print(f"[gare_ambiance] lit '{self.name}' demarre "
+              f"(boucle a fondus croises {CROSSFADE_SEC:g}s, vol {self.volume})")
+        while not self._stop.is_set():
+            files = _files(self.name)
+            if not files:
+                break
+            path = random.choice(files)  # variete : un segment peut differer du precedent
+            dur = _duration(path)
+            fade = self._play_segment(path, dur)
+            self._prune()
+            if fade is None:
+                if self._stop.wait(5):  # echec de lancement : repli, on retente
+                    break
+                continue
+            if not dur:
+                if self._stop.wait(30):  # duree inconnue : pas de recouvrement precis
+                    break
+                continue
+            # relance le segment suivant `fade` s AVANT la fin -> recouvrement
+            if self._stop.wait(max(0.5, dur - fade)):
+                break
+        self._terminate_all()
+
+    def _terminate_all(self):
+        for ff, ap in self._procs:
+            for p in (ap, ff):
+                if p.poll() is None:
+                    try:
+                        p.terminate()
+                        p.wait(timeout=2)
+                    except Exception:
+                        try:
+                            p.kill()
+                        except Exception:
+                            pass
+        self._procs = []
+
+    def stop(self):
+        if not self.running() and not self._procs:
+            return
+        self._stop.set()
+        if self._thread is not None:
+            self._thread.join(timeout=CROSSFADE_SEC + 2)
+        self._terminate_all()
+        print(f"[gare_ambiance] lit '{self.name}' coupe")
 
 
 def watch():
@@ -162,7 +242,7 @@ def watch():
                 if name in wanted:
                     if not bed.running():
                         bed.start()  # (re)demarre ; dossier vide -> rien, sans erreur
-                elif bed.running() or bed.ff is not None:
+                elif bed.running():
                     bed.stop()
         except Exception as exc:
             print(f"[gare_ambiance] {exc!r}")

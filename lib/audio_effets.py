@@ -49,8 +49,19 @@ _PA_COLOR = [
     "lowpass", "4500",
     "gain", "-8",
 ]
-# Voie directe : la coloration + le silence de fin (pour aligner sur la queue).
-_PA_DRY = _PA_COLOR + ["pad", "0", PAD_SEC]
+# Voie directe : la coloration de base PUIS un renfort de caractere "pavillon"
+# applique SEULEMENT au direct (pas a la reverb, qu'on garde propre) --
+# retabli le 2026-10-09 apres que le nettoyage de la reverb a fait paraitre le
+# direct trop "neutre" :
+#   equalizer 950 1.0q +4  : la bosse "nasillarde" ~900-1000 Hz, signature du
+#                            pavillon/megaphone -- c'est elle qui fait "sono".
+#   equalizer 2500 1.4q +3 : renfort de presence (mordant + intelligibilite).
+# puis le silence de fin (pour aligner sur la queue de reverb).
+_PA_DRY = _PA_COLOR + [
+    "equalizer", "950", "1.0q", "4",
+    "equalizer", "2500", "1.4q", "3",
+    "pad", "0", PAD_SEC,
+]
 # Voie reverb seule : meme coloration, PUIS
 #   highpass 500 : on retire les graves de la REVERB (anti-"tube", demande) --
 #                  le direct garde son bas-medium, mais l'espace ne renvoie que
