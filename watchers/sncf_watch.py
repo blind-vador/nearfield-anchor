@@ -12,15 +12,17 @@ import audio_lock
 from sound_player import play_sound_effect as _play_sound_effect
 
 
-# Tout le son de la GARE (jingles, annonces, evenements d'ambiance) sort
-# reverbere facon hall : on enveloppe les deux lecteurs pour activer reverb=True
-# par defaut (2026-10-09), sans toucher chaque appel ni impacter les autres
-# veilles (radio, alertes), qui gardent le son sec via sound_player/speak.
-def play_sound_effect(*args, reverb=True, **kwargs):
+# Tout le son de la GARE passe par un effet "gare", sans toucher chaque appel
+# ni impacter les autres veilles (radio, alertes), qui gardent le son sec.
+# Deux profils (2026-10-09) : les annonces et jingles sortent d'un haut-parleur
+# de quai -> "pa" (bande limitee + grand hall) ; les sons d'ambiance (train qui
+# passe, klaxon, bruitages d'arrivee/depart via _play_file) sont seulement
+# poses dans la salle reverberante, pleine bande -> "hall".
+def play_sound_effect(*args, reverb="hall", **kwargs):
     return _play_sound_effect(*args, reverb=reverb, **kwargs)
 
 
-def speak_with_lead_sound(*args, reverb=True, **kwargs):
+def speak_with_lead_sound(*args, reverb="pa", **kwargs):
     return _speak_with_lead_sound(*args, reverb=reverb, **kwargs)
 from sound_paths import TRAIN_SCANER_DIR
 import reglages

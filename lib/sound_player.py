@@ -43,10 +43,11 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False):
     meteo_watch.py -- une seule implementation, evite la divergence entre
     copies.
 
-    reverb=True (2026-10-09) : joue une COPIE reverberee facon hall de gare
-    (voir audio_effets.reverb_gare) -- reserve aux sons de la GARE (jingles,
-    annonces, ambiances), pour qu'ils sonnent comme entendus dans le hall. Le
-    journal garde malgre tout la source propre (non reverberee). Si l'effet
+    reverb (2026-10-09) : joue une COPIE traitee facon gare (voir
+    audio_effets.reverb_gare) -- reserve aux sons de la GARE. Profil "pa"
+    (ou True) = voix/jingles comme sortis d'un haut-parleur de quai ; "hall" =
+    sons d'ambiance poses dans la salle, pleine bande ; False = aucun effet.
+    Le journal garde malgre tout la source propre (non traitee). Si l'effet
     echoue, on joue le son d'origine, jamais de silence."""
     # Priorites (audio_lock, 2026-10-01) : decode en PCM puis relais par
     # morceaux de 100 ms, pour appliquer le volume du moment (attenue si une
@@ -61,7 +62,8 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False):
     reverb_tmp = None
     if reverb:
         import audio_effets
-        reverb_tmp = audio_effets.reverb_gare(path)
+        profile = "pa" if reverb is True else reverb
+        reverb_tmp = audio_effets.reverb_gare(path, profile)
     to_play = reverb_tmp or path  # repli sur le son sec si la reverb a echoue
     decoder = player = None
     try:
