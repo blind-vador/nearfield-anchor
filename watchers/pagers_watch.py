@@ -21,7 +21,11 @@ SAMPLE_RATE = 22050
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_morse.mp3")
 STATE_PATH = "/tmp/pagers_watch_state.json"
 REPEAT_SEC = 300          # retransmission d'un meme appel (reseau qui repete), pas un nouvel appel
-MIN_LETTERS = 6            # en dessous : numerique, bruit ou trame de service
+MIN_ALNUM = 2             # en dessous : trame de service ou bruit, pas un message
+# Caracteres attendus dans un message en clair (lettres/chiffres accentues
+# compris via isalnum, espace, ponctuation courante). Le reste = bruit de
+# decodage (octets parasites d'une trame mal recue).
+_TEXTE_PONCT = " .,:;!?/\\-'\"()[]°+%&@*#=<>"
 # POCSAG : "POCSAG1200: Address: 123456  Function: 3  Alpha:   texte"
 # FLEX   : "FLEX|date|1600/2/K/A|12.345|000123456|ALN|texte"
 ALPHA = re.compile(r"Alpha:\s*(.*)$|\|ALN\|(.*)$")
@@ -33,10 +37,24 @@ _next = 0
 
 
 def _readable(text):
+    """Un message en clair est LU tel quel (comme une voix sur un talkie) --
+    on ne rejette QUE le bruit de decodage. 2026-10-09 : avant, un seuil de
+    6 lettres ET >=50 % de lettres ecartait a tort les messages riches en
+    chiffres (adresses, heures, codes), pourtant parfaitement en clair, qui
+    etaient alors retrogrades en "appel sans texte". Desormais on compte
+    l'alphanumerique (chiffres inclus) et on ne jette que ce qui est
+    majoritairement du symbole/octet parasite."""
     text = re.sub(r"<[A-Z]{2,4}>", " ", text)  # <NUL>, <EOT>... de multimon-ng
+    text = "".join(c if c.isprintable() else " " for c in text)  # octets parasites
     text = " ".join(text.split())
-    letters = sum(c.isalpha() for c in text)
-    return text if letters >= MIN_LETTERS and letters >= len(text) * 0.5 else ""
+    if not text:
+        return ""
+    alnum = sum(c.isalnum() for c in text)
+    texte = sum(1 for c in text if c.isalnum() or c in _TEXTE_PONCT)
+    # assez de contenu alphanumerique, et pas majoritairement du symbole
+    if alnum >= MIN_ALNUM and texte >= len(text) * 0.6:
+        return text
+    return ""
 
 
 def _other_page(line, freq):
