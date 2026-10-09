@@ -17,8 +17,13 @@ import time
 
 from phrases import Etiquettes
 
-LEVELS = ["aucun", "faible", "normal", "fort", "passion"]
-WEIGHTS = {"aucun": 0.1, "faible": 0.4, "normal": 1.0, "fort": 1.8, "passion": 2.5}
+# "désactivé" (2026-10-09) : la bande est entierement SAUTEE par le scanner
+# (poids 0 ET exclue du plancher d'exploration, voir lib/attention.py) -- pour
+# une bande qu'on ne peut pas capter (ex. satellites sans bonne antenne) ou
+# qu'on ne veut pas ecouter. Different de "aucun" (plus faible priorite, mais
+# toujours revue de temps en temps).
+LEVELS = ["désactivé", "aucun", "faible", "normal", "fort", "passion"]
+WEIGHTS = {"désactivé": 0.0, "aucun": 0.1, "faible": 0.4, "normal": 1.0, "fort": 1.8, "passion": 2.5}
 LEVEL_NAMES = Etiquettes("interet.niveau", {l: l for l in LEVELS}, "niveau d'intérêt pour une catégorie d'écoute")
 
 # categorie -> (cibles du scanner, niveau par defaut). Prefixes acceptes ("relais_").
@@ -34,6 +39,7 @@ CATEGORIES = {
     "professionnels": (["uhf_business", "vhf_business", "vhf_80", "uhf_410", "vhf_low", "pmse", "dmr"], "normal"),
     "fm": (["fm_diffusion"], "faible"),   # bandes de verification : du trafic tout le temps
     "dab": (["dab"], "normal"),
+    "satellites": (["satellites"], "normal"),  # passages radioamateurs (ISS...) ; "désactivé" les saute
 }
 CATEGORY_NAMES = Etiquettes("interet.categorie", {
     "talkies": "talkies-walkies 446 et LPD",
@@ -46,6 +52,7 @@ CATEGORY_NAMES = Etiquettes("interet.categorie", {
     "professionnels": "radios professionnelles et micros sans fil",
     "fm": "radio FM commerciale",
     "dab": "radio numérique DAB+ : textes et images des stations",
+    "satellites": "passages de satellites radioamateurs : ISS et cubesats",
 }, "catégorie d'écoute du scanner, dans la commande intérêts")
 CACHE_SEC = 30
 _cache = {"t": 0.0, "niveaux": None}
@@ -79,6 +86,14 @@ def category_of(target):
 def weight(target):
     cat = category_of(target)
     return WEIGHTS[levels()[cat]] if cat else 1.0
+
+
+def disabled(target):
+    """La cible appartient-elle a une categorie mise sur "désactivé" ? Le
+    scanner (lib/attention.py) saute alors entierement cette bande, et les
+    passages satellites (radio_watch) sont ignores pour la cible "satellites"."""
+    cat = category_of(target)
+    return cat is not None and levels().get(cat) == "désactivé"
 
 
 def save(new_levels):

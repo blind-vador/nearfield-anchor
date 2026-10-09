@@ -1590,7 +1590,15 @@ def _speech_detector():
 
 def _satellite_pass_if_due():
     """Passage de satellite qui commence (lib/satellites.py) : il prend la
-    cle pour sa duree (satellites_watch)."""
+    cle pour sa duree (satellites_watch). Saute si l'interet "satellites" est
+    "désactivé" (commande intérêts) -- ex. pas d'antenne pour les capter
+    (2026-10-09)."""
+    try:
+        import interets
+        if interets.disabled("satellites"):
+            return
+    except Exception:
+        pass
     try:
         p = satellites.due()
     except Exception as exc:  # orbites indisponibles : le scan continue

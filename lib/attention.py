@@ -175,9 +175,21 @@ def pressure(target, state, ctx):
 
 # --- programme d'un cycle ---
 
+def _disabled(target):
+    """Categorie mise sur "désactivé" (commande intérêts) : bande entierement
+    sautee, plancher d'exploration compris (2026-10-09)."""
+    try:
+        import interets
+        return interets.disabled(target)
+    except Exception:
+        return False
+
+
 def plan_cycle(windows, sweeps):
     """Liste d'etapes (genre, objet, cible, duree d'ecoute, piqure avions)."""
     state, ctx, now = _load(), air_context(), time.time()
+    windows = [w for w in windows if not _disabled(w["name"])]
+    sweeps = [b for b in sweeps if not _disabled(b["name"])]
     steps, extra = [], []
     for w in windows:
         total, _, air = pressure(w["name"], state, ctx)
@@ -186,6 +198,8 @@ def plan_cycle(windows, sweeps):
         steps.append(["airband", w, w["name"], dwell, air])
         extra.append(dwell - base)
     for name, base in DATA_WINDOWS.items():
+        if _disabled(name):
+            continue
         total, _, air = pressure(name, state, ctx)
         since = now - state.get(name, {}).get("last_visit", 0)
         if since < DATA_MIN_INTERVAL.get(name, 0) and total < EXTRA_VISIT_SCORE:
