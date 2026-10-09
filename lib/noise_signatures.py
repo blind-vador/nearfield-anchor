@@ -120,17 +120,22 @@ def load_signatures():
 
 
 def has_signatures_near(freq_hz):
-    return any(abs(e["freq_hz"] - freq_hz) <= FREQ_TOLERANCE_HZ for e in load_signatures())
+    return any(e.get("actif", True) and abs(e["freq_hz"] - freq_hz) <= FREQ_TOLERANCE_HZ
+               for e in load_signatures())
 
 
 def matches_known_noise(freq_hz, pcm_bytes, sample_rate, sample_format):
     """(True, similarite) si l'audio ressemble a un parasite connu proche
-    en frequence ; sinon (False, meilleure similarite ou None)."""
+    en frequence ; sinon (False, meilleure similarite ou None).
+    Les filtres desactives (actif=False, commande console "filtres") sont
+    ignores : le parasite est garde mais ne bloque plus rien."""
     fp = fingerprint(pcm_bytes, sample_rate, sample_format)
     if fp is None:
         return False, None
     best = None
     for entry in load_signatures():
+        if not entry.get("actif", True):
+            continue
         if abs(entry["freq_hz"] - freq_hz) > FREQ_TOLERANCE_HZ:
             continue
         sim = similarity(fp, entry["fingerprint"])
@@ -159,6 +164,80 @@ def add_signature(capture):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     _atomic_write_json(path, entries)
     return len(entries)
+
+
+# --- Gestion des filtres par la console (commande "filtres", 2026-10-09) ---
+# Les parasites sont marques un par un ("parasite"), et sur une bande chargee
+# (PMR446...) des dizaines d'empreintes s'accumulent et finissent par bloquer
+# toute la bande. La commande "filtres" les regroupe par canal (~12,5 kHz) et
+# permet de les ACTIVER/DESACTIVER sans les supprimer (reversible) ou de les
+# purger. Un filtre desactive est ignore par matches_known_noise/has_signatures.
+
+def _bucket(freq_hz):
+    """Numero de canal ~12,5 kHz : regroupe les empreintes d'une meme frequence."""
+    return round(freq_hz / FREQ_TOLERANCE_HZ)
+
+
+def _in_group(entry, label, bucket):
+    return entry.get("label", "") == label and _bucket(entry["freq_hz"]) == bucket
+
+
+def filtres():
+    """Parasites regroupes par (bande, canal) pour la console : liste triee de
+    {cle, freq_hz, label, nb, actif}. actif = au moins une empreinte active."""
+    groups = {}
+    for e in load_signatures():
+        key = (e.get("label", ""), _bucket(e["freq_hz"]))
+        g = groups.setdefault(key, {"freqs": [], "nb": 0, "actifs": 0})
+        g["freqs"].append(e["freq_hz"])
+        g["nb"] += 1
+        g["actifs"] += 1 if e.get("actif", True) else 0
+    out = [{"cle": [label, bucket], "freq_hz": sum(g["freqs"]) / len(g["freqs"]),
+            "label": label, "nb": g["nb"], "actif": g["actifs"] > 0}
+           for (label, bucket), g in groups.items()]
+    return sorted(out, key=lambda x: x["freq_hz"])
+
+
+def _rewrite_signatures(entries):
+    path = _signatures_path()
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _atomic_write_json(path, entries)
+
+
+def set_group_active(cle, actif):
+    """Active ou desactive toutes les empreintes du groupe (cle = [label, bucket]).
+    Retourne True si le fichier a change."""
+    label, bucket = cle[0], cle[1]
+    entries = _read_json(_signatures_path(), [])
+    changed = False
+    for e in entries:
+        if _in_group(e, label, bucket) and e.get("actif", True) != actif:
+            e["actif"] = actif
+            changed = True
+    if changed:
+        _rewrite_signatures(entries)
+    return changed
+
+
+def delete_group(cle):
+    """Supprime toutes les empreintes du groupe. Retourne les entrees retirees
+    (pour restore_entries)."""
+    label, bucket = cle[0], cle[1]
+    entries = _read_json(_signatures_path(), [])
+    removed = [e for e in entries if _in_group(e, label, bucket)]
+    if removed:
+        _rewrite_signatures([e for e in entries if not _in_group(e, label, bucket)])
+    return removed
+
+
+def restore_entries(removed):
+    """Remet des empreintes supprimees (Ctrl+Z de la commande "filtres")."""
+    if not removed:
+        return False
+    entries = _read_json(_signatures_path(), [])
+    entries.extend(removed)
+    _rewrite_signatures(entries)
+    return True
 
 
 # --- Bruit de fond (idee de l'utilisateur, 2026-09-30) ---

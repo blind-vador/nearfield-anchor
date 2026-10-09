@@ -632,6 +632,10 @@ COMMANDS = [
             keywords=["liste noire", "blacklist", "black list", "stations interdites", "radios interdites",
                       "liste des interdites", "interdites"],
             examples=["les stations que j'ai bannies", "ajouter une radio à la liste noire", "débannir une station"]),
+    Command("filtres", "parasites appris : les parcourir et activer ou désactiver chacun, ou en supprimer ; utile si une bande est bloquée par trop de filtres", None,
+            keywords=["filtres", "filtre", "filtres parasites", "gérer les parasites",
+                      "gérer les filtres", "activer un filtre", "désactiver un filtre", "débloquer une bande"],
+            examples=["montre-moi les filtres parasites", "désactiver le filtre sur le 446", "débloquer la bande 446"]),
     # Avant "attention" (dont un mot-cle est "priorites") : centres d'interet de l'utilisateur.
     Command("intérêts", "tes centres d'intérêt : ce qui doit attirer le scanner en priorité ; intérêt avions fort, par exemple", None,
             keywords=["interets", "interet", "centres d interet", "centre d interet", "mes interets"],

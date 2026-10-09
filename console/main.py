@@ -355,6 +355,9 @@ def run_command(line, key_source, last_response):
     if cmd.name == "liste noire":
         import liste_noire_cmd
         return liste_noire_cmd.run(line, key_source, voix.say, out)
+    if cmd.name == "filtres":
+        import filtres_cmd
+        return filtres_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "intérêts":
         import interets_cmd
         return interets_cmd.run(line, key_source, voix.say, out)
