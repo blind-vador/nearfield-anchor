@@ -12,12 +12,17 @@ et, si l'IA a nettoye, un extrait APRES, pour comparer.
 Chaque proposition :
   id, le (epoch), origine ("ia" | "metadonnees" | "note"), confiance 0..1,
   resume (texte pret a dire -- donnee, pas une cle de phrase),
-  avant / apres (chemins d'extraits audio, optionnels),
-  action : dict applique a la confirmation. Types geres cote Pi :
+  brut (chemin de l'extrait AVANT traitement, optionnel),
+  traitements : liste ORDONNEE (du plus leger au plus agressif) de niveaux de
+    nettoyage, chacun {niveau: nom, audio: chemin, action: dict}. L'utilisateur
+    passe de l'un a l'autre avec "t", en confirme UN SEUL (c) ou les refuse
+    tous (r). Peut etre vide (proposition sans audio, ex. reglage simple).
+  action : dict applique a la confirmation d'une proposition SANS niveaux (ou
+    porte par chaque niveau). Types geres cote Pi :
     {"kind": "parasite_off", "cle": [label, bucket]}   -> desactive un filtre
     {"kind": "interet", "categorie": c, "niveau": n}    -> change un interet
-    {"kind": "filtre", ...}                             -> (a venir) reglage de
-        nettoyage ; non applique automatiquement pour l'instant (note "manuel").
+    {"kind": "filtre", "target": ..., "params": {...}}  -> (a venir) reglage de
+        nettoyage du Pi ; non applique automatiquement pour l'instant ("manuel").
   etat : "attente" | "confirme" | "refuse".
 """
 import fcntl
@@ -57,15 +62,17 @@ def _with_lock(fn):
         return result
 
 
-def add(resume, action, origine="ia", confiance=0.5, avant=None, apres=None):
-    """Depose une proposition (appele par la passe Mac via le bridge, ou en
-    local). Retourne l'id attribue."""
+def add(resume, action=None, origine="ia", confiance=0.5, brut=None, traitements=None):
+    """Depose une proposition (ecrit par la passe Mac sur le NAS, ou en local).
+    traitements : liste [{niveau, audio, action}] du plus leger au plus
+    agressif. Retourne l'id attribue."""
     pid = f"{int(time.time()*1000)}"
 
     def put(data):
         data.append({"id": pid, "le": time.time(), "origine": origine,
-                     "confiance": confiance, "resume": resume, "avant": avant,
-                     "apres": apres, "action": action or {}, "etat": "attente"})
+                     "confiance": confiance, "resume": resume, "brut": brut,
+                     "traitements": traitements or [], "action": action or {},
+                     "etat": "attente"})
         del data[:-MAX_ENTRIES]
     _with_lock(put)
     return pid
@@ -90,11 +97,11 @@ def set_etat(pid, etat):
     _with_lock(apply)
 
 
-def apply_action(prop):
-    """Applique l'action d'une proposition confirmee. Retourne (ok, detail)
-    ou detail est un court texte (donnee) decrivant ce qui a ete fait, ou la
-    raison de l'echec."""
-    action = prop.get("action") or {}
+def apply(action):
+    """Applique une action (celle du niveau confirme, ou l'action simple de la
+    proposition). Retourne (ok, detail) ou detail est un court texte decrivant
+    ce qui a ete fait, ou la raison de l'echec."""
+    action = action or {}
     kind = action.get("kind")
     try:
         if kind == "parasite_off":

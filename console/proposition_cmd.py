@@ -33,18 +33,46 @@ def _clip(path):
     return candidate if os.path.isfile(candidate) else None
 
 
+def _traitements(p):
+    return p.get("traitements") or []
+
+
 def _line(items, i):
     p = items[i]
-    return dire("proposition.ligne", index=i + 1, total=len(items), resume=p.get("resume", ""))
+    n = len(_traitements(p))
+    base = dire("proposition.ligne", index=i + 1, total=len(items), resume=p.get("resume", ""))
+    if n:
+        base += " " + dire("proposition.niveaux", nombre=nombre(n, "niveau", "niveaux"))
+    return base
 
 
 def run(line, key_source, say, out):
     items = propositions.entries()
     i = 0
+    lvl, refused = 0, set()   # niveau courant + niveaux refuses de la proposition i
     player = Player()
     title = dire("proposition.titre", nombre=nombre(len(items), "proposition", "propositions"))
     intro = conseils.intro("proposition", title, dire("proposition.consigne"))
     out(intro + "\n")
+
+    def select(new_i):
+        nonlocal i, lvl, refused
+        i, lvl, refused = new_i, 0, set()
+        return _line(items, i)
+
+    def advance():
+        """Niveau de traitement suivant non refuse (cycle) ; joue et annonce."""
+        nonlocal lvl
+        traits = _traitements(items[i])
+        libres = [k for k in range(len(traits)) if k not in refused]
+        if not libres:
+            return dire("proposition.pas_de_traitement")
+        lvl = libres[(libres.index(lvl) + 1) % len(libres)] if lvl in libres else libres[0]
+        clip = _clip(traits[lvl].get("audio"))
+        if clip:
+            player.play(clip)
+        return dire("proposition.niveau_courant", index=lvl + 1, total=len(traits), nom=traits[lvl].get("niveau", ""))
+
     try:
         if not items:
             say(f"{intro} {dire('proposition.vide')}")
@@ -64,36 +92,35 @@ def run(line, key_source, say, out):
                 return dire("proposition.fermee")
             elif key in (UP, DOWN):
                 j = i + (-1 if key == UP else 1)
-                if 0 <= j < len(items):
-                    i = j
-                    text = _line(items, i)
-                else:
-                    text = dire("commun.debut_liste") if j < 0 else dire("commun.fin_liste")
-            elif key in ("\r", "\n"):
-                clip = _clip(items[i].get("avant"))
+                text = select(j) if 0 <= j < len(items) else (
+                    dire("commun.debut_liste") if j < 0 else dire("commun.fin_liste"))
+            elif key in ("b", "B"):
+                clip = _clip(items[i].get("brut"))
                 if clip:
                     player.play(clip)
                 else:
                     text = dire("proposition.pas_d_extrait")
-            elif key in ("p", "P"):
-                clip = _clip(items[i].get("apres"))
-                if clip:
-                    player.play(clip)
-                else:
-                    text = dire("proposition.pas_d_apres")
+            elif key in ("t", "T"):
+                text = advance()
             elif key in ("c", "C"):
-                ok, detail = propositions.apply_action(items[i])
+                traits = _traitements(items[i])
+                action = traits[lvl]["action"] if (traits and lvl < len(traits)) else items[i].get("action")
+                ok, detail = propositions.apply(action)
                 propositions.set_etat(items[i]["id"], "confirme")
-                items.pop(i)  # retiree de la file a traiter
-                i = min(i, max(len(items) - 1, 0))
+                items.pop(i)
                 text = (dire("proposition.confirmee", detail=detail) if ok
                         else dire("proposition.confirmee_manuelle", detail=detail))
-                text += " " + (_line(items, i) if items else dire("proposition.plus_rien"))
+                text += " " + (select(min(i, len(items) - 1)) if items else dire("proposition.plus_rien"))
             elif key in ("r", "R"):
-                propositions.set_etat(items[i]["id"], "refuse")
-                items.pop(i)
-                i = min(i, max(len(items) - 1, 0))
-                text = dire("proposition.refusee") + " " + (_line(items, i) if items else dire("proposition.plus_rien"))
+                traits = _traitements(items[i])
+                refused.add(lvl)
+                if not traits or len(refused) >= len(traits):   # tous les niveaux refuses
+                    propositions.set_etat(items[i]["id"], "refuse")
+                    items.pop(i)
+                    text = dire("proposition.refusee") + " " + (
+                        select(min(i, len(items) - 1)) if items else dire("proposition.plus_rien"))
+                else:
+                    text = dire("proposition.niveau_refuse") + " " + advance()
             else:
                 text = dire("proposition.touches")
             if text:
