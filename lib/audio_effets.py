@@ -24,6 +24,10 @@ RATE = 44100
 
 # Chaine sox (ordre = ordre d'application) :
 #   gain -3      : un peu de marge + l'attenuation demandee ("un peu")
+#   pad 0 1.5    : 1,5 s de silence AJOUTE a la fin -- sinon sox sort autant
+#                  d'echantillons qu'il en recoit et COUPE la queue de reverb
+#                  (teste : duree identique a l'entree sans ce pad). Ce silence
+#                  laisse la traine du hall resonner apres la fin du son.
 #   reverb R HF room stereo predelai wet-gain : hall de gare. Reverberance 45 %
 #                  (queue audible mais la voix reste intelligible, pas noyee),
 #                  amortissement des aigus 50 %, piece a fond (grand volume),
@@ -32,7 +36,8 @@ RATE = 44100
 #                  clarte de l'annonce).
 #   lowpass 8500 : les aigus les plus fins se perdent dans un grand hall / une
 #                  sono PA -- couleur typique, evite un reverb trop "cristallin".
-REVERB_CHAIN = ["gain", "-3", "reverb", "45", "50", "100", "100", "18", "0", "lowpass", "8500"]
+REVERB_CHAIN = ["gain", "-3", "pad", "0", "1.5",
+                "reverb", "45", "50", "100", "100", "18", "0", "lowpass", "8500"]
 
 
 def reverb_gare(src):
