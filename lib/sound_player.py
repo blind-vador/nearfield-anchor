@@ -1,3 +1,4 @@
+import audioop
 import os
 import subprocess
 import time
@@ -37,7 +38,7 @@ def get_recording_session():
     return _active_recording_session
 
 
-def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False):
+def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, volume=1.0):
     """Joue un court effet sonore (mp3) sur le peripherique audio partage,
     de maniere bloquante. Module commun a radio_watch.py, adsb_watch.py et
     meteo_watch.py -- une seule implementation, evite la divergence entre
@@ -80,7 +81,10 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False):
             data = decoder.stdout.read(chunk)
             if not data:
                 break
-            player.stdin.write(audio_lock.scale(data))
+            data = audio_lock.scale(data)
+            if volume != 1.0:  # doublon d'ambiance joue plus bas (sncf_watch)
+                data = audioop.mul(data, 2, volume)
+            player.stdin.write(data)
         player.stdin.close()
         player.wait(timeout=max(1.0, deadline - time.time() + 1))
         decoder.wait(timeout=2)

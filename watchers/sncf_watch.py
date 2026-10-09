@@ -281,33 +281,81 @@ HORN_SOUND = os.path.join(AMBIANT_SOUND_DIR, "horn1.mp3")
 AMBIENCE_EXTRA_PROB = 0.15
 
 
+# Anti-doublon (2026-10-09, demande utilisateur) : deux trains ne doivent
+# jamais jouer EXACTEMENT le meme fichier en meme temps (deux sons identiques
+# alignes = ecart/echo bizarre). On tient un registre des fichiers en cours ;
+# le choix evite ceux qui jouent deja. S'il ne reste aucun fichier libre (plus
+# d'evenements simultanes que de fichiers dispo), le doublon est inevitable :
+# on le DECALE (on laisse ~1/4 du son passer) et on le joue plus bas, pour que
+# le recouvrement ne s'entende pas comme un echo.
+DUP_VOLUME = 0.4            # volume d'un doublon force
+DUP_OVERLAP = 0.25         # fraction du son laissee passer avant le doublon
+_ambient_playing = {}      # chemin -> instant de fin (epoch)
+_ambient_lock = threading.Lock()
+
+
+def _is_playing(path):
+    with _ambient_lock:
+        return _ambient_playing.get(path, 0.0) > time.time()
+
+
+def _mark_playing(path, start_in, duration):
+    with _ambient_lock:
+        _ambient_playing[path] = time.time() + start_in + duration
+
+
+def _choose(files):
+    """Un fichier au hasard en EVITANT ceux qui jouent deja. Retourne
+    (chemin, doublon_force) ; doublon_force=True si tous jouent deja."""
+    if not files:
+        return None, False
+    libres = [f for f in files if not _is_playing(f)]
+    if libres:
+        return random.choice(libres), False
+    return random.choice(files), True
+
+
 def _pick_ambient(category, action):
     folder = os.path.join(AMBIANT_SOUND_DIR, f"{category}_{action}")
     try:
-        files = [f for f in os.listdir(folder) if f.lower().endswith((".mp3", ".wav"))]
+        files = [os.path.join(folder, f) for f in os.listdir(folder)
+                 if f.lower().endswith((".mp3", ".wav"))]
     except FileNotFoundError:
-        return None
-    return os.path.join(folder, random.choice(files)) if files else None
+        return None, False
+    return _choose(files)
 
 
-def _play_file(path):
+def _play_file(path, duplicate=False):
     """Joue un son d'ambiance SANS verrou exclusif : plusieurs sons se mixent
     sur la carte USB ("default" via dmix), donc une arrivee et un depart
-    simultanes jouent ensemble (2026-10-08, demande utilisateur)."""
-    play_sound_effect(path, timeout_sec=_probe_duration_sec(path) + 5, label="sncf_watch")
+    simultanes jouent ensemble (2026-10-08). duplicate=True : meme fichier deja
+    en cours faute de mieux -> decale de ~1/4 du son et joue plus bas, pour
+    eviter l'echo de deux sons identiques alignes (2026-10-09)."""
+    dur = _probe_duration_sec(path)
+    if duplicate:
+        delay = max(0.3, dur * DUP_OVERLAP)
+        _mark_playing(path, delay, dur)
+        threading.Timer(delay, lambda: play_sound_effect(
+            path, timeout_sec=dur + 5, label="sncf_watch", volume=DUP_VOLUME)).start()
+    else:
+        _mark_playing(path, 0.0, dur)
+        play_sound_effect(path, timeout_sec=dur + 5, label="sncf_watch")
 
 
 def _play_random_ambience():
     """Evenement secondaire d'ambiance : un train qui passe (TER ou TGV) ou un
     coup de klaxon, au hasard. Decoratif, pas forcement reel."""
     choix = random.choice(["ter_passby", "tgv_passby", "horn"])
-    path = HORN_SOUND if choix == "horn" else _pick_ambient(choix.split("_")[0], "passby")
+    if choix == "horn":
+        path, dup = _choose([HORN_SOUND])
+    else:
+        path, dup = _pick_ambient(choix.split("_")[0], "passby")
     if path and os.path.exists(path):
-        _play_file(path)
+        _play_file(path, duplicate=dup)
 
 
 def _play_ambient_sound(category, action):
-    path = _pick_ambient(category, action)
+    path, dup = _pick_ambient(category, action)
     if not path:
         print(f"[sncf_watch] dossier bruitage absent ou vide : {category}_{action}")
         return
@@ -315,7 +363,7 @@ def _play_ambient_sound(category, action):
     # principal) avec une faible probabilite, pour animer la gare.
     if random.random() < AMBIENCE_EXTRA_PROB:
         threading.Timer(random.uniform(1.0, 4.0), _play_random_ambience).start()
-    _play_file(path)
+    _play_file(path, duplicate=dup)
 
 
 def _schedule_ambient_sound(mode, action, event_dt):
