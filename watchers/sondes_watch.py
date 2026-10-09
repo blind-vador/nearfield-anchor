@@ -163,7 +163,7 @@ def scan_window(dwell_sec=45):
     threading.Thread(target=_reader, args=(dec, frames), daemon=True).start()
     print(f"[sondes_watch] ecoute de {target['serie']} ({kind}) sur {freq / 1e6:.3f} MHz, "
           f"a {round(target['km'])} km, {round(target.get('alt') or 0)} m")
-    announced, count = False, 0
+    count = 0
     try:
         deadline = time.time() + dwell_sec
         while time.time() < deadline:
@@ -172,15 +172,20 @@ def scan_window(dwell_sec=45):
                 frame = frames.pop(0)
                 count += 1
                 serial = frame.get("id") or target["serie"]
-                if _process(frame, serial):
-                    announced = True
+                _process(frame, serial)
     finally:
-        for p in (rtl, sox, dec):
+        # Seul rtl_fm touche la cle : on l'arrete EN DOUCEUR (comme aprs/pagers),
+        # pendant que sox le draine encore, pour ne pas le tuer en plein transfert
+        # USB (sinon le noyau reinitialise la cle, 2026-10-10). sox et dec ne font
+        # que du calcul : on les arrete ensuite, sans menagement.
+        from lecture_flux import arreter
+        arreter(rtl, "rtl_fm (sondes)")
+        for p in (sox, dec):
             if p.poll() is None:
                 p.terminate()
-        for p in (rtl, sox, dec):
+        for p in (sox, dec):
             try:
-                p.wait(timeout=5)
+                p.wait(timeout=3)
             except subprocess.TimeoutExpired:
                 p.kill()
         _memory.save()
