@@ -632,6 +632,11 @@ def _process_station(state):
 
 def main():
     print(f"[sncf_watch] démarrage de la veille gare ({STATION_NAME}, UIC {STATION_UIC})")
+    # Habillage sonore : lit d'ambiance en fond, bas volume, pendant que la
+    # gare est ouverte (+ ambiance meteo si pluie/orage/neige/vent reel).
+    # Thread demon : s'arrete avec la veille ; dossiers vides = silencieux.
+    import gare_ambiance
+    threading.Thread(target=gare_ambiance.watch, name="gare_ambiance", daemon=True).start()
     state = {
         # un seul set unifie (2026-08-31) -- avant, deux sets separes
         # (announced_departures/announced_arrivals) laissaient un
