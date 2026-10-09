@@ -27,7 +27,7 @@ AMBI_DIR = os.path.join(TRAIN_SCANER_DIR, "ambi")
 # Heures d'ouverture de la gare (locale) : lit coupe la nuit profonde.
 OPEN_HOUR, CLOSE_HOUR = 5, 1          # ouverte de 5 h a 1 h du matin
 RATE = 48000
-NORMAL_VOLUME = 0.07                  # presque inaudible : juste un fond
+NORMAL_VOLUME = 0.15                  # fond discret du hall (2026-10-09)
 WEATHER_VOLUME = 0.18
 WEATHER_SOURCES = ("pluie", "orage", "neige", "vent")
 WEATHER_CACHE_SEC = 600

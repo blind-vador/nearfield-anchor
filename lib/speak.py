@@ -216,7 +216,7 @@ def _save_repetitive_sample(text, voice, src_path):
         print(f"[speak] echec sauvegarde cache repetitif : {exc}")
 
 
-def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=False):
+def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=False, reverb=False):
     """Diffuse sound_path puis annonce text -- lance la synthese cloud
     (edge-tts) EN PARALLELE du son d'accompagnement plutot qu'apres coup :
     au moment ou l'appelant declenche le son, il sait deja ce qu'il va dire
@@ -245,8 +245,8 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
         cached_path = _cached_repetitive_sample(text)
         if cached_path:
             print(text)
-            play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label)
-            play_sound_effect(cached_path, timeout_sec=_speech_timeout(cached_path), label=label)
+            play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label, reverb=reverb)
+            play_sound_effect(cached_path, timeout_sec=_speech_timeout(cached_path), label=label, reverb=reverb)
             return
         candidate_voices = _missing_voices_for(text)
     else:
@@ -256,7 +256,7 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
     thread = threading.Thread(target=_synthesize_edge_tts, args=(text, result_holder, candidate_voices), daemon=True)
     thread.start()
 
-    play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label)
+    play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label, reverb=reverb)
 
     thread.join(EDGE_TTS_EXTRA_WAIT_SEC)
     result = result_holder[0]
@@ -266,17 +266,17 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
         if repetitive:
             _save_repetitive_sample(text, voice, audio_path)
         try:
-            play_sound_effect(audio_path, timeout_sec=_speech_timeout(audio_path), label=label)
+            play_sound_effect(audio_path, timeout_sec=_speech_timeout(audio_path), label=label, reverb=reverb)
         finally:
             try:
                 os.remove(audio_path)
             except OSError:
                 pass
     else:
-        _espeak_recorded(text, label)
+        _espeak_recorded(text, label, reverb=reverb)
 
 
-def _espeak_recorded(text, label):
+def _espeak_recorded(text, label, reverb=False):
     """Repli espeak en passant par un fichier : la voix est jouee ET copiee
     dans l'enregistrement du journal en cours (sinon la prise n'a que le
     carillon, 2026-10-03)."""
@@ -285,7 +285,7 @@ def _espeak_recorded(text, label):
     try:
         subprocess.run(["espeak", "-v", "fr", "-b", "1", "-w", path, text], capture_output=True, timeout=30)
         if os.path.getsize(path) > 0:
-            play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label)
+            play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb)
             return
     except Exception as exc:
         print(f"[espeak fichier indisponible: {exc}]")

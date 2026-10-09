@@ -1,3 +1,4 @@
+import os
 import subprocess
 import time
 
@@ -36,11 +37,17 @@ def get_recording_session():
     return _active_recording_session
 
 
-def play_sound_effect(path, timeout_sec=8, label="sound_player"):
+def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False):
     """Joue un court effet sonore (mp3) sur le peripherique audio partage,
     de maniere bloquante. Module commun a radio_watch.py, adsb_watch.py et
     meteo_watch.py -- une seule implementation, evite la divergence entre
-    copies."""
+    copies.
+
+    reverb=True (2026-10-09) : joue une COPIE reverberee facon hall de gare
+    (voir audio_effets.reverb_gare) -- reserve aux sons de la GARE (jingles,
+    annonces, ambiances), pour qu'ils sonnent comme entendus dans le hall. Le
+    journal garde malgre tout la source propre (non reverberee). Si l'effet
+    echoue, on joue le son d'origine, jamais de silence."""
     # Priorites (audio_lock, 2026-10-01) : decode en PCM puis relais par
     # morceaux de 100 ms, pour appliquer le volume du moment (attenue si une
     # source plus prioritaire parle par-dessus) ; rien si la source a abandonne.
@@ -51,10 +58,15 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player"):
         if _active_recording_session is not None:
             _active_recording_session.add_audio_file(path)
         return
+    reverb_tmp = None
+    if reverb:
+        import audio_effets
+        reverb_tmp = audio_effets.reverb_gare(path)
+    to_play = reverb_tmp or path  # repli sur le son sec si la reverb a echoue
     decoder = player = None
     try:
         decoder = subprocess.Popen(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", path,
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", to_play,
              "-f", "s16le", "-ac", str(EFFECT_CHANNELS), "-ar", str(EFFECT_RATE), "-"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         player = subprocess.Popen(
@@ -82,3 +94,8 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player"):
             if proc is not None and proc.poll() is None:
                 proc.kill()
                 proc.wait()
+        if reverb_tmp is not None:
+            try:
+                os.remove(reverb_tmp)
+            except OSError:
+                pass
