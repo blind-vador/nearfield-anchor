@@ -464,7 +464,7 @@ def run(key_source, say, out, category="radio"):
                         # selectionne (sinon on croit l'avoir ecoute alors que non).
                         voix.say_blocking(bound)
                         play(rec_i)
-            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "b", "B", "i", "I"):
+            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "b", "B", "i", "I", "e", "E"):
                 text = dire("journal.choisir")
             elif key in ("\r", "\n"):
                 play(rec_i)
@@ -513,6 +513,13 @@ def run(key_source, say, out, category="radio"):
                 player.stop()
                 stamp, path, _ = recs[rec_i]
                 text = notation.rate(key_source, say, out, path, stamp)
+            elif key in ("e", "E"):
+                # Envoi a l'examen IA du Mac mini (en differe) : il reprendra le
+                # brut, tentera plusieurs nettoyages, et deposera une proposition.
+                import examen
+                path = recs[rec_i][1]
+                text = (dire("journal.examen_demande") if examen.demander(os.path.basename(path))
+                        else dire("journal.examen_deja"))
             elif conseils.is_help(key):
                 text = consigne
             else:

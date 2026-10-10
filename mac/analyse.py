@@ -243,7 +243,7 @@ def collect(base, hours, limit):
     return recent[:limit]
 
 
-def process_clip(src, base, tmpdir, audio_rel_dir, dry):
+def process_clip(src, base, tmpdir, audio_rel_dir, dry, force=False, origine="ia"):
     name = os.path.basename(src)
     is_rejet = os.path.basename(os.path.dirname(src)) == "rejets"
     wav = os.path.join(tmpdir, name + ".wav")
@@ -264,10 +264,13 @@ def process_clip(src, base, tmpdir, audio_rel_dir, dry):
     # DOUX du souffle/sifflement, qui preserve la musique, et seulement s'il y a
     # vraiment du souffle (platitude HF).
     is_music = m0 >= MUSIC_HIGH and m0 >= v0
-    if not is_music and not is_rejet and v0 >= AMBIG_HIGH:
-        return None  # voix deja claire : audible, rien a proposer
-    if is_music and not is_rejet and _hf_hiss(y, sr) < HISS_MIN:
-        return None  # musique deja propre : pas de souffle a enlever
+    # force=True : clip demande explicitement a l'examen (touche "e" du journal)
+    # -> on produit TOUJOURS une proposition pour comparer, meme si deja clair.
+    if not force:
+        if not is_music and not is_rejet and v0 >= AMBIG_HIGH:
+            return None  # voix deja claire : audible, rien a proposer
+        if is_music and not is_rejet and _hf_hiss(y, sr) < HISS_MIN:
+            return None  # musique deja propre : pas de souffle a enlever
 
     niveaux = NIVEAUX_MUSIQUE if is_music else NIVEAUX_VOIX
     band = band_from_name(name)
@@ -287,17 +290,19 @@ def process_clip(src, base, tmpdir, audio_rel_dir, dry):
         confiance = round(m0, 2)
     else:
         gain = best_v - v0
-        propose = (best_v >= REVEAL_MIN and gain >= GAIN_MIN) or (is_rejet and v0 >= AMBIG_HIGH)
+        propose = force or (best_v >= REVEAL_MIN and gain >= GAIN_MIN) or (is_rejet and v0 >= AMBIG_HIGH)
         if not propose:
             return None
         musique = f" (musique {m0:.2f} présente)" if m0 >= 0.3 else ""
         if is_rejet:
             resume = f"{band} : écarté comme bruit, mais une voix semble présente (proba {v0:.2f}){musique}. À confirmer."
         else:
-            resume = (f"{band} : voix faible révélée par le nettoyage, de {v0:.2f} à {best_v:.2f}{musique}. "
+            resume = (f"{band} : voix de {v0:.2f} à {best_v:.2f} après nettoyage{musique}. "
                       f"À confirmer à l'oreille.")
         # Si de la musique traine, la "voix revelee" est plus douteuse : on pondere.
         confiance = round(best_v * (1.0 - 0.4 * m0), 2)
+    if origine == "demande":
+        resume = "Examen demandé — " + resume
 
     traitements = []
     for niveau, method, param, yc, sc in niveaux_calc:
@@ -312,9 +317,80 @@ def process_clip(src, base, tmpdir, audio_rel_dir, dry):
         traitements.append({"niveau": niveau, "audio": rel,
                             "action": {"kind": "filtre", "target": band, "params": params}})
     brut_rel = os.path.join("rejets", name) if is_rejet else name
-    return {"id": pid, "le": time.time(), "origine": "ia", "confiance": confiance,
+    return {"id": pid, "le": time.time(), "origine": origine, "confiance": confiance,
             "resume": resume, "brut": brut_rel, "traitements": traitements,
             "action": {}, "etat": "attente"}
+
+
+# --- File d'examen a la demande (touche "e" du journal, lib/examen.py) --------
+def _queue_path(base):
+    return os.path.join(base, "a_examiner.json")
+
+
+def queue_items(base):
+    try:
+        with open(_queue_path(base)) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return []
+
+
+def dequeue(base, fichier):
+    import fcntl
+    p = _queue_path(base)
+    try:
+        with open("/tmp/pcw_examen.lock", "w") as lk:
+            fcntl.flock(lk, fcntl.LOCK_EX)
+            data = [e for e in queue_items(base) if e.get("fichier") != fichier]
+            tmp = p + ".tmp"
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(data, f, ensure_ascii=False)
+            os.replace(tmp, p)
+    except Exception as exc:
+        print(f"[analyse] dequeue : {exc}")
+
+
+def _brut_for(base, fichier):
+    """Resout l'audio BRUT d'un enregistrement du journal demande a l'examen :
+    son .brut.mp3 de preference, sinon le fichier tel quel, sinon dans rejets/."""
+    stem = fichier[:-4] if fichier.endswith(".mp3") else fichier
+    for cand in (os.path.join(base, stem + ".brut.mp3"),
+                 os.path.join(base, fichier),
+                 os.path.join(base, "rejets", fichier)):
+        if os.path.isfile(cand):
+            return cand
+    return None
+
+
+def run_queue(base):
+    """Traite les clips mis en file par la touche "e" du journal (force une
+    proposition meme si deja clair). Vide rapidement si la file est vide (ne
+    charge pas les modeles pour rien)."""
+    items = queue_items(base)
+    if not items:
+        print("[analyse] file d'examen vide.")
+        return 0
+    print(f"[analyse] {len(items)} clip(s) demandé(s) à l'examen")
+    tmpdir = tempfile.mkdtemp(prefix="pcw_examen_", dir=os.path.expanduser("~/pcw-analyse"))
+    n = 0
+    try:
+        for e in items:
+            fichier = e.get("fichier", "")
+            src = _brut_for(base, fichier)
+            if src:
+                prop = process_clip(src, base, tmpdir, "propositions_audio", False,
+                                    force=True, origine="demande")
+                if prop:
+                    write_proposition(base, prop)
+                    n += 1
+                    print(f"  [examen] {prop['resume']}")
+            else:
+                print(f"  [examen] introuvable : {fichier}")
+            dequeue(base, fichier)  # retire dans tous les cas (pas de boucle infinie)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    print(f"[analyse] examen terminé : {n} proposition(s).")
+    return 0
 
 
 def main():
@@ -322,6 +398,7 @@ def main():
     ap.add_argument("--hours", type=float, default=24)
     ap.add_argument("--max", type=int, default=300)
     ap.add_argument("--dry", action="store_true", help="n'écrit rien sur le NAS")
+    ap.add_argument("--queue", action="store_true", help="traite seulement la file d'examen (touche e)")
     args = ap.parse_args()
 
     base = resolve_base()
@@ -329,6 +406,8 @@ def main():
         print(f"[analyse] NAS indisponible ({base}) -- partage non monté ? Abandon.")
         return 1
     print(f"[analyse] base : {base}")
+    if args.queue:
+        return run_queue(base)
     clips = collect(base, args.hours, args.max)
     print(f"[analyse] {len(clips)} clip(s) du jour à examiner (noisereduce {'OK' if nr else 'ABSENT'})")
 
