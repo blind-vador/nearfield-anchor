@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>local.deepspace9.disques</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/sh</string>
+        <string>-c</string>
+        <string>for i in $(seq 1 60); do /usr/bin/nc -z -G 2 deepspace9.local 445 2>/dev/null &amp;&amp; break; sleep 5; done; for s in server stockage; do /sbin/mount | /usr/bin/grep -q "on /Volumes/$s " || /usr/bin/osascript -e "mount volume \"smb://vador@deepspace9.local/$s\"" 2>/dev/null; done</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

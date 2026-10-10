@@ -1,0 +1,4 @@
+# Registre des serveurs web hébergés sur deepspace9.
+# Une ligne par site : nom::chemin   (chemin = URL, ex. /octoprint, ou /sous-dossier/)
+# Il suffit de remplir ce fichier : index.php liste les liens automatiquement.
+OctoPrint::/octoprint
