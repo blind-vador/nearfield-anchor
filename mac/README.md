@@ -1,5 +1,7 @@
 # Passe d'analyse IA (Mac mini)
 
+**Installation clef en main : `bash mac/install-mac.sh`** (depuis le dépôt cloné) — crée le venv, installe les dépendances, télécharge les modèles, pose le script et les 3 agents launchd. Détails ci-dessous.
+
 `analyse.py` tourne sur le Mac mini (M4), PAS sur le Pi. Il lit les clips du NAS
 (partage Samba monté), score voix/musique via **PANNs CNN14**, nettoie les cas
 ambigus (noisereduce + **DeepFilterNet**), et dépose des propositions dans
