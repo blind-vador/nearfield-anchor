@@ -1,0 +1,13 @@
+Habillage sonore de la gare (ambiances en boucle, volume faible en fond).
+
+Depose tes fichiers d ambiance (mp3 ou wav, de preference longs, 30 s et plus,
+qui bouclent bien) dans :
+  ambi/normal/  ambiance de gare classique (jouee en continu quand la gare
+                est ouverte, tres bas, juste pour habiller)
+  ambi/pluie/   ambiance de pluie (jouee EN PLUS quand il pleut vraiment)
+  ambi/neige/   ambiance de neige (quand il neige vraiment)
+  ambi/vent/    ambiance de vent (quand il vente vraiment)
+
+Les ambiances meteo se declenchent selon la meteo en ligne (ultralocale).
+Un dossier vide = pas de son pour ce temps-la, sans erreur.
+NE PAS mettre ici des sons courts de transition ou de montage video.
