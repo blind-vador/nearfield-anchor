@@ -50,11 +50,13 @@ PANNS_SR = 32000                        # PANNs CNN14 attend du 32 kHz mono
 # famille musicale -- 'music' attrape Music + genres, + le chant).
 SPEECH_WORDS = ("speech", "speaking", "conversation", "narration")
 MUSIC_WORDS = ("music", "singing")
-# Niveaux de nettoyage (prop_decrease noisereduce). VOIX : agressif (reveler une
-# voix noyee). MUSIQUE : DOUX, pour oter le souffle/sifflement SANS defigurer la
-# musique (demande utilisateur : la musique FM faussait les nettoyages trop forts).
-NIVEAUX_VOIX = [("léger", 0.6), ("moyen", 0.85), ("fort", 1.0)]
-NIVEAUX_MUSIQUE = [("léger", 0.3), ("moyen", 0.5), ("fort", 0.7)]
+# Niveaux de nettoyage : (nom, methode, parametre). methode "nr" = noisereduce
+# (soustraction spectrale, parametre = prop_decrease) ; "df" = DeepFilterNet
+# (debruitage NEURONAL, discriminatif -> pas d'hallucination). VOIX : agressif
+# (reveler une voix noyee). MUSIQUE : DOUX, pour oter le souffle/sifflement SANS
+# defigurer la musique. Le niveau "neuronal" (DeepFilterNet) ferme chaque liste.
+NIVEAUX_VOIX = [("léger", "nr", 0.6), ("moyen", "nr", 0.85), ("fort", "nr", 1.0), ("neuronal", "df", None)]
+NIVEAUX_MUSIQUE = [("léger", "nr", 0.3), ("moyen", "nr", 0.5), ("fort", "nr", 0.7), ("neuronal", "df", None)]
 # Seuils (score PANNs), calibres sur clips reels (2026-10-10).
 AMBIG_HIGH = 0.50       # base voix au-dessus : deja claire/audible, inutile de proposer
 REVEAL_MIN = 0.50       # apres nettoyage, la proba de voix doit atteindre ca
@@ -165,13 +167,44 @@ def _spectral_score(y, sr):
     return float(max(0.0, min(1.0, band_ratio * (1.0 - flatness))))
 
 
-def clean(y, sr, prop):
+_df = {"model": None, "state": None}  # DeepFilterNet chargé une seule fois
+
+
+def clean(y, sr, method, param):
+    """Nettoie un clip ; retourne (audio, sr_sortie). methode "nr" =
+    noisereduce (param = prop_decrease) ; "df" = DeepFilterNet (neuronal, 48 kHz)."""
+    if method == "df":
+        return clean_df(y, sr)
     if nr is None:
-        return y
+        return y, sr
     try:
-        return nr.reduce_noise(y=y, sr=sr, prop_decrease=prop, stationary=True)
+        return nr.reduce_noise(y=y, sr=sr, prop_decrease=param, stationary=True), sr
     except Exception:
-        return y
+        return y, sr
+
+
+def clean_df(y, sr):
+    """Debruitage NEURONAL DeepFilterNet (discriminatif, pas de son genere).
+    Fonctionne a 48 kHz : on resample vers 48k, on debruite, on retourne a 48k.
+    Repli : audio inchange si DeepFilterNet indisponible."""
+    try:
+        import torch
+        from df.enhance import enhance, init_df
+        if _df["model"] is None:
+            _df["model"], _df["state"], _ = init_df()
+        target = int(_df["state"].sr())  # 48000
+        if sr != target:
+            from math import gcd
+            from scipy.signal import resample_poly
+            g = gcd(target, int(sr))
+            yy = resample_poly(y, target // g, int(sr) // g).astype(np.float32)
+        else:
+            yy = y.astype(np.float32)
+        enh = enhance(_df["model"], _df["state"], torch.from_numpy(yy).unsqueeze(0))
+        return enh.squeeze(0).detach().cpu().numpy().astype(np.float32), target
+    except Exception as exc:
+        print(f"[analyse] DeepFilterNet indisponible : {exc}")
+        return y, sr
 
 
 # --- Propositions (meme schema que lib/propositions.py du Pi) ----------------
@@ -240,11 +273,11 @@ def process_clip(src, base, tmpdir, audio_rel_dir, dry):
     band = band_from_name(name)
     pid = f"{int(time.time()*1000)}_{abs(hash(name)) % 10000}"
     niveaux_calc, best_v = [], v0
-    for niveau, prop in niveaux:
-        yc = clean(y, sr, prop)
+    for niveau, method, param in niveaux:
+        yc, sc = clean(y, sr, method, param)
         if not is_music:
-            best_v = max(best_v, classify(yc, sr)[0])
-        niveaux_calc.append((niveau, prop, yc))
+            best_v = max(best_v, classify(yc, sc)[0])
+        niveaux_calc.append((niveau, method, param, yc, sc))
 
     if is_music:
         # Nettoyage musique : on propose des que la musique est presente et
@@ -267,15 +300,17 @@ def process_clip(src, base, tmpdir, audio_rel_dir, dry):
         confiance = round(best_v * (1.0 - 0.4 * m0), 2)
 
     traitements = []
-    for niveau, prop, yc in niveaux_calc:
+    for niveau, method, param, yc, sc in niveaux_calc:
         rel = os.path.join(audio_rel_dir, f"{pid}_{niveau}.wav")
         if not dry:
             out = os.path.join(base, rel)
             os.makedirs(os.path.dirname(out), exist_ok=True)
-            sf.write(out, np.clip(yc, -1, 1).astype(np.float32), sr)
+            sf.write(out, np.clip(yc, -1, 1).astype(np.float32), sc)
+        params = {"methode": method, "musique": is_music}
+        if method == "nr":
+            params["prop_decrease"] = param
         traitements.append({"niveau": niveau, "audio": rel,
-                            "action": {"kind": "filtre", "target": band,
-                                       "params": {"prop_decrease": prop, "musique": is_music}}})
+                            "action": {"kind": "filtre", "target": band, "params": params}})
     brut_rel = os.path.join("rejets", name) if is_rejet else name
     return {"id": pid, "le": time.time(), "origine": "ia", "confiance": confiance,
             "resume": resume, "brut": brut_rel, "traitements": traitements,
