@@ -53,6 +53,7 @@ SOURCES = Etiquettes("source", {
     "donnees": "données radio : APRS, ACARS, capteurs, pagers, planeurs",
     "bus": "bus et tram",
     "disques": "disques",
+    "imprimante": "imprimante 3D",
 }, "nom d'une source de son, réglage des priorités")
 DEFAULT_ORDER = list(SOURCES)
 DEFAULT_MODES = {s: "attend" for s in SOURCES}
@@ -65,6 +66,7 @@ DEFAULT_VOLUME = 0.3
 SCRIPT_SOURCES = {
     "radio_watch": "radio", "sncf_watch": "trains", "meteo_watch": "alertes", "crue_watch": "alertes",
     "adsb_watch": "avions", "stas_watch": "bus", "nas_watch": "disques", "main": "console",
+    "imprimante_watch": "imprimante",
 }
 
 # Journal ouvert dans la console (console/journal.py, archives.py) : les

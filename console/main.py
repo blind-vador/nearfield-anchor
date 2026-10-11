@@ -268,6 +268,9 @@ def run_command(line, key_source, last_response):
             out(f"{text}\n")
             voix.say_and_wait(text)
         return cmd.handler(announce)
+    import imprimante_cmd
+    if imprimante_cmd.handles(cmd.name):
+        return imprimante_cmd.run(cmd.name, line, key_source, voix.say, out, read_line)
     if cmd.name == "décris":
         # Tout ce qui n'est pas un simple mot declencheur devient une question
         # posee en plus a l'IA ("photo, la piece est-elle decollee ?").

@@ -19,7 +19,6 @@ sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import reglages  # noqa: E402
 from phrases import Etiquettes, _code, dire, dire_ou, nombre  # noqa: E402
 
-OCTOPRINT_URL = "http://127.0.0.1:5000"
 FM_RANGE = "88M:108M:125k"
 FM_SCAN_TIMEOUT_SEC = 40
 
@@ -71,36 +70,9 @@ def heure():
 
 
 def printer_status():
-    api_key = reglages.cle("octoprint")
-    if not api_key:
-        return (dire("commandes.cle_api_octoprint_absente"))
-    headers = {"X-Api-Key": api_key}
-    try:
-        printer = requests.get(f"{OCTOPRINT_URL}/api/printer", headers=headers, timeout=5)
-        if printer.status_code == 409:
-            return dire("commandes.imprimante_connectee_octoprint")
-        if printer.status_code in (401, 403):
-            return dire("commandes.octoprint_refuse_cle_api")
-        printer.raise_for_status()
-        job = requests.get(f"{OCTOPRINT_URL}/api/job", headers=headers, timeout=5).json()
-    except requests.RequestException:
-        return dire("commandes.octoprint_repond")
-
-    data = printer.json()
-    temps = data.get("temperature", {})
-    parts = [dire("commandes.imprimante", get=data.get('state', {}).get('text') or dire("commandes.etat_inconnu"))]
-    progress = (job.get("progress") or {})
-    if progress.get("completion") is not None and job.get("state", "").startswith("Printing"):
-        parts.append(dire("commandes.impression_cent", round=round(progress['completion'])))
-        left = progress.get("printTimeLeft")
-        if left:
-            h, m = divmod(int(left) // 60, 60)
-            parts.append(dire("commandes.reste_heures_minutes", h=h, m=m) if h else dire("commandes.reste_minutes", m=m))
-    for key, label in (("tool0", "Buse"), ("bed", "Plateau")):
-        t = temps.get(key)
-        if t and t.get("actual") is not None:
-            parts.append(dire("commandes.degres_cible", label=label, round=round(t['actual']), round2=round(t.get('target') or 0)))
-    return " ".join(parts)
+    # Etat complet (fichier, pause, erreur, temperatures) : console/imprimante_cmd.py (2026-10-11).
+    import imprimante_cmd
+    return imprimante_cmd.etat_texte()
 
 
 def radio_scan():
@@ -167,6 +139,7 @@ WATCHERS = Etiquettes("veille", {
     "nas-watch": "disques", "radio-watch": "radio", "meteo-watch": "météo",
     "crue-watch": "crues", "sncf-watch": "trains", "adsb-watch": "avions",
     "stas-watch": "bus et tram", "log-ship": "copie des journaux", "usb-watch": "appareils USB",
+    "imprimante-watch": "annonces de l'imprimante",
 }, "nom d'une veille (service du Pi)")
 NAS_MOUNTS = ["/media/nas/nd1", "/media/nas/nd2"]
 
@@ -573,6 +546,55 @@ COMMANDS = [
                       "tu vois quoi", "photo", "camera", "webcam"],
             examples=["décris moi l'imprimante", "montre moi ce qui se passe", "qu'est-ce qu'il y a dans le caisson"],
             busy=lambda: __import__("vision").busy()),
+    # Pilotage de l'imprimante (console/imprimante_cmd.py, 2026-10-11) : avant
+    # "imprimante", qui garde "impression" seul. "pause" et "reprends" seuls
+    # restent aux veilles et au scanner : ici, toujours suivis de l'impression.
+    Command("annule impression", "annule l'impression en cours, après confirmation",
+            lambda announce: __import__("imprimante_cmd").annuler(announce),
+            keywords=["annule l impression", "annuler l impression", "annule impression", "arrete l impression",
+                      "stoppe l impression", "annulation de l impression"],
+            examples=["arrête d'imprimer", "annule le print"],
+            confirm="Annuler l'impression en cours ? La pièce sera perdue. Tape oui puis entrée. "
+                    "Toute autre réponse annule."),
+    Command("pause impression", "met l'impression en pause", None,
+            keywords=["pause impression", "pause l impression", "pause de l impression", "mets en pause",
+                      "met en pause", "mets l impression en pause", "suspends l impression"],
+            examples=["mets l'impression en pause"]),
+    Command("reprends impression", "reprend l'impression en pause", None,
+            keywords=["reprends l impression", "reprendre l impression", "reprends impression",
+                      "reprise de l impression", "relance l impression", "continue l impression"],
+            examples=["reprends l'impression"]),
+    Command("refroidis", "coupe la chauffe de la buse et du plateau", None,
+            keywords=["refroidis", "refroidir", "refroidissement", "coupe la chauffe", "arrete la chauffe",
+                      "eteins la chauffe", "stop chauffe"],
+            examples=["arrête de chauffer"]),
+    Command("chauffe", "chauffe l'imprimante : chauffe pla, chauffe abs, chauffe buse 200, chauffe plateau 60", None,
+            keywords=["chauffe", "chauffer", "prechauffe", "prechauffer", "prechauffage"],
+            examples=["préchauffe pour le pla"]),
+    Command("arrêt d'urgence", "arrêt d'urgence de l'imprimante : tout se fige, il faudra la redémarrer", None,
+            keywords=["arret d urgence", "arret urgence", "urgence"]),
+    Command("pilote imprimante", "piloter l'imprimante au clavier : axes, origine, position, filament, réglage du plateau",
+            None,
+            keywords=["pilote imprimante", "pilote l imprimante", "piloter l imprimante", "controle imprimante",
+                      "controle l imprimante", "bouge les axes", "bouger les axes", "deplace la tete", "axes"],
+            examples=["je veux bouger la tête de l'imprimante", "réglage du plateau", "mise à niveau du plateau"]),
+    Command("imprime", "choisir un fichier et lancer une impression, après confirmation", None,
+            keywords=["imprime", "imprimer", "lance une impression", "lancer une impression",
+                      "fichiers d impression", "fichiers a imprimer", "fichiers"],
+            examples=["qu'est-ce que je peux imprimer", "liste des fichiers"]),
+    Command("ventilateur", "ventilateur de la pièce : ventilateur, ventilateur 50, ventilateur arrêt", None,
+            keywords=["ventilateur", "ventilo", "ventilation"],
+            examples=["coupe le ventilo"]),
+    Command("moteurs", "coupe les moteurs de l'imprimante : les axes se bougent à la main", None,
+            keywords=["coupe les moteurs", "moteurs", "moteur", "libere les axes"]),
+    Command("connexion imprimante", "connecte ou déconnecte l'imprimante d'OctoPrint", None,
+            keywords=["connecte l imprimante", "connecte imprimante", "connecter l imprimante",
+                      "reconnecte l imprimante", "deconnecte l imprimante", "deconnecte imprimante",
+                      "deconnecter l imprimante"]),
+    Command("vitesse d'impression", "vitesse de l'impression en cours, en pour cent : vitesse d'impression 120", None,
+            keywords=["vitesse d impression", "vitesse impression", "vitesse de l impression"]),
+    Command("débit", "débit de filament en pour cent : débit 95", None,
+            keywords=["debit", "debit de filament", "flux de filament"]),
     Command("imprimante", "état de l'impression et températures", printer_status,
             keywords=["imprimante", "impression", "octoprint", "buse", "plateau"],
             examples=["elle en est où l'impression", "état de l'imprimante",

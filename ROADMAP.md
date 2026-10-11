@@ -6507,3 +6507,38 @@ DMR n'est pas une logique a part, c'est une facette du balayage. Verifie :
   jour) ; usb-watch dans "veilles", protegee de "arrete toutes les
   veilles" (elle garde le clavier et le son de la console), et dans le
   bilan de sante.
+
+## 2026-10-11 : pilotage vocal de l'imprimante 3D
+- lib/octoprint.py : client partage. API REST pour etat, temperatures,
+  deplacements, chauffe, travaux, fichiers. La position reelle n'est pas
+  dans l'API : M114 envoye au firmware, reponse guettee dans le websocket
+  d'OctoPrint (/sockjs/websocket, session passive ouverte avec la cle) --
+  0,5 a 0,7 s mesure. M400 avant M114 (position apres les mouvements),
+  JAMAIS pendant une impression : M400 viderait le tampon du firmware.
+- console/imprimante_cmd.py, dialogue "pilote imprimante" : fleches X/Y
+  (haut = arriere), Page precedente/suivante Z, + / - pas 0,1 / 1 / 10 /
+  50 mm (Z 10 au plus), Ctrl+X origine X Y, Ctrl+Z origine Z, Debut
+  origine de tout (en tache de fond, fin dite quand le firmware a fini,
+  refus du firmware dit en clair), x y z p position, t temperatures,
+  e / r 5 mm de filament (buse >= 170 degres), v ventilateur, m moteurs
+  coupes, n reglage du plateau (4 coins a 30 mm du bord puis centre, buse
+  a Z0 pour la feuille de papier, origine faite d'abord si besoin), i etat.
+- Garde-fous : rien ne bouge pendant une impression ni une pause (un
+  gcode irait dans le flux de la piece) ; Z ne descend que de 1 mm par
+  appui tant que Z n'a pas ete mis a l'origine dans cette console ;
+  chauffe bornee (buse 260, plateau 110) ; lancement et annulation d'une
+  impression apres "oui" ; arret d'urgence (M112) sans question mais
+  seulement sur ses mots exacts.
+- Commandes tapees : chauffe (prechauffages d'OctoPrint : pla, abs ; ou
+  buse N / plateau N), refroidis, pause / reprends / annule l'impression
+  ("pause" et "reprends" seuls restent aux veilles et au scanner),
+  imprime (liste des fichiers, fleches, Entree), ventilateur [N | arret],
+  moteurs, connecte / deconnecte l'imprimante, vitesse d'impression N,
+  debit N, arret d'urgence. "imprimante" donne maintenant l'etat complet
+  (fichier, pause, erreur, temps restant, temperatures).
+- watchers/imprimante_watch.py (service imprimante-watch, source de son
+  "imprimante 3D" dans les priorites) : chauffe atteinte, impression
+  lancee (duree estimee), 25 / 50 / 75 %, pause, reprise, terminee (duree
+  reelle), annulee, erreurs, rappel toutes les 15 min d'une chauffe
+  allumee sans impression. Veille pilotable par "arrete octoprint" (pas
+  "imprimante" : "coupe la chauffe de l'imprimante" doit refroidir).

@@ -38,6 +38,7 @@ l'installation complète en cas de panne de carte SD.
 | `crue_watch.py` | Vigilance crues (Vigicrues, Loire forézienne) |
 | `adsb_watch.py` | Survols d'avions à proximité (API OpenSky) |
 | `stas_watch.py` | Perturbations réseau de bus/tram (STAS Saint-Étienne) |
+| `imprimante_watch.py` | Annonces de l'imprimante 3D (OctoPrint) : chauffe atteinte, impression lancée / 25-50-75 % / en pause / reprise / terminée / annulée, erreurs, rappel d'une chauffe oubliée sans impression |
 | `usb_watch.py` | Entretien des périphériques USB : répare tout seul un port bloqué, la caméra figée, la carte son ou le clavier sans pilote, le pilote TNT sur le dongle, reconnecte l'imprimante rebranchée à OctoPrint ; prévient à la voix quand il faut agir à la main (gestes root via `tools/usb-repare`, commande console « usb ») |
 
 Chaque watcher tourne comme un service systemd indépendant (`Restart=always`),
@@ -57,6 +58,7 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `matcher.py` | Mots-cles puis repli flou (seuil 65) ; sinon "commande non reconnue" |
 | `simulation.py` | 23 scenarios qui font parler les vraies fonctions d'annonce des watchers |
 | `maj.py` | Mise à jour apt en arrière-plan, étapes parlées, détail dans `server/logs/mise_a_jour_*.log` |
+| `imprimante_cmd.py` | Pilotage vocal de l'imprimante 3D : dialogue « pilote imprimante » (flèches X/Y, Page préc./suiv. Z, Ctrl+X / Ctrl+Z / Début origine, x y z p position, e/r filament, v ventilateur, m moteurs, n réglage du plateau), commandes chauffe, refroidis, pause / reprends / annule l'impression, imprime, ventilateur, moteurs, vitesse, débit, arrêt d'urgence ; client partagé `lib/octoprint.py` |
 | `vision.py` | Photo via mjpg-streamer, refus si trop sombre, description Gemini lue puis oubliée |
 | `manuel.py` | Dialogue du mode manuel ; plages publiées par le scanner (`/tmp/radio_watch_plages.json`) |
 | `reglages_cmd.py` | Commandes `réglages`, `ville`, `gare`, `aéroport` : choix écrits sur le NAS, veilles concernées relancées |

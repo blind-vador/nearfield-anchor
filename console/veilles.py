@@ -30,6 +30,8 @@ WATCHERS = [
     ("nas-watch", "disques", ["disque", "disques", "nas"]),
     ("log-ship", "copie des journaux", ["journaux", "journal", "logs"]),
     ("usb-watch", "appareils USB", ["usb", "peripheriques"]),
+    # Pas "imprimante" : "coupe la chauffe de l'imprimante" doit refroidir, pas arreter la veille.
+    ("imprimante-watch", "annonces de l'imprimante", ["octoprint"]),
 ]
 # "toutes les veilles" : jamais les deux qui protegent les disques, ni
 # celle qui garde le clavier et le son de cette console (usb-watch).
