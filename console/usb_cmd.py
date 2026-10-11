@@ -31,7 +31,7 @@ def usb_status():
     if time.time() - state.get("maj", 0) > STALE_SEC:
         return dire("usb.veille_arretee")
     devices = state.get("appareils", {})
-    ok = [NOMS[r] for r in NOMS if devices.get(r) == "ok"]
+    ok = [NOMS[r][:1].lower() + NOMS[r][1:] for r in NOMS if devices.get(r) == "ok"]  # noms "en debut de phrase"
     other = [dire("usb.etat_appareil", appareil=NOMS[r], etat=ETATS[devices[r]])
              for r in NOMS if devices.get(r) not in (None, "ok", "absent") and devices[r] in ETATS]
     parts = []
@@ -43,9 +43,9 @@ def usb_status():
         parts.append(dire("usb.ports_bloques", appareils=nombre(len(stuck), "appareil")))
     today = datetime.date.today()
     repairs = [r for r in state.get("reparations", [])
-               if datetime.date.fromtimestamp(r["t"]) == today and r["ok"]]
+               if datetime.date.fromtimestamp(r["t"]) == today and r.get("resolu")]
     if repairs:
         last = datetime.datetime.fromtimestamp(repairs[-1]["t"])
-        parts.append(dire("usb.reparations_jour", reparations=nombre(len(repairs), "réparation"),
-                          heure=last.hour, minutes=f"{last.minute:02d}"))
+        parts.append(dire("usb.reparations_jour", nombre=len(repairs), heure=last.hour,
+                          minutes=f"{last.minute:02d}"))
     return " ".join(parts) or dire("usb.rien")

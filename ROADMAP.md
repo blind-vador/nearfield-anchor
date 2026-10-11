@@ -6472,3 +6472,38 @@ DMR n'est pas une logique a part, c'est une facette du balayage. Verifie :
 - Evenement d'ambiance secondaire : proba AMBIENCE_EXTRA_PROB (0,15) qu'un son
   de train declenche, en parallele, un train qui passe (ter/tgv_passby) ou un
   klaxon (horn1.mp3) au hasard -- decoratif, pour faire vivre la gare.
+
+## 2026-10-11 : veille USB, reparation automatique des peripheriques
+- Constat sur deepspace9 : la webcam s'est deconnectee une seconde a
+  23 h 47 (mise en veille USB automatique) ; mjpg-streamer est mort
+  ("Error grabbing frames") mais webcamd restait "active" : camera
+  revenue jamais reprise, vision.py et photos des plantes muettes 14 h.
+  Un appareil lent branche directement sur le Pi (port 1-1.4) n'a jamais
+  ete reconnu (port bloque dans l'etat "default", erreurs -32/-71, meme
+  apres coupure du port et ancien schema d'enumeration : materiel ou
+  cable). L'imprimante rebranchee (CH340) n'est pas reprise par
+  OctoPrint, qui ne se connecte qu'a son demarrage.
+- watchers/usb_watch.py (service usb-watch, toutes les 15 s) : appareils
+  reconnus par leur TYPE (clavier HID, audio sans video, UVC, RTL2838,
+  convertisseur serie), pas par leur port. Gestes gradues, un probleme =
+  son echelle : veille retiree tout de suite ; puis rebranchement
+  logiciel / relance de webcamd / retrait du pilote TNT, au 2e passage
+  en panne, 2 min entre deux gestes. Echec de toute l'echelle -> on le
+  dit ("Debranche-le, puis rebranche-le"), rappel au plus toutes les 2 h,
+  nouvel essai discret toutes les 30 min.
+- Ports bloques : coupure/remise du courant du port, puis meme geste
+  avec old_scheme_first ; sinon annonce (directement sur le Pi / sur un
+  hub). Annonce aussi quand l'appareil finit par etre reconnu.
+- Imprimante : connexion OctoPrint demandee seulement quand elle
+  (re)apparait ou au demarrage de la veille, 3 essais -- deconnectee a
+  la main dans OctoPrint, elle n'est pas reconnectee derriere ton dos.
+- Debranchement d'un appareil deja vu (souvenir sur la carte SD,
+  ~/autopilot/usb_watch_attendus.json) annonce apres ~30 s, retour aussi.
+- tools/usb-repare (/usr/local/sbin, sudo -n limite) : seuls gestes root ;
+  refuse un port sain, un hub ou un disque (les disques restent a
+  nas_watch.py). config/99-nearfield-usb.rules : plus de veille USB
+  automatique pour les appareils (hubs exceptes).
+- Console : commande "usb" (etat, ports bloques, reparations reussies du
+  jour) ; usb-watch dans "veilles", protegee de "arrete toutes les
+  veilles" (elle garde le clavier et le son de la console), et dans le
+  bilan de sante.

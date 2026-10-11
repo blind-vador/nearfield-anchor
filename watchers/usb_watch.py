@@ -263,8 +263,10 @@ class Watch:
         self.status = {}
         self.history = []
 
-    def _log(self, what, ok):
-        self.history = (self.history + [{"t": time.time(), "quoi": what, "ok": ok}])[-20:]
+    def _log(self, what, ok, resolu=False):
+        """resolu : l'appareil remarche (ce que compte la commande "usb"),
+        par opposition a un geste tente."""
+        self.history = (self.history + [{"t": time.time(), "quoi": what, "ok": ok, "resolu": resolu}])[-20:]
 
     # 1) ports bloques
     def check_ports(self, devices):
@@ -300,7 +302,7 @@ class Watch:
             if self.port_step.get(port) and child in devices:
                 product = devices[child]["produit"] or dire("usb.appareil_sans_nom")
                 print(f"[usb_watch] {port} : appareil enfin reconnu ({product})")
-                self._log(f"port {port} : reconnu ({product})", True)
+                self._log(f"port {port} : reconnu ({product})", True, resolu=True)
                 _speak(dire("usb.port_repare", produit=product))
             for d in (self.ports_stuck, self.port_step, self.port_given_up):
                 d.pop(port, None)
@@ -344,7 +346,7 @@ class Watch:
         if problem is None:
             if role in self.role_acted:
                 print(f"[usb_watch] {role} repare")
-                self._log(f"{role} : repare", True)
+                self._log(f"{role} : repare", True, resolu=True)
                 _speak(dire("usb.repare", appareil=NOMS[role]))
             for d in (self.role_reason, self.role_fails, self.role_step, self.role_failed):
                 d.pop(role, None)
@@ -391,7 +393,7 @@ class Watch:
         self.status["imprimante"] = "deconnectee" if closed else "ok"
         if not closed:
             if closed is False and self.printer_asked:
-                self._log("imprimante : reconnectee a OctoPrint", True)
+                self._log("imprimante : reconnectee a OctoPrint", True, resolu=True)
                 _speak(dire("usb.imprimante_reconnectee"))
             self.printer_tries, self.printer_asked = 0, False
             return

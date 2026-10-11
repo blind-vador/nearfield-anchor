@@ -38,6 +38,7 @@ l'installation complète en cas de panne de carte SD.
 | `crue_watch.py` | Vigilance crues (Vigicrues, Loire forézienne) |
 | `adsb_watch.py` | Survols d'avions à proximité (API OpenSky) |
 | `stas_watch.py` | Perturbations réseau de bus/tram (STAS Saint-Étienne) |
+| `usb_watch.py` | Entretien des périphériques USB : répare tout seul un port bloqué, la caméra figée, la carte son ou le clavier sans pilote, le pilote TNT sur le dongle, reconnecte l'imprimante rebranchée à OctoPrint ; prévient à la voix quand il faut agir à la main (gestes root via `tools/usb-repare`, commande console « usb ») |
 
 Chaque watcher tourne comme un service systemd indépendant (`Restart=always`),
 sauf `airband_bridge.py`/`acars_watch.py` qui sont des modules importés par
