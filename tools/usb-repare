@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Gestes de reparation USB de usb_watch.py, les seuls qui demandent root
+# (2026-10-11). Installe dans /usr/local/sbin/usb-repare par install.sh ;
+# usb_watch.py (utilisateur vador) l'appelle via "sudo -n", regle sudoers
+# limitee a ce script. Chaque geste refuse ce qui pourrait couper un
+# appareil qui marche -- en particulier les disques du NAS et les hubs qui
+# les portent :
+#
+#   usb-repare port <1-1-port4>      coupe puis remet le courant d'un port
+#                                    BLOQUE (appareil present mais jamais
+#                                    reconnu) ; refuse si le port est sain
+#   usb-repare port-ancien <port>    pareil, avec l'ancien schema
+#                                    d'enumeration du noyau (certains
+#                                    claviers/peripheriques lents)
+#   usb-repare rebranche <1-1.3.3>   debranchement/rebranchement logiciel
+#                                    d'un appareil (jamais un hub ni un disque)
+#   usb-repare detache <1-1.3.2:1.0> retire le pilote noyau d'une interface
+#                                    (pilote TNT pose sur le dongle radio)
+#   usb-repare sans-veille <1-1.3.3> desactive la mise en veille USB
+#                                    automatique d'un appareil
+#   usb-repare webcam                relance webcamd (mjpg-streamer d'OctoPi)
+set -euo pipefail
+
+SYS=/sys/bus/usb/devices
+DEV_RE='^[0-9]+-[0-9]+(\.[0-9]+)*$'
+INTF_RE='^[0-9]+-[0-9]+(\.[0-9]+)*:[0-9]+\.[0-9]+$'
+PORT_RE='^(usb[0-9]+|[0-9]+-[0-9]+(\.[0-9]+)*)-port[0-9]+$'
+
+die() { echo "usb-repare: $*" >&2; exit 2; }
+
+port_dir() {
+    [[ "$1" =~ $PORT_RE ]] || die "port invalide : $1"
+    local d
+    d=$(ls -d "$SYS"/*/*:1.0/"$1" 2>/dev/null | head -1)
+    [ -n "$d" ] || die "port introuvable : $1"
+    echo "$d"
+}
+
+# Hub (classe 09) ou stockage (interface classe 08) : jamais touche.
+protege() {
+    local dev="$SYS/$1"
+    [ "$(cat "$dev/bDeviceClass" 2>/dev/null)" = "09" ] && return 0
+    grep -qx "08" "$dev"/*:*/bInterfaceClass 2>/dev/null && return 0
+    return 1
+}
+
+cycle_port() {
+    local dir state
+    dir=$(port_dir "$1")
+    state=$(cat "$dir/state")
+    case "$state" in
+        attached|powered|default|addressed|reconnecting) ;;
+        *) die "port $1 dans l'etat '$state' : pas bloque, on n'y touche pas" ;;
+    esac
+    echo 1 > "$dir/disable"
+    sleep 2
+    echo 0 > "$dir/disable"
+}
+
+action="${1:-}"
+cible="${2:-}"
+case "$action" in
+    port)
+        cycle_port "$cible"
+        ;;
+    port-ancien)
+        param=/sys/module/usbcore/parameters/old_scheme_first
+        before=$(cat "$param")
+        echo Y > "$param"
+        trap 'echo "$before" > "$param"' EXIT
+        cycle_port "$cible"
+        sleep 6  # l'enumeration se fait apres la remise sous tension
+        ;;
+    rebranche)
+        [[ "$cible" =~ $DEV_RE ]] || die "appareil invalide : $cible"
+        [ -e "$SYS/$cible/authorized" ] || die "appareil introuvable : $cible"
+        protege "$cible" && die "$cible est un hub ou un disque : refuse"
+        echo 0 > "$SYS/$cible/authorized"
+        sleep 1
+        echo 1 > "$SYS/$cible/authorized"
+        ;;
+    detache)
+        [[ "$cible" =~ $INTF_RE ]] || die "interface invalide : $cible"
+        drv="$SYS/$cible/driver"
+        [ -e "$drv" ] || exit 0
+        protege "${cible%%:*}" && die "${cible%%:*} est un hub ou un disque : refuse"
+        echo "$cible" > "$drv/unbind"
+        ;;
+    sans-veille)
+        [[ "$cible" =~ $DEV_RE ]] || die "appareil invalide : $cible"
+        echo on > "$SYS/$cible/power/control"
+        ;;
+    webcam)
+        systemctl restart webcamd
+        ;;
+    *)
+        die "usage : usb-repare port|port-ancien|rebranche|detache|sans-veille <cible> | webcam"
+        ;;
+esac

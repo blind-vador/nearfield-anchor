@@ -205,6 +205,8 @@ mkdir -p "$PYTHON_SITE"
 cp "$REPO_DIR"/radiono/magicsound.py "$PYTHON_SITE/magicsound.py"
 cp "$REPO_DIR"/nas/nas_watch.py "$NAS_TARGET_DIR/"
 cp "$REPO_DIR"/console/*.py "$CONSOLE_TARGET_DIR/"
+# Reparations USB (usb_watch.py) : seul geste root, appele via sudo -n.
+install -m 755 "$REPO_DIR"/tools/usb-repare /usr/local/sbin/usb-repare
 chown -R "$RUN_USER:$RUN_USER" "$RADIONO_TARGET_DIR"
 
 echo "=== 5/6 : reglages systeme ==="
@@ -222,7 +224,8 @@ loginctl enable-linger "$RUN_USER"
 # Points de montage de nas_watch.py (pas d'entree fstab, volontairement).
 mkdir -p /media/nas/nd1 /media/nas/nd2
 # sudo sans mot de passe limite a ce dont les services ont besoin :
-# nas_watch.py (mount/umount) et la console (redemarrer/eteindre, mise a jour).
+# nas_watch.py (mount/umount), usb_watch.py (usb-repare) et la console
+# (redemarrer/eteindre, mise a jour).
 SUDOERS_FILE=/etc/sudoers.d/020-pi-console-watchers
 # systemctl start/stop/restart/enable/disable des veilles : commandes
 # "arrete"/"reprends" de la console (console/veilles.py).
@@ -238,7 +241,7 @@ done
 # reste non interactive : apt ne doit jamais poser de question sur tty1).
 cat > "$SUDOERS_FILE.tmp" <<EOF
 Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND LC_ALL"
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/apt-get$VEILLE_CMDS
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/apt-get, /usr/local/sbin/usb-repare$VEILLE_CMDS
 EOF
 visudo -cf "$SUDOERS_FILE.tmp" && chmod 440 "$SUDOERS_FILE.tmp" && mv "$SUDOERS_FILE.tmp" "$SUDOERS_FILE"
 # Partages reseau "server" (nd1) et "stockage" (nd2) pour les autres
@@ -262,6 +265,10 @@ if aplay -l 2>/dev/null | grep -q "USB Audio"; then
 else
     echo "!! Pas d'adaptateur son USB detecte : sortie sur le jack integre (pilote fragile)."
 fi
+# Pas de mise en veille USB automatique des appareils (usb_watch.py, 2026-10-11).
+cp "$REPO_DIR/config/99-nearfield-usb.rules" /etc/udev/rules.d/
+udevadm control --reload-rules
+udevadm trigger --subsystem-match=usb --action=add || true
 # tty1 appartient a la console vocale : plus de login classique sur l'ecran
 # (SSH reste le moyen normal d'administration).
 systemctl stop getty@tty1.service 2>/dev/null || true

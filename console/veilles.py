@@ -29,9 +29,11 @@ WATCHERS = [
     ("stas-watch", "bus et tram", ["bus", "tram", "stas"]),
     ("nas-watch", "disques", ["disque", "disques", "nas"]),
     ("log-ship", "copie des journaux", ["journaux", "journal", "logs"]),
+    ("usb-watch", "appareils USB", ["usb", "peripheriques"]),
 ]
-# "toutes les veilles" : jamais les deux qui protegent les disques.
-PROTECTED = {"nas-watch", "log-ship"}
+# "toutes les veilles" : jamais les deux qui protegent les disques, ni
+# celle qui garde le clavier et le son de cette console (usb-watch).
+PROTECTED = {"nas-watch", "log-ship", "usb-watch"}
 ALL_WORDS = {"toutes", "tout", "tous"}
 
 STOP_WORDS = {"arrete", "arreter", "arretes", "stop", "stoppe", "stopper", "coupe", "couper",

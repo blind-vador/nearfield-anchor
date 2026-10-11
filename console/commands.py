@@ -166,7 +166,7 @@ def rire():
 WATCHERS = Etiquettes("veille", {
     "nas-watch": "disques", "radio-watch": "radio", "meteo-watch": "météo",
     "crue-watch": "crues", "sncf-watch": "trains", "adsb-watch": "avions",
-    "stas-watch": "bus et tram", "log-ship": "copie des journaux",
+    "stas-watch": "bus et tram", "log-ship": "copie des journaux", "usb-watch": "appareils USB",
 }, "nom d'une veille (service du Pi)")
 NAS_MOUNTS = ["/media/nas/nd1", "/media/nas/nd2"]
 
@@ -577,6 +577,11 @@ COMMANDS = [
             keywords=["imprimante", "impression", "octoprint", "buse", "plateau"],
             examples=["elle en est où l'impression", "état de l'imprimante",
                       "ça imprime", "où en est le print"]),
+    # Apres "décris" (qui garde "camera"/"webcam") et "imprimante".
+    Command("usb", "état des appareils USB : clavier, son, radio, caméra, imprimante, et réparations automatiques",
+            lambda: __import__("usb_cmd").usb_status(),
+            keywords=["usb", "peripheriques", "peripherique", "appareils branches", "branchements"],
+            examples=["est-ce que tout est bien branché", "état des périphériques"]),
     Command("température", "température du Pi", pi_temp,
             keywords=["temperature du pi", "temperature pi", "chaleur", "temp"],
             examples=["quelle température fait le pi", "le pi chauffe",
