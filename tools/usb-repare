@@ -71,6 +71,16 @@ case "$action" in
         cycle_port "$cible"
         sleep 6  # l'enumeration se fait apres la remise sous tension
         ;;
+    port-off)
+        # Coupe un port fantome pour arreter la tempete d'enumeration
+        # (erreurs -32/-71 en boucle) sans toucher aux appareils sains.
+        dir=$(port_dir "$cible")
+        echo 1 > "$dir/disable"
+        ;;
+    port-on)
+        dir=$(port_dir "$cible")
+        echo 0 > "$dir/disable"
+        ;;
     rebranche)
         [[ "$cible" =~ $DEV_RE ]] || die "appareil invalide : $cible"
         [ -e "$SYS/$cible/authorized" ] || die "appareil introuvable : $cible"
@@ -94,6 +104,6 @@ case "$action" in
         systemctl restart webcamd
         ;;
     *)
-        die "usage : usb-repare port|port-ancien|rebranche|detache|sans-veille <cible> | webcam"
+        die "usage : usb-repare port|port-ancien|port-off|port-on|rebranche|detache|sans-veille <cible> | webcam"
         ;;
 esac

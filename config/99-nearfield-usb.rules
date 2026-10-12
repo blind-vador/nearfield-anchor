@@ -1,5 +1,7 @@
-# Pas de mise en veille USB automatique pour les appareils (hubs exceptes) :
-# la webcam s'est deconnectee en veille le 2026-10-10 et mjpg-streamer ne
-# l'a jamais reprise. Installe par install.sh dans /etc/udev/rules.d/ ;
+# Pas de mise en veille USB automatique :
+# - appareils : la webcam s'est deconnectee en veille le 2026-10-10 ;
+# - hubs aussi (2026-10-12) : un hub en autosuspend puis reveil brutal
+#   (branchement USB2 sur le hub NAS) peut reset le controleur xHCI.
+# Installe par install.sh dans /etc/udev/rules.d/ ;
 # usb_watch.py corrige aussi a chaud un appareil reste en veille "auto".
-ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{bDeviceClass}!="09", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", TEST=="power/control", ATTR{power/control}="on"

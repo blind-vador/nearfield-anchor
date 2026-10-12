@@ -56,6 +56,7 @@ SYS = "/sys/bus/usb/devices"
 HELPER = ["sudo", "-n", "/usr/local/sbin/usb-repare"]
 STATE_FILE = "/tmp/usb_watch_etat.json"
 SEEN_FILE = "/home/vador/autopilot/usb_watch_attendus.json"  # survit au redemarrage
+PORTS_IGNORE_FILE = "/home/vador/autopilot/usb_watch_ports_ignores.json"  # ports fantomes
 OCTOPRINT_URL = "http://127.0.0.1:5000"
 SNAPSHOT_URL = "http://127.0.0.1:8080/?action=snapshot"  # meme source que console/vision.py
 
@@ -129,6 +130,45 @@ def _port_on_pi(port):
     plutot que d'un hub ajoute."""
     hub = port.rsplit("-port", 1)[0]
     return hub.startswith("usb") or hub.count(".") == 0 and _read(f"{SYS}/{hub}/idVendor") == "2109"
+
+
+def _port_peer(port):
+    """Nom du port USB3 jumeau (sysfs peer), ou None."""
+    matches = glob.glob(f"{SYS}/*/*:1.0/{port}")
+    if not matches:
+        return None
+    peer = os.path.join(matches[0], "peer")
+    if not os.path.islink(peer):
+        return None
+    return os.path.basename(os.readlink(peer))
+
+
+def _load_ignored_ports():
+    try:
+        with open(PORTS_IGNORE_FILE) as f:
+            return set(json.load(f))
+    except (OSError, ValueError):
+        return set()
+
+
+def _save_ignored_ports(ports):
+    try:
+        with open(PORTS_IGNORE_FILE, "w") as f:
+            json.dump(sorted(ports), f)
+    except OSError as exc:
+        print(f"[usb_watch] impossible d'ecrire {PORTS_IGNORE_FILE} : {exc}")
+
+
+def _ignore_port(port, reason):
+    """Abandonne un port fantome : plus de power-cycle, et coupe le port
+    pour stopper la tempete d'enumeration noyau (qui secoue le hub jumeau)."""
+    ignored = _load_ignored_ports()
+    if port not in ignored:
+        ignored.add(port)
+        _save_ignored_ports(ignored)
+        print(f"[usb_watch] port ignore desormais : {port} ({reason})")
+    _helper("port-off", port)
+
 
 
 # --- appareils du projet ------------------------------------------------------
@@ -267,6 +307,13 @@ class Watch:
         self.ports_stuck = {}   # port -> passages consecutifs bloque
         self.port_step = {}
         self.port_given_up = {}  # port -> heure de l'abandon (rappel/nouvel essai)
+        self.ports_ignored = _load_ignored_ports()
+        # Au demarrage : recouper les ports deja abandonnes (disable est
+        # perdu au reboot / apres un power-cycle) pour ne pas relancer la
+        # tempete d'enumeration ni l'echelle de reparation.
+        for port in list(self.ports_ignored):
+            self.port_given_up[port] = {"essai": time.time(), "annonce": 0}
+            _helper("port-off", port)
         self.printer_tries = 0
         self.printer_asked = False
         self.printer_present = None
@@ -284,17 +331,35 @@ class Watch:
         for port, state in _ports().items():
             if state not in STUCK_STATES or _port_child(port) in devices:
                 continue
+            # Ports deja abandonnes (persistes) : ne plus jamais power-cycler.
+            if port in self.ports_ignored:
+                stuck_now.add(port)
+                continue
+            peer = _port_peer(port)
+            if peer and peer.startswith("2-"):
+                # Jumeau USB2 d'un hub USB3 (hub periph sur deepspace9) :
+                # power-cycler reset TOUT le hub (radio/son/camera...).
+                # 1-1-port1 = montee du hub USB2 : NE JAMAIS couper.
+                # 1-1-port2/4 = fantomes sur ports vides du hub : ignorer+couper.
+                stuck_now.add(port)
+                if port in ("1-1-port2", "1-1-port4"):
+                    print(f"[usb_watch] {port} fantome (jumeau {peer}) : ignore, coupe")
+                    _ignore_port(port, f"peer fantome {peer}")
+                    self.ports_ignored.add(port)
+                    self.port_given_up[port] = {"essai": time.time(), "annonce": 0}
+                else:
+                    if self.ports_stuck.get(port, 0) == 0:
+                        print(f"[usb_watch] {port} bloque (jumeau {peer}, "
+                              f"port critique) : aucune reparation auto")
+                    self.ports_stuck[port] = self.ports_stuck.get(port, 0) + 1
+                continue
             stuck_now.add(port)
             self.ports_stuck[port] = self.ports_stuck.get(port, 0) + 1
             if self.ports_stuck[port] < 2:
                 continue
             given_up = self.port_given_up.get(port)
             if given_up:
-                # Pas de nouvel essai auto : recycler un port fantome
-                # (default sans appareil, typique VL805 ports vides ou
-                # bruit) secoue tout le bus USB2 et fait decrocher radio
-                # et son. On attend un vrai passage par "not attached"
-                # (clear plus bas) avant de retenter.
+                # Pas de nouvel essai auto apres abandon.
                 if time.time() - given_up["annonce"] >= REMIND_EVERY_SEC:
                     given_up["annonce"] = time.time()
                     _speak(dire("usb.port_bloque", ou=dire("usb.ou_pi" if _port_on_pi(port) else "usb.ou_hub")))
@@ -307,19 +372,25 @@ class Watch:
             elif not given_up:
                 print(f"[usb_watch] {port} : toujours bloque apres reparation, on previent")
                 self.port_given_up[port] = {"essai": time.time(), "annonce": time.time()}
+                _ignore_port(port, "echelle epuisee")
+                self.ports_ignored.add(port)
                 _speak(dire("usb.port_bloque", ou=dire("usb.ou_pi" if _port_on_pi(port) else "usb.ou_hub")))
-        for port in list(self.ports_stuck):
+        for port in list(self.ports_stuck) | set(self.ports_ignored):
             if port in stuck_now:
                 continue
             child = _port_child(port)
-            if self.port_step.get(port) and child in devices:
+            if child in devices:
                 product = devices[child]["produit"] or dire("usb.appareil_sans_nom")
                 print(f"[usb_watch] {port} : appareil enfin reconnu ({product})")
                 self._log(f"port {port} : reconnu ({product})", True, resolu=True)
                 _speak(dire("usb.port_repare", produit=product))
+                if port in self.ports_ignored:
+                    self.ports_ignored.discard(port)
+                    _save_ignored_ports(self.ports_ignored)
+                    _helper("port-on", port)
             for d in (self.ports_stuck, self.port_step, self.port_given_up):
                 d.pop(port, None)
-        return sorted(p for p in stuck_now if self.port_step.get(p))
+        return sorted(p for p in stuck_now if p in self.ports_ignored or self.port_step.get(p))
 
     # 2) et 3) appareils du projet
     def check_roles(self, devices):
