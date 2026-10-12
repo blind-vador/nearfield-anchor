@@ -375,7 +375,7 @@ class Watch:
                 _ignore_port(port, "echelle epuisee")
                 self.ports_ignored.add(port)
                 _speak(dire("usb.port_bloque", ou=dire("usb.ou_pi" if _port_on_pi(port) else "usb.ou_hub")))
-        for port in list(self.ports_stuck) | set(self.ports_ignored):
+        for port in set(self.ports_stuck) | set(self.ports_ignored):
             if port in stuck_now:
                 continue
             child = _port_child(port)
