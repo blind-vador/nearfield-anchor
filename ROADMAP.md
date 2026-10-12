@@ -1,3 +1,5 @@
+<!-- Renommé 2026-10-12 : dépôt `pi-console-watchers` → `nearfield_anchor` (bare NAS + clone). Les chemins de déploiement `/home/vador/autopilot/` restent. -->
+
 # Roadmap : console vocale accessible du Pi (deepspace9)
 
 Ce document sert de passation pour une future session/agent qui reprendrait ce travail.

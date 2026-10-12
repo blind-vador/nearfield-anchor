@@ -26,7 +26,7 @@ TARGET_DIR="${TARGET_DIR:-/home/vador/autopilot/pi_console}"
 RADIONO_TARGET_DIR="${RADIONO_TARGET_DIR:-/home/vador/autopilot}"
 NAS_TARGET_DIR="${NAS_TARGET_DIR:-/home/vador/autopilot/nas_manager}"
 CONSOLE_TARGET_DIR="${CONSOLE_TARGET_DIR:-/home/vador/autopilot/console}"
-BUILD_DIR="${BUILD_DIR:-/tmp/pi-console-watchers-build}"
+BUILD_DIR="${BUILD_DIR:-/tmp/nearfield_anchor-build}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # OctoPi installe /root/bin/git, un garde-fou qui refuse git en root (pour
@@ -226,7 +226,7 @@ mkdir -p /media/nas/nd1 /media/nas/nd2
 # sudo sans mot de passe limite a ce dont les services ont besoin :
 # nas_watch.py (mount/umount), usb_watch.py (usb-repare) et la console
 # (redemarrer/eteindre, mise a jour).
-SUDOERS_FILE=/etc/sudoers.d/020-pi-console-watchers
+SUDOERS_FILE=/etc/sudoers.d/020-nearfield_anchor
 # systemctl start/stop/restart/enable/disable des veilles : commandes
 # "arrete"/"reprends" de la console (console/veilles.py).
 VEILLE_CMDS=""

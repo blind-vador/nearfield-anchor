@@ -1,4 +1,4 @@
-# pi-console-watchers
+# nearfield_anchor
 
 Écosystème de veille vocale autonome pour Raspberry Pi (radio, trains,
 météo, avions, crues, ACARS) et gestion NAS associée — construit pour
@@ -191,8 +191,8 @@ Rotation simple à 20 Mo par fichier (1 sauvegarde `.1`).
 ## Installation
 
 ```bash
-git clone <ce-depot> pi-console-watchers
-cd pi-console-watchers
+git clone <ce-depot> nearfield_anchor
+cd nearfield_anchor
 sudo bash install.sh
 ```
 
