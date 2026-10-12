@@ -380,14 +380,21 @@ def _set_current(p):
 def _spawn(text, echo):
     """Lance la phrase avec le meilleur moteur disponible, sans jamais
     attendre le reseau pour un echo de touche."""
-    voice = _cloud_voice()
     espeak_rate = RATE_ECHO if echo else RATE_REPONSE
+    configured = settings().get("voix") or ESPEAK
+    if "Multilingual" in configured:
+        configured = "fr-FR-DeniseNeural"
+    rate = settings().get("debit_echo" if echo else "debit", "+0%")
+    # Cache SD d'abord, meme si le cloud est marque en panne : sinon un 403
+    # Microsoft (oct. 2026) force espeak alors que 900+ phrases Denise sont
+    # deja en cache.
+    if configured != ESPEAK and edge_tts is not None:
+        path = _cached(text, configured, rate)
+        if path:
+            return _set_current(Clip(path))
+    voice = _cloud_voice()
     if voice is None:
         return _set_current(espeak_out.Speech(text, "fr", espeak_rate))
-    rate = settings().get("debit_echo" if echo else "debit", "+0%")
-    path = _cached(text, voice, rate)
-    if path:
-        return _set_current(Clip(path))
     if echo and len(text) <= ECHO_MAX_CHARS:
         _prepare(text, voice, rate)  # Microsoft la prochaine fois
         return _set_current(espeak_out.Speech(text, "fr", espeak_rate))

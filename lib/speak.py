@@ -167,10 +167,11 @@ def _repetitive_cache_dir(text):
 
 
 def _cached_repetitive_sample(text):
-    """Si le cache de cette phrase est COMPLET (un echantillon par voix
-    disponible), retourne le chemin d'un echantillon tire au hasard parmi
-    eux. Sinon (dossier absent ou incomplet) retourne None -- il faut
-    passer par l'API."""
+    """Retourne un echantillon tire au hasard dans le cache de cette phrase,
+    s'il en existe au moins un. Un cache partiel (quelques voix) vaut mieux
+    qu'espeak -- surtout quand le cloud edge-tts est en panne (403 Microsoft,
+    oct. 2026). Le remplissage des voix manquantes reste guide par
+    _missing_voices_for() au prochain succes cloud."""
     cache_dir = _repetitive_cache_dir(text)
     try:
         samples = [f for f in os.listdir(cache_dir) if f.endswith(".mp3")]
@@ -179,7 +180,7 @@ def _cached_repetitive_sample(text):
         # (EIO, 2026-09-29 -- nas-watch plantait en annoncant justement la
         # perte du disque). Pas de cache = synthese normale, jamais de plantage.
         return None
-    if len(samples) < len(EDGE_TTS_VOICES):
+    if not samples:
         return None
     return os.path.join(cache_dir, random.choice(samples))
 
@@ -273,6 +274,14 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
             except OSError:
                 pass
     else:
+        # Cloud down / timeout : dernier recours premium = cache partiel
+        # (ex. phrase repetitive incomplete avant le 403 Microsoft).
+        if repetitive:
+            cached_path = _cached_repetitive_sample(text)
+            if cached_path:
+                play_sound_effect(cached_path, timeout_sec=_speech_timeout(cached_path),
+                                  label=label, reverb=reverb)
+                return
         _espeak_recorded(text, label, reverb=reverb)
 
 
@@ -336,6 +345,11 @@ def speak_cloud(text, repetitive=False):
             except OSError:
                 pass
     else:
+        if repetitive:
+            cached_path = _cached_repetitive_sample(text)
+            if cached_path:
+                play_sound_effect(cached_path, timeout_sec=_speech_timeout(cached_path), label="speak")
+                return
         try:
             espeak_out.say(text, "fr", timeout=30, scale=audio_lock.scale)
         except Exception as exc:
