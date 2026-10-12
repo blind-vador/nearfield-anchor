@@ -27,6 +27,13 @@ Ce qui est surveille toutes les CHECK_INTERVAL_SEC :
 Les disques du NAS restent a nas_watch.py ; les hubs et disques ne sont
 jamais coupes (garde-fou aussi dans tools/usb-repare).
 
+Branchements de reference (deepspace9, face ports) :
+  bas-gauche USB3  = hub alimente NAS (nd1+nd2) ;
+  haut-gauche USB3 = hub alimente (imprimante + camera derriere
+    interrupteurs USB a bouton, carte son, dongle radio) ;
+  haut-droite USB2 = clavier ; bas-droite USB2 = vide.
+Camera/imprimante absentes = interrupteur coupe, pas une panne.
+
 Les gestes root passent par /usr/local/sbin/usb-repare (sudo -n, regle
 sudoers generee par install.sh). Etat publie dans STATE_FILE pour la
 commande "usb" de la console (console/usb_cmd.py).
@@ -195,8 +202,11 @@ def _diagnose(role, name, dev):
         if _unbound(dev, "03"):
             return "sans_pilote", [("rebranche", name)]
     elif role == "radio":
-        bound = [i[0] for i in dev["interfaces"] if i[4]]
-        if bound:  # pilote TNT : rtl_power/rtl_fm ne peuvent plus ouvrir le dongle
+        # usbfs = dongle ouvert par rtl_power/rtl_fm/airband : normal.
+        # Seuls les pilotes noyau (DVB/TNT) bloquent l acces userspace.
+        bound = [i[0] for i in dev["interfaces"]
+                 if i[4] and i[4] != "usbfs"]
+        if bound:
             return "pilote_tnt", [("detache", i) for i in bound]
     elif role == "camera":
         if _unbound(dev, "0e"):
@@ -280,12 +290,15 @@ class Watch:
                 continue
             given_up = self.port_given_up.get(port)
             if given_up:
-                if time.time() - given_up["essai"] >= RETRY_AFTER_SEC:
-                    given_up["essai"] = time.time()
-                    self.port_step[port] = 0
+                # Pas de nouvel essai auto : recycler un port fantome
+                # (default sans appareil, typique VL805 ports vides ou
+                # bruit) secoue tout le bus USB2 et fait decrocher radio
+                # et son. On attend un vrai passage par "not attached"
+                # (clear plus bas) avant de retenter.
                 if time.time() - given_up["annonce"] >= REMIND_EVERY_SEC:
                     given_up["annonce"] = time.time()
                     _speak(dire("usb.port_bloque", ou=dire("usb.ou_pi" if _port_on_pi(port) else "usb.ou_hub")))
+                continue
             step = self.port_step.get(port, 0)
             if step < len(PORT_LADDER):
                 self.port_step[port] = step + 1
