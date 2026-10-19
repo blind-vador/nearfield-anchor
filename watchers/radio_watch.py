@@ -34,6 +34,7 @@ import profils_bruit
 import reglages_audio
 import relais
 import meteo_locale
+import mesure_antenne
 import adsb_local_watch
 import aprs_watch
 import balises_watch
@@ -1797,6 +1798,23 @@ def _meteo_scan_if_requested(max_temp=None):
         print(f"[radio_watch] balayage meteo : {exc!r}")
 
 
+def _antenne_if_requested():
+    """Mesure de l'antenne demandee par la console (commande "antenne",
+    lib/mesure_antenne.py) : une passe par bande, la console attend le resultat."""
+    if not mesure_antenne.requested():
+        return
+    mesure_antenne.take_request()
+    print("[radio_watch] mesure de l'antenne demandee par la console")
+    meteo_locale.set_scanner_state("mesure_antenne")
+    try:
+        res = mesure_antenne.measure(BANDS, lambda name: _settings(name)["marge_detection_db"])
+    except Exception as exc:
+        print(f"[radio_watch] mesure de l'antenne : {exc!r}")
+        res = {"t": time.time(), "erreur": "rtl_power", "bandes": []}
+    mesure_antenne.done(res)
+    meteo_locale.set_scanner_state("actif")
+
+
 _meteo_pause = {"last_watch": 0.0, "announced": False}
 
 
@@ -1850,6 +1868,8 @@ def _thermal_pause_wait(duration):
         limit, level = _meteo_temp_limit()
         allowed = not _too_hot(limit)
         meteo_locale.set_scanner_state("pause_thermique_meteo" if allowed else "pause_thermique")
+        if allowed and mesure_antenne.requested():  # mesure courte, permise comme la veille meteo
+            _antenne_if_requested()
         wanted = meteo_locale.scan_requested() or level >= 2
         if allowed and wanted:
             if not _meteo_pause["announced"]:
@@ -2397,6 +2417,12 @@ def main():
                 dmr_filtres.search_done()
             manual_pending = (None, 0.0)
             continue
+        if mesure_antenne.requested():  # commande "antenne" : la cle est a elle le temps de la mesure
+            manual_stream.stop()
+            current_lock_key = None
+            _antenne_if_requested()
+            manual_pending = (None, 0.0)
+            continue
         manual = noise_signatures.manual_request()
         if manual:
             meteo_locale.set_scanner_state("manuel")
@@ -2465,6 +2491,7 @@ def main():
             while time.time() < pause_end:
                 if meteo_locale.scan_requested():
                     _meteo_scan_if_requested()
+                _antenne_if_requested()
                 time.sleep(1)
             meteo_locale.set_scanner_state("actif")
             _speak_pause(dire("radio.scanner_radio_reprend"))
@@ -2515,6 +2542,7 @@ def main():
                 print(f"[radio_watch] {target} saute (mode restreint ou interet désactivé)")
                 continue
             _meteo_scan_if_requested()  # la console attend son bulletin : on n'attend pas la fin du cycle
+            _antenne_if_requested()
             _satellite_pass_if_due()
             # Une ligne par fenetre (2026-10-07) : retrouver laquelle precede une
             # remise a zero de la cle par le noyau (journalctl -k).

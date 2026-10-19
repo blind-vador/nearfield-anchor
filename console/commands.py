@@ -493,6 +493,10 @@ COMMANDS = [
     # declencher une autre commande par ses mots ; "tableau gare" doit
     # ouvrir le tableau, pas le choix de la gare suivie.
     # Avant "voix" : "voix locales" contient le mot-cle "voix" (2026-10-18).
+    Command("antenne", "mesure l'antenne : stations FM, bruit de fond, écart au seuil de détection par bande ; antenne détail", None,
+            keywords=["antenne", "mesure antenne", "mesurer l'antenne", "test antenne", "tester l'antenne", "cable antenne",
+                      "puissance du signal", "niveau du signal", "force du signal"],
+            examples=["est-ce que l'antenne est bien branchée", "quelle est la puissance du signal reçu"]),
     Command("phrases", "phrases gardées en cache par les voix : écouter, recalculer une phrase bafouillée, valider, effacer", None,
             keywords=["phrases", "phrases en cache", "cache des voix", "cache de voix", "cache voix", "phrases des voix",
                       "phrases bafouillees", "recalculer une phrase", "valider les phrases"],
