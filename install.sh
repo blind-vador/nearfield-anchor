@@ -301,6 +301,12 @@ systemctl restart smbd
 # integre, dont le pilote snd_bcm2835 plantait (2026-09-29). Seulement si
 # l'adaptateur est branche : sinon "default" viserait une carte absente et
 # plus rien ne sortirait.
+# Carte "boucle" (snd-aloop) : la sortie par defaut y envoie aussi tout le
+# son, que la commande "capture" enregistre (lib/capture_son.py). Chargee a
+# chaque demarrage : sans elle, la sortie par defaut ne marcherait plus.
+echo "snd-aloop" > /etc/modules-load.d/snd-aloop.conf
+echo "options snd-aloop index=5 id=Loopback pcm_substreams=2" > /etc/modprobe.d/snd-aloop.conf
+modprobe snd-aloop index=5 id=Loopback pcm_substreams=2 || true
 if aplay -l 2>/dev/null | grep -q "USB Audio"; then
     cp "$REPO_DIR/config/asound.conf" /etc/asound.conf
     amixer -q -c Device sset Speaker 85% || true

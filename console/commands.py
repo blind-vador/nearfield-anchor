@@ -493,6 +493,9 @@ COMMANDS = [
     # declencher une autre commande par ses mots ; "tableau gare" doit
     # ouvrir le tableau, pas le choix de la gare suivie.
     # Avant "voix" : "voix locales" contient le mot-cle "voix" (2026-10-18).
+    Command("capture", "enregistre tout ce qui sort du haut-parleur ; capture démarre, capture stop", None,
+            keywords=["capture", "capturer", "enregistre le son", "enregistrer le son", "enregistrement du son"],
+            examples=["capture démarre", "capture stop", "enregistre ce qui sort du haut-parleur"]),
     Command("antenne", "mesure l'antenne : stations FM, bruit de fond, écart au seuil de détection par bande ; antenne détail", None,
             keywords=["antenne", "mesure antenne", "mesurer l'antenne", "test antenne", "tester l'antenne", "cable antenne",
                       "puissance du signal", "niveau du signal", "force du signal"],

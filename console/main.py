@@ -342,6 +342,9 @@ def run_command(line, key_source, last_response):
         return manuel.run(key_source, voix.say, out, read_line)
     if cmd.name == "terrain":
         return commands.terrain_cmd(line)
+    if cmd.name == "capture":
+        import capture_cmd
+        return capture_cmd.run(line, voix.say_and_wait)
     if cmd.name == "antenne":
         import antenne_cmd
         return antenne_cmd.run(line, voix.say, out)
