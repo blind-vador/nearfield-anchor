@@ -278,8 +278,14 @@ def _probe_duration_sec(path, default=30.0):
 HORN_SOUND = os.path.join(AMBIANT_SOUND_DIR, "horn1.mp3")
 # Faible proba qu'un son de train declenche un evenement secondaire aleatoire
 # (train qui passe, klaxon), MEME s'il n'est pas reel : colore et fait vivre
-# la gare (2026-10-08, demande utilisateur).
-AMBIENCE_EXTRA_PROB = 0.15
+# la gare (2026-10-08, demande utilisateur). Depuis le 2026-10-19 il tombe a
+# un instant au hasard du son du train (debut, milieu ou tout a la fin), plus
+# systematiquement sur son debut.
+AMBIENCE_EXTRA_PROB = 0.10
+# Et parfois sans aucun train (2026-10-19) : chaque heure d'ouverture de la
+# gare, cette chance qu'un evenement de decor tombe a un moment quelconque de
+# l'heure.
+AMBIENCE_FREE_PROB_PER_HOUR = 0.3
 
 
 # Anti-doublon (2026-10-09, demande utilisateur) : deux trains ne doivent
@@ -361,10 +367,29 @@ def _play_ambient_sound(category, action):
         print(f"[sncf_watch] dossier bruitage absent ou vide : {category}_{action}")
         return
     # Evenement secondaire aleatoire lance EN PARALLELE (il se mixe au son
-    # principal) avec une faible probabilite, pour animer la gare.
+    # principal) avec une faible probabilite, pour animer la gare : a un
+    # instant quelconque du son du train, de son debut a sa fin.
     if random.random() < AMBIENCE_EXTRA_PROB:
-        threading.Timer(random.uniform(1.0, 4.0), _play_random_ambience).start()
+        t = threading.Timer(random.uniform(0.0, _probe_duration_sec(path)), _play_random_ambience)
+        t.daemon = True
+        t.start()
     _play_file(path, duplicate=dup)
+
+
+def _ambience_libre():
+    """Thread : decor sans train, au plus un par heure, a un moment au hasard
+    de l'heure, gare ouverte seulement (gare_ambiance)."""
+    import gare_ambiance
+    while True:
+        debut = time.time()
+        if random.random() < AMBIENCE_FREE_PROB_PER_HOUR:
+            time.sleep(random.uniform(0, 3600))
+            if gare_ambiance._station_open():
+                try:
+                    _play_random_ambience()
+                except Exception as exc:
+                    print(f"[sncf_watch] decor libre : {exc!r}")
+        time.sleep(max(0.0, debut + 3600 - time.time()))
 
 
 def _schedule_ambient_sound(mode, action, event_dt):
@@ -726,6 +751,7 @@ def main():
     # Thread demon : s'arrete avec la veille ; dossiers vides = silencieux.
     import gare_ambiance
     threading.Thread(target=gare_ambiance.watch, name="gare_ambiance", daemon=True).start()
+    threading.Thread(target=_ambience_libre, name="decor_libre", daemon=True).start()
     state = {
         # un seul set unifie (2026-08-31) -- avant, deux sets separes
         # (announced_departures/announced_arrivals) laissaient un
