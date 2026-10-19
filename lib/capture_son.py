@@ -3,15 +3,24 @@ tout ce que joue la carte son, en stereo, tel qu'on l'entend (annonces,
 scanner, ambiance de la gare, console...), pour garder et partager un
 extrait.
 
-La sortie par defaut (/etc/asound.conf, sortie_double) envoie chaque son a
-la fois a la carte USB et a une carte "boucle" (snd-aloop, id Loopback) ;
-la capture enregistre l'autre bout de la boucle (hw:Loopback,1,0), sans
-toucher a ce qu'on entend. Enregistrement en WAV pendant la capture (rien
-de perdu si le Pi s'arrete), MP3 320 kb/s a l'arret : le fichier a partager,
-dans storage/capture du disque nd2 (partage reseau "stockage").
+Pendant une capture SEULEMENT, la sortie par defaut passe par une carte
+"boucle" (snd-aloop) : le fichier REDIRECTION, charge par /etc/asound.conf
+quand il existe, l'envoie au melangeur de la boucle (boucle_mix) ; un relais
+(alsaloop) renvoie la boucle vers la carte USB, et l'enregistrement lit la
+meme boucle (boucle_ecoute, partagee). Premiere version (un "multi" ALSA
+vers la carte et la boucle en permanence) abandonnee le jour meme : apres
+un blanc, ce greffon tuait le lecteur au lieu de reprendre -- le journal
+devenait muet, une voix pouvait se couper.
 
-L'etat vit dans un fichier : une capture survit a un redemarrage de la
-console et s'arrete depuis n'importe ou. Garde-fou : MAX_SEC.
+Le relais reste en place tant que la redirection existe ou qu'un son
+ouvert pendant la capture joue encore dans la boucle, puis s'arrete seul.
+REDIRECTION est dans /run/user (efface a chaque demarrage du Pi) et
+reparer() la retire si la capture a ete tuee (console redemarree) : jamais
+de son envoye dans une boucle que personne ne relaie.
+
+Enregistrement en WAV pendant la capture (rien de perdu si le Pi s'arrete),
+MP3 320 kb/s en fond a l'arret : le fichier a partager, dans storage/capture
+du disque nd2 (partage reseau "stockage"). Garde-fou : MAX_SEC.
 """
 import json
 import os
@@ -22,7 +31,11 @@ from datetime import datetime
 
 DOSSIER = "/media/nas/nd2/storage/capture"
 ETAT = "/home/vador/autopilot/capture_en_cours.json"
-SOURCE = "hw:Loopback,1,0"
+SOURCE = "boucle_ecoute"          # asound.conf : la boucle, lisible a plusieurs
+REDIRECTION = "/run/user/1000/capture_alsa.conf"
+RELAIS_PID = "/run/user/1000/capture_relais.pid"
+LOOP_STATUS = "/proc/asound/Loopback/pcm0p/sub0/status"
+RELAIS = ("alsaloop -C boucle_ecoute -P dmix:CARD=Device,DEV=0 -c 2 -f S16_LE -r 48000 -t 100000")
 RATE, CANAUX = 48000, 2   # ceux de la boucle (asound.conf, boucle_mix)
 MAX_SEC = 2 * 3600
 MP3_DEBIT = "320k"
@@ -60,13 +73,62 @@ def en_cours():
     return None
 
 
+def _relais_vivant():
+    try:
+        with open(RELAIS_PID) as f:
+            return _vivant(int(f.read().strip()))
+    except (OSError, ValueError):
+        return False
+
+
+def _lancer_relais():
+    """Relais boucle -> carte USB, relance s'il tombe, arrete seul quand plus
+    rien ne passe par la boucle (redirection retiree, derniers sons finis)."""
+    if _relais_vivant():
+        return
+    script = (f'echo $$ > {RELAIS_PID}; {RELAIS} 2>/dev/null & A=$!; '
+              f'while [ -f {REDIRECTION} ] || grep -qs RUNNING {LOOP_STATUS}; do '
+              f'kill -0 $A 2>/dev/null || {{ {RELAIS} 2>/dev/null & A=$!; }}; sleep 2; done; '
+              f'kill $A 2>/dev/null; rm -f {RELAIS_PID}')
+    subprocess.Popen(["sh", "-c", script], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                     stderr=subprocess.DEVNULL, start_new_session=True)
+    for _ in range(30):
+        if _relais_vivant():
+            return
+        time.sleep(0.1)
+
+
+def _rediriger(oui):
+    if oui:
+        with open(REDIRECTION + ".tmp", "w") as f:
+            f.write('pcm.!default {\n    type plug\n    slave.pcm "boucle_mix"\n}\n')
+        os.replace(REDIRECTION + ".tmp", REDIRECTION)
+    else:
+        try:
+            os.remove(REDIRECTION)
+        except OSError:
+            pass
+
+
+def reparer():
+    """Au demarrage de la console : une redirection sans capture vivante (la
+    capture a ete tuee) est retiree, sinon le son irait dans la boucle."""
+    if os.path.exists(REDIRECTION) and not en_cours():
+        _rediriger(False)
+        print("[capture] redirection orpheline retiree")
+
+
 def demarrer():
     """Lance la capture. Rend (etat, None) ou (None, raison)."""
     if en_cours():
         return None, "deja"
     if not os.path.isdir(os.path.dirname(DOSSIER)):
         return None, "disque_absent"
+    if not os.path.exists("/proc/asound/Loopback"):
+        return None, "boucle_absente"
     os.makedirs(DOSSIER, exist_ok=True)
+    _rediriger(True)
+    _lancer_relais()  # aussitot : le relais vit tant que la redirection existe
     nom = datetime.now().strftime("capture_%Y-%m-%d_%Hh%M-%S")
     wav = os.path.join(DOSSIER, nom + ".en_cours.wav")
     proc = subprocess.Popen(
@@ -74,9 +136,12 @@ def demarrer():
          "-sample_rate", str(RATE), "-i", SOURCE, "-t", str(MAX_SEC), "-c:a", "pcm_s16le", wav],
         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)
     time.sleep(1.0)
-    if proc.poll() is not None:
-        err = (proc.stderr.read() or b"").decode(errors="replace").strip()
-        print(f"[capture] ffmpeg : {err[-300:]}")
+    if proc.poll() is not None or not _relais_vivant():
+        err = (proc.stderr.read() or b"").decode(errors="replace").strip() if proc.poll() is not None else "relais"
+        print(f"[capture] demarrage : {err[-300:]}")
+        _rediriger(False)
+        if proc.poll() is None:
+            proc.kill()
         return None, "boucle_absente"
     etat = {"pid": proc.pid, "wav": wav, "nom": nom, "debut": time.time()}
     tmp = ETAT + ".tmp"
@@ -103,6 +168,7 @@ def arreter():
             time.sleep(0.1)
         else:
             os.kill(etat["pid"], signal.SIGKILL)
+    _rediriger(False)  # les nouveaux sons reprennent le chemin direct ; le relais finit les sons en cours
     try:
         os.remove(ETAT)
     except OSError:

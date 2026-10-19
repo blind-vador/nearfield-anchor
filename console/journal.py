@@ -127,9 +127,7 @@ class Player:
     """aplay ouvert en continu ; chaque lecture = un ffmpeg qui l'alimente."""
 
     def __init__(self):
-        self._aplay = subprocess.Popen(
-            ["aplay", "-q", "-D", "default", "-r", str(RATE), "-f", "S16_LE", "-c", "1", "-B", "500000"],
-            stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self._aplay = self._open_aplay()
         self._ffmpeg = None
         self._thread = None
         self.gain = 1.0  # volume de lecture (dialogue "archives" : fleches gauche/droite)
@@ -137,10 +135,27 @@ class Player:
         self._guard = threading.Lock()
         self._ticket = None  # sortie son prise seulement pendant une ecoute
 
+    @staticmethod
+    def _open_aplay():
+        return subprocess.Popen(
+            ["aplay", "-q", "-D", "default", "-r", str(RATE), "-f", "S16_LE", "-c", "1", "-B", "500000"],
+            stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+
+    def _aplay_ok(self):
+        """Relance la sortie son si elle est tombee (2026-10-19 : un aplay mort
+        rendait tout le journal muet, sans aucun message)."""
+        if self._aplay.poll() is not None:
+            print(f"[journal] sortie son tombee (code {self._aplay.returncode}) : relancee", file=sys.stderr)
+            self._aplay = self._open_aplay()
+
     def _hold(self):
+        """Ecouter est une action directe : le son part tout de suite, sans
+        attendre son tour (l'attente bloquait le clavier jusqu'a 10 s,
+        2026-10-19) ; la phrase de la console en cours s'efface devant lui."""
         import audio_lock
         if self._ticket is None:
-            self._ticket = audio_lock.acquire("console", timeout=LOCK_WAIT_SEC)
+            voix.stop()
+            self._ticket = audio_lock.prendre_sans_attendre("console")
 
     def _let_go(self):
         import audio_lock
@@ -150,6 +165,7 @@ class Player:
 
     def play(self, path):
         self.stop()
+        self._aplay_ok()
         self._hold()
         self._ffmpeg = subprocess.Popen(
             ["ffmpeg", "-v", "quiet", "-nostdin", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(RATE), "-"],
@@ -174,11 +190,16 @@ class Player:
             with self._guard:
                 if generation != self._generation:
                     return
-                try:
-                    self._aplay.stdin.write(data)
-                    self._aplay.stdin.flush()
-                except (BrokenPipeError, ValueError, OSError):
-                    return
+                for essai in (1, 2):
+                    try:
+                        self._aplay.stdin.write(data)
+                        self._aplay.stdin.flush()
+                        break
+                    except (BrokenPipeError, ValueError, OSError):
+                        if essai == 2:
+                            self._let_go()
+                            return
+                        self._aplay_ok()  # sortie tombee en cours de lecture : relancee, on reprend
 
     def stop(self):
         with self._guard:

@@ -483,6 +483,11 @@ def main():
     try:
         welcome = conseils.intro("accueil", dire("console.accueil"), dire("console.accueil_consigne"))
         out(f"\n{welcome}\n> ")
+        try:  # capture tuee avec l'ancienne console : le son ne doit pas rester dans la boucle
+            import capture_son
+            capture_son.reparer()
+        except Exception as exc:
+            print(f"[console] capture : {exc!r}", file=sys.stderr)
         voix.say_and_wait(welcome)
         # Noms de touches dans la voix choisie, prepares en fond (espeak en attendant).
         voix.prune_cache()
