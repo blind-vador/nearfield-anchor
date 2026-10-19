@@ -342,6 +342,9 @@ def run_command(line, key_source, last_response):
         return manuel.run(key_source, voix.say, out, read_line)
     if cmd.name == "terrain":
         return commands.terrain_cmd(line)
+    if cmd.name == "phrases":
+        import phrases_cmd
+        return phrases_cmd.run(key_source, voix.say, out)
     if cmd.name == "voix locales":
         import voix_locales_cmd
         return voix_locales_cmd.run(key_source, voix.say, out)

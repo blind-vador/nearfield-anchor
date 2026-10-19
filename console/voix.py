@@ -40,6 +40,7 @@ import piper_out  # noqa: E402  (voix neuronales locales, 2026-10-18)
 import phrases_fixes  # noqa: E402  (phrases fixes, cache phrase par phrase)
 import voix_sources  # noqa: E402  (voix par source : console, touches, 2026-10-19)
 import audio_lock  # noqa: E402  (priorites des haut-parleurs)
+import cache_voix  # noqa: E402  (phrases en cache, validation)
 import reglages  # noqa: E402
 
 try:
@@ -137,7 +138,9 @@ def _probe():
 
 def _cache_path(text, voice, rate):
     digest = hashlib.md5(f"{rate}|{text}".encode("utf-8")).hexdigest()
-    return os.path.join(CACHE_DIR, voice.replace(":", "_"), f"{digest}.wav")
+    folder = os.path.join(CACHE_DIR, voice.replace(":", "_"))
+    cache_voix.noter(folder, text, rate)  # texte retrouvable (commande "phrases", 2026-10-19)
+    return os.path.join(folder, f"{digest}.wav")
 
 
 def is_piper(voice):
@@ -188,11 +191,15 @@ def _store(mp3_bytes, path):
 
 
 def prune_cache():
-    """Menage : au-dela de CACHE_MAX_BYTES, les sons les moins utilises partent."""
+    """Menage : au-dela de CACHE_MAX_BYTES, les sons les moins utilises partent
+    (jamais une phrase validee, commande "phrases")."""
     files = []
+    valides = cache_voix.validees()
     for root, _, names in os.walk(CACHE_DIR):
         for name in names:
             path = os.path.join(root, name)
+            if path in valides or not name.endswith(".wav"):
+                continue
             try:
                 st = os.stat(path)
             except OSError:

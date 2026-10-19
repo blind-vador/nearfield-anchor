@@ -493,6 +493,10 @@ COMMANDS = [
     # declencher une autre commande par ses mots ; "tableau gare" doit
     # ouvrir le tableau, pas le choix de la gare suivie.
     # Avant "voix" : "voix locales" contient le mot-cle "voix" (2026-10-18).
+    Command("phrases", "phrases gardées en cache par les voix : écouter, recalculer une phrase bafouillée, valider, effacer", None,
+            keywords=["phrases", "phrases en cache", "cache des voix", "cache de voix", "cache voix", "phrases des voix",
+                      "phrases bafouillees", "recalculer une phrase", "valider les phrases"],
+            examples=["une phrase est mal prononcée", "Piper bafouille sur une phrase", "nettoyer le cache des voix"]),
     Command("voix locales", "voix neuronales locales Piper : écouter, installer depuis le dépôt officiel, dans toutes les langues", None,
             keywords=["voix locales", "voix locale", "voix piper", "piper", "telecharger des voix", "telecharger une voix",
                       "installer une voix", "installer des voix", "autres voix", "voix neuronales"],
