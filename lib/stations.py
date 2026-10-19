@@ -298,6 +298,93 @@ def center(freq_hz, mode):
 
 # --- revisites ---------------------------------------------------------------------------
 
+def active(station):
+    """La station est-elle revisitee par le scanner ? Reglage propre a la
+    station (touche O du mode manuel, 2026-10-17) sinon l'interet de sa
+    bande : "désactivé" (commande interets) la saute entierement."""
+    if "actif" in station:
+        return bool(station["actif"])
+    try:
+        import interets
+        return not interets.disabled(station.get("bande") or "")
+    except Exception:
+        return True
+
+
+def set_active(freq_hz, mode, on):
+    """Active ou desactive la station la plus proche ; rend la station ou None."""
+    with _Locked() as data:
+        s = _near(data, freq_hz, mode)
+        if s is not None:
+            s["actif"] = bool(on)
+            return dict(s)
+    return None
+
+
+def add(freq_hz, mode, nom=None, bande=None, label=None, fenetre=None, captures=()):
+    """Station entree a la main (touche A du mode manuel, 2026-10-17) ou
+    reprise d'une fenetre RTLSDR-Airband (fenetre : son nom ; le scanner
+    l'ecoute deja par la fenetre, bands() ne la double pas).
+    Rend (station, creee) ; une station deja proche est seulement completee."""
+    with _Locked() as data:
+        s = _near(data, freq_hz, mode)
+        created = s is None
+        if created:
+            s = {"freq_hz": int(freq_hz), "mode": mode, "bande": bande, "label": label,
+                 "cree": time.time(), "centree": False, "captures": [], "visite": 0, "manuelle": True}
+            data["stations"].append(s)
+        if nom and not s.get("nom"):
+            s["nom"] = nom
+        if fenetre:
+            s["fenetre"] = fenetre
+        if captures:
+            s["captures"] = sorted(set(s["captures"]) | set(captures))[-500:]
+        return dict(s), created
+
+
+def remove(freq_hz, mode):
+    """Retire la station la plus proche ; rend True si elle existait."""
+    with _Locked() as data:
+        s = _near(data, freq_hz, mode)
+        if s is None:
+            return False
+        data["stations"].remove(s)
+        return True
+
+
+def window_disabled(name):
+    """Fenetre RTLSDR-Airband dont la station a ete desactivee (touche O)."""
+    return any(s.get("fenetre") == name and s.get("actif") is False for s in load()["stations"])
+
+
+def rename(freq_hz, mode, name):
+    """Nom humain de la station (touche F3 du mode manuel, 2026-10-17) ;
+    name vide : le nom est retire. Rend la station ou None."""
+    with _Locked() as data:
+        s = _near(data, freq_hz, mode)
+        if s is None:
+            return None
+        if name:
+            s["nom"] = name
+        else:
+            s.pop("nom", None)
+        return dict(s)
+
+
+def name_near(freq_hz, mode):
+    """Nom humain de la station probable proche, ou None."""
+    s = _near(load(), freq_hz, mode)
+    return s.get("nom") if s else None
+
+
+def _interest_weight(station):
+    try:
+        import interets
+        return interets.weight(station.get("bande") or "")
+    except Exception:
+        return 1.0
+
+
 def bands(now=None):
     """Bandes "fm_channels" du scanner : les stations a revisiter maintenant,
     regroupees par mode. Delai entre deux visites selon l'interet ; a chaque
@@ -307,8 +394,16 @@ def bands(now=None):
     due = {}
     with _Locked() as data:
         for s in data["stations"]:
+            if not active(s):
+                continue  # desactivee (touche O) ou bande "désactivé" (interets)
+            if s.get("fenetre"):
+                continue  # deja ecoutee par sa fenetre RTLSDR-Airband
             habit_now = any(wd == d.weekday() and h == d.hour for wd, h, _ in habits(s))
-            wait = max(MIN_REVISIT_SEC, min(MAX_REVISIT_SEC, MAX_REVISIT_SEC / (1 + 2 * interest(s, now))))
+            # L'interet de la bande (commande interets) espace aussi les visites :
+            # "aucun" ou "faible" reviennent bien moins souvent (au plus MAX_REVISIT_SEC).
+            weight = max(_interest_weight(s), 0.05) if "actif" not in s else 1.0
+            wait = max(MIN_REVISIT_SEC, min(MAX_REVISIT_SEC,
+                                            MAX_REVISIT_SEC / (1 + 2 * interest(s, now)) / weight))
             if habit_now or now - s.get("visite", 0) >= wait:
                 s["visite"] = now
                 due.setdefault(s["mode"], []).append(s["freq_hz"])
@@ -325,11 +420,13 @@ def spoken_list():
     parts = []
     for s in stations[:12]:
         mhz = f"{s['freq_hz'] / 1e6:.4f}".rstrip("0").replace(".", ",")
-        text = dire("station.megahertz_capture", mhz=mhz, v1=s.get('label') or s['mode'], len=len(s['captures']), pluriel='s' if len(s['captures']) > 1 else '')
+        text = dire("station.megahertz_capture", mhz=mhz, v1=s.get('nom') or s.get('label') or s['mode'], len=len(s['captures']), pluriel='s' if len(s['captures']) > 1 else '')
         h = habits(s)
         if h:
             wd, hour, n = h[0]
             text += dire("station.souvent_vers_heures", v1=JOURS[wd], hour=hour)
+        if not active(s):
+            text += dire("station.desactivee_suffixe")
         if not s.get("centree"):
             text += dire("station.encore_recentree")
         if s.get("analyse", {}).get("code", s.get("analyse", {}).get("verdict", "")[:8]) == "artefact":

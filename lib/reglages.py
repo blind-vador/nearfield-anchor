@@ -54,8 +54,21 @@ DEFAULTS = {
     "capteurs": {"miens": []},
     # reseaux de transport en commun de la commune (lib/transports.py)
     "transports": {"reseaux": []},
+    # voix par source (lib/voix_sources.py, commande "voix") : {source: {...}}
+    "voix_sources": {},
     "console": {"voix": "fr-FR-DeniseNeural", "debit": "+20%", "debit_echo": "+50%",
                 "conseils": "toujours", "conseils_vus": []},
+    "imprimante": {
+        "materiau": "PLA",
+        "buse_mm": 0.4,
+        "test_filament": True,
+        "couche": "normale",
+        "remplissage": "normal",
+        "supports": False,
+        "adherence": "skirt",
+        # type de tete (demontage/remontage de buse a chaud) : "ptfe", "tout_metal", None = demander
+        "tete": None,
+    },
 }
 
 # fichier cles/<nom>.txt -> (ancien nom dans credentials.py, usage dit a voix haute)

@@ -6544,3 +6544,135 @@ DMR n'est pas une logique a part, c'est une facette du balayage. Verifie :
   reelle), annulee, erreurs, rappel toutes les 15 min d'une chauffe
   allumee sans impression. Veille pilotable par "arrete octoprint" (pas
   "imprimante" : "coupe la chauffe de l'imprimante" doit refroidir).
+
+## 2026-10-14 : antenne discone, DMR, capteurs, reglages son, pont Mac (fait)
+
+- Antenne : discone Sirio montee dehors. Premier montage : ~20 dB de perte
+  (liaison coaxiale) ; corrige par l'utilisateur. Mesure apres : FM +28 a
+  +33 dB au-dessus du bruit (fouet : ~7 dB), relais DMR 467,23 +21 dB.
+  Rallonge USB ajoutee (le gros coax tordait le dongle) : aucune perte,
+  4 echantillons par million perdus a 2,4 MS/s. Pi souvent en pause
+  thermique (75 C) : ventilation a envisager.
+- Console : "reapprendre" (et toute commande confirmee sans handler)
+  plantait la console (cmd.handler None) ; corrige dans main.py.
+- Ancienne antenne mise de cote : 172 enregistrements radio d'avant
+  15:47 deplaces vers storage/radio (+ annexes et manifeste dans
+  storage/radio/ancienne_antenne_annexes) ; parasites_connus.json (374
+  empreintes) et bruit_de_fond.json archives "_archive_fouet_..." ; profils
+  de bruit et reglages audio archives par "reapprendre".
+- DMR : les "Message DMR : _-- -402__" etaient des enregistrements ARS
+  Motorola (poste qui s'annonce au serveur de dispatch 16448250, IP
+  13.250.250.250, port 4005), pas du texte ; une partie refusee (ICMP
+  "Destination Network Unreachable" : dispatch injoignable, les postes
+  reessaient). lib/decodeurs.py les reconnait et les donne a
+  lib/dmr_registre.py (ars_event) : fichier du jour
+  donnees/dmr_ars_<jour>.jsonl, postes dans le registre, bonus de veille
+  apres une connexion recente, resume du jour range au journal messages a
+  23 h 50 (daily_tick, radio_watch), "dmr aujourd'hui" / "dmr hier".
+  632 faux messages deplaces dans server/corbeille/dmr_faux_messages_2026-10-14.
+  Note : 467,2373 et 467,2408 sont tres probablement LE MEME relais
+  (3,5 kHz d'ecart, memes postes et groupes) mesure avec un decalage.
+- Capteurs : memoire persistante lib/capteurs_connus.py (premier/dernier
+  vu, nombre, jours, mien), etat de capteurs_watch sur la carte SD (plus
+  /tmp) ; "nouveau" = jamais entendu (avant : tous les 7 jours et a chaque
+  redemarrage). Commande "capteurs connus". Alarmes : phrase sobre de
+  Gemini (nature de l'appareil et de l'alarme, faux decodage probable),
+  cache par contenu 30 jours. Aucun capteur appaire pour l'instant (normal).
+- Reglages son a la main : commande "reglages son" (console/reglages_son_cmd.py),
+  type de contenu par bande (auto, musique, voix, donnees) + couches
+  (filtre voix, pilote FM, souffle, crachotements, sifflement,
+  bourdonnement, volume, aigus) ; reglages_audio.json "manuel", prioritaire
+  sur l'appris, garde par "reapprendre" ; F / B reecoutent la derniere
+  capture filtree / brute. Sans reglage manuel, sortie identique a l'octet
+  pres a l'ancienne chaine (verifie).
+- Pont Mac : coupures a repetition = Mac en veille demandee (Software
+  Sleep), pas un bug ; le Pi coupe apres 120 s sans battement, journal
+  rendu lisible ("en veille probablement"). Wake-on-LAN actif (womp 1).
+  Le Mac envoie maintenant l'etat de session (verrouille, inactivite) ;
+  "compagnon" le dit. 20 echecs = Meteor "signal trop faible" (fouet).
+- LoRa : les "noeuds LoRa" (F1ZCK-4 Guizay 5 km digi+iGate 433,775 ;
+  F4HYI-10 ; 7X2SR-10 iGate RX seul a la gare d'Amplepuis) venaient de
+  l'APRS VHF (paquets tiers relayes par F1ZCK-3). Test 20 min d'ecoute
+  continue de 433,775 : 2 vraies trames LoRa APRS reperees ("<" en tete),
+  confiees au Mac en une seconde, mais abimees (CRC). Le Pi n'ecoute LoRa
+  que ~2 % du temps en temps normal. Signal enregistre tres bas dans le
+  convertisseur (amplitude moyenne 0,008, max 0,067) a -g 40.
+
+## 2026-10-14 : a faire (demande utilisateur)
+
+1. Notation en degres, par onglets (console/notation.py). Plus de choix
+   exclusifs : chaque dimension est un curseur (pourcentage ou degre),
+   tout a 0 par defaut. Onglets : Contenu (voix %, musique %, tonalites %,
+   donnees %... un contenu peut etre "musique puis voix"), Perturbations
+   (sifflement, bourdonnement, autre station, crachotements, souffle,
+   chacun en degre), Son (naturel, etouffe, metallique, sature : en
+   degres, pas un seul choix), Qualite (lisibilite, volume, stabilite,
+   debut, fin, merite, certitude). Tab / Maj+Tab : onglet suivant /
+   precedent ; fleches haut / bas : dans l'onglet ; gauche / droite :
+   la valeur. Garder la lecture des anciennes notes (mapper l'ancien
+   choix unique en 100 % / degre plein) pour que bilan.py reste juste.
+2. Contenu appris par station / frequence. Le Pi additionne les
+   pourcentages notes par frequence (stations.py, registre) : une station
+   surtout musicale prend des reglages "musique" plutot que "voix", sans
+   ecraser un reglage fait a la main (reglages_audio "manuel" reste
+   prioritaire). Idealement un type de contenu par station, pas seulement
+   par bande.
+3. Journal : touche C = "bonne prise, mais coupee trop tot" (comme V,
+   meme qualite, plus fin = coupee). Aujourd'hui il faut V puis N et
+   renoter la fin : tres frequent.
+4. Fin coupee trop tot -> ecouter plus longtemps, sur TOUTES les bandes y
+   compris DMR. bilan.py ecarte les captures numeriques (_note_digital)
+   de ses suggestions : verifier que la fin / le debut / le volume y sont
+   quand meme appris (seuls les filtres analogiques ne s'appliquent pas
+   au DMR). Pour le DMR : attente de fin (attente_fin_s, deja lue pour
+   "dmr"), debut, volume ; et/ou seuil de fin. Dans "reglages son", la
+   bande DMR doit proposer ces couches-la (fin, debut, volume) meme sans
+   filtres.
+5. Sifflement sur la bande FM, present MEME dans le son brut (dit par
+   l'utilisateur) : donc avant la chaine de filtres, dans la reception ou
+   la demodulation (rtl_fm wbfm -s 200000 -r 48000 -E dc -E deemp).
+   Mesures du 2026-10-14 non concluantes (aucune tonalite fixe sur 89,5
+   et 106,45 ; 1 588 Hz sur 100,9 peut-etre dans le programme). Pistes :
+   enregistrer un brut ou l'utilisateur l'entend et l'analyser ;
+   comparer avec rtl_fm -M fm -s 240000 | sox sinc -15k rate 48000 (aucune
+   tonalite mesuree) ; verifier le centrage (_centered) et la DC.
+6. Gain du dongle (propose, en attente de decision) : A) gain optimal
+   mesure par bande (paliers 20 a 49,6 dB : plancher de bruit et taux
+   d'ecretage, garder le plus haut sans ecretage ; a refaire avec la
+   discone) ; B) relance en gain plus fort quand un candidat ou un
+   preambule LoRa est faible, en surveillant l'ecretage. Puis refaire le
+   test LoRa (lora_watch est a -g 40 ; 49,6 laisserait encore ~13 dB de
+   marge sur la trame enregistree) et decider de la part d'ecoute LoRa
+   (fenetres plus longues ou veille de nuit).
+7. Pont Mac : decider quoi faire quand l'ecran du Mac est verrouille
+   (pas de dialogue d'appairage ? autre ?) ; aujourd'hui le Pi le sait et
+   le dit seulement.
+
+## 2026-10-14 (nuit) : points 1 a 4 de la liste faits
+
+- Notation en degres par onglets (console/notation.py) : Contenu (voix,
+  musique, tonalites, donnees, rien, en %), Perturbations (souffle +
+  4 brouillages, degres aucun..envahissant), Son (etouffe, metallique,
+  sature, volume -2..+2), Qualite (lisibilite 0..5, coupures, debut coupe,
+  fin -2..+2), Avis (interet -2..+2, doute). Tout a 0 ; Tab / Maj+Tab
+  onglets, haut/bas, gauche/droite, E exemple, Entree enregistre. La note
+  garde "degres" ET "reponses" (legacy() : ancienne grille) ; bilan.quality
+  utilise les degres quand ils sont la. Interet 0 = "bof" (neutre).
+- Contenu appris par station : lib/contenus.py (carte SD,
+  contenus_stations.json, recalcule a chaque note) ; reglages_audio.get(band,
+  freq_hz) applique "musique" ou "donnees" a une station >= 60 % de ce
+  contenu (>= 2 notes), seulement si la bande est en contenu automatique.
+  chaine_audio passe la frequence.
+- Journal : touche C = bonne prise coupee trop tot (fin -2 / "coupee") ; sur
+  une prise deja notee, corrige seulement la fin.
+- Voix numerique : nouveaux reglages attente_fin_numerique_s (None = 10 s,
+  DSD_FME_IDLE_SEC) et gain_numerique_db, lus par try_digital_voice_decode
+  (target passe par _dmr_window et _handle_candidate) ; la fin DMR etait un
+  delai fige qui ignorait tout reglage. bilan.suggestions_digital les ajuste
+  (fins coupees : +3 s, 4..30 ; volume) des 4 notes numeriques. "reglages
+  son" : bande dmr = ces deux couches seulement ; toutes les bandes ont en
+  plus attente de fin et marge de detection (Espace = valeur du scanner) ;
+  FM etroite : aussi les deux couches numeriques.
+- Reste : 5 (sifflement FM, attend un enregistrement ou il s'entend),
+  6 (gain : mesure lancee, ~/backups/mesure_gain_2026-10-14.json), 7 (Mac
+  verrouille : decision utilisateur).

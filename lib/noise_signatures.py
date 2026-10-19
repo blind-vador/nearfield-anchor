@@ -29,6 +29,11 @@ SIGNATURES_LOCAL = "/home/vador/autopilot/pi_console/parasites_connus.json"
 BACKGROUND_NAS = f"{NAS_ROOT}/server/radio_log/bruit_de_fond.json"
 BACKGROUND_LOCAL = "/home/vador/autopilot/pi_console/bruit_de_fond.json"
 LAST_CAPTURE_PATH = "/tmp/radio_watch_derniere_capture.json"
+# Ecoute en cours (2026-10-17) : "verrouille" pendant qu'on entend quelque
+# chose doit viser CETTE frequence ; la derniere capture n'est ecrite qu'a la
+# fin et designait l'ecoute d'avant (parfois 40 min plus tot).
+LIVE_CAPTURE_PATH = "/tmp/radio_watch_capture_en_cours.json"
+LIVE_CAPTURE_MAX_SEC = 1800  # garde-fou si le scanner meurt sans nettoyer
 CONTROL_PATH = "/tmp/radio_watch_controle.json"
 PLAGES_PATH = "/tmp/radio_watch_plages.json"
 
@@ -337,6 +342,40 @@ def forget_capture(log_path):
 
 def last_capture():
     return _read_json(LAST_CAPTURE_PATH, None)
+
+
+def capture_started(source, freq_hz, mode, label, target):
+    """Le scanner commence a faire entendre cette frequence (fin : capture_ended)."""
+    try:
+        _atomic_write_json(LIVE_CAPTURE_PATH, {
+            "source": source, "freq_hz": freq_hz, "mode": mode, "label": label,
+            "target": target, "time": time.time(), "pid": os.getpid(), "en_cours": True,
+        })
+    except OSError as exc:
+        print(f"[noise_signatures] ecoute en cours non memorisee : {exc}")
+
+
+def capture_ended():
+    live = _read_json(LIVE_CAPTURE_PATH, None)
+    if live and live.get("pid") == os.getpid():
+        try:
+            os.remove(LIVE_CAPTURE_PATH)
+        except OSError:
+            pass
+
+
+def live_capture():
+    """L'ecoute en cours (ce que l'on entend maintenant), ou None."""
+    live = _read_json(LIVE_CAPTURE_PATH, None)
+    if not live or time.time() - live.get("time", 0) > LIVE_CAPTURE_MAX_SEC:
+        return None
+    try:
+        os.kill(int(live.get("pid", 0)), 0)
+    except ProcessLookupError:
+        return None
+    except (PermissionError, ValueError, TypeError):
+        pass
+    return live
 
 
 def mark_last_capture_noise():

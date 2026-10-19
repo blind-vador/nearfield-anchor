@@ -2,10 +2,12 @@
 choisis (commande "ville", lieu.json -- voir reglages.py).
 
 Trois parties :
-  1. presse du jour : Google Actualites (recherche sur la commune) et le fil
-     France 3 du departement ; articles regroupes par sujet, un sujet repris
-     par plusieurs medias monte a la une ;
-  2. redaction du flash par Gemini (cle cles/gemini.txt), consigne stricte
+  1. presse du jour : Google Actualites (recherche sur la commune), le fil
+     France 3 du departement, et la veille terrain (sites militants,
+     Mastodon, Telegram : sources independantes, 2026-10-18) ; articles
+     regroupes par sujet, un sujet repris par plusieurs medias monte a la une ;
+  2. redaction du flash par Gemini (cle cles/gemini.txt) : ligne editoriale
+     materialiste choisie par l'utilisateur (voir PROMPT), consigne stricte
      de ne rien ajouter aux faits fournis ; sans Gemini, lecture des
      meilleurs titres ;
   3. services, toujours frais car calcules a chaque demande : meteo du
@@ -71,32 +73,63 @@ WMO = Etiquettes("meteo.temps", {0: "ciel dégagé", 1: "ciel peu nuageux", 2: "
        95: "orages", 96: "orages avec grêle", 99: "orages avec forte grêle"},
                  "temps qu'il fait, d'après le code météo")
 
-PROMPT = """Tu es journaliste dans une radio locale française. Rédige le flash
+# Ligne editoriale (choix de l'utilisateur, 2026-10-18) : lecture materialiste,
+# pas de "journalisme de prefecture". La regle des faits reste entiere : rien
+# d'invente, l'analyse est donnee comme analyse. Changer PROMPT_VERSION
+# reecrit le flash suivant meme si la peche n'a pas change.
+PROMPT_VERSION = 2
+PROMPT = """Tu es journaliste dans une radio locale libre française. Rédige le flash
 d'information locale de {commune} ({departement}), à lire à voix haute par une
 synthèse vocale, à partir UNIQUEMENT des sujets ci-dessous.
 
-Règles :
+Ligne éditoriale :
+- Grille de lecture matérialiste, marxiste et trotskiste : pour chaque sujet
+  important, demande-toi quels rapports de classe, quels intérêts économiques,
+  quels rapports de production et quel rapport de force entre travailleurs,
+  patronat et État sont en jeu ; qui y gagne, qui en paie le prix.
+- Critique rationaliste et systémique : cherche les causes structurelles
+  (logique du profit, politiques publiques, institutions) plutôt que les
+  explications individuelles, morales ou de fatalité. Pas de complotisme :
+  des mécanismes, pas des intentions cachées.
+- Pas de journalisme de préfecture : ne reprends jamais tel quel le récit
+  des autorités (préfecture, police, gouvernement, mairie, direction d'une
+  entreprise). Attribue-le : « selon la préfecture », « d'après la police ».
+  Refuse leur vocabulaire euphémisant ou criminalisant quand un mot plus
+  exact existe. Quand une source indépendante ou militante (type
+  "independant") raconte autre chose, donne les deux versions et dis
+  laquelle est vérifiée.
+- Donne la parole aux premiers concernés : grévistes, manifestants,
+  habitants, syndicats, collectifs, quand les sujets les mentionnent.
+
+Règles sur les faits (elles passent avant tout) :
 - N'ajoute aucun fait, chiffre, nom ou lieu absent des sujets fournis. Si un
   sujet est flou, reste flou ou laisse-le de côté.
+- L'analyse doit se voir comme telle (« derrière cette décision… », « ce qui
+  se joue, c'est… ») et rester courte : une phrase ou deux par sujet important.
+- Les sujets "independant" viennent de sites militants, de Mastodon ou de
+  Telegram : attribue-les (« selon des témoignages relayés par… ») et ne les
+  présente pas comme vérifiés s'ils ne sont confirmés par aucune autre source.
 - Commence directement par le sujet le plus important (l'annonce de l'heure et
-  de la ville est déjà faite). Les sujets sont classés : "medias" indique
-  combien de médias en parlent.
+  de la ville est déjà faite). "medias" indique combien de médias en parlent ;
+  une mobilisation sociale ou une répression compte autant qu'un sujet repris
+  partout.
 - Laisse de côté les titres racoleurs ou vagues qui n'apportent aucun fait
   concret (classements, "au top", "on vous dit tout"...).
 - Regroupe à la fin le sport, puis la culture et les sorties.
-- 150 à 250 mots, phrases courtes, style radio, en français. Pas de markdown,
+- 180 à 300 mots, phrases courtes, style radio, en français. Pas de markdown,
   pas de liste, pas de titre, pas de formule de fin.
 - Écris les nombres en chiffres, sans abréviation (pas de "M€", écris
   "millions d'euros").
 
 Réponds en JSON : {{"flash": "texte du flash", "rubriques": {{"id du sujet":
-"rubrique"}}}} avec pour chaque sujet une rubrique parmi : À la une, Faits
-divers et justice, Politique et société, Économie, Transports, Sport, Culture
-et sorties, Autres.
+"rubrique"}}}} avec pour chaque sujet une rubrique parmi : À la une, Luttes
+et mobilisations, Faits divers et justice, Politique et société, Économie,
+Transports, Sport, Culture et sorties, Autres.
 
 Sujets :
 {sujets}
 """
+INDEPENDENT_STORIES = 6   # sujets de la veille terrain toujours confies a Gemini, en plus du haut du classement
 
 
 # --- Collecte --------------------------------------------------------------
@@ -182,11 +215,36 @@ def _fetch_france3(lieu):
     return _parse_rss(_get(_france3_url(lieu)).text, google=False)
 
 
+def _fetch_terrain(lieu):
+    """Veille terrain (watchers/veille_terrain.py, journal du jour et de la
+    veille) : sites militants, Mastodon, Telegram. Seulement ce qu'elle a
+    juge digne d'etre dit (parle du coin, ou site local)."""
+    import veille_donnees as vd
+    rows = []
+    for day in (datetime.now(), datetime.now() - timedelta(days=1)):
+        path = os.path.join(vd.ARCHIVE_DIR, f"terrain_{day:%Y-%m-%d}.jsonl")
+        try:
+            with open(path, encoding="utf-8") as f:
+                rows += [json.loads(line) for line in f if line.strip()]
+        except (OSError, ValueError):
+            continue
+    articles = []
+    for r in rows:
+        if not (r.get("annonce") or r.get("local")):
+            continue
+        text = r.get("texte") or ""
+        title = r.get("titre") or (text[:140].rsplit(" ", 1)[0] if len(text) > 140 else text)
+        if title:
+            articles.append({"titre": title, "source": r.get("source", "veille terrain"), "date": r.get("t", 0),
+                             "resume": text[:400], "lien": r.get("lien") or "", "independant": True})
+    return articles
+
+
 def fetch_articles(lieu):
     """Articles des dernieres 24 heures, toutes sources ; les sources en
     panne sont ignorees (liste des pannes rendue a part)."""
     articles, failed = [], []
-    fetchers = {"Google Actualités": _fetch_google, "France 3": _fetch_france3}
+    fetchers = {"Google Actualités": _fetch_google, "France 3": _fetch_france3, "Veille terrain": _fetch_terrain}
     with concurrent.futures.ThreadPoolExecutor(len(fetchers)) as pool:
         futures = {pool.submit(fn, lieu): name for name, fn in fetchers.items()}
         for future in concurrent.futures.as_completed(futures):
@@ -219,6 +277,8 @@ def cluster(articles):
     for story in stories:
         arts = story["articles"]
         story["medias"] = len({a["source"] for a in arts})
+        story["independant"] = any(a.get("independant") for a in arts)
+        story["sources"] = sorted({a["source"] for a in arts})
         story["date"] = max(a["date"] for a in arts)
         # titre le plus informatif : celui d'un article avec resume, sinon le plus long
         lead = max(arts, key=lambda a: (bool(a["resume"]), len(a["titre"])))
@@ -267,14 +327,25 @@ def _hours_ago(ts):
     return dire("flash.moins_heure") if hours < 1 else f"{hours} heure{'s' if hours > 1 else ''}"
 
 
+def _selection(stories):
+    """Haut du classement, plus les sujets de la veille terrain qui n'y sont
+    pas : un seul site militant n'atteint jamais le nombre de medias de la
+    presse, il ne doit pas disparaitre pour autant."""
+    top = stories[:TOP_STORIES]
+    extra = [s for s in stories[TOP_STORIES:] if s.get("independant")][:INDEPENDENT_STORIES]
+    return top + extra
+
+
 def write_news(lieu, stories):
     """(texte, {cle: rubrique}, remarque ou None)."""
-    top = stories[:TOP_STORIES]
+    top = _selection(stories)
     if not top:
         return dire("flash.information_locale_marquante_depuis"), {}, None
     sujets = "\n".join(
         json.dumps({"id": str(i), "titre": s["titre"], "resume": s["resume"][:400],
-                    "medias": s["medias"], "il_y_a": _hours_ago(s["date"])}, ensure_ascii=False)
+                    "medias": s["medias"], "sources": s.get("sources", [])[:5],
+                    "type": "independant" if s.get("independant") else "presse",
+                    "il_y_a": _hours_ago(s["date"])}, ensure_ascii=False)
         for i, s in enumerate(top))
     data, problem = _gemini(PROMPT.format(commune=lieu["commune"],
                                           departement=lieu["departement_nom"], sujets=sujets))
@@ -435,15 +506,15 @@ def _press(lieu):
     stories = cluster(articles)
     # La peche : tous les titres des sujets retenus. Un nouveau titre (meme
     # sur un sujet deja connu) = flash reecrit ; sinon, on relit le dernier.
-    catch = sorted({_norm(a["titre"]) for s in stories[:TOP_STORIES] for a in s["articles"]})
+    catch = sorted({_norm(a["titre"]) for s in _selection(stories) for a in s["articles"]})
     cache = _load_cache()
     fresh = not (cache.get("commune") == lieu["code_insee"] and cache.get("peche") == catch
-                 and cache.get("texte"))
+                 and cache.get("texte") and cache.get("version") == PROMPT_VERSION)
     remark = None
     if fresh:
         news, rubriques, remark = write_news(lieu, stories)
         if remark is None:  # repli sur les titres : on retentera au prochain appel
-            _save_cache({"commune": lieu["code_insee"], "peche": catch, "texte": news,
+            _save_cache({"commune": lieu["code_insee"], "peche": catch, "texte": news, "version": PROMPT_VERSION,
                          "rubriques": rubriques, "genere": time.time()})
     else:
         news, rubriques = cache["texte"], cache.get("rubriques") or {}

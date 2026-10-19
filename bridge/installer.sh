@@ -2,6 +2,8 @@
 # Installe le module compagnon de nearfield anchor sur une machine plus
 # puissante que le Pi (Mac ou Linux), sans droits administrateur :
 #   - numpy, cryptography (cles du pont) et cmake via pip --user ;
+#   - piper-venv (piper-tts, voix calculees pour le Pi) et, sur Apple
+#     Silicon, vlm-venv (mlx-vlm, description d'images), via uv ;
 #   - meteor_demod / meteor_decode (dbdexter-dev, libres) compiles dans
 #     ~/.nearfield-bridge/bin ;
 #   - GNU Radio (conda-forge, dans ~/.nearfield-bridge/gnuradio) et
@@ -39,7 +41,8 @@ fi
 
 echo "-- module compagnon : fichiers --"
 mkdir -p "$DEST/bin" "$BUILD"
-cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/lora_decode.py" "$DEST/"
+cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/lora_decode.py" "$HERE/decrire_images.py" \
+    "$HERE/voix_piper.py" "$HERE/voix_piper_worker.py" "$DEST/"
 
 echo "-- numpy, cryptography, cmake --"
 "$PY" -m pip install --user --quiet --upgrade numpy cryptography cmake
@@ -68,6 +71,30 @@ for d in meteor_demod meteor_decode; do
             && make -j4 >/dev/null && cp "$d" "$DEST/bin/")
     fi
 done
+
+echo "-- voix Piper (travaux \"voix\" du Pi : piper-venv) --"
+# Environnement Python a part (piper-tts) : le calcul des sons que le Pi
+# prepare d'avance (voix_piper.py). Python 3.11 via uv (roues piper-tts).
+UV="$(command -v uv || echo "$HOME/.local/bin/uv")"
+if [ ! -x "$UV" ]; then
+    curl -LsSf https://astral.sh/uv/install.sh | sh >/dev/null
+    UV="$HOME/.local/bin/uv"
+fi
+if ! "$DEST/piper-venv/bin/python" -c "import piper" 2>/dev/null; then
+    "$UV" venv -q --python 3.11 "$DEST/piper-venv"
+    "$UV" pip install -q --python "$DEST/piper-venv/bin/python" piper-tts
+fi
+"$DEST/piper-venv/bin/python" -c "import piper; print('piper-tts : pret')"
+
+# Description d'images (decrire_images.py) : modeles MLX, Apple Silicon seulement.
+if [ "$(uname)-$(uname -m)" = "Darwin-arm64" ]; then
+    echo "-- description d'images (vlm-venv : mlx-vlm, argostranslate) --"
+    if ! "$DEST/vlm-venv/bin/python" -c "import mlx_vlm, argostranslate" 2>/dev/null; then
+        "$UV" venv -q --python 3.12 "$DEST/vlm-venv"
+        "$UV" pip install -q --python "$DEST/vlm-venv/bin/python" mlx-vlm argostranslate transformers torch
+    fi
+    "$DEST/vlm-venv/bin/python" -c "import mlx_vlm; print('mlx-vlm : pret')" || echo "!! vlm-venv incomplet"
+fi
 
 echo "-- GNU Radio et gr-lora_sdr (decodage LoRa) --"
 GR="$DEST/gnuradio"

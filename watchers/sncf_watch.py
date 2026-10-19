@@ -9,6 +9,7 @@ import requests
 
 from speak import speak_with_lead_sound as _speak_with_lead_sound
 import audio_lock
+import annonce_morceaux as morceaux
 from sound_player import play_sound_effect as _play_sound_effect
 
 
@@ -377,34 +378,59 @@ def _schedule_ambient_sound(mode, action, event_dt):
     timer.start()
 
 
+# Annonces assemblees par morceaux (lib/annonce_morceaux.py, 2026-10-18) :
+# chaque morceau (parties fixes, gare, numero de train, heure) est synthetise
+# une fois par voix et garde ; l'annonce d'un train est preparee des qu'il
+# est connu (_schedule_announcement), puis seulement jouee a l'heure. Toujours
+# avec l'effet "haut-parleur de quai" (reverb "pa").
+_prepared = {}
+
+
+def _parts_depart(mode, destination, scheduled_dt, train_number=None):
+    return morceaux.fragments("trains.destination_depart_va_etre", mode_label=_train_label(mode, train_number),
+                              destination=destination, v1=_format_time_spoken(scheduled_dt))
+
+
+def _parts_terminus(mode, origin, scheduled_dt, train_number=None):
+    return morceaux.fragments("trains.provenance_entrera_gare", mode_label=_train_label(mode, train_number),
+                              origin=origin, v1=_format_time_spoken(scheduled_dt))
+
+
+def _parts_stop_and_go(mode, origin, destination, scheduled_dt, train_number=None):
+    return morceaux.fragments("trains.provenance_destination_entrera_gare", mode_label=_train_label(mode, train_number),
+                              origin=origin, destination=destination, v1=_format_time_spoken(scheduled_dt))
+
+
+def _say_parts(sound, parts, prepared=None):
+    lock = audio_lock.acquire()
+    try:
+        morceaux.say(sound, parts, label="sncf_watch", reverb="pa", prepared=prepared)
+    finally:
+        audio_lock.release(lock)
+
+
+def _prepared_key(fn, args):
+    return (fn.__name__, repr(args))
+
+
 def _speak_depart_announcement(mode, destination, scheduled_dt, train_number=None):
     """Train qui NAIT a cette gare (present dans /departures, absent de
     /arrivals) -- formulation "mise en place" fournie par l'utilisateur
     (2026-08-31, quatrieme correction sur cette annonce : la destination,
     omise dans la version precedente, doit y etre -- "coquille" signalee
     par l'utilisateur, pas une omission volontaire)."""
-    mode_label = _train_label(mode, train_number)
-    message = (
-        dire("trains.destination_depart_va_etre", mode_label=mode_label, destination=destination, v1=_format_time_spoken(scheduled_dt))
-    )
-    lock = audio_lock.acquire()
-    try:
-        speak_with_lead_sound(SOUND_MODERNE, message, label="sncf_watch")
-    finally:
-        audio_lock.release(lock)
+    args = (mode, destination, scheduled_dt, train_number)
+    _say_parts(SOUND_MODERNE, _parts_depart(*args),
+               _prepared.pop(_prepared_key(_speak_depart_announcement, args), None))
 
 
 def _speak_terminus_announcement(mode, origin, scheduled_dt, train_number=None):
     """Train qui FINIT son service a cette gare (present dans /arrivals,
     absent de /departures) -- juste l'origine, pas de destination
     puisqu'il n'y en a pas apres Chateaucreux pour ce train."""
-    mode_label = _train_label(mode, train_number)
-    message = dire("trains.provenance_entrera_gare", mode_label=mode_label, origin=origin, v1=_format_time_spoken(scheduled_dt))
-    lock = audio_lock.acquire()
-    try:
-        speak_with_lead_sound(SOUND_MODERNE, message, label="sncf_watch")
-    finally:
-        audio_lock.release(lock)
+    args = (mode, origin, scheduled_dt, train_number)
+    _say_parts(SOUND_MODERNE, _parts_terminus(*args),
+               _prepared.pop(_prepared_key(_speak_terminus_announcement, args), None))
 
 
 def _speak_stop_and_go_announcement(mode, origin, destination, scheduled_dt, train_number=None):
@@ -412,15 +438,12 @@ def _speak_stop_and_go_announcement(mode, origin, destination, scheduled_dt, tra
     dans /departures ET /arrivals) -- UNE SEULE annonce combinee origine+
     destination, jamais deux annonces separees pour le meme train
     physique (demande explicite de l'utilisateur, 2026-08-31)."""
-    mode_label = _train_label(mode, train_number)
-    message = (
-        dire("trains.provenance_destination_entrera_gare", mode_label=mode_label, origin=origin, destination=destination, v1=_format_time_spoken(scheduled_dt))
-    )
-    lock = audio_lock.acquire()
-    try:
-        speak_with_lead_sound(SOUND_MODERNE, message, label="sncf_watch")
-    finally:
-        audio_lock.release(lock)
+    args = (mode, origin, destination, scheduled_dt, train_number)
+    _say_parts(SOUND_MODERNE, _parts_stop_and_go(*args),
+               _prepared.pop(_prepared_key(_speak_stop_and_go_announcement, args), None))
+
+
+_PARTS = {}  # rempli apres les definitions (voir plus bas)
 
 
 def _schedule_announcement(speak_fn, args, actual_dt, state, vj_id):
@@ -432,6 +455,11 @@ def _schedule_announcement(speak_fn, args, actual_dt, state, vj_id):
     pouvoir l'annuler si le train est supprime avant que l'annonce ne parte
     (voir _process_station)."""
     delay = max(0.0, (actual_dt - datetime.now()).total_seconds() - ANNOUNCEMENT_LEAD_SEC)
+    # Annonce previsible des maintenant : on la calcule tout de suite (voix,
+    # morceaux manquants), elle sera seulement jouee a l'heure.
+    key = _prepared_key(speak_fn, args)
+    if key not in _prepared and speak_fn in _PARTS:
+        _prepared[key] = morceaux.prepare(_PARTS[speak_fn](*args))
     timer = threading.Timer(delay, _enqueue_announcement, args=(speak_fn, args))
     timer.daemon = True
     timer.start()
@@ -453,6 +481,10 @@ _GROUP_TEMPLATES = {
     _speak_terminus_announcement: ("trains.frag_terminus", "trains.groupe_terminus"),
     _speak_stop_and_go_announcement: ("trains.frag_sag", "trains.groupe_sag"),
 }
+
+
+_PARTS.update({_speak_depart_announcement: _parts_depart, _speak_terminus_announcement: _parts_terminus,
+               _speak_stop_and_go_announcement: _parts_stop_and_go})
 
 
 def _enqueue_announcement(speak_fn, args):
@@ -497,54 +529,53 @@ def _speak_grouped(fn, group):
     frag_key, verb_key = _GROUP_TEMPLATES[fn]
     frags = []
     for args in group:
+        _prepared.pop(_prepared_key(fn, args), None)  # annonce seule preparee : remplacee par le groupe
         mode, train_number = args[0], args[-1]
         mode_label = _train_label(mode, train_number)
         heure = _format_time_spoken(args[-2])
         if fn is _speak_depart_announcement:          # (mode, destination, scheduled_dt, train_number)
-            frags.append(dire(frag_key, mode_label=mode_label, destination=args[1], v1=heure))
+            frags.append(morceaux.fragments(frag_key, mode_label=mode_label, destination=args[1], v1=heure))
         elif fn is _speak_terminus_announcement:      # (mode, origin, scheduled_dt, train_number)
-            frags.append(dire(frag_key, mode_label=mode_label, origin=args[1], v1=heure))
+            frags.append(morceaux.fragments(frag_key, mode_label=mode_label, origin=args[1], v1=heure))
         else:                                         # stop_and_go (mode, origin, destination, scheduled_dt, train_number)
-            frags.append(dire(frag_key, mode_label=mode_label, origin=args[1], destination=args[2], v1=heure))
-    liste = frags[0] if len(frags) == 1 else ", ".join(frags[:-1]) + " " + dire("trains.et") + " " + frags[-1]
-    message = dire(verb_key, nombre=nombre(len(group), "train"), liste=liste)
-    lock = audio_lock.acquire()
-    try:
-        speak_with_lead_sound(SOUND_MODERNE, message, label="sncf_watch")
-    finally:
-        audio_lock.release(lock)
+            frags.append(morceaux.fragments(frag_key, mode_label=mode_label, origin=args[1], destination=args[2], v1=heure))
+    liste = []
+    for i, f in enumerate(frags):
+        if i == len(frags) - 1 and i > 0:
+            liste += [(dire("trains.et"), "")]
+        elif i > 0:
+            liste[-1] = (liste[-1][0], ",")
+        liste += f
+    _say_parts(SOUND_MODERNE, morceaux.fragments(verb_key, nombre=nombre(len(group), "train"), liste=liste))
 
 
 def _cancel_scheduled_announcement(state, vj_id):
+    # L'annonce preparee d'avance (si elle existe) n'est plus a jouer.
     timer = state["scheduled_announcements"].pop(vj_id, None)
+    if timer is not None and timer.args:
+        prepared = _prepared.pop(_prepared_key(*timer.args), None)
+        path = prepared.wait(0) if prepared else None
+        if path:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
     if timer is not None:
         timer.cancel()
 
 
 def _speak_disruption(mode, destination, scheduled_dt, delay_min, motif=None, train_number=None):
-    mode_label = _train_label(mode, train_number)
-    reason = (" " + dire("trains.motif", motif=motif)) if motif else ""
-    message = (
-        dire("trains.perturbation_destination_prevu_partira", mode_label=mode_label, destination=destination, v1=_format_time_spoken(scheduled_dt), delay_min=delay_min, reason=reason)
-    )
-    lock = audio_lock.acquire()
-    try:
-        speak_with_lead_sound(SOUND_RETRO, message, label="sncf_watch")
-    finally:
-        audio_lock.release(lock)
+    reason = morceaux.fragments("trains.motif", motif=motif) if motif else []
+    _say_parts(SOUND_RETRO, morceaux.fragments(
+        "trains.perturbation_destination_prevu_partira", mode_label=_train_label(mode, train_number),
+        destination=destination, v1=_format_time_spoken(scheduled_dt), delay_min=str(delay_min), reason=reason))
 
 
 def _speak_cancellation(mode, destination, scheduled_dt, motif=None, train_number=None):
-    mode_label = _train_label(mode, train_number)
-    reason = (" " + dire("trains.motif_2", motif=motif)) if motif else (" " + dire("trains.motif_non_precise"))
-    message = (
-        dire("trains.suppression_destination_prevu_supprime", mode_label=mode_label, destination=destination, v1=_format_time_spoken(scheduled_dt), reason=reason)
-    )
-    lock = audio_lock.acquire()
-    try:
-        speak_with_lead_sound(SOUND_RETRO, message, label="sncf_watch")
-    finally:
-        audio_lock.release(lock)
+    reason = morceaux.fragments("trains.motif_2", motif=motif) if motif else morceaux.whole(dire("trains.motif_non_precise"))
+    _say_parts(SOUND_RETRO, morceaux.fragments(
+        "trains.suppression_destination_prevu_supprime", mode_label=_train_label(mode, train_number),
+        destination=destination, v1=_format_time_spoken(scheduled_dt), reason=reason))
 
 
 def _schedule_train_event(state, vj_id, dep, arr, origins_by_id):
@@ -674,12 +705,8 @@ def _process_station(state):
                 state["known_disruptions"][vj_id] = disruption_id
         elif previous_delay is not None:
             # retard résorbé
-            mode_label = _train_label(mode, train_number)
-            lock = audio_lock.acquire()
-            try:
-                speak_with_lead_sound(SOUND_MODERNE, dire("trains.destination_plus_retard_notable", mode_label=mode_label, destination=destination), label="sncf_watch")
-            finally:
-                audio_lock.release(lock)
+            _say_parts(SOUND_MODERNE, morceaux.fragments("trains.destination_plus_retard_notable",
+                                                         mode_label=_train_label(mode, train_number), destination=destination))
             state["known_delays"].pop(vj_id, None)
             state["known_disruptions"].pop(vj_id, None)
 

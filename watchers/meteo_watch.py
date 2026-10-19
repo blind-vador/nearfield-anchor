@@ -476,10 +476,10 @@ def main():
     threading.Thread(target=_precursor_watcher, daemon=True).start()
     import personnalite  # chaque nuit a minuit, le Pi reecrit ses phrases (personnalite choisie)
     threading.Thread(target=personnalite.watch, daemon=True).start()
+    import bulletin_capteurs  # bulletin horaire des capteurs meteo, journal "meteo" (2026-10-19)
+    threading.Thread(target=bulletin_capteurs.watch, daemon=True).start()
     import stats_locales  # releves de capteurs resumes sur la carte SD, bruts effaces apres 48 h
     threading.Thread(target=stats_locales.watch, daemon=True).start()
-    import compagnon_serveur  # liaison avec les machines compagnes (calculs lourds)
-    threading.Thread(target=compagnon_serveur.run, daemon=True).start()
     import plantes_calendrier  # evenements de vie des plantes (journal "plantes")
     threading.Thread(target=plantes_calendrier.watch, daemon=True).start()
     _vigilance_watcher()

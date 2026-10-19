@@ -38,7 +38,60 @@ def get_recording_session():
     return _active_recording_session
 
 
-def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, volume=1.0):
+# Jingle puis voix (2026-10-19) : la voix part juste apres la derniere note du
+# jingle, PAR-DESSUS sa traine (reverberation de gare), au lieu d'attendre la
+# fin du fichier. La derniere note se mesure sur le son sec (seuil sous la
+# crete), une fois par fichier.
+FIN_AUDIBLE_DB = -30
+LEAD_GAP_SEC = 0.15
+_fins = {}
+
+
+def fin_audible(path):
+    """Secondes jusqu'a la fin de la derniere note audible du son (sec)."""
+    try:
+        key = (path, os.path.getmtime(path))
+    except OSError:
+        return 0.0
+    if key not in _fins:
+        try:
+            import numpy as np
+            raw = subprocess.run(["ffmpeg", "-v", "quiet", "-i", path, "-f", "s16le", "-ac", "1", "-ar", "22050", "-"],
+                                 capture_output=True, timeout=20).stdout
+            a = np.frombuffer(raw, dtype=np.int16).astype(np.float32)
+            rms = np.sqrt(np.convolve(a * a, np.ones(441) / 441, mode="same"))
+            loud = np.flatnonzero(rms > rms.max() * 10 ** (FIN_AUDIBLE_DB / 20)) if len(rms) else []
+            _fins[key] = (loud[-1] / 22050) if len(loud) else len(a) / 22050
+        except Exception:
+            _fins[key] = 0.0
+    return _fins[key]
+
+
+def play_lead_then(lead_path, then, label="sound_player", reverb=False, timeout_sec=15):
+    """Joue lead_path et lance then() des sa derniere note (sans attendre la
+    traine) ; rend quand les deux sont finis. Meme priorite audio (ticket du
+    fil appelant) pour le jingle joue dans son propre fil."""
+    import threading
+    if not lead_path:
+        return then()
+    ticket = audio_lock.ticket_courant()
+    started = threading.Event()
+
+    def lead():
+        audio_lock._local.ticket = ticket
+        play_sound_effect(lead_path, timeout_sec=timeout_sec, label=label, reverb=reverb, on_start=started.set)
+        started.set()
+    t = threading.Thread(target=lead, daemon=True)
+    t.start()
+    if started.wait(10):
+        time.sleep(fin_audible(lead_path) + LEAD_GAP_SEC)
+    try:
+        return then()
+    finally:
+        t.join(timeout_sec + 5)
+
+
+def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, volume=1.0, on_start=None):
     """Joue un court effet sonore (mp3) sur le peripherique audio partage,
     de maniere bloquante. Module commun a radio_watch.py, adsb_watch.py et
     meteo_watch.py -- une seule implementation, evite la divergence entre
@@ -77,6 +130,8 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
              "-c", str(EFFECT_CHANNELS)], stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         deadline = time.time() + timeout_sec
         chunk = EFFECT_RATE * EFFECT_CHANNELS * 2 // 10
+        if on_start is not None:
+            on_start()  # le son commence vraiment maintenant (effet calcule, lecteur pret)
         while time.time() < deadline:
             data = decoder.stdout.read(chunk)
             if not data:

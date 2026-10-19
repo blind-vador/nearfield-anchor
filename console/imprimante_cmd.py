@@ -7,11 +7,14 @@ Dialogue "pilote imprimante" (touches, tout est dit) :
   + et -                       pas du deplacement : 0,1 / 1 / 10 / 50 mm
                                (Z : 10 mm au plus)
   Ctrl + X                     origine de X et Y
-  Ctrl + Z                     origine de Z
+  Ctrl + Z                     origine de Z (via centre sonde, XY d'abord)
+  (dit: calibrage imprimante)  dialogue guide : console/imprimante_calibrage.py
   Debut                        origine de tous les axes
   x, y, z                      position de cet axe ; p ou espace : les trois
   t                            temperatures
   e / r                        pousse / retire 5 mm de filament (buse chaude)
+  f                            ejecte le filament a froid (retrait long)
+                               (r a froid fait la meme chose)
   v                            ventilateur marche / arret
   m                            coupe les moteurs (axes libres a la main)
   n                            reglage du plateau : point suivant (4 coins
@@ -20,15 +23,16 @@ Dialogue "pilote imprimante" (touches, tout est dit) :
   F1 aide ; Echap ferme
 
 Commandes tapees : chauffe (pla, abs, buse 200, plateau 60), refroidis,
-pause / reprends / annule l'impression, imprime (liste des fichiers),
-ventilateur, moteurs, connecte / deconnecte l'imprimante, vitesse et
-debit d'impression, arret d'urgence.
+éjecte filament (aussi a froid), imprimante chargée en pla/abs/…,
+pause / reprends / annule l'impression,
+imprime (liste des fichiers), ventilateur, moteurs, connecte / deconnecte
+l'imprimante, vitesse et debit d'impression, arret d'urgence.
 
 Garde-fous : rien ne bouge pendant une impression ni une pause (les
 gcodes iraient dans le flux de la piece) ; Z ne descend que de 1 mm par
 appui tant que Z n'a pas ete mis a l'origine dans cette console (pas de
-butee logicielle connue) ; filament seulement buse chaude ; temperatures
-bornees. Les evenements (chauffe atteinte, fin d'impression...) sont dits
+butee logicielle connue) ; filament : poussee seulement buse chaude,
+ejection possible a froid (F) ; temperatures bornees. Les evenements (chauffe atteinte, fin d'impression...) sont dits
 par watchers/imprimante_watch.py, meme console fermee.
 """
 import re
@@ -52,6 +56,8 @@ Z_STEP_MAX = 10
 Z_STEP_UNHOMED = 1
 EXTRUDE_MM = 5
 EXTRUDE_MIN_C = 170         # Marlin refuse d'extruder en dessous (EXTRUDE_MINTEMP)
+COLD_EJECT_MM = 40          # retrait long a froid (stub casse dans l'extrudeur)
+COLD_EJECT_FEED = 200       # mm/min, lent pour ne pas raper les engrenages
 NOZZLE_MAX_C, BED_MAX_C = 260, 110
 SPEED_RANGE, FLOW_RANGE = (25, 200), (75, 125)
 POSITION_TIMEOUT_SEC = 6
@@ -79,7 +85,17 @@ def _fr(value):
     return text.replace(".", ",") or "0"
 
 
+def _son(nom, attendre=True):
+    """Bruitage (lib/sons_imprimante.py) avant la phrase."""
+    try:
+        import sons_imprimante
+        sons_imprimante.jouer(nom, attendre=attendre)
+    except Exception as exc:
+        print(f"[imprimante] son {nom} : {exc!r}", file=sys.stderr)
+
+
 def _erreur(exc):
+    _son("printer_warning")
     if exc.code == "occupee":
         try:
             e = op.etat()
@@ -129,13 +145,41 @@ def _duree(seconds):
 
 
 def etat_texte():
-    """Etat complet : liaison, travail en cours, progression, temperatures."""
+    """Etat complet : liaison, travail en cours, progression, temperatures, ecran virtuel."""
     try:
         e = op.etat()
     except op.Erreur as exc:
         return _erreur(exc)
+
+    def _fil_parts(parts):
+        try:
+            fil = op.etat_filament_serial()
+            phase = fil.get("phase")
+            if phase == "action" or fil.get("processing"):
+                parts.append(dire("imprimante.evt_filament_ecran_action"))
+            elif fil.get("erreur") or fil.get("pause") or phase == "attente":
+                parts.append(dire("imprimante.etat_filament_erreur"))
+            elif fil.get("ok"):
+                parts.append(dire("imprimante.etat_filament_ok"))
+        except Exception:
+            pass
+
+    def _ecran_parts(parts):
+        try:
+            import json
+            with open("/tmp/imprimante_ecran.json", encoding="utf-8") as ef:
+                ec = json.load(ef)
+            if ec.get("texte"):
+                parts.append(dire("imprimante.ecran_affiche", texte=ec["texte"]))
+        except Exception:
+            pass
+
     if not e["connecte"]:
-        return dire("imprimante.pas_connectee_etat", etat=e["texte"] or "?")
+        # Hors ligne : seulement l'etat de la liaison. Le filament (fin du journal
+        # serie) et l'ecran (dernier texte affiche) datent d'avant la deconnexion :
+        # les redire faisait croire a une buse a 61 degres (2026-10-19).
+        return dire("imprimante.pas_connectee_etat", etat=op.liaison_en_clair(e["texte"]))
+
     flags, job = e["flags"], e["job"]
     parts = []
     name = ((job.get("job") or {}).get("file") or {}).get("display") or \
@@ -147,14 +191,15 @@ def etat_texte():
         if progress.get("printTimeLeft"):
             parts.append(dire("imprimante.reste", duree=_duree(progress["printTimeLeft"])))
     elif e["erreur"]:
-        parts.append(dire("imprimante.etat_erreur", erreur=e["erreur"]))
+        parts.append(dire("imprimante.etat_erreur", erreur=op.message_en_clair(e["erreur"])))
     else:
         parts.append(dire("imprimante.etat_pret"))
     parts.append(_temps_text(e))
-    return " ".join(p for p in parts if p)
+    _fil_parts(parts)
+    _ecran_parts(parts)
+    return " ".join(parts)
 
 
-# --- dialogue de pilotage -------------------------------------------------------
 
 def _background(say, work):
     """Mouvement long (origine, reglage du plateau) : le clavier reste libre,
@@ -172,6 +217,17 @@ def _background(say, work):
     threading.Thread(target=run, daemon=True).start()
 
 
+def procedure_calibrage(say=None):
+    """Texte de procedure origines + nivellement pour cette machine."""
+    try:
+        m = op.detecter_machine(force=True)
+    except Exception:
+        m = {"z_probe": True, "autolevel": False, "homing_safe_xy": {"x": 150, "y": 110}}
+    sx = (m.get("homing_safe_xy") or {}).get("x", 150)
+    sy = (m.get("homing_safe_xy") or {}).get("y", 110)
+    return dire("imprimante.procedure_calibrage", sx=round(sx), sy=round(sy))
+
+
 def _homing(axes, say):
     refused = _libre()
     if refused:
@@ -179,20 +235,47 @@ def _homing(axes, say):
     if _session["occupe"]:
         return dire("imprimante.patiente", quoi=_session["occupe"])
     label = {"xy": "imprimante.axes_xy", "z": "imprimante.axe_z", "xyz": "imprimante.axes_tous"}[axes]
-    gcode = {"xy": "G28 X Y", "z": "G28 Z", "xyz": "G28"}[axes]
     _session["occupe"] = dire("imprimante.occupe_origine")
 
     def work():
-        found, lines = op.interroger([gcode, "M400", "M114"], op.POSITION_RE, HOMING_TIMEOUT_SEC)
-        problem = op.probleme_firmware(lines)
-        if problem or not found:
-            return dire("imprimante.origine_echec", axes=dire(label), detail=problem or dire("imprimante.sans_reponse"))
-        _session["origine"].update(axes)
-        x, y, z = (float(v) for v in found.groups())
-        return dire("imprimante.origine_faite", axes=dire(label), x=_fr(x), y=_fr(y), z=_fr(z))
+        ok, detail, machine = op.homing_sur(axes, timeout=HOMING_TIMEOUT_SEC)
+        if not ok:
+            if detail == "probe_hors_plateau":
+                return dire("imprimante.origine_probe_hors_plateau")
+            if detail == "pas_au_centre_sonde":
+                return dire("imprimante.origine_pas_centre_sonde")
+            return dire("imprimante.origine_echec", axes=dire(label), detail=str(detail))
+        _session["origine"].update(axes if axes != "xyz" else "xyz")
+        pos = (machine.get("position") or {})
+        mode = machine.get("mode_leveling") or "?"
+        return dire(
+            "imprimante.origine_faite_adaptive",
+            axes=dire(label),
+            x=_fr(pos.get("x")),
+            y=_fr(pos.get("y")),
+            z=_fr(pos.get("z")),
+            mode=dire({
+                "mesh": "imprimante.mode_level_mesh",
+                "probe_z": "imprimante.mode_level_probe",
+                "manuel": "imprimante.mode_level_manuel",
+            }.get(mode, "imprimante.mode_level_manuel")),
+        )
 
     _background(say, work)
-    return dire("imprimante.origine_lancee", axes=dire(label))
+    # Annonce mode detecte avant le mouvement
+    try:
+        m = op.detecter_machine()
+        extra = ""
+        if axes in ("xyz", "xy"):
+            extra += " " + dire("imprimante.origine_butees_xy")
+        if axes in ("z", "xyz") and m.get("z_probe"):
+            extra += " " + dire("imprimante.origine_z_procedure")
+        elif m.get("autolevel"):
+            extra += " " + dire("imprimante.origine_mode_mesh")
+        return dire("imprimante.origine_lancee", axes=dire(label)) + extra
+    except Exception:
+        return dire("imprimante.origine_lancee", axes=dire(label))
+
 
 
 def _level_next(say):
@@ -201,19 +284,41 @@ def _level_next(say):
         return refused
     if _session["occupe"]:
         return dire("imprimante.patiente", quoi=_session["occupe"])
+    # Coins d'apres le firmware (M211 : 235 x 235 sur cette Ender) et non le
+    # profil OctoPrint (200 x 200) : avec 200, les coins droits tombaient
+    # 35 mm trop a l'interieur, loin des molettes.
     prof = op.profil()
+    try:
+        vol = op.limites_firmware() or {}
+    except op.Erreur:
+        vol = {}
+    largeur, profondeur = vol.get("x") or prof["largeur"], vol.get("y") or prof["profondeur"]
     m = LEVEL_MARGIN_MM
-    points = [("avant_gauche", m, m), ("avant_droit", prof["largeur"] - m, m),
-              ("arriere_droit", prof["largeur"] - m, prof["profondeur"] - m),
-              ("arriere_gauche", m, prof["profondeur"] - m),
-              ("centre", prof["largeur"] / 2, prof["profondeur"] / 2)]
+    points = [("avant_gauche", m, m), ("avant_droit", largeur - m, m),
+              ("arriere_droit", largeur - m, profondeur - m),
+              ("arriere_gauche", m, profondeur - m),
+              ("centre", largeur / 2, profondeur / 2)]
     _session["niveau"] = (_session["niveau"] + 1) % len(points)
     code, x, y = points[_session["niveau"]]
-    gcodes = [] if _session["origine"] >= set("xyz") else ["G28"]
+    # Ne pas G28 brut : homing_sur si besoin. Ne plus plonger a Z0 (risque marteau).
+    gcodes = []
+    if not (_session["origine"] >= set("xyz")):
+        # homing fait dans work() via op.homing_sur
+        pass
+    # Z0 : la feuille ne frotte qu'a la hauteur zero (Z3 laissait 3 mm d'air).
     gcodes += ["G90", "G1 Z5 F600", f"G1 X{x:.1f} Y{y:.1f} F3000", "G1 Z0 F300", "M400", "M114"]
     _session["occupe"] = dire("imprimante.occupe_niveau")
 
     def work():
+        if not (_session["origine"] >= set("xyz")):
+            ok, detail, _m = op.homing_sur("xyz", timeout=HOMING_TIMEOUT_SEC)
+            if not ok:
+                if detail == "pas_au_centre_sonde":
+                    return dire("imprimante.origine_pas_centre_sonde")
+                if detail == "probe_hors_plateau":
+                    return dire("imprimante.origine_probe_hors_plateau")
+                return dire("imprimante.niveau_echec", detail=str(detail))
+            _session["origine"].update("xyz")
         found, lines = op.interroger(gcodes, op.POSITION_RE, HOMING_TIMEOUT_SEC)
         problem = op.probleme_firmware(lines)
         if problem or not found:
@@ -274,16 +379,61 @@ def _extrude(sign):
         return _erreur(exc)
     if not e["connecte"]:
         return dire("imprimante.pas_connectee")
-    if e["flags"].get("printing"):
+    if e["flags"].get("printing") or e["flags"].get("paused"):
         return dire("imprimante.impression_en_cours_refus")
     actual = e["buse"][0] or 0
     if actual < EXTRUDE_MIN_C:
+        # Pousser a froid risque de boucher ; retirer a froid reste utile
+        # (filament casse qui depasse a peine de l'extrudeur).
+        if sign < 0:
+            return _ejecte_froid(e)
         return dire("imprimante.buse_trop_froide", reelle=round(actual), minimum=EXTRUDE_MIN_C)
     try:
         op.extruder(sign * EXTRUDE_MM)
     except op.Erreur as exc:
         return _erreur(exc)
+    if sign < 0:
+        _son("printer_filament_ejected")
     return dire("imprimante.filament_pousse" if sign > 0 else "imprimante.filament_retire", mm=EXTRUDE_MM)
+
+
+def _ejecte_froid(etat=None):
+    """Retrait filament moteur, buse froide : M302 puis G1 E- (Marlin).
+
+    Sert quand le filament a casse et ne depasse presque plus de l'extrudeur.
+    """
+    try:
+        e = etat or op.etat()
+    except op.Erreur as exc:
+        return _erreur(exc)
+    if not e["connecte"]:
+        return dire("imprimante.pas_connectee")
+    if e["flags"].get("printing") or e["flags"].get("paused"):
+        return dire("imprimante.impression_en_cours_refus")
+    if _session["occupe"]:
+        return dire("imprimante.patiente", quoi=_session["occupe"])
+    mm = COLD_EJECT_MM
+    feed = COLD_EJECT_FEED
+    # M302 S0 : autorise extrusion a toute temperature ; on restaure ensuite.
+    gcodes = [
+        "M302 S0",
+        "G91",
+        f"G1 E-{mm} F{feed}",
+        "G90",
+        f"M302 S{EXTRUDE_MIN_C}",
+    ]
+    try:
+        op.commande(*gcodes)
+    except op.Erreur as exc:
+        # Tant pis pour la restauration si la liaison tombe au milieu
+        try:
+            op.commande(f"M302 S{EXTRUDE_MIN_C}")
+        except op.Erreur:
+            pass
+        return _erreur(exc)
+    actual = round((e.get("buse") or [0])[0] or 0)
+    _son("printer_filament_ejected")
+    return dire("imprimante.filament_ejecte_froid", mm=mm, reelle=actual)
 
 
 def _gcode_simple(gcodes):
@@ -342,6 +492,8 @@ def _key(key, state, say):
         return _extrude(1)
     if key in ("r", "R"):
         return _extrude(-1)
+    if key in ("f", "F"):
+        return _ejecte_froid()
     if key in ("v", "V"):
         return _fan_toggle()
     if key in ("m", "M"):
@@ -608,9 +760,27 @@ def fichiers(key_source, say, out, read_line):
 # Noms des commandes (console/commands.py) traitees ici, avec la ligne tapee.
 LINE_HANDLERS = {"chauffe": chauffe, "ventilateur": ventilateur, "connexion imprimante": connexion,
                  "vitesse d'impression": vitesse, "débit": debit}
+def reconnecte_imprimante(line=""):
+    """Retablit OctoPrint apres arret d'urgence / liaison tombee."""
+    try:
+        op.reconnect_imprimante()
+        return dire("imprimante.connexion_retablie")
+    except op.Erreur:
+        return dire("imprimante.connexion_bloque")
+    except Exception:
+        return dire("imprimante.connexion_bloque")
+
+
+def ejecte_filament(line=""):
+    """Commande tapee : ejecte le filament a froid (meme sans buse chaude)."""
+    return _ejecte_froid()
+
+
 SIMPLE_HANDLERS = {"refroidis": refroidis, "pause impression": pause, "reprends impression": reprendre,
-                   "moteurs": moteurs, "arrêt d'urgence": urgence}
-DIALOGS = {"pilote imprimante", "imprime"}
+                   "moteurs": moteurs, "arrêt d'urgence": urgence,
+                   "éjecte filament": ejecte_filament, "ejecte filament": ejecte_filament, "reconnecte imprimante": reconnecte_imprimante, "procedure calibrage": lambda line="": procedure_calibrage(), "procédure calibrage": lambda line="": procedure_calibrage(), "reconnecter imprimante": reconnecte_imprimante,
+                   "retire filament": ejecte_filament}
+DIALOGS = {"pilote imprimante", "imprime", "calibre plateau", "nettoie imprimante", "charge filament"}
 
 
 def handles(name):
@@ -622,6 +792,15 @@ def run(name, line, key_source, say, out, read_line):
         return pilote(key_source, say, out)
     if name == "imprime":
         return fichiers(key_source, say, out, read_line)
+    if name == "calibre plateau":
+        import imprimante_calibrage
+        return imprimante_calibrage.calibrage(key_source, say, out)
+    if name == "nettoie imprimante":
+        import imprimante_nettoyage
+        return imprimante_nettoyage.nettoyage(key_source, say, out)
+    if name == "charge filament":
+        import imprimante_chargement
+        return imprimante_chargement.chargement(key_source, say, out)
     if name in LINE_HANDLERS:
         return LINE_HANDLERS[name](line)
     return SIMPLE_HANDLERS[name]()

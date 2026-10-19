@@ -176,11 +176,15 @@ def pressure(target, state, ctx):
 # --- programme d'un cycle ---
 
 def _disabled(target):
-    """Categorie mise sur "désactivé" (commande intérêts) : bande entierement
-    sautee, plancher d'exploration compris (2026-10-09)."""
+    """Categorie mise sur "désactivé" (commande intérêts), ou cible hors du
+    mode restreint (lib/restreint.py) : bande entierement sautee, plancher
+    d'exploration compris (2026-10-09)."""
     try:
         import interets
-        return interets.disabled(target)
+        import stations
+        # ou fenetre aero desactivee comme station reperee (touche O du mode manuel)
+        import restreint
+        return interets.disabled(target) or stations.window_disabled(target) or restreint.exclu(target)
     except Exception:
         return False
 

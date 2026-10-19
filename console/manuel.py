@@ -10,6 +10,13 @@
   page haut / page bas     dix pas
   F                        filtre on/off : filtre de bande vocale + silencieux,
                            comme en reception normale (coupe sifflements et souffle)
+  O                        station reperee sous le curseur : activee / desactivee
+                           (le scanner ne la revisite plus, 2026-10-17)
+  F3                       renommer la station reperee : nom humain, dit par le
+                           scanner et le mode manuel ("aucun" retire le nom)
+  A                        ajouter une station a la main : frequence, modulation
+                           (fleches gauche / droite), nom
+  Suppr                    retirer la station reperee (confirmation "oui")
   Entree                   redit la plage et la frequence
   Echap                    ferme le dialogue ; le scanner reste fixe sur la
                            frequence (avec silencieux) jusqu'a "decroche"
@@ -132,11 +139,135 @@ class Tuner:
             n = self.plage["channels"].index(self.freq) + 1
             text = dire("manuel.station", numero=n, total=len(self.plage["channels"]), frequence=text,
                         mode=MODES.get(station["mode"], station["mode"]), bande=station.get("label") or station.get("bande"))
+            if station.get("nom"):
+                text = f"{station['nom']}, {text}"
             habits = stations.habits(station)
             if habits:
                 text += ", " + dire("manuel.habitude", jour=stations.JOURS[habits[0][0]], heure=habits[0][1])
+            if not stations.active(station):
+                text += ", " + dire("manuel.station_etat_desactivee")
             return text
         return f"{self.plage['label']}, {text}" if with_plage else text
+
+    def toggle_station(self):
+        """O : active ou desactive la station reperee sous le curseur."""
+        station = self.station()
+        if station is None:
+            return dire("manuel.pas_une_station")
+        import stations
+        on = not stations.active(station)
+        saved = stations.set_active(station["freq_hz"], station["mode"], on)
+        if saved is None:
+            return dire("manuel.station_introuvable")
+        station["actif"] = on
+        mhz = spoken_mhz(self.freq)
+        return dire("manuel.station_activee" if on else "manuel.station_desactivee", frequence=mhz)
+
+    def rename_station(self, key_source, say, read_line):
+        """F3 : nom humain de la station reperee, tape au clavier."""
+        station = self.station()
+        if station is None:
+            return dire("manuel.renommer_pas_une_station")
+        say(dire("manuel.renommer_consigne", frequence=spoken_mhz(self.freq),
+                 actuel=station.get("nom") or dire("manuel.sans_nom")))
+        name = " ".join(read_line(key_source).split())
+        if not name:
+            return dire("manuel.nom_inchange")
+        import matcher
+        import stations
+        if matcher.normalize(name) in ("aucun", "efface", "effacer", "supprimer"):
+            name = ""
+        if stations.rename(station["freq_hz"], station["mode"], name) is None:
+            return dire("manuel.station_introuvable")
+        if name:
+            station["nom"] = name
+            return dire("manuel.station_renommee", frequence=spoken_mhz(self.freq), nom=name)
+        station.pop("nom", None)
+        return dire("manuel.nom_retire", frequence=spoken_mhz(self.freq))
+
+    def _guess(self, freq):
+        """(mode, bande, libelle) de la plage qui contient freq, sinon selon la frequence."""
+        for plage in self.plages:
+            if plage.get("stations") or plage["low_hz"] is None:
+                continue
+            if plage["low_hz"] <= freq <= plage["high_hz"]:
+                return plage["mode"], plage["target"], plage["label"]
+        if 87_500_000 <= freq <= 108_000_000:
+            return "wfm", "fm_diffusion", None
+        if 118_000_000 <= freq <= 137_000_000:
+            return "am", "aviation", None
+        return "nfm", "manuel", None
+
+    def _refresh_stations(self, freq):
+        """Relit la plage des stations reperees et y place le curseur."""
+        probable = stations_plage()
+        has = bool(self.plages and self.plages[0].get("stations"))
+        if probable is None:
+            if has:
+                self.plages.pop(0)
+            self.index, self.freq = 0, self._first(self.plages[0])
+            return
+        if has:
+            self.plages[0] = probable
+        else:
+            self.plages.insert(0, probable)
+        self.index = 0
+        channels = probable["channels"]
+        self.freq = min(channels, key=lambda c: abs(c - freq))
+
+    def add_station(self, key_source, say, read_line):
+        """A : nouvelle station tapee a la main (frequence, modulation, nom)."""
+        say(dire("manuel.ajout_frequence"))
+        typed = read_line(key_source).strip().replace(",", ".").replace(" ", "")
+        try:
+            value = float(typed)
+        except ValueError:
+            return dire("manuel.ajout_annule") if not typed else dire("manuel.ajout_frequence_invalide")
+        freq = int(round(value * (1e6 if value < 3_000 else 1e3 if value < 3_000_000 else 1)))
+        if not 24_000_000 <= freq <= 1_766_000_000:
+            return dire("manuel.ajout_frequence_invalide")
+        import stations
+        known = stations._near(stations.load(), freq)
+        if known is not None:  # deja repere : on s'y place, rien a redemander
+            self._refresh_stations(known["freq_hz"])
+            return dire("manuel.station_deja_la", frequence=spoken_mhz(known["freq_hz"])) + " " + self.describe()
+        mode, bande, label = self._guess(freq)
+        order = ["nfm", "wfm", "am"]
+        i = order.index(mode)
+        say(dire("manuel.ajout_mode", frequence=spoken_mhz(freq), mode=MODES[order[i]]))
+        for key in key_source:
+            if key in ("\x1b[C", "\x1b[D"):
+                i = (i + (1 if key == "\x1b[C" else -1)) % len(order)
+                say(MODES[order[i]])
+            elif key in ("\r", "\n"):
+                break
+            elif key == "\x1b":
+                return dire("manuel.ajout_annule")
+            else:
+                say(dire("manuel.ajout_mode_aide"))
+        mode = order[i]
+        say(dire("manuel.ajout_nom"))
+        nom = " ".join(read_line(key_source).split()) or None
+        station, created = stations.add(freq, mode, nom=nom, bande=bande,
+                                        label=label or dire("manuel.station_reperee"))
+        self._refresh_stations(station["freq_hz"])
+        key = "manuel.station_ajoutee" if created else "manuel.station_deja_la"
+        return dire(key, frequence=spoken_mhz(station["freq_hz"])) + " " + self.describe()
+
+    def remove_station(self, key_source, say, read_line):
+        """Suppr : retire la station reperee sous le curseur (apres "oui")."""
+        station = self.station()
+        if station is None:
+            return dire("manuel.suppr_pas_une_station")
+        say(dire("manuel.suppr_confirmer", frequence=spoken_mhz(self.freq)))
+        import matcher
+        if matcher.normalize(read_line(key_source)) != "oui":
+            return dire("manuel.suppr_annule")
+        import stations
+        stations.remove(station["freq_hz"], station["mode"])
+        freq = self.freq
+        self._refresh_stations(freq)
+        return dire("manuel.station_retiree", frequence=spoken_mhz(freq)) + " " + self.describe()
 
     def target(self):
         """Description compatible avec une "derniere capture" (verrouillage).
@@ -146,7 +277,7 @@ class Tuner:
         if station:
             import stations
             return {"source": station.get("source", "rtl_fm"), "freq_hz": self.freq, "mode": station["mode"],
-                    "label": station.get("label") or dire("manuel.station_reperee"), "target": station.get("bande"),
+                    "label": station.get("nom") or station.get("label") or dire("manuel.station_reperee"), "target": station.get("bande"),
                     "numerique": stations.is_digital(station),
                     "log_path": None, "fingerprint": None, "time": 0, "filter": self.filtered}
         return {"source": plage["source"], "freq_hz": self.freq, "mode": plage["mode"],
@@ -200,7 +331,10 @@ def _relay_events(say, out, stop):
         stop.wait(0.3)
 
 
-def run(key_source, say, out):
+F3 = ("\x1b[[C", "\x1bOR", "\x1b[13~")
+
+
+def run(key_source, say, out, read_line=None):
     """Boucle du dialogue ; rend la phrase de sortie a dire par la console."""
     plages = ns.read_plages()
     if not plages:
@@ -228,6 +362,14 @@ def run(key_source, say, out):
             text = tuner.toggle_filter()
         elif key in ("v", "V"):
             text = tuner.validate()
+        elif key in ("o", "O"):
+            text = tuner.toggle_station()
+        elif key in F3 and read_line is not None:
+            text = tuner.rename_station(key_source, say, read_line)
+        elif key in ("a", "A") and read_line is not None:
+            text = tuner.add_station(key_source, say, read_line)
+        elif key == "\x1b[3~" and read_line is not None:
+            text = tuner.remove_station(key_source, say, read_line)
         elif key in ("\r", "\n"):
             text = tuner.describe() + (", " + dire("manuel.filtre_actif") if tuner.filtered else "")
         elif conseils.is_help(key):

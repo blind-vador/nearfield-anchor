@@ -25,6 +25,9 @@ import acars_watch
 import satellites
 import satellites_watch
 import decodeurs
+import dmr_filtres
+import annonce_morceaux as morceaux
+import restreint
 import stations
 import chaine_audio
 import profils_bruit
@@ -535,6 +538,11 @@ DSD_FME_MONO_DATAGRAM = 320
 # fin apres DSD_FME_IDLE_SEC sans paquet, plafond DSD_FME_MAX_SEC.
 DSD_FME_IDLE_SEC = 10.0  # 2026-10-03 : conversation DMR coupee entre deux interlocuteurs a 3 s
 DSD_FME_MAX_SEC = 300  # une vraie conversation (qso) dure plusieurs minutes
+DSD_FME_PRE_MAX = 500  # datagrammes gardes avant la confirmation (~10 s en stereo)
+# Duree minimale d'ecoute une fois une voix reconnue (2026-10-19, toutes les
+# bandes) : un clic de micro raccroche ne ferme pas l'ecoute en 3 s, et une
+# reponse qui suit de pres n'est pas perdue.
+MIN_ECOUTE_SEC = 8.0
 
 # Pic DC : artefact materiel propre aux dongles RTL-SDR (architecture a conversion
 # directe), qui apparait comme un pic artificiel au centre exact de chaque segment
@@ -812,9 +820,11 @@ def _dmr_window(dwell_sec=20):
     # seulement les mieux notees) : on veut capter TOUT ce qui est ouvert
     # (2026-10-08). Les plus prometteuses passent plus souvent (DMR_TOP en
     # tete, puis le reste en rotation).
-    known = dmr_registre.targets()
+    known = [e for e in dmr_registre.targets() if dmr_filtres.freq_state(e["freq_hz"]) != "ignore"]
     if not known:
         return False
+    # Ciblage (exploration dmr) : frequences favorites d'abord.
+    known.sort(key=lambda e: dmr_filtres.freq_state(e["freq_hz"]) != "favori")
     head = known[:DMR_TOP]
     target = (head + known)[_dmr_turn[0] % (len(head) + len(known))]
     _dmr_turn[0] += 1
@@ -828,7 +838,7 @@ def _dmr_window(dwell_sec=20):
     sound_player.set_recording_session(log_session)
     saved = False
     try:
-        protocol = try_digital_voice_decode(freq, "-fs", label, probe_sec=dwell_sec)
+        protocol = try_digital_voice_decode(freq, "-fs", label, probe_sec=dwell_sec, target="dmr")
         if not protocol:
             log_session.discard()
             return False
@@ -836,20 +846,124 @@ def _dmr_window(dwell_sec=20):
             log_session.discard()
             return True
         play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
-        speak(dire("radio.reception_terminee", protocol=protocol))
+        morceaux.say(None, morceaux.whole(dire("radio.reception_terminee", protocol=protocol)), label="radio_watch")
         path = log_session.finalize()
         noise_signatures.record_capture("rtl_fm", freq, "nfm", label, "dmr", path, None,
                                         {"numerique": True, "veille_dmr": True})
         saved = True
         return True
     finally:
+        noise_signatures.capture_ended()
         sound_player.set_recording_session(None)
         audio_lock.release(lock)
         if saved and lock.silent:
             journal_notice()
 
 
-def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=None):
+# Recherche DMR (touche R de l'exploration dmr, 2026-10-17) : balayage des
+# bandes professionnelles, puis courte sonde dsd-fme muette sur chaque pic
+# inconnu ; ce qui accroche en DMR entre au registre (et dans l'exploration).
+DMR_SEARCH_RANGES = [(440_000_000, 470_000_000), (148_000_000, 174_000_000)]
+DMR_SEARCH_STEP_HZ = 6250
+DMR_SEARCH_MARGIN_DB = 10.0
+DMR_SEARCH_MAX_PEAKS = 10
+DMR_SEARCH_PROBE_SEC = 4.0
+
+
+def _dmr_probe(freq_hz, seconds=DMR_SEARCH_PROBE_SEC):
+    """dsd-fme en DMR seul, sans son : rend True si le DMR s'est confirme."""
+    stats = decodeurs.new_stats(freq_hz)
+    proc = subprocess.Popen(["dsd-fme", "-fs", "-i", f"rtl:0:{int(freq_hz)}:0:0:12:0:2", "-o", "null"],
+                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    watcher = threading.Thread(target=_dsdfme_stdout_watcher, args=(proc, stats), daemon=True)
+    watcher.start()
+    end = time.time() + seconds
+    try:
+        while time.time() < end and proc.poll() is None:
+            if _dsdfme_validated(stats) and (stats.get("dmr") or {}).get("appels"):
+                time.sleep(0.5)  # le temps de lire groupe et emetteur
+                break
+            time.sleep(0.2)
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=2)
+        except Exception:
+            proc.kill()
+    if _dsdfme_validated(stats) and "DMR" in str(stats.get("protocol") or ""):
+        _dmr_learn(stats)
+        return True
+    return False
+
+
+def _dmr_search():
+    import dmr_registre
+    import manual_tuner
+    known = [e["freq_hz"] for e in dmr_registre.load().values()]
+    found = []
+    manual_tuner.event(dire("dmr_exploration.recherche_debut"))
+    for low, high in DMR_SEARCH_RANGES:
+        if not dmr_filtres.search_requested():
+            break  # annulee par la console
+        fd, path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        try:
+            run = subprocess.run(["rtl_power", "-f", f"{low}:{high}:{DMR_SEARCH_STEP_HZ}", "-i", "1", "-1", path],
+                                 capture_output=True, timeout=90)
+            all_db, bins = _read_csv_bins(path) if run.returncode == 0 else ([], [])
+        except Exception as exc:
+            print(f"[radio_watch] recherche DMR : balayage impossible ({exc!r})")
+            all_db, bins = [], []
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        floor = _percentile(all_db, 20) if all_db else None
+        if floor is None:
+            continue
+        peaks = []
+        for f, db in sorted(bins, key=lambda b: -b[1]):
+            if db < floor + DMR_SEARCH_MARGIN_DB or len(peaks) >= DMR_SEARCH_MAX_PEAKS:
+                break
+            if any(abs(f - p) < 25_000 for p in peaks) or any(abs(f - k) < 12_500 for k in known):
+                continue
+            peaks.append(f)
+        print(f"[radio_watch] recherche DMR {low / 1e6:.0f}-{high / 1e6:.0f} MHz : {len(peaks)} pic(s) a sonder")
+        for f in peaks:
+            if not dmr_filtres.search_requested():
+                break
+            f = int(round(f / DMR_SEARCH_STEP_HZ) * DMR_SEARCH_STEP_HZ)
+            if _dmr_probe(f):
+                found.append(f)
+                manual_tuner.event(dire("dmr_exploration.recherche_trouve",
+                                        frequence=f"{f / 1e6:.4f}".rstrip("0").replace(".", ",")))
+    dmr_filtres.search_done()
+    if found:
+        manual_tuner.event(dire("dmr_exploration.recherche_fin", nombre=len(found)))
+    else:
+        manual_tuner.event(dire("dmr_exploration.recherche_rien"))
+
+
+def _annonce_dmr(protocol, band_label, ticket):
+    """Carillon, "Reception DMR, <bande>", son d'ouverture : joue pendant que
+    try_digital_voice_decode garde le son en tampon. ticket : celui du fil
+    appelant (priorites, journal ouvert, calibrage)."""
+    audio_lock._local.ticket = ticket
+    try:
+        # Morceaux en cache (lib/annonce_morceaux.py) : "Reception DMR", nom de bande.
+        parts = morceaux.whole(dire("radio.reception", protocol=protocol) + ("," if band_label else "."))
+        if band_label:
+            parts += morceaux.whole(band_label + ".")
+        morceaux.say(DECODING_NUMERIC_SOUND, parts, label="radio_watch")
+        # Meme encadrement que la voix analogique (2026-10-02) : son
+        # d'ouverture avant la voix, son de fin apres (_handle_candidate).
+        play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
+    except Exception as exc:
+        print(f"[radio_watch] annonce DMR : {exc!r}")
+
+
+def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=None, target=None):
     """Tente un decodage vocal numerique (DMR/P25/NXDN/D-STAR/YSF/dPMR/X2-TDMA)
     directement depuis le dongle RTL-SDR via dsd-fme. dsd-fme n'a pas de
     sortie ALSA directe -- on le fait sortir en UDP local (PCM brut, voix
@@ -869,6 +983,10 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
     aplay = None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:  # marge si la boucle prend du retard (le tampon principal reste "attente")
+            sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
+        except OSError:
+            pass
         sock.bind((DSD_FME_UDP_HOST, DSD_FME_UDP_PORT))
         sock.settimeout(0.5)
 
@@ -878,6 +996,11 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
         stats = decodeurs.new_stats(freq_hz)  # textes transportes (alias, SMS, GPS) : lib/decodeurs.py
+        # Reglages de la voix numerique (2026-10-14) : attente de fin et volume
+        # propres, ajustes par le bilan (fins coupees) ou a la main ("reglages son").
+        digital = _settings(target) if target else {}
+        idle_sec = digital.get("attente_fin_numerique_s") or DSD_FME_IDLE_SEC
+        gain = 10 ** ((digital.get("gain_numerique_db") or 0.0) / 20)
         stdout_thread = threading.Thread(target=_dsdfme_stdout_watcher, args=(proc, stats), daemon=True)
         stdout_thread.start()
 
@@ -886,6 +1009,9 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         pending = []
         channels = 1 if mode_flag in DSD_FME_MONO_MODES else DSD_FME_VOICE_CHANNELS
         validated = False
+        annonce, attente, validated_at = None, [], 0.0
+        filtered_out = False
+        max_sec = min(DSD_FME_MAX_SEC, dmr_filtres.max_duration())
         captured_chunks = []
         start = time.time()
         deadline = start + (probe_sec or DSD_FME_PROBE_SEC)
@@ -897,7 +1023,12 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 data = None
             if data and not validated:
                 pending.append(data)
-            if not validated and pending and _dsdfme_validated(stats):
+                pending = pending[-DSD_FME_PRE_MAX:]  # avant la confirmation : les dernieres secondes
+            # Ciblage DMR (lib/dmr_filtres.py) : un groupe ignore ne declenche
+            # ni carillon ni annonce, et ne retient pas le scanner.
+            if not validated and pending and _dsdfme_validated(stats) and not dmr_filtres.slot_gains(stats)[2]:
+                filtered_out = True
+            if not validated and pending and _dsdfme_validated(stats) and dmr_filtres.slot_gains(stats)[2]:
                 validated = True
                 size = len(pending[0])
                 if size == DSD_FME_STEREO_DATAGRAM:
@@ -907,24 +1038,36 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 protocol = stats["protocol"] or dire("radio.numerique")
                 print(f"[radio_watch] dsd-fme : decodage {protocol} confirme "
                       f"({stats['clean']} synchros propres sur {stats['total']}), {channels} voie(s)")
-                # Carillon et annonce seulement maintenant ; le son continue
-                # d'arriver dans le tampon de la socket pendant ce temps.
-                speak_with_lead_sound(DECODING_NUMERIC_SOUND,
-                                      dire("radio.reception", protocol=protocol) + (f", {band_label}" if band_label else "") + ".",
-                                      label="radio_watch")
-                # Meme encadrement que la voix analogique (2026-10-02) : son
-                # d'ouverture avant la voix, son de fin apres (_handle_candidate).
-                play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
+                # Carillon et annonce dans un fil a part (2026-10-19) : pendant
+                # qu'ils jouent, cette boucle continue de lire la socket et met
+                # TOUT en tampon (avant, la socket debordait au bout de ~6 s
+                # d'annonce : le debut de la transmission etait perdu).
+                annonce = threading.Thread(target=_annonce_dmr, daemon=True,
+                                           args=(protocol, band_label, audio_lock.ticket_courant()))
+                annonce.start()
+                validated_at = time.time()
+                attente, pending, data = list(pending), [], None
+            if validated and annonce is not None:
+                if data:
+                    attente.append(data)
+                deadline = max(deadline, time.time() + idle_sec)  # on ne finit pas pendant l'annonce
+                if annonce.is_alive():
+                    continue
+                annonce = None
                 aplay = subprocess.Popen(
                     ["aplay", "-D", AUDIO_DEVICE, "-r", str(DSD_FME_VOICE_SAMPLE_RATE),
                      "-f", "S16_LE", "-c", str(channels), "-q"],
                     stdin=subprocess.PIPE, stderr=subprocess.DEVNULL,
                 )
-                data = b"".join(pending)
-                pending = []
+                data, attente = b"".join(attente), []   # tout ce qui a ete entendu, depuis le debut
             if not data or not validated:
                 continue
-            deadline = min(time.time() + DSD_FME_IDLE_SEC, start + DSD_FME_MAX_SEC)
+            data, heard = dmr_filtres.apply(data, stats, channels)
+            if not heard:
+                continue  # groupe ignore ou hors cible : ne prolonge pas l'ecoute
+            # Ecoute au moins MIN_ECOUTE_SEC apres la confirmation : un clic de
+            # micro ne ferme pas l'ecoute, une reponse qui suit n'est pas perdue.
+            deadline = min(max(time.time() + idle_sec, validated_at + MIN_ECOUTE_SEC), start + max_sec)
             if (stats.get("prive") or stats.get("chiffre")) and not muted:
                 muted = True
                 captured_chunks = []
@@ -937,12 +1080,21 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                       f"son coupe et non enregistre (donnees seulement)")
             if muted:
                 continue
+            if gain != 1.0:
+                data = audioop.mul(data, 2, gain)
             captured_chunks.append(data)
             try:
                 aplay.stdin.write(audio_lock.scale(data))
             except Exception:
                 break
 
+        if not validated and filtered_out:
+            # Decode mais groupe ignore / hors cible : on apprend quand meme
+            # (registre), rien n'est joue ; "muet" pour les appelants.
+            print(f"[radio_watch] dsd-fme : groupe {(stats.get('dmr') or {}).get('en_cours')} filtre, on passe")
+            _dmr_learn(stats)
+            try_digital_voice_decode.last_muted = True
+            return stats["protocol"] or "numérique"
         if not validated:
             if pending:
                 print(f"[radio_watch] dsd-fme : son ecarte, synchro non confirmee "
@@ -1286,7 +1438,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     raw_chunks, filtered_chunks = [], []
 
     probs_seen, trigger_prob, early_cut = [], None, False
-    start = time.time()
+    start = signal_at = time.time()
     try:
         while total_bytes < max_bytes and time.time() - start < MAX_HOLD_SEC + 5:
             # Timeout (pas un .get() bloquant sans limite) : une attente
@@ -1346,10 +1498,12 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
                     print(f"[radio_watch] declenchement signal : smoothed_prob={smoothed_prob:.3f}, rms={rms}")
                     heard_signal = True
                     trigger_prob = smoothed_prob
+                    signal_at = time.time()
             else:
                 consecutive_signal_windows = 0
                 quiet_windows_seen += 1
-                if heard_signal and quiet_windows_seen >= quiet_windows_needed:
+                if heard_signal and quiet_windows_seen >= quiet_windows_needed \
+                        and time.time() - signal_at >= MIN_ECOUTE_SEC:
                     break
             if not heard_signal and time.time() - start >= EARLY_CUT_SEC:
                 early_cut = True
@@ -1729,14 +1883,16 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     log_session = radio_log.RadioLogSession(band_label)
     sound_player.set_recording_session(log_session)
     saved = False
+    # Ce qu'on entend maintenant : cible de "verrouille" pendant l'ecoute.
+    noise_signatures.capture_started("rtl_fm", freq, mode, band_label, target)
     try:
-        protocol = try_digital_voice_decode(freq, band_label=band_label) if mode == "nfm" else None
+        protocol = try_digital_voice_decode(freq, band_label=band_label, target=target) if mode == "nfm" else None
         if protocol and try_digital_voice_decode.last_muted:  # appel prive ou chiffre : rien n'est garde
             log_session.discard()
             return True
         if protocol:
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
-            speak(dire("radio.reception_terminee", protocol=protocol))
+            morceaux.say(None, morceaux.whole(dire("radio.reception_terminee", protocol=protocol)), label="radio_watch")
             path = log_session.finalize()
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
                                             {"niveau_db": level_db, "numerique": True})
@@ -1772,7 +1928,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             # Ecarte comme voix : peut-etre un mode numerique que -fa ne tente pas.
             log_session = radio_log.RadioLogSession(band_label)
             sound_player.set_recording_session(log_session)
-            if try_digital_voice_decode(freq, extra[0], band_label):
+            if try_digital_voice_decode(freq, extra[0], band_label, target=target):
                 play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
                 speak(dire("radio.reception_terminee_2", v1=extra[1]))
                 path = log_session.finalize()
@@ -1801,6 +1957,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             print(f"[radio_watch] empreinte de bruit non apprise : {exc!r}")
         return False
     finally:
+        noise_signatures.capture_ended()
         sound_player.set_recording_session(None)
         audio_lock.release(lock)
         if saved and lock.silent:
@@ -1815,6 +1972,15 @@ def _centered(freq, mode):
     except Exception as exc:
         print(f"[radio_watch] recentrage impossible : {exc!r}")
         return freq
+
+
+def _station_name(freq, mode):
+    """Nom donne a la station probable proche (F3 du mode manuel), ou None."""
+    try:
+        return stations.name_near(freq, mode)
+    except Exception as exc:
+        print(f"[radio_watch] nom de station illisible : {exc!r}")
+        return None
 
 
 def _station_capture(freq, mode):
@@ -1838,7 +2004,8 @@ def scan_fm_band(band):
         print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.5f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")
         if band["name"].startswith("stations_"):
             freq = _centered(freq, band["mode"])
-        if _handle_candidate(freq, band["mode"], f"canal {band['name_spoken']}", band["name"], level_db=db):
+        label = _station_name(freq, band["mode"]) or f"canal {band['name_spoken']}"
+        if _handle_candidate(freq, band["mode"], label, band["name"], level_db=db):
             _station_capture(freq, band["mode"])
             return True
     return False
@@ -1859,7 +2026,8 @@ def scan_sweep_band(band):
         # Pres d'une station probable : on se cale sur son vrai centre
         # (plus d'ecoute en bord de canal, demande utilisateur 2026-10-02).
         freq = _centered(freq, band["mode"])
-        if _handle_candidate(freq, band["mode"], f"bande {band['name_spoken']}", band["name"], level_db=db):
+        label = _station_name(freq, band["mode"]) or f"bande {band['name_spoken']}"
+        if _handle_candidate(freq, band["mode"], label, band["name"], level_db=db):
             _station_capture(freq, band["mode"])
             return True
     return False
@@ -1927,6 +2095,16 @@ def _publish_plages():
             "channels": [s["freq_hz"] for s in aero], "stations": aero,
         })
     noise_signatures.write_plages(plages)
+    # Cibles du mode restreint (lib/restreint.py) : tout ce que le cycle visite.
+    try:
+        cibles = [("stations", dire("restreint.stations"), "stations"), ("relais", dire("restreint.relais"), "relais")]
+        cibles += [(b["name"], f"{'bande' if b['type'] == 'sweep' else 'canal'} {b['name_spoken']}", "bande")
+                   for b in BANDS]
+        cibles += [(w["name"], w["name_spoken"], "fenetre") for w in airband_bridge.AIRBAND_WINDOWS]
+        cibles += [(n, attention.DATA_LABELS.get(n, n), "donnees") for n in attention.DATA_WINDOWS]
+        restreint.publish(cibles)
+    except Exception as exc:
+        print(f"[radio_watch] cibles du mode restreint non publiees : {exc!r}")
 
 
 def _get_cpu_temp_c():
@@ -2066,6 +2244,12 @@ def main():
         now = time.time()
         check_interval = WATCH_ZONE_CHECK_INTERVAL_SEC if in_watch_zone else TEMP_CHECK_INTERVAL_SEC
 
+        try:  # resume des connexions DMR du jour, range au journal a 23 h 50
+            import dmr_registre
+            dmr_registre.daily_tick()
+        except Exception as exc:
+            print(f"[radio_watch] resume DMR : {exc!r}")
+
         if now - last_outdoor_poll >= OUTDOOR_TEMP_POLL_INTERVAL_SEC:
             last_outdoor_poll = now
             outdoor_temp_c = _fetch_outdoor_temp_c()
@@ -2202,6 +2386,17 @@ def main():
         # Mode manuel (console, 2026-09-29) : ecoute en direct sans
         # silencieux de la frequence choisie au clavier. La console annonce
         # elle-meme les frequences : rien a dire ici.
+        if dmr_filtres.search_requested():  # exploration dmr, touche R
+            manual_stream.stop()
+            meteo_locale.set_scanner_state("recherche_dmr")
+            current_lock_key = None
+            try:
+                _dmr_search()
+            except Exception as exc:
+                print(f"[radio_watch] recherche DMR : {exc!r}")
+                dmr_filtres.search_done()
+            manual_pending = (None, 0.0)
+            continue
         manual = noise_signatures.manual_request()
         if manual:
             meteo_locale.set_scanner_state("manuel")
@@ -2288,6 +2483,9 @@ def main():
         for band in fm_bands + relais.bands() + probable:
             if _lock_pending():
                 break
+            import interets
+            if interets.disabled(band["name"]) or restreint.exclu(band["name"]):
+                continue  # interet "désactivé" ou hors du mode restreint : bande sautee
             if scan_fm_band(band):
                 activity = True
 
@@ -2311,6 +2509,11 @@ def main():
         for kind, obj, target, dwell, air_boost in plan:
             if _lock_pending():
                 break
+            # Programme fait en debut de cycle : un mode restreint ou un interet
+            # "désactivé" choisi entre-temps vaut tout de suite (2026-10-17).
+            if attention._disabled(target):
+                print(f"[radio_watch] {target} saute (mode restreint ou interet désactivé)")
+                continue
             _meteo_scan_if_requested()  # la console attend son bulletin : on n'attend pas la fin du cycle
             _satellite_pass_if_due()
             # Une ligne par fenetre (2026-10-07) : retrouver laquelle precede une

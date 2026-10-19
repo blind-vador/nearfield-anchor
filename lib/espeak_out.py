@@ -13,7 +13,16 @@ le joue sur "default" (mixeur de l'adaptateur USB).
 import subprocess
 import threading
 
+import audio_lock
+
 WAV_HEADER = 44
+
+
+def duree_max(text, minimum=45):
+    """Temps maximal pour dire ce texte (2026-10-19 : les delais fixes de 30,
+    45 ou 120 s coupaient les textes longs, comme l'aide) : ~9 caracteres par
+    seconde au debit le plus lent, plus une marge."""
+    return max(minimum, len(text or "") / 9 + 20)
 ESPEAK_RATE = 22050
 
 
@@ -23,9 +32,14 @@ class Speech:
     def __init__(self, text, voice="fr", rate=None, scale=None):
         """scale(pcm) -> pcm : volume applique au vol (priorites, audio_lock) ;
         sans scale, espeak alimente aplay directement (console)."""
+        self._text = text
         args = ["espeak", "-v", voice, "-b", "1", "--stdout"]
         if rate:
             args += ["-s", str(rate)]
+        # Le PCM est relaye dans un autre fil : il doit connaitre le ticket
+        # du fil appelant, sinon le volume decide par l'arbitre (attenue si une
+        # source plus prioritaire parle) etait ignore (fuite du 2026-10-16).
+        self._ticket = audio_lock.ticket_courant() if scale is not None else None
         self._espeak = subprocess.Popen(args + [text], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self._relay = None
         if scale is None:
@@ -46,7 +60,7 @@ class Speech:
                 data = self._espeak.stdout.read(ESPEAK_RATE // 5 * 2)
                 if not data:
                     break
-                self._aplay.stdin.write(scale(data))
+                self._aplay.stdin.write(scale(data, self._ticket))
         except (BrokenPipeError, ValueError, OSError):
             pass
         finally:
@@ -59,6 +73,10 @@ class Speech:
         return self._aplay.poll()
 
     def wait(self, timeout=None):
+        # timeout=None : borne a 60 s pour ne jamais bloquer la console si
+        # aplay reste ouvert sur une carte USB/dmix plantee.
+        if timeout is None:
+            timeout = duree_max(self._text, 60)
         try:
             code = self._aplay.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
@@ -79,6 +97,6 @@ class Speech:
                 pass
 
 
-def say(text, voice="fr", rate=None, timeout=30, scale=None):
+def say(text, voice="fr", rate=None, timeout=None, scale=None):
     """Parle et attend la fin de la phrase (au plus timeout secondes)."""
     return Speech(text, voice, rate, scale).wait(timeout=timeout)

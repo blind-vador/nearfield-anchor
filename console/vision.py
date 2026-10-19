@@ -25,6 +25,7 @@ import urllib.request
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import reglages  # noqa: E402
+import sons_imprimante as sons  # noqa: E402  (bruitages camera, 2026-10-18)
 from phrases import dire  # noqa: E402
 
 SNAPSHOT_URL = "http://127.0.0.1:8080/?action=snapshot"
@@ -104,6 +105,7 @@ def _run(question, say):
     say(dire("vision.photo"))
     try:
         jpeg = _snapshot()
+        sons.jouer("camera_take_picture")
     except OSError:
         say(dire("vision.camera_repond_verifie_webcam"))
         return
@@ -112,7 +114,8 @@ def _run(question, say):
             say(dire("vision.photo_trop_sombre_caisson"))
             return
         say(dire("vision.analyse_cours"))
-        description, problem = _ask_gemini(jpeg, question)
+        with sons.boucle("camera_loading_data_loop"):  # tant que Gemini regarde la photo
+            description, problem = _ask_gemini(jpeg, question)
     finally:
         del jpeg  # la photo n'a jamais ete ecrite sur disque ; on lache la derniere reference
     say(description or problem)

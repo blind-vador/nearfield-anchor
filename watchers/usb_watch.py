@@ -219,13 +219,32 @@ def _octoprint(method, path, **kwargs):
         return None
 
 
+def _job_occupe():
+    """True si OctoPrint croit encore imprimer / annuler : ne pas spammer
+    connect ni crier 'debranche' sur un micro-blanc USB des moteurs."""
+    resp = _octoprint("GET", "/api/job")
+    if resp is None or resp.status_code != 200:
+        return False
+    try:
+        state = (resp.json().get("state") or "").lower()
+    except ValueError:
+        return False
+    return any(w in state for w in ("print", "paus", "cancel"))
+
+
 def _printer_closed():
     """True si OctoPrint n'est connecte a rien, None si on ne sait pas."""
     resp = _octoprint("GET", "/api/connection")
     if resp is None or resp.status_code != 200:
         return None
     state = resp.json().get("current", {}).get("state", "")
-    return state.startswith(("Closed", "Offline", "Error"))
+    # Connecting/Opening bloques apres kill : traiter comme "pas pret"
+    if state.startswith(("Closed", "Offline", "Error")):
+        return True
+    if state in ("Connecting", "Opening serial connection", "Detecting serial connection"):
+        # laisse une chance courte : le caller gere les tries
+        return True
+    return False
 
 
 def _diagnose(role, name, dev):
@@ -416,6 +435,11 @@ class Watch:
     def _missing(self, role):
         if role == "imprimante":
             self.printer_present = False
+            # Pendant une impression, un blanc USB de 1-2 s (moteurs) est
+            # frequent : ne pas hurler ni encherir les reconnexions.
+            if _job_occupe():
+                self.status[role] = "glitch"
+                return
         if role not in self.seen:
             self.status[role] = "absent"
             return
@@ -482,6 +506,12 @@ class Watch:
             self.printer_tries, self.printer_asked = 0, False
             return
         if self.printer_tries > 0:
+            # Si un job tourne encore cote OctoPrint, attendre qu'il bascule
+            # Offline tout seul : reconnecter trop tot combat le firmware.
+            if _job_occupe() and self.printer_tries > 1:
+                print(f"[usb_watch] imprimante sur {name} : job encore actif, "
+                      f"on differe la reconnexion ({self.printer_tries})")
+                return
             self.printer_tries -= 1
             resp = _octoprint("POST", "/api/connection", json={"command": "connect", "autoconnect": True})
             self.printer_asked = resp is not None and resp.status_code == 204

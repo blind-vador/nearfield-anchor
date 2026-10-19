@@ -9,6 +9,9 @@ satellites -- "journal capteurs", "journal satellites"...
   Ctrl + fleche haut / bas premier / dernier enregistrement du jour
                            (Ctrl lu sur le clavier par evdev : la console
                            envoie la meme sequence qu'une fleche seule)
+  C                        bonne prise, mais coupee trop tot (comme V, fin
+                           coupee : le bilan fera ecouter plus longtemps) ;
+                           sur une prise deja notee, corrige seulement la fin
   fleche droite            garde : copie dans les extraits interessants
                            (storage/radio), nommee par sa date de capture
   fleche gauche            rejette : meme procedure que "parasite"
@@ -464,7 +467,7 @@ def run(key_source, say, out, category="radio"):
                         # selectionne (sinon on croit l'avoir ecoute alors que non).
                         voix.say_blocking(bound)
                         play(rec_i)
-            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "b", "B", "i", "I", "e", "E"):
+            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "c", "C", "b", "B", "i", "I", "e", "E"):
                 text = dire("journal.choisir")
             elif key in ("\r", "\n"):
                 play(rec_i)
@@ -478,7 +481,7 @@ def run(key_source, say, out, category="radio"):
                     player.play(brut)
                 else:
                     text = dire("journal.pas_son_brut")
-            elif recs[rec_i][2] is not None and key in ("\x1b[D", "n", "N", "v", "V"):
+            elif recs[rec_i][2] is not None and key in ("\x1b[D", "n", "N", "v", "V", "c", "C"):
                 text = dire("journal.releve_non_notable")
             elif key in ("\x1b[C", "\x1b[D"):
                 player.stop()
@@ -505,10 +508,11 @@ def run(key_source, say, out, category="radio"):
                         voix.say_blocking(text)
                         text = None
                         play(rec_i)
-            elif key in ("v", "V"):
-                # La lecture continue : on valide sans interrompre l'ecoute.
+            elif key in ("v", "V", "c", "C"):
+                # La lecture continue : on valide sans interrompre l'ecoute ;
+                # C : bonne prise mais coupee trop tot (2026-10-14).
                 stamp, path, _ = recs[rec_i]
-                text = notation.validate(path, stamp)
+                text = notation.validate(path, stamp, cut=key in ("c", "C"))
             elif key in ("n", "N"):
                 player.stop()
                 stamp, path, _ = recs[rec_i]

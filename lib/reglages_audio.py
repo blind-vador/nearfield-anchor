@@ -30,17 +30,50 @@ DEFAULTS = {
     "anti_sifflement": False,     # retire les tonalites fixes
     "anti_bourdonnement": False,  # retire les harmoniques du secteur (50 Hz)
     "gain_db": 0.0,               # volume apres nettoyage
+    "filtre_voix": True,          # bande vocale (300 Hz a "aigus gardes") sur ce qu'on entend
+    "pilote_fm": True,            # radio FM : retire le pilote stereo a 19 kHz
+    # Voix numerique (DMR... decodee par dsd-fme, 2026-10-14) : ni filtres ni
+    # nettoyage, mais sa propre attente de fin (None : 10 s du scanner,
+    # DSD_FME_IDLE_SEC) et son propre volume -- une bande balayee peut melanger
+    # analogique et numerique, chacun garde ses valeurs.
+    "attente_fin_numerique_s": None,
+    "gain_numerique_db": 0.0,
 }
 NAMES = Etiquettes("audio.reglage", {
     "attente_fin_s": "attente avant de clore", "marge_detection_db": "marge de détection",
     "passe_bas_hz": "aigus gardés", "reduction_bruit_db": "retrait du souffle",
     "anti_crachotements": "seuil anti-crachotements", "anti_sifflement": "filtre anti-sifflement",
     "anti_bourdonnement": "filtre anti-bourdonnement", "gain_db": "volume",
+    "filtre_voix": "filtre voix", "pilote_fm": "filtre du pilote stéréo FM",
+    "attente_fin_numerique_s": "attente avant de clore, numérique", "gain_numerique_db": "volume numérique",
 }, "nom d'un réglage audio, suivi de sa valeur")
+
+# Reglages a la main (2026-10-14, demande utilisateur : choisir soi-meme les
+# couches de filtres d'une bande, et un type de contenu qui pose un jeu de
+# couches adapte). Ordre de priorite dans get() : usine < appris des notes
+# (bandes) < type de contenu < couches reglees a la main. L'apprentissage
+# automatique continue d'ecrire "bandes" mais ne passe jamais au-dessus d'une
+# couche reglee a la main. Stocke dans "manuel" : {bande: {"contenu", "couches"}}.
+# Valeur 0 de anti_crachotements ou reduction_bruit_db : couche coupee.
+CONTENTS = {
+    # Musique : rien qui ronge le son -- l'anti-sifflement ecrase les notes
+    # tenues (il cherche les sons fixes), le retrait de souffle les gargouille.
+    "musique": {"filtre_voix": False, "reduction_bruit_db": 0.0, "anti_crachotements": 0.0,
+                "anti_sifflement": False, "anti_bourdonnement": False, "pilote_fm": True},
+    "voix": {"filtre_voix": True, "passe_bas_hz": 3000.0, "reduction_bruit_db": 10.0, "anti_crachotements": 8.0,
+             "anti_sifflement": False, "anti_bourdonnement": False},
+    # Donnees / numerique : aucun filtre, pour ne rien abimer de ce qu'un decodeur doit lire.
+    "donnees": {"filtre_voix": False, "reduction_bruit_db": 0.0, "anti_crachotements": 0.0,
+                "anti_sifflement": False, "anti_bourdonnement": False, "pilote_fm": False, "gain_db": 0.0},
+}
+CONTENT_ORDER = ["auto", "musique", "voix", "donnees"]
+CONTENT_NAMES = Etiquettes("audio.contenu", {"auto": "automatique, appris de tes notes", "musique": "musique",
+                                             "voix": "voix", "donnees": "données ou numérique"},
+                           "type de contenu d'une bande radio")
 
 
 def _empty():
-    return {"bandes": {}, "historique": [], "auto": False}
+    return {"bandes": {}, "historique": [], "auto": False, "manuel": {}}
 
 
 def load():
@@ -69,9 +102,46 @@ class _Locked:
         self.f.close()
 
 
-def get(band):
-    """Reglages en vigueur pour une bande (usine + ajustements)."""
-    return {**DEFAULTS, **load()["bandes"].get(band or "", {})}
+# Contenu appris d'une station (lib/contenus.py) : seuls les contenus qui
+# COUPENT le traitement de la voix s'appliquent ; une station de voix garde
+# les reglages appris de sa bande.
+LEARNED_CONTENTS = ("musique", "donnees")
+
+
+def get(band, freq_hz=None):
+    """Reglages en vigueur pour une bande : usine, appris des notes, contenu
+    appris de la station (freq_hz, si la bande est en contenu automatique),
+    type de contenu choisi, puis couches reglees a la main (toujours en dernier)."""
+    data = load()
+    m = data["manuel"].get(band or "", {})
+    learned = {}
+    if freq_hz and m.get("contenu", "auto") == "auto":
+        try:
+            import contenus
+            code = contenus.dominant(freq_hz)
+            if code in LEARNED_CONTENTS:
+                learned = CONTENTS[code]
+        except Exception:
+            pass
+    return {**DEFAULTS, **data["bandes"].get(band or "", {}), **learned, **CONTENTS.get(m.get("contenu"), {}),
+            **m.get("couches", {})}
+
+
+def manual(band):
+    """{"contenu": ..., "couches": {...}} regles a la main pour cette bande."""
+    m = load()["manuel"].get(band or "", {})
+    return {"contenu": m.get("contenu", "auto"), "couches": dict(m.get("couches", {}))}
+
+
+def set_manual(band, contenu=None, couches=None):
+    """Remplace le reglage a la main d'une bande (contenu "auto" et aucune
+    couche : la bande revient entierement a l'apprentissage)."""
+    with _Locked() as data:
+        manual_all = data.setdefault("manuel", {})
+        if (contenu in (None, "auto")) and not couches:
+            manual_all.pop(band, None)
+        else:
+            manual_all[band] = {"contenu": contenu or "auto", "couches": dict(couches or {})}
 
 
 def last_change(band):
@@ -131,17 +201,24 @@ def set_auto(on):
 
 
 def reset():
-    """Reglages d'usine ; l'ancien etat est archive a cote (rien de perdu)."""
+    """Reglages d'usine ; l'ancien etat est archive a cote (rien de perdu).
+    Les reglages faits a la main sont des choix, pas un apprentissage : ils
+    restent en place."""
+    kept = load().get("manuel") or {}
     if os.path.exists(STORE_PATH):
         os.replace(STORE_PATH, STORE_PATH.replace(".json", time.strftime("_archive_%Y-%m-%d_%H%M%S.json")))
+    if kept:
+        with _Locked() as data:
+            data["manuel"] = kept
 
 
 def spoken_value(param, value):
     if isinstance(value, bool):
         return "activé" if value else "désactivé"
     if value is None:
-        return "3 secondes" if param == "attente_fin_s" else "valeur d'origine"
+        return {"attente_fin_s": "3 secondes", "attente_fin_numerique_s": "10 secondes"}.get(param, "valeur d'origine")
     unit = {"attente_fin_s": " secondes", "marge_detection_db": " décibels", "passe_bas_hz": " hertz",
-            "reduction_bruit_db": " décibels", "gain_db": " décibels"}.get(param, "")
-    text = f"{value:+g}" if param in ("marge_detection_db", "gain_db") else f"{value:g}"
+            "reduction_bruit_db": " décibels", "gain_db": " décibels", "attente_fin_numerique_s": " secondes",
+            "gain_numerique_db": " décibels"}.get(param, "")
+    text = f"{value:+g}" if param in ("marge_detection_db", "gain_db", "gain_numerique_db") else f"{value:g}"
     return text.replace(".", ",") + unit

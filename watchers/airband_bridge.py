@@ -42,6 +42,7 @@ INCOMING_SOUND = f"{SOUND_EFFECTS_DIR}/incoming.mp3"
 # silence en fin de capture (priorites de veille fixees avec l'utilisateur).
 SILENCE_DEBOUNCE_SEC = 3.0
 MIN_AUDIO_SEC = 0.6          # en dessous : eclat de squelch, prise abandonnee
+MIN_ECOUTE_SEC = 8.0         # duree minimale d'ecoute d'un canal ouvert (meme valeur que radio_watch)
 GAP_SEC = 0.3  # un trou plus long entre deux paquets = le silencieux s'est ferme puis rouvert
 MAX_HOLD_SEC = 45
 
@@ -398,6 +399,9 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         # candidat naturel au cache repetitif (2026-08-31).
         speak_with_lead_sound(INCOMING_SOUND, name_spoken, label="airband_bridge", repetitive=True)
         play_sound_effect(FREQ_OPEN_SOUND, label="airband_bridge")
+        # Ce qu'on entend maintenant : cible de "verrouille" pendant l'ecoute.
+        live_window = next((w for w in AIRBAND_WINDOWS if w["name"] == window_name), {})
+        noise_signatures.capture_started("airband", freq_hz, live_window.get("mode", "am"), name_spoken, window_name)
 
         aplay = subprocess.Popen(
             ["aplay", "-D", AUDIO_DEVICE, "-r", str(AIRBAND_SAMPLE_RATE_HZ),
@@ -427,7 +431,9 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
             while True:
                 if time.time() - start > max_hold_sec + 5:
                     break
-                if time.time() - last_packet_time > debounce:
+                # Au moins MIN_ECOUTE_SEC d'ecoute (2026-10-19) : un clic de
+                # squelch ne ferme pas le canal en 3 s, une reponse n'est pas perdue.
+                if time.time() - last_packet_time > debounce and time.time() - start >= MIN_ECOUTE_SEC:
                     break
                 if prebuffer:
                     data = prebuffer.pop(0)
@@ -493,6 +499,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         })
         return True
     finally:
+        noise_signatures.capture_ended()
         sound_player.set_recording_session(None)
         audio_lock.release(lock)
         if lock.silent:

@@ -47,6 +47,7 @@ import time
 import audio_lock
 import chaine_audio
 import decodeurs
+import dmr_filtres
 from sound_paths import RADIO_SCANER_DIR
 from phrases import dire
 
@@ -274,9 +275,23 @@ class ManualStream:
         except (OSError, ValueError):
             pass
 
+    @staticmethod
+    def _announce_calls(stats, calls):
+        """Exploration dmr : dit chaque nouvel appel de groupe (groupe,
+        intervalle, ignore ou favori), une fois par appel."""
+        current = dict(((stats.get("dmr") or {}).get("en_cours") or {}))
+        if current != calls and dmr_filtres.exploring():
+            for slot, tg in current.items():
+                if calls.get(slot) != tg:
+                    state = dmr_filtres.group_state(tg)
+                    etat = dire(f"dmr_exploration.etat_{state}") if state else ""
+                    event(dire("dmr_exploration.appel", groupe=tg, intervalle=slot, etat=etat).strip())
+        return current
+
     def _relay_dsd(self, udp, stats, flag, generation):
         announced = False
         state = None
+        calls = {}
         while generation == self._generation:
             try:
                 data, _ = udp.recvfrom(65536)
@@ -294,6 +309,12 @@ class ManualStream:
                 event(dire("manuel_radio.reception", protocol=protocol))
                 self._play_chime(generation)
             stereo = len(data) == decodeurs.DSD_STEREO_DATAGRAM and flag not in decodeurs.DSD_MONO_MODES
+            calls = self._announce_calls(stats, calls)
+            # Ciblage DMR (lib/dmr_filtres.py) : groupe ignore, hors cible ou
+            # autre que celui choisi dans l'exploration -> son coupe.
+            data, heard = dmr_filtres.apply(data, stats, 2 if stereo else 1)
+            if not heard:
+                continue
             if stereo:
                 data = audioop.tomono(data, 2, 0.5, 0.5)
             pcm, state = audioop.ratecv(data, 2, 1, decodeurs.DSD_VOICE_RATE, OUT_RATE, state)

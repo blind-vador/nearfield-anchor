@@ -2,16 +2,21 @@
 systemd separes) : priorites et comportement de chaque source, reglables
 depuis la console (commande "priorites", reglages priorites.json).
 
-Chaque source a un rang (0 = la plus prioritaire) et un comportement face
-a une source plus prioritaire :
-  attend     ne parle jamais en meme temps : file d'attente, la plus
-             prioritaire passe en premier (et non la premiere arrivee) ;
-  attenue    joue quand meme, a volume reduit (volume_attenue) tant qu'une
-             source plus prioritaire parle ; une source plus prioritaire
-             peut aussi demarrer par-dessus elle ;
-  abandonne  laisse tomber si une source plus prioritaire parle deja.
-Rien n'est jamais coupe en cours de route (choix de l'utilisateur,
-2026-10-01).
+Chaque source a un rang (0 = la plus prioritaire). Regle (choix de
+l'utilisateur, 2026-10-17, remplace celle du 2026-10-16 qui coupait le son :
+une annonce interrompue continuait a volume zero, on en perdait le contenu
+et le temps reel) : rien n'est jamais coupe ni perdu, la plus prioritaire
+domine et les autres passent dessous, attenuees.
+  - une source plus prioritaire demarre sans attendre ; celles deja en cours
+    continuent a volume reduit ("volume_attenue") puis remontent a la fin ;
+  - "attend" : file d'attente (la plus prioritaire d'abord, puis l'ordre
+    d'arrivee) : ne demarre que quand aucune source aussi ou plus prioritaire
+    ne joue. Une moins prioritaire en cours ne la retient pas : elle passe
+    dessous, attenuee ;
+  - "attenue" : demarre tout de suite, attenuee tant qu'une plus prioritaire
+    parle (chevauchement, comme avant le 2026-10-16) ; n'attend que la fin
+    d'un son de la meme source (jamais deux fois la meme voix superposee) ;
+  - "abandonne" : laisse tomber si une plus prioritaire joue deja.
 
 Registre commun : REGISTRY (JSON), modifie sous un verrou court
 (REGISTRY_LOCK) ; les entrees des processus morts sont purgees. Interface
@@ -54,6 +59,7 @@ SOURCES = Etiquettes("source", {
     "bus": "bus et tram",
     "disques": "disques",
     "imprimante": "imprimante 3D",
+    "helicos": "hélicoptères au-dessus de la ville",
 }, "nom d'une source de son, réglage des priorités")
 DEFAULT_ORDER = list(SOURCES)
 DEFAULT_MODES = {s: "attend" for s in SOURCES}
@@ -74,7 +80,16 @@ SCRIPT_SOURCES = {
 # annonce, ni son en direct -- on ne saurait plus si on entend le direct ou
 # le journal), puis une phrase courte previent (speak.journal_notice).
 JOURNAL_FLAG = "/tmp/journal_ouvert.json"
-SILENT_WHEN_JOURNAL = {"radio", "donnees"}  # donnees : prises vocales, deja au journal (lib/prise_vocale.py)
+SILENT_WHEN_JOURNAL = {"radio", "donnees"}
+
+# Mode calibrage de l'imprimante (2026-10-16) : pendant un test guide a la
+# voix, seule la console parle (les consignes ne doivent jamais etre
+# couvertes). Les alertes attendent la fin du test ; les autres sources
+# abandonnent ; un son deja commence passe a volume zero (rien n'est coupe).
+# Le drapeau porte le pid du test : s'il meurt, le mode s'arrete tout seul.
+CALIBRAGE_FLAG = "/tmp/calibrage_en_cours.json"
+CALIBRAGE_MAX_SEC = 1800          # garde-fou : jamais plus de 30 min de silence
+ATTEND_CALIBRAGE = {"alertes"}  # donnees : prises vocales, deja au journal (lib/prise_vocale.py)
 
 _local = threading.local()
 _settings_cache = (0.0, None)
@@ -192,6 +207,38 @@ def set_journal_open(is_open):
         pass
 
 
+def calibrage_actif():
+    try:
+        with open(CALIBRAGE_FLAG, encoding="utf-8") as f:
+            data = json.load(f)
+        return _alive(int(data["pid"])) and time.time() - float(data["t"]) < CALIBRAGE_MAX_SEC
+    except (OSError, ValueError, KeyError, TypeError):
+        return False
+
+
+def set_calibrage(actif):
+    try:
+        if actif:
+            with open(CALIBRAGE_FLAG, "w", encoding="utf-8") as f:
+                json.dump({"pid": os.getpid(), "t": time.time()}, f)
+        else:
+            os.remove(CALIBRAGE_FLAG)
+    except OSError:
+        pass
+
+
+def prendre_sans_attendre(source):
+    """Se declare en train de jouer, sans attendre : pour la console (rang 0),
+    dont chaque phrase coupe le son des sources moins prioritaires."""
+    ticket = Ticket(source)
+    conf = settings()
+    entry = {"id": ticket.id, "pid": os.getpid(), "source": source, "rang": conf["ordre"].index(source),
+             "mode": conf["comportements"][source], "etat": "joue", "t": time.time()}
+    with _Registry() as reg:
+        reg.entries.append(entry)
+    return ticket
+
+
 class Ticket:
     def __init__(self, source):
         self.id = uuid.uuid4().hex
@@ -200,23 +247,30 @@ class Ticket:
         self.silent = False
         self.gain = 1.0
         self._gain_at = 0.0
+        self._applied = None  # volume du dernier morceau joue (fondu, _ramp)
 
 
 def _decide(me, entries):
     """ "joue", "abandonne" ou "attend" pour l'entree me."""
     playing = [e for e in entries if e["etat"] == "joue" and e["id"] != me["id"]]
-    # Ce qui m'empeche de parler : tout ce qui joue, sauf une source moins
-    # prioritaire en mode attenue (elle baissera le volume pour moi).
-    blockers = [p for p in playing if not (p["rang"] > me["rang"] and p["mode"] == "attenue")]
-    waiting = sorted((e for e in entries if e["etat"] == "attente"), key=lambda e: (e["rang"], e["t"]))
+    if me["mode"] == "attenue":
+        # Chevauchement attenue : seule la meme source passe avant (file).
+        blockers = [p for p in playing if p["rang"] == me["rang"]]
+        same_rank = [e for e in entries if e["etat"] == "attente" and e["rang"] == me["rang"]]
+        first_in_line = min(same_rank, key=lambda e: e["t"])["id"] == me["id"] if same_rank else True
+        return "joue" if not blockers and first_in_line else "attend"
+    # Ce qui m'empeche de parler : une source aussi ou plus prioritaire en
+    # cours. Une moins prioritaire en cours ne bloque pas : elle passe
+    # dessous, attenuee (current_gain), le temps que je parle.
+    blockers = [p for p in playing if p["rang"] <= me["rang"]]
+    if me["mode"] == "abandonne" and any(b["rang"] < me["rang"] for b in blockers):
+        return "abandonne"
+    # File : les "attend" passent par ordre de priorite puis d'arrivee.
+    waiting = sorted((e for e in entries if e["etat"] == "attente" and e.get("mode") != "attenue"),
+                     key=lambda e: (e["rang"], e["t"]))
     first_in_line = not waiting or waiting[0]["id"] == me["id"]
     if not blockers and first_in_line:
         return "joue"
-    higher_playing = [b for b in blockers if b["rang"] < me["rang"]]
-    if me["mode"] == "attenue" and blockers and len(higher_playing) == len(blockers):
-        return "joue"          # sous une source plus prioritaire, volume reduit
-    if me["mode"] == "abandonne" and higher_playing:
-        return "abandonne"
     return "attend"
 
 
@@ -232,6 +286,16 @@ def acquire(source=None, timeout=ACQUIRE_TIMEOUT_SEC):
         _local.ticket = ticket
         print(f"[audio_lock] journal ouvert : {source} capte en silence.")
         return ticket
+    if source != "console" and calibrage_actif():
+        if source in ATTEND_CALIBRAGE:
+            fin_attente = time.time() + CALIBRAGE_MAX_SEC
+            while calibrage_actif() and time.time() < fin_attente:
+                time.sleep(1.0)
+        else:
+            ticket.dropped = ticket.silent = True
+            _local.ticket = ticket
+            print(f"[audio_lock] calibrage en cours : {source} se tait.")
+            return ticket
     me = {"id": ticket.id, "pid": os.getpid(), "source": source, "rang": conf["ordre"].index(source),
           "mode": conf["comportements"][source], "etat": "attente", "t": time.time()}
     deadline = time.time() + timeout
@@ -281,10 +345,18 @@ def dropped():
     return bool(t and t.dropped)
 
 
+def ticket_courant():
+    """Ticket du fil appelant : a passer aux fils qui jouent le son pour lui
+    (espeak_out relaie le PCM dans son propre fil, 2026-10-16)."""
+    return getattr(_local, "ticket", None)
+
+
 def current_gain(ticket=None):
-    """1.0 ; volume_attenue si une source plus prioritaire parle par-dessus ;
-    0.0 si la source a abandonne. Relu au plus toutes les GAIN_REFRESH_SEC.
-    ticket : a passer depuis un fil autre que celui qui a fait acquire()."""
+    """1.0 ; "volume_attenue" (reglage, 0.3 par defaut) si une source plus
+    prioritaire joue : on passe dessous sans rien perdre ; 0.0 si la source
+    a abandonne ou pendant un calibrage. Relu au plus toutes les
+    GAIN_REFRESH_SEC. ticket : a passer depuis un fil autre que celui qui a
+    fait acquire()."""
     t = ticket or getattr(_local, "ticket", None)
     if t is None:
         return 1.0
@@ -293,30 +365,54 @@ def current_gain(ticket=None):
     now = time.time()
     if now - t._gain_at >= GAIN_REFRESH_SEC:
         t._gain_at = now
+        if t.source != "console" and calibrage_actif():
+            t.gain = 0.0
+            return t.gain
         entries = _read()
         me = next((e for e in entries if e.get("id") == t.id), None)
         above = me is not None and any(e.get("etat") == "joue" and e.get("rang", 99) < me["rang"]
                                        for e in entries)
-        t.gain = settings()["volume_attenue"] if above else 1.0
+        t.gain = max(0.0, min(1.0, float(settings()["volume_attenue"]))) if above else 1.0
     return t.gain
+
+
+def _ramp(t, gain):
+    """(debut, fin) du volume sur ce morceau : fondu depuis le volume du
+    morceau precedent, pour que la bascule attenue/plein ne claque pas."""
+    t = t or getattr(_local, "ticket", None)
+    start = getattr(t, "_applied", None)
+    if start is None:  # premier morceau : directement au bon volume
+        start = gain
+    if t is not None:
+        t._applied = gain
+    return start, gain
 
 
 def scale(data, ticket=None):
     """Volume courant applique a un morceau de PCM entier 16 bits."""
     gain = current_gain(ticket)
-    if gain == 1.0 or not data:
+    start, gain = _ramp(ticket, gain)
+    if (gain == 1.0 and start == 1.0) or not data:
         return data
-    try:
-        return audioop.mul(data[: len(data) - len(data) % 2], 2, gain)
-    except audioop.error:
-        return data
+    data = data[: len(data) - len(data) % 2]
+    if start == gain:
+        try:
+            return audioop.mul(data, 2, gain)
+        except audioop.error:
+            return data
+    import numpy as np
+    samples = np.frombuffer(data, dtype=np.int16).astype(np.float32)
+    samples *= np.linspace(start, gain, len(samples), dtype=np.float32)
+    return np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
 
 
 def scale_float(data, ticket=None):
     """Meme chose pour du PCM flottant 32 bits (RTLSDR-Airband)."""
     gain = current_gain(ticket)
-    if gain == 1.0 or not data:
+    start, gain = _ramp(ticket, gain)
+    if (gain == 1.0 and start == 1.0) or not data:
         return data
     import numpy as np
-    samples = np.frombuffer(data[: len(data) - len(data) % 4], dtype=np.float32) * gain
+    samples = np.frombuffer(data[: len(data) - len(data) % 4], dtype=np.float32)
+    samples = samples * np.linspace(start, gain, len(samples), dtype=np.float32)
     return samples.astype(np.float32).tobytes()

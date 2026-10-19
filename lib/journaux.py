@@ -19,12 +19,16 @@ ses propres archives (extraits gardes, fleche droite).
               (lib/plantes_calendrier.py, 2026-10-06)
   transports  perturbations des reseaux de bus, tram, metro de la commune
               (watchers/stas_watch.py, 2026-10-07)
+  meteo       bulletin horaire des capteurs meteo du voisinage
+              (lib/bulletin_capteurs.py, 2026-10-19)
+La veille terrain (sites militants, Mastodon, Telegram) va dans "donnees"
+(2026-10-19 : elle s'entassait dans le journal radio).
 """
 import os
 
 KEEP_DIR = "/media/nas/nd2/storage/radio"
-ORDER = ["radio", "messages", "donnees", "capteurs", "satellites", "plantes", "transports"]
-NAMES = {"radio": "radio", "messages": "messages", "donnees": "données", "capteurs": "capteurs",
+ORDER = ["radio", "messages", "donnees", "meteo", "capteurs", "satellites", "plantes", "transports"]
+NAMES = {"radio": "radio", "messages": "messages", "donnees": "données", "meteo": "météo", "capteurs": "capteurs",
          "satellites": "satellites", "plantes": "plantes", "transports": "transports"}
 PREFIXES = {
     "plantes": ("plante_",),
@@ -33,7 +37,8 @@ PREFIXES = {
     "capteurs": ("voiture", "capteur_", "capteurs_", "sonde_"),
     # anciens noms (avant le 2026-10-03) : ACARS, vdl2, pager, meshtastic -> messages
     "messages": ("message_", "ACARS", "vdl2", "pager", "meshtastic"),
-    "donnees": ("APRS", "OGN_", "balise_", "lora"),
+    "donnees": ("APRS", "OGN_", "balise_", "lora", "terrain_"),
+    "meteo": ("meteo_",),   # "meteor" (satellites) a deja ete pris plus haut
 }
 # Mots qui designent un journal dans une commande ("journal capteurs",
 # "archives satellites"...), sans accents (matcher.normalize).
@@ -42,10 +47,11 @@ WORDS = {
     "capteurs": ("capteur", "capteurs", "voiture", "voitures", "sonde", "sondes", "thermometre", "thermometres"),
     "messages": ("message", "messages", "acars", "vdl2", "avion", "avions", "bipeur", "bipeurs", "pager", "pagers", "dab",
                  "meshtastic"),
-    "donnees": ("donnee", "donnees", "data", "aprs", "lora", "planeur", "planeurs", "balise", "balises"),
+    "donnees": ("donnee", "donnees", "data", "aprs", "lora", "planeur", "planeurs", "balise", "balises", "terrain"),
     "radio": ("radio", "voix"),
     "plantes": ("plante", "plantes", "jardin", "jardinage"),
     "transports": ("transport", "transports", "bus", "tram", "metro", "perturbation", "perturbations"),
+    "meteo": ("meteo", "bulletin", "bulletins", "temperature", "temperatures", "releve", "releves"),
 }
 
 
@@ -60,7 +66,7 @@ def category_of(filename):
 def from_words(normalized_text):
     """Journal designe dans une commande deja normalisee ; radio par defaut."""
     words = set(normalized_text.split())
-    for category in ("satellites", "capteurs", "messages", "donnees", "plantes", "transports", "radio"):
+    for category in ("satellites", "meteo", "capteurs", "messages", "donnees", "plantes", "transports", "radio"):
         if words & set(WORDS[category]):
             return category
     return "radio"

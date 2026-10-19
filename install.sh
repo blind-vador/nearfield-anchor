@@ -10,10 +10,12 @@
 #   2) compile RTLSDR-Airband, mbelib+dsd-fme, libacars+acarsdec et RNNoise
 #      depuis les sources (aucun n'est empaquete Debian) -- saute une etape
 #      si le binaire attendu existe deja (idempotent, relancable sans risque)
+#      et le moteur de voix locales Piper
 #   3) installe les dependances Python (pip)
 #   4) aplatit watchers/ + lib/ + config/ + tools/ dans un seul repertoire
 #      cible (preserve le style d'imports plats des scripts -- aucune
-#      modification de code necessaire), deploie la console
+#      modification de code necessaire), deploie la console, les sons de
+#      notification (branche assets) et les voix Piper francaises
 #   5) reglages systeme (pilote DVB, session audio, points de montage,
 #      droits sudo limites, tty1 pour la console)
 #   6) deploie les unites systemd et les active
@@ -48,7 +50,8 @@ apt-get install -y \
     libsndfile1-dev libitpp-dev libncurses-dev libcodec2-dev portaudio19-dev \
     zlib1g-dev libxml2-dev \
     libopenblas0 samba \
-    python3-evdev python3-fuzzywuzzy python3-levenshtein python3-pil
+    python3-evdev python3-fuzzywuzzy python3-levenshtein python3-pil \
+    python3-cryptography python3-serial
 
 echo "=== 2/6 : compilation des bibliotheques externes (idempotent) ==="
 mkdir -p "$BUILD_DIR"
@@ -166,6 +169,25 @@ else
     echo "-- RNNoise deja compile, saute --"
 fi
 
+# Voix locales Piper (lib/piper_out.py) : binaire officiel armv7 dans
+# /home/vador/piper, voix francaises du depot officiel rhasspy/piper-voices
+# (installees plus bas, etape 4, par lib/piper_voix.py qui verifie les MD5).
+PIPER_DIR=/home/$RUN_USER/piper
+if [ ! -x "$PIPER_DIR/piper" ]; then
+    echo "-- Piper --"
+    case "$(uname -m)" in
+        aarch64) PIPER_TGZ=piper_linux_aarch64.tar.gz ;;
+        x86_64) PIPER_TGZ=piper_linux_x86_64.tar.gz ;;
+        *) PIPER_TGZ=piper_linux_armv7l.tar.gz ;;
+    esac
+    wget -q -O "$BUILD_DIR/piper.tar.gz" "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/$PIPER_TGZ"
+    mkdir -p "$PIPER_DIR/voix"
+    tar -xzf "$BUILD_DIR/piper.tar.gz" -C "$PIPER_DIR" --strip-components=1
+    chown -R "$RUN_USER:$RUN_USER" "$PIPER_DIR"
+else
+    echo "-- Piper deja installe, saute --"
+fi
+
 echo "=== 3/6 : dependances Python (pip) ==="
 pip3 install -r "$REPO_DIR/requirements.txt"
 
@@ -175,6 +197,7 @@ mkdir -p "$TARGET_DIR" "$TARGET_DIR/rnnoise_lib" "$RADIONO_TARGET_DIR" "$NAS_TAR
 cp "$REPO_DIR"/watchers/*.py "$TARGET_DIR/"
 cp "$REPO_DIR"/lib/*.py "$TARGET_DIR/"
 cp "$REPO_DIR"/lib/rnnoise_lib/*.py "$TARGET_DIR/rnnoise_lib/"
+cp -r "$REPO_DIR"/lib/cura_defs "$TARGET_DIR/"  # definitions Cura du tranchage (lib/imprimante_tranche.py)
 cp "$REPO_DIR"/tools/*.py "$TARGET_DIR/"
 cp "$REPO_DIR"/bridge/pont_protocole.py "$REPO_DIR"/bridge/lora_decode.py "$TARGET_DIR/"  # pont machine compagne (lib/compagnon.py), decodage LoRa de secours
 install -D -o vador -g vador -m 755 "$REPO_DIR"/tools/python3-gnuradio /home/vador/autopilot/bin/python3-gnuradio
@@ -208,6 +231,28 @@ cp "$REPO_DIR"/console/*.py "$CONSOLE_TARGET_DIR/"
 # Reparations USB (usb_watch.py) : seul geste root, appele via sudo -n.
 install -m 755 "$REPO_DIR"/tools/usb-repare /usr/local/sbin/usb-repare
 chown -R "$RUN_USER:$RUN_USER" "$RADIONO_TARGET_DIR"
+
+# Sons de notification (jingles, bips, boucles de l'imprimante...) : branche
+# "assets" du depot, deposee dans le dossier "server" du NAS
+# (config/sound_paths.py). Rien d'existant n'est ecrase (tar -k). Les sons
+# Epidemic Sound sont sous licence : depot prive uniquement.
+SONS_DIR="${SONS_DIR:-/media/nas/nd1/server}"
+# git en tant que $RUN_USER : le depot lui appartient (git refuse sinon en root).
+GIT_U="sudo -u $RUN_USER git -C $REPO_DIR"
+$GIT_U fetch -q origin assets:refs/remotes/origin/assets 2>/dev/null || true
+if [ -d "$SONS_DIR" ] && $GIT_U rev-parse -q --verify origin/assets >/dev/null; then
+    echo "-- sons de notification -> $SONS_DIR --"
+    $GIT_U archive origin/assets | sudo -u "$RUN_USER" tar -xk -C "$SONS_DIR" 2>/dev/null || true
+else
+    echo "!! sons non deployes (NAS non monte ou branche assets absente) : relancer l'installeur ensuite"
+fi
+
+# Voix Piper francaises (verifiees, voir lib/piper_voix.py) ; une voix deja la est sautee.
+for v in fr_FR-siwis-medium fr_FR-siwis-low fr_FR-upmc-medium fr_FR-tom-medium fr_FR-mls-medium fr_FR-mls_1840-low fr_FR-gilles-low; do
+    [ -f "$PIPER_DIR/voix/$v.onnx" ] && continue
+    sudo -u "$RUN_USER" python3 -c "import sys; sys.path.insert(0, '$TARGET_DIR'); import piper_voix; ok, why = piper_voix.install('$v'); print('$v', 'installee' if ok else why)" \
+        || echo "!! voix $v non installee (reseau ?)"
+done
 
 echo "=== 5/6 : reglages systeme ==="
 # Le noyau capture le dongle RTL-SDR comme tuner TNT : rtl_power/rtl_fm ne

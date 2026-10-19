@@ -362,11 +362,29 @@ def voitures_cmd(line):
     return voitures.summary()
 
 
+def terrain_cmd(line=""):
+    """Derniers messages de la veille terrain (watchers/veille_terrain.py) ;
+    "terrain mots" : ce qu'elle surveille en ce moment."""
+    import matcher
+    import veille_terrain
+    if {"mots", "mot", "surveille", "hashtags", "diese"} & set(matcher.normalize(line).split()):
+        return veille_terrain.words_text()
+    return veille_terrain.latest()
+
+
 def accroche():
     import noise_signatures as ns
+    import veille_donnees as vd
     locked = ns.lock_request()
     if locked:
         return dire("commandes.scanner_deja_verrouille_tape", label=locked['label'])
+    # D'abord ce qu'on entend en ce moment (2026-10-17) : la derniere capture
+    # n'est ecrite qu'en fin d'ecoute et designait sinon la precedente.
+    live = ns.live_capture()
+    if live:
+        ns.request_lock(live)
+        return dire("commandes.verrouillage_demande_en_cours", label=live['label'],
+                    mhz=vd.fr_number(live['freq_hz'] / 1e6, 4))
     capture = ns.last_capture()
     if not capture:
         return dire("commandes.aucune_reception_recente_laquelle")
@@ -410,6 +428,11 @@ def _power(action, done_key):
 # mentionne passe par la confirmation, et SANS phrases d'exemple : jamais
 # declenches par le repli flou, uniquement par mot-cle explicite.
 COMMANDS = [
+    # En tete (2026-10-19) : "simulation imprimante", "simulation meteo"... restent
+    # des simulations, et ne sont jamais prises par la commande de leur sujet.
+    Command("simulation", "simule les annonces : train, avion, météo, crue, bus, radio, disque, imprimante, ou tout", None,
+            keywords=["simulation", "simulations", "simule", "simuler"],
+            examples=["simulation"]),
     Command("redémarrer", "redémarre le Pi, après confirmation",
             _power("reboot", "commandes.redemarrage_pi"),
             keywords=["redemarre", "redemarrer", "redemarrage", "reboot"],
@@ -432,6 +455,12 @@ COMMANDS = [
     Command("réglages automatiques", "réglages audio appliqués tout seuls d'après tes notes : réglages automatiques oui ou non", None,
             keywords=["reglages automatiques", "reglage automatique", "mode automatique"],
             examples=["active les réglages automatiques", "arrête les réglages automatiques"]),
+    # Avant "réglages audio" (qui lit seulement) : regler soi-meme les couches de filtres.
+    Command("réglages son", "régler à la main, bande par bande, le type de contenu (musique, voix, données) "
+            "et chaque couche de filtres", None,
+            keywords=["reglages son", "reglage son", "regler le son", "filtres audio", "filtres du son",
+                      "couches de filtres", "type de contenu", "reglages des filtres"],
+            examples=["coupe l'anti-sifflement sur la FM", "mets la bande FM en musique"]),
     Command("réglages audio", "réglages audio en place, bande par bande", None,
             keywords=["reglages audio", "reglage audio", "reglages du son"],
             examples=["quels réglages audio"]),
@@ -463,6 +492,11 @@ COMMANDS = [
     # Avant les autres : un nom de commune tape apres "ville" ne doit pas
     # declencher une autre commande par ses mots ; "tableau gare" doit
     # ouvrir le tableau, pas le choix de la gare suivie.
+    # Avant "voix" : "voix locales" contient le mot-cle "voix" (2026-10-18).
+    Command("voix locales", "voix neuronales locales Piper : écouter, installer depuis le dépôt officiel, dans toutes les langues", None,
+            keywords=["voix locales", "voix locale", "voix piper", "piper", "telecharger des voix", "telecharger une voix",
+                      "installer une voix", "installer des voix", "autres voix", "voix neuronales"],
+            examples=["je veux d'autres voix", "ajouter une voix dans une autre langue"]),
     Command("voix", "choisir la voix de la console et son débit, ou la voix locale espeak", None,
             keywords=["voix", "changer de voix", "change de voix", "choisir la voix", "debit de la voix"],
             examples=["parle plus vite", "change ta voix"]),
@@ -478,6 +512,15 @@ COMMANDS = [
                       "qualite de l air", "pollution", "pollen", "pollens", "meteo des aeroports", "crue de la riviere"],
             examples=["la rivière monte-t-elle", "y a-t-il eu un séisme", "comment est l'air"]),
     # Avant "satellites" : "machine compagne" ne doit pas lister les passages.
+    # Avant "dmr" : "exploration dmr" contient le mot-cle "dmr" (2026-10-17).
+    Command("exploration dmr", "écouter les fréquences DMR groupe d'appel par groupe d'appel, ignorer ou mettre en favori, "
+            "chercher de nouvelles fréquences", None,
+            keywords=["exploration dmr", "explorer dmr", "explore dmr", "explorer le dmr", "dmr exploration",
+                      "dmr explore", "cibler dmr", "cibler le dmr", "ciblage dmr", "groupes dmr"],
+            examples=["je veux choisir les groupes d'appel", "explorer la bande numérique"]),
+    Command("restreint", "mode restreint : cocher les bandes que le scanner a le droit d'écouter ; restreint arrêt pour tout reprendre",
+            None, keywords=["mode restreint", "restreint", "restreindre", "restriction", "cocher les bandes"],
+            examples=["n'écoute que certaines bandes", "je veux choisir les bandes à écouter"]),
     Command("dmr", "ce que le scanner sait des fréquences DMR captées : relais, groupes d'appel, émetteurs ; dmr explications pour les mots",
             None, keywords=["dmr", "radio numerique pro", "groupes d appel", "groupe d appel", "talkgroup", "talkgroups",
                             "frequences dmr"],
@@ -518,6 +561,12 @@ COMMANDS = [
     Command("satellites", "prochains passages de satellites écoutés : météo, station spatiale, radioamateurs", None,
             keywords=["satellites", "satellite", "passages", "station spatiale", "iss", "meteor"],
             examples=["quand passe l'iss", "prochain satellite"]),
+    # Avant "capteurs" : la memoire des capteurs deja entendus (lib/capteurs_connus.py).
+    Command("capteurs connus", "capteurs sans fil déjà entendus : combien, depuis quand, combien de fois, les tiens",
+            lambda: __import__("capteurs_connus").summary(),
+            keywords=["capteurs connus", "capteurs deja vus", "capteurs deja entendus", "memoire des capteurs",
+                      "combien de capteurs", "historique des capteurs"],
+            examples=["quels capteurs tu connais", "depuis quand tu entends les capteurs"]),
     Command("capteurs", "derniers relevés des capteurs sans fil et stations météo radioamateur captés", capteurs,
             keywords=["capteurs", "capteur", "sondes", "stations meteo", "thermometres"],
             examples=["quelle température chez les voisins", "les relevés des capteurs"]),
@@ -568,6 +617,58 @@ COMMANDS = [
             keywords=["refroidis", "refroidir", "refroidissement", "coupe la chauffe", "arrete la chauffe",
                       "eteins la chauffe", "stop chauffe"],
             examples=["arrête de chauffer"]),
+    # Dialogue guide (console/imprimante_calibrage.py, 2026-10-14) : verifications,
+    # test des capteurs en direct, origines, reglage du plateau, hauteur de buse.
+    Command("calibre plateau", "calibrage guidé de l'imprimante : capteurs, origines, plateau, hauteur de la buse", None,
+            keywords=["calibre plateau", "calibrer plateau", "calibrage imprimante", "calibre imprimante",
+                      "calibrer imprimante", "calibrage plateau", "procedure origine", "procédure origine",
+                      "nivellement", "niveler", "nivelle", "niveler plateau", "nivelle plateau",
+                      "calibrage de l imprimante", "calibre l imprimante", "calibrer l imprimante",
+                      "calibrage"],
+            examples=["calibre plateau", "calibrage de l'imprimante", "niveler le plateau",
+                      "remettre la tête à l'origine"]),
+    # Dialogue guide (console/imprimante_nettoyage.py, 2026-10-16) : catalogue de
+    # methodes (plateau, buse a chaud, purge, tirage a froid), materiel decrit.
+    Command("nettoie imprimante", "nettoyage guidé : plateau, buse à chaud, purge, tirage à froid", None,
+            keywords=["nettoie imprimante", "nettoyer imprimante", "nettoyage imprimante", "nettoyage",
+                      "nettoie buse", "nettoyer buse", "nettoyage buse", "nettoie plateau", "nettoyer plateau",
+                      "nettoyage plateau", "nettoyage de l imprimante", "nettoie l imprimante",
+                      "tirage a froid", "tirage à froid", "cold pull", "purge buse",
+                      "nettoyer le plateau", "nettoie le plateau", "nettoyage du plateau", "nettoyer la buse",
+                      "nettoie la buse", "nettoyage de la buse", "nettoyer l imprimante", "purger la buse",
+                      "purge la buse"],
+            examples=["nettoie l'imprimante", "nettoyage de la buse", "nettoyer le plateau"]),
+    # Dialogue guide (console/imprimante_chargement.py, 2026-10-16) : materiau,
+    # retrait de l'ancien filament, chargement, ecoulement, debit facultatif.
+    Command("charge filament", "chargement guidé du filament avant une impression : matériau, écoulement, débit", None,
+            keywords=["charge filament", "charger filament", "charge le filament", "charger le filament",
+                      "chargement filament", "chargement du filament", "change filament", "changer filament",
+                      "change de filament", "changer de filament", "changement de filament", "prepare l imprimante",
+                      "preparer l imprimante", "prepare imprimante", "preparer imprimante", "mettre du filament",
+                      "mets du filament", "insere le filament", "inserer le filament"],
+            examples=["charge le filament", "prépare l'imprimante", "change de filament"]),
+    Command("reconnecte imprimante", "rétabli la liaison USB OctoPrint après un arrêt d'urgence", None,
+            keywords=["reconnecte imprimante", "reconnecter imprimante", "relie imprimante", "usb imprimante"],
+            examples=["reconnecte imprimante", "relie l'imprimante"]),
+    Command("filament prêt", "après une pause filament : confirmer le rechargement et reprendre", None,
+            keywords=["filament pret", "filament prêt", "fil pret", "fil prêt", "reprends filament",
+                      "reprise filament", "filament recharge", "filament rechargé"],
+            examples=["filament prêt", "fil prêt", "reprends filament"]),
+    Command("imprimante chargée", "déclarer le filament en place : P.L.A., A.B.S., P.E.T.G. ou T.P.U.", None,
+            keywords=["imprimante chargee", "imprimante chargée", "filament charge", "filament chargé",
+                      "chargee en pla", "chargée en pla", "materiau charge", "matériau chargé",
+                      "filament pla", "filament abs", "filament petg", "filament tpu"],
+            examples=["imprimante chargée en pla", "filament chargé abs", "matériau PETG"]),
+    Command("éjecte filament", "retire le filament même buse froide (utile si le fil a cassé dans l'extrudeur)", None,
+            keywords=["ejecte filament", "éjecte filament", "ejecter filament", "retire filament",
+                      "retirer filament", "decharge filament", "décharge filament", "sort filament"],
+            examples=["éjecte le filament", "retire le filament à froid"]),
+    Command("fichiers préparés", "explorer les fichiers pièces téléchargés : descriptions Gemini, ouvrir, imprimer, supprimer", None,
+            keywords=["fichiers prepares", "fichiers préparés", "explorateur pieces", "explorateur pièces",
+                      "pieces telechargees", "pièces téléchargées", "mes pieces", "mes pièces",
+                      "fichiers pieces", "fichiers pièces", "stl telecharges", "préparations impression"],
+            examples=["mes fichiers préparés", "ouvre les pièces téléchargées", "explorateur de pièces"]),
+
     Command("chauffe", "chauffe l'imprimante : chauffe pla, chauffe abs, chauffe buse 200, chauffe plateau 60", None,
             keywords=["chauffe", "chauffer", "prechauffe", "prechauffer", "prechauffage"],
             examples=["préchauffe pour le pla"]),
@@ -599,6 +700,14 @@ COMMANDS = [
             keywords=["imprimante", "impression", "octoprint", "buse", "plateau"],
             examples=["elle en est où l'impression", "état de l'imprimante",
                       "ça imprime", "où en est le print"]),
+    Command("pièces", "chercher un fichier à imprimer sur Printables : liste, fiche, Valider pour une description fine", None,
+            keywords=["pieces", "piece", "cherche piece", "chercher piece", "cherche pieces",
+                      "modele imprimable", "modeles imprimables", "fichier a imprimer",
+                      "fichiers a imprimer", "printables", "recherche impression",
+                      "fichier 3d", "modele 3d", "stl"],
+            examples=["pièces station spatiale", "cherche pièce tiroir", "modèle imprimable crochet",
+                      "pièces ISS", "pièce crochet"]),
+
     # Apres "décris" (qui garde "camera"/"webcam") et "imprimante".
     Command("usb", "état des appareils USB : clavier, son, radio, caméra, imprimante, et réparations automatiques",
             lambda: __import__("usb_cmd").usb_status(),
@@ -684,6 +793,12 @@ COMMANDS = [
     Command("manuel", "mode manuel : choisir soi-même la plage et la fréquence aux flèches", None,
             keywords=["manuel", "manuelle", "mode manuel", "reglage manuel", "accord manuel"],
             examples=["je veux régler moi-même", "passe en manuel", "je choisis la fréquence"]),
+    Command("telegram", "canaux Telegram publics suivis par la veille terrain : s'abonner, suggestions pour la ville", None,
+            keywords=["telegram", "telegramme", "canaux telegram", "canal telegram", "abonnements"],
+            examples=["je veux suivre un canal", "ajouter un canal"]),
+    Command("terrain", "derniers messages de la veille terrain : sites militants, Mastodon et canaux Telegram publics",
+            terrain_cmd, keywords=["terrain", "veille terrain", "infos terrain", "ca se passe ou", "quoi de neuf dehors"],
+            examples=["qu'est-ce qui se passe dehors", "les dernières infos de la manif"]),
     Command("accroche", "le scanner se fixe sur la fréquence de la dernière réception", accroche,
             keywords=["accroche", "accrocher", "verrouille", "verrouiller", "verrouillage",
                       "scan verrouiller", "bloque le scan", "reste dessus", "reste sur cette frequence"],
@@ -695,9 +810,6 @@ COMMANDS = [
     Command("radio", "scan de la bande FM", radio_scan,
             keywords=["radio", "scan", "fm"],
             examples=["scanne la bande fm", "cherche une station"]),
-    Command("simulation", "simule les annonces : train, avion, météo, crue, bus, radio, disque, ou tout", None,
-            keywords=["simulation", "simulations", "simule", "simuler"],
-            examples=["simulation"]),
     # Apres "simulation" : "simulation meteo" reste une simulation.
     # Avant "meteo" : "orage au loin" est une observation, "orage" seul une question.
     Command("observation", "dire au Pi le temps qu'il fait : il pleut fort, tonnerre au loin, ou le dialogue complet", None,

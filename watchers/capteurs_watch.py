@@ -6,15 +6,15 @@ Une frequence par passage, en alternance. Annonces :
 - alarmes (fumee, eau, intrusion...) : a chaque evenement (anti-repetition
   ALARM_EVERY_SEC) ;
 - sonnettes et boutons : a chaque appui (BUTTON_EVERY_SEC) ;
-- capteur jamais vu depuis NEW_EVERY_SEC : presente une fois, avec ses
-  valeurs ;
-- releves (demande utilisateur 2026-10-03) : chaque releve est dit AU FIL
-  DE L'EAU, des qu'il est capte, comme une prise vocale du journal
-  "capteurs" (lib/prise_vocale.py) ; un releve qui redit exactement les
-  valeurs deja annoncees pour ce capteur est tu ; les thermometres
-  d'interieur probables (lib/capteurs_interieurs.py) sont annonces comme
-  tels et ecartes de la meteo. Capteurs atypiques (cuisson, piscine,
-  frigo, sol...) : chaque releve avec une petite blague de Gemini ;
+- capteur jamais entendu (memoire persistante, lib/capteurs_connus.py,
+  2026-10-14 : plus de redecouverte a chaque redemarrage) : presente une
+  fois, avec ses valeurs ;
+- releves meteo (thermometres, stations) : plus dits un par un
+  (2026-10-19, des centaines d'entrees dans le journal capteurs) : gardes
+  pour le bulletin horaire (lib/bulletin_capteurs.py, journal "meteo") ;
+  les thermometres d'interieur probables (lib/capteurs_interieurs.py) y
+  sont a part. Capteurs atypiques (cuisson, piscine, frigo, sol...) :
+  chaque releve avec une petite blague de Gemini ;
 - capteurs de pneus (voitures qui passent) : jamais annonces, archives.
 Les derniers releves sont publies (READINGS_PATH) pour la console et le
 flash ; tout est archive.
@@ -26,6 +26,7 @@ import threading
 import time
 from datetime import datetime
 
+import capteurs_connus as connus
 import veille_donnees as vd
 import voitures
 from sound_paths import RADIO_SCANER_DIR
@@ -33,9 +34,9 @@ from phrases import Etiquettes, dire
 
 FREQUENCIES = ["433.92M", "868.3M"]
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
-STATE_PATH = "/tmp/capteurs_watch_state.json"
+# Carte SD, pas /tmp (vide a chaque demarrage) : valeurs deja dites, anti-repetitions.
+STATE_PATH = "/home/vador/autopilot/capteurs_watch_state.json"
 READINGS_PATH = "/tmp/capteurs_releves.json"
-NEW_EVERY_SEC = 7 * 86400
 ALARM_EVERY_SEC = 120
 BUTTON_EVERY_SEC = 60
 READINGS_KEEP_SEC = 6 * 3600
@@ -187,6 +188,7 @@ def _process(event, freq, tpms, at):
     key = _key(event)
     own = _my_sensor(key)
     if own:
+        connus.seen(key, own["nom"], own.get("genre") or "mien", freq[:3], mine=True)
         _publish(key, event, "mien")
         if event.get("battery_ok") == 0 and _memory.due(f"pile|{key}", BATTERY_EVERY_SEC):
             vd.announce(dire("capteur.pile_faible_mien", nom=own["nom"]), SOUND, f"capteur_pile_{key}", "capteurs_watch")
@@ -199,12 +201,14 @@ def _process(event, freq, tpms, at):
         tpms.append((at, key, _pressure_kpa(event)))
         return False
     _publish(key, event, kind)
+    first = connus.seen(key, _name(event), kind, freq[:3])
     values = _values(event)
     if kind == "alarme" and _memory.due(f"alarme|{key}", ALARM_EVERY_SEC):
-        vd.announce(dire("capteur.alarme_capteur_sans_fil", v1=_name(event)) + (f" {values}." if values else ""),
+        plain = dire("capteur.alarme_capteur_sans_fil", v1=_name(event)) + (f" {values}." if values else "")
+        vd.announce(lambda: plain + (" " + (_alarm_explanation(event) or "")).rstrip(),
                     SOUND, f"capteur_alarme_{key}", "capteurs_watch")
         return True
-    if _memory.due(f"nouveau|{key}", NEW_EVERY_SEC):
+    if first:
         what = KIND_NAMES.get(kind) or dire("capteur.type_inconnu")
         freq_txt = "433" if freq.startswith("433") else "868"
         number = dire("capteur.numero", id=event['id']) if event.get("id") is not None else ""
@@ -251,25 +255,27 @@ def _hz(freq):
 
 
 def _reading(key, event, kind, freq):
-    """Releve capte : dit tout de suite (prise vocale), sauf s'il redit
-    exactement les valeurs deja annoncees pour ce capteur (2026-10-03).
+    """Releve capte. Meteo : garde pour le bulletin horaire, jamais dit seul
+    (2026-10-19). Capteur atypique : dit tout de suite (prise vocale), sauf
+    s'il redit exactement les valeurs deja annoncees (2026-10-03).
     Rend False : la routine d'un capteur ne pique pas l'attention du scanner
     (seuls un nouveau capteur, une alarme, une sonnette le font)."""
     values = _values(event)
     last = _memory.data.get("_dits", {}).get(key)
+    if kind == "meteo" and values:
+        import bulletin_capteurs  # chaque releve compte pour l'evolution de l'heure
+        import capteurs_interieurs
+        bulletin_capteurs.noter(key, _name(event), event, capteurs_interieurs.is_indoor(key))
+        _said(key, event)
+        _memory.data["_dits"][key]["valeurs"] = values
+        return False
     if last and last.get("valeurs") == values:
         return False
     _said(key, event)
     _memory.data["_dits"][key]["valeurs"] = values
     fiche = {"protocole": "rtl_433", "frequence_hz": _hz(freq), "source": _name(event), "valeurs": values}
     if kind == "meteo":
-        if not values:
-            return False
-        import capteurs_interieurs
-        phrase = "capteur.releve_interieur" if capteurs_interieurs.is_indoor(key) else "capteur.releve_meteo"
-        vd.announce(dire(phrase, nom=_name(event), valeurs=values), SOUND, f"capteur_{key}",
-                    "capteurs_watch", fiche=fiche)
-        return False
+        return False  # releve meteo sans valeur lisible
     what = KIND_NAMES.get(kind) or dire("capteur.type_inconnu")
     plain = dire("capteur.releve_atypique", what=what, nom=_name(event), valeurs=values or dire("capteur.sans_valeur"))
     vd.announce(lambda: _fun_again(event, what) or plain, SOUND, f"capteur_{key}", "capteurs_watch", fiche=fiche)
@@ -317,6 +323,49 @@ def _fun_explanation(event, what, freq_txt):
         print(f"[capteurs_watch] explication Gemini indisponible : {problem}")
     else:
         vd.archive("capteurs_gemini", {"modele": event.get("model"), "texte": text})
+    return text
+
+
+# Alarme (2026-10-14, demande utilisateur) : une phrase sobre de Gemini dit de
+# quelle NATURE d'alarme il s'agit (fumee, fuite, cuve, ouverture...) et si
+# la trame ressemble a un faux decodage. Gardee par modele et contenu
+# (ALARM_EXPLAINED_SEC) : une alarme repetee ne rappelle pas Gemini.
+ALARM_PROMPT = """Tu es la voix d'un récepteur radio domestique. Un capteur sans fil proche vient
+d'émettre une trame marquée "alarme". En français, pour une personne aveugle, en 2 phrases
+courtes à lire à voix haute, sans blague :
+1. D'abord ce qu'est l'appareil d'après son nom de modèle (par exemple "Oil-SonicStd" est une
+   jauge à ultrasons de cuve à fioul) et à quoi il sert.
+2. Puis la nature de l'alarme (fumée, fuite d'eau, niveau bas de cuve, ouverture, pile,
+   sabotage...) ; si les données ressemblent à un faux décodage (identifiant 65535 ou 0,
+   valeurs toutes à zéro, champs incohérents), dis plutôt que c'est probablement une fausse
+   alarme due à un décodage erroné.
+L'appareil est chez un voisin, pas chez l'auditeur : ne dis jamais "votre". N'invente aucune
+donnée. Ne commence pas par "Alerte". Pas de markdown, pas de liste.
+
+Données décodées (format rtl_433) :
+{data}
+"""
+ALARM_EXPLAINED_SEC = 30 * 86400
+
+
+def _alarm_explanation(event):
+    fields = {k: v for k, v in event.items() if k not in ("time", "rssi", "snr", "noise", "freq", "freq1", "freq2",
+                                                          "mod", "bande", "t")}
+    cache_key = json.dumps({k: v for k, v in fields.items() if k != "id"}, sort_keys=True, ensure_ascii=False)
+    cache = _memory.data.setdefault("_alarmes_expliquees", {})
+    hit = cache.get(cache_key)
+    if hit and time.time() - hit["t"] < ALARM_EXPLAINED_SEC:
+        return hit["texte"]
+    try:
+        import gemini
+        text, problem = gemini.ask(ALARM_PROMPT.format(data=json.dumps(fields, ensure_ascii=False)))
+    except Exception as exc:
+        text, problem = None, repr(exc)
+    if problem or not text:
+        print(f"[capteurs_watch] explication d'alarme indisponible : {problem}")
+        return None
+    cache[cache_key] = {"t": time.time(), "texte": text}
+    vd.archive("capteurs_gemini", {"modele": event.get("model"), "alarme": True, "texte": text})
     return text
 
 
@@ -429,6 +478,7 @@ def scan_window(dwell_sec=30):
             announced = True
 
         _memory.save()
+        connus.save()
     if count:
         print(f"[capteurs_watch] {count} trame(s) capteurs sur {freq}")
     return announced

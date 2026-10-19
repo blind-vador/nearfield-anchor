@@ -201,6 +201,81 @@ def disque_echec():
 
 # (nom parle, mots-cles, fonction). Le premier mot-cle est la categorie :
 # commun a tous les scenarios du groupe, il les selectionne tous d'un coup.
+# --- Imprimante (imprimante_watch, lib/sons_imprimante.py), 2026-10-18 ---
+# Une seance d'impression enchainee, pour apprendre a reconnaitre chaque
+# bruitage : chaque etape est d'abord nommee, puis on entend le vrai son (ou
+# la vraie boucle, quelques secondes) et le vrai message. Rien n'est envoye a
+# l'imprimante : aucun mouvement, aucune chauffe.
+FICHIER_SIMULE = "support_casque.gcode"
+
+
+def _etape(nom):
+    from speak import speak
+    _locked(lambda: speak(dire("simulation.etape", nom=nom)))
+
+
+def _boucle(nom, secondes, phrase=None):
+    import time
+    import sons_imprimante as sons
+    from speak import speak
+    jeton = sons.demarrer_boucle(nom)
+    try:
+        if phrase:
+            _locked(lambda: speak(phrase))
+        time.sleep(secondes)
+    finally:
+        sons.arreter_boucle(jeton)
+
+
+def impression_complete():
+    import time
+    import imprimante_watch as iw
+    import sons_imprimante as sons
+    from speak import speak
+    pause = 1.5
+    steps = [
+        (dire("simulation.imp_chauffe"),
+         lambda: (_boucle("printer_waiting_temperature_loop", 6),
+                  iw._speak(dire("imprimante.evt_temperature_atteinte", nom=dire("imprimante.buse"), cible=210),
+                            iw.PROGRES))),
+        (dire("simulation.imp_tete"),
+         lambda: _boucle("printer_moving_head_loop", 6, dire("imprimante.net.centrage"))),
+        (dire("simulation.imp_plateau"),
+         lambda: _boucle("printer_moving_bed_loop", 5, dire("imprimante.net.plateau_vient"))),
+        (dire("simulation.imp_filament"),
+         lambda: (_boucle("printer_pushing_filament_loop", 6),
+                  sons.jouer("printer_filament_in", attendre=True),
+                  _locked(lambda: speak(dire("imprimante.charge.fini"))))),
+        (dire("simulation.imp_lancement"),
+         lambda: iw._speak(dire("imprimante.evt_lancee", fichier=FICHIER_SIMULE) + " " +
+                           dire("imprimante.evt_estimee", duree=iw._duree(2 * 3600 + 15 * 60)), iw.PROGRES)),
+        (dire("simulation.imp_progression"),
+         lambda: [iw._speak(dire("imprimante.evt_progression", pourcent=p) + " " +
+                            dire("imprimante.reste", duree=iw._duree(r)), iw.PROGRES)
+                  for p, r in ((25, 6000), (50, 4000), (75, 2000))]),
+        (dire("simulation.imp_pause_filament"),
+         lambda: (iw._speak(dire("imprimante.evt_pause", fichier=FICHIER_SIMULE), iw.WARN),
+                  iw._speak(dire("imprimante.evt_filament_pause_active"), iw.WARN),
+                  iw._speak(dire("imprimante.evt_filament_ok"), "printer_filament_in"),
+                  iw._speak(dire("imprimante.evt_reprise")))),
+        (dire("simulation.imp_fin"),
+         lambda: iw._speak(dire("imprimante.evt_terminee", fichier=FICHIER_SIMULE,
+                                duree=iw._duree(2 * 3600 + 22 * 60)), iw.FINI)),
+        (dire("simulation.imp_retrait"),
+         lambda: (sons.jouer("printer_filament_ejected", attendre=True),
+                  _locked(lambda: speak(dire("imprimante.filament_retire", mm=50))))),
+        (dire("simulation.imp_erreur"),
+         lambda: iw._speak(dire("imprimante.evt_erreur", erreur=dire("simulation.imp_erreur_exemple")), iw.WARN)),
+        (dire("simulation.imp_camera"),
+         lambda: (sons.jouer("camera_take_picture", attendre=True),
+                  _boucle("camera_loading_data_loop", 5, dire("vision.analyse_cours")))),
+    ]
+    for nom, action in steps:
+        _etape(nom)
+        action()
+        time.sleep(pause)
+
+
 SCENARIOS = [
     ("départ de train", ["train", "depart", "mise en place"], train_depart),
     ("arrivée de train au terminus", ["train", "arrivee", "terminus"], train_arrivee),
@@ -225,6 +300,7 @@ SCENARIOS = [
     ("disque perdu", ["disque", "nas", "perdu", "introuvable"], disque_perdu),
     ("disque reconnecté", ["disque", "nas", "reconnecte", "revenu"], disque_revenu),
     ("échec de remontage de disque", ["disque", "nas", "echec"], disque_echec),
+    ("séance d'impression complète", ["imprimante", "impression", "printer", "imprimer"], impression_complete),
 ]
 
 

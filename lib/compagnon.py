@@ -30,7 +30,7 @@ import time
 import uuid
 
 import pont_protocole as proto
-from phrases import dire, nombre
+from phrases import dire, dire_ou, nombre
 
 BRIDGE_DIR = "/media/nas/nd1/server/nearfield-anchor-bridge"
 LOCAL_DIR = "/home/vador/autopilot/compagnon"
@@ -101,6 +101,18 @@ def update_card(cid, **fields):
     return card
 
 
+def note_state(cid, state):
+    """Etat de session envoye par la machine (2026-10-14 : ecran verrouille,
+    inactivite) ; l'heure du dernier changement de verrouillage est gardee."""
+    if not isinstance(state, dict) or "verrouille" not in state:
+        return
+    card = trusted().get(cid) or {}
+    fields = {"etat": dict(state, t=time.time())}
+    if (card.get("etat") or {}).get("verrouille") != state["verrouille"]:
+        fields["verrou_depuis"] = time.time()
+    update_card(cid, **fields)
+
+
 def connected():
     """{id: {depuis, vu}} des machines presentes : liaison directe
     (compagnon_serveur), ou signe de vie signe depose sur le NAS depuis moins
@@ -125,9 +137,12 @@ def companions():
     for cid, card in trusted().items():
         c = dict(card, id=cid, presente=cid in online,
                  directe=cid in online and online[cid].get("par") != "nas")  # sinon : differe
-        if cid in online and online[cid].get("capacites"):
-            c["capacites"] = online[cid]["capacites"]
-            c["vu"] = online[cid]["vu"]
+        if cid in online:
+            # Union des capacites : un vieux battement NAS ne doit pas
+            # effacer une capacite nouvellement declaree sur la fiche.
+            if online[cid].get("capacites"):
+                c["capacites"] = sorted(set(list(c.get("capacites") or []) + list(online[cid]["capacites"])))
+            c["vu"] = online[cid].get("vu", c.get("vu"))
         out.append(c)
     return out
 
@@ -314,6 +329,27 @@ def pending_count():
     return sum(1 for j in _list("travaux") if not os.path.exists(_path("travaux", j, "resultat.json")))
 
 
+def _hm(t):
+    return time.strftime("%H h %M", time.localtime(t))
+
+
+def _session_text(c):
+    """Ecran verrouille ou non (liaison directe), sinon depuis quand elle se tait
+    (une machine qui ne repond plus est presque toujours en veille)."""
+    etat = c.get("etat") or {}
+    if c.get("directe") and "verrouille" in etat:
+        if etat["verrouille"]:
+            since = c.get("verrou_depuis")
+            return dire_ou("compagnon.ecran_verrouille", "écran verrouillé" + (f" depuis {_hm(since)}" if since else ""))
+        idle = etat.get("inactif_s")
+        if idle is not None and idle >= 120:
+            return dire_ou("compagnon.ecran_libre_inactif", f"écran déverrouillé, personne au clavier depuis {idle // 60} minutes")
+        return dire_ou("compagnon.ecran_libre", "écran déverrouillé, quelqu'un s'en sert")
+    if not c.get("presente") and c.get("vu"):
+        return dire_ou("compagnon.silencieuse", f"silencieuse depuis {_hm(c['vu'])}, sans doute en veille")
+    return ""
+
+
 def status():
     """Commande "compagnon" : etat du pont."""
     found = companions()
@@ -326,6 +362,9 @@ def status():
         state = (dire("compagnon.connectee") if c.get("directe") else dire("compagnon.differe_nas_deux_fois") if c["presente"]
                  else dire("compagnon.connectee_reveillerai_au_besoin"))
         text = dire("compagnon.fiche", nom=c['nom'], etat=state, capacites=caps)
+        session = _session_text(c)
+        if session:
+            text += ", " + session
         done, failed = stats.get("faits", 0), stats.get("echecs", 0)
         if done or failed:
             text += ", " + dire("compagnon.bilan_travaux", reussis=nombre(done, "travail réussi", "travaux réussis"),

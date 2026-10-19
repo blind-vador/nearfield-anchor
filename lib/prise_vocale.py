@@ -40,17 +40,23 @@ _worker_lock = threading.Lock()
 
 # --- synthese ------------------------------------------------------------------------
 
-def _edge(text, path):
+def _edge(text, path, choix):
     import edge_tts
     import edge_langue
-    import speak
+    import voix_sources
     edge_langue.force_language()
-    voice = random.choice(speak.EDGE_TTS_VOICES)
 
     async def run():
-        await asyncio.wait_for(edge_tts.Communicate(text, voice).save(path), timeout=SYNTH_TIMEOUT_SEC)
-    asyncio.run(run())
-    return os.path.exists(path) and os.path.getsize(path) > 0
+        await asyncio.wait_for(edge_tts.Communicate(text, choix["voix"], rate=choix["debit"],
+                                                    pitch=choix["hauteur"]).save(path), timeout=SYNTH_TIMEOUT_SEC)
+    try:
+        asyncio.run(run())
+    except Exception:
+        voix_sources.noter_microsoft(False)
+        raise
+    ok = os.path.exists(path) and os.path.getsize(path) > 0
+    voix_sources.noter_microsoft(ok)
+    return ok
 
 
 def _espeak(text, path):
@@ -64,13 +70,47 @@ def _espeak(text, path):
     return os.path.exists(path) and os.path.getsize(path) > 0
 
 
-def synthesize(text, path):
-    """Voix du texte dans path (mp3). True si reussi."""
+def _piper(text, path, choix):
+    """Voix Piper, phrase par phrase (2026-10-18) : les phrases fixes des
+    annonces viennent du cache (preparees d'avance, une voix par annonce),
+    seul le texte qui change est calcule."""
+    import annonce_morceaux as morceaux
+    import phrases_fixes
+    import piper_out
+    if choix["moteur"] != "piper" or not piper_out.available():
+        return False
+    parts = []
+    for sentence in phrases_fixes.split(text):
+        body, punct = (sentence[:-1], sentence[-1]) if sentence[-1:] in ".!?" else (sentence, ".")
+        parts.append((body if phrases_fixes.est_fixe(sentence) else morceaux.Live(body), punct))
+    wav = morceaux.assemble(parts, choix)
+    if not wav:
+        return False
+    subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", wav, path],
+                   capture_output=True, timeout=60)
+    os.remove(wav)
+    return os.path.exists(path) and os.path.getsize(path) > 0
+
+
+def synthesize(text, path, source=None):
+    """Voix du texte dans path (mp3), selon la voix de la source (commande
+    "voix") : Microsoft s'il est choisi et present, sinon la voix de secours
+    Piper (2026-10-18), espeak en dernier. True si reussi."""
+    import voix_sources
+    source = source or voix_sources.source_pour()
+    choix = voix_sources.choisir(source)
+    if choix["moteur"] == "edge":
+        try:
+            if _edge(text, path, choix):
+                return True
+        except Exception as exc:
+            print(f"[prise_vocale] edge-tts : {str(exc)[:120]}")
+        choix = voix_sources.secours(source)
     try:
-        if _edge(text, path):
+        if _piper(text, path, choix):
             return True
     except Exception as exc:
-        print(f"[prise_vocale] edge-tts : {exc!r}")
+        print(f"[prise_vocale] piper : {exc!r}")
     try:
         return _espeak(text, path)
     except Exception as exc:
@@ -78,12 +118,12 @@ def synthesize(text, path):
         return False
 
 
-def record(text, sound, label, meta=None):
+def record(text, sound, label, meta=None, source=None):
     """Fabrique la prise (carillon + voix) au journal ; rend son chemin ou None."""
     tmp = tempfile.mkdtemp(prefix="prise_")
     try:
         voice = os.path.join(tmp, "voix.mp3")
-        if not synthesize(text, voice):
+        if not synthesize(text, voice, source):
             return None
         parts = [p for p in (sound, voice) if p and os.path.exists(p)]
         listing = os.path.join(tmp, "liste.txt")
@@ -139,14 +179,14 @@ def _run():
             if not text:
                 continue
             print(f"[{item['tag']}] annonce : {text}")
-            path = record(text, item["son"], item["etiquette"], item["fiche"])
+            path = record(text, item["son"], item["etiquette"], item["fiche"], item.get("source"))
             if path:
                 play(path, item["tag"])
             else:  # synthese impossible : on dit quand meme, en direct
                 import speak
                 lock = audio_lock.acquire("donnees")
                 try:
-                    speak.speak_with_lead_sound(item["son"], text, label=item["tag"])
+                    speak.speak_with_lead_sound(item["son"], text, label=item["tag"], source=item.get("source"))
                 finally:
                     audio_lock.release(lock)
         except Exception as exc:  # une annonce ratee n'arrete pas la file
@@ -166,6 +206,8 @@ def announce(text, sound, label, tag, fiche=None, wait=False):
             _worker = threading.Thread(target=_run, daemon=True, name="prise_vocale")
             _worker.start()
     done = threading.Event() if wait else None
-    _queue.put({"texte": text, "son": sound, "etiquette": label, "tag": tag, "fiche": fiche, "fait": done})
+    import voix_sources  # la source se decide ici, dans le service qui annonce
+    _queue.put({"texte": text, "son": sound, "etiquette": label, "tag": tag, "fiche": fiche, "fait": done,
+                "source": voix_sources.source_pour(tag)})
     if done:
         done.wait(timeout=600)

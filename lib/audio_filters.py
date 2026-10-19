@@ -304,7 +304,8 @@ class GentleCleaner:
         x = np.frombuffer(chunk_bytes, dtype=np.int16).astype(np.float64)
         if self.hum is not None:
             x = self.hum.process(x)
-        x = _declick(x, self.click_threshold)
+        if self.click_threshold:  # 0 : couche coupee (reglage a la main)
+            x = _declick(x, self.click_threshold)
         if self.spectral:
             x = self._denoise(x)
         x = self.compressor.process(x)
@@ -315,7 +316,8 @@ class GentleCleaner:
         x = np.frombuffer(chunk_bytes, dtype=np.float32).astype(np.float64) * 32768
         if self.hum is not None:
             x = self.hum.process(x)
-        x = _declick(x, self.click_threshold)
+        if self.click_threshold:  # 0 : couche coupee (reglage a la main)
+            x = _declick(x, self.click_threshold)
         if self.spectral:
             x = self._denoise(x)
         x = self.compressor.process(x)

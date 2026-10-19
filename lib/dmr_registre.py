@@ -21,7 +21,18 @@ seules ses donnees sont notees (stats["prive"], stats["chiffre"]).
 
 Registre : carte SD (REGISTRY_PATH), une entree par frequence (pas de
 6,25 kHz) ; journal brut des sessions sur le NAS (veille_donnees.archive).
+
+Connexions ARS (2026-10-14) : un poste Motorola qui s'allume ou revient a
+portee s'annonce au serveur de dispatch (enregistrement automatique, ARS).
+Ce n'est pas un message : on en garde le poste, le serveur, l'heure, et si
+le reseau a refuse (serveur injoignable, le poste reessaie alors en boucle).
+Chaque connexion va dans un fichier du jour sur le NAS (dmr_ars_<jour>.jsonl),
+les postes dans le registre ; une connexion recente fait revenir la veille
+DMR sur ce relais (des postes qui s'allument : la journee de l'equipe
+commence). Un resume de la journee est range au journal messages a 23 h 50
+(daily_tick, appele par radio_watch), et dit par "dmr aujourd'hui".
 """
+import datetime
 import json
 import math
 import os
@@ -31,6 +42,12 @@ import time
 REGISTRY_PATH = "/home/vador/autopilot/dmr_frequences.json"
 STEP_HZ = 6250
 HALF_LIFE_DAYS = 7
+ARS_DIR = "/media/nas/nd1/server/radio_log/donnees"   # meme dossier que veille_donnees.archive
+ARS_FRESH_SEC = 1800
+ARS_STANDARD_SERVER = "16448250"   # identifiant du serveur ARS Motorola par defaut (IP 13.250.250.250)
+SUMMARY_STATE = "/home/vador/autopilot/dmr_resume.json"
+SUMMARY_AT = (23, 50)
+SUMMARY_SOUND = "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3"
 
 CC_RE = re.compile(r"Color Code=(\d{1,2})")
 SLOT_RE = re.compile(r"\[SLOT([12])\]")
@@ -56,6 +73,8 @@ def line(stats, text):
     m = CALL_RE.search(text)
     if m:
         slot, tgt, src, kind = m.group(1), m.group(2), m.group(3), m.group(4).strip()
+        if "group" in kind.lower():  # groupe qui parle sur cet intervalle (filtres : lib/dmr_filtres.py)
+            d.setdefault("en_cours", {})[slot] = tgt
         call = d["appels"].setdefault((slot, tgt, src), {"type": kind, "n": 0})
         call["n"] += 1
         if "private" in kind.lower():
@@ -110,6 +129,13 @@ def record(stats, now=None):
     e["prive"] += 1 if stats.get("prive") else 0
     e["chiffre"] += 1 if stats.get("chiffre") else 0
     new_groups = []
+    for ev in d.get("ars", []):
+        p = e.setdefault("postes_ars", {}).setdefault(ev["poste"], {"n": 0, "refus": 0, "premiere": ev["t"]})
+        p["n"] += 1
+        p["refus"] += 1 if ev.get("refus") else 0
+        p["derniere"] = ev["t"]
+        p["serveur"] = ev.get("serveur")
+        e["derniere_ars"] = max(e.get("derniere_ars", 0), ev["t"])
     for (slot, tgt, src), call in d["appels"].items():
         g = e["groupes"].setdefault(tgt, {"n": 0, "emetteurs": [], "slots": [], "type": call["type"]})
         if g["n"] == 0:
@@ -140,8 +166,10 @@ def score(e, now=None):
     h = time.localtime(now).tm_hour
     same_time = (hours[h] + 0.5 * (hours[(h - 1) % 24] + hours[(h + 1) % 24])) / max(1, sum(hours))
     voice = sum(1 for g in (e.get("groupes") or {}).values() if g.get("type", "").lower().startswith("group"))
+    # Postes qui viennent de s'annoncer (ARS) : des appels suivent souvent.
+    fresh_ars = math.exp(-max(0.0, now - e.get("derniere_ars", 0)) / ARS_FRESH_SEC)
     return (0.2 + recency) * (1 + math.log1p(e.get("sessions", 0))) * (1 + 2 * same_time) * (1.5 if e.get("relais") else 1) \
-        * (1.2 if voice else 1)
+        * (1.2 if voice else 1) * (1 + fresh_ars)
 
 
 def targets(now=None):
@@ -197,6 +225,166 @@ def resolve_callsign(src):
     except Exception as exc:
         print(f"[dmr_registre] radioid {src} : {exc!r}")
         return None
+
+
+def ars_event(stats, packet, now=None):
+    """Un poste s'annonce au serveur de dispatch (lib/decodeurs.py) : garde
+    pour le registre (fin de session) et ecrit tout de suite au fichier du jour."""
+    src = packet.get("src")
+    if not src:
+        return
+    now = now or time.time()
+    ev = {"t": now, "freq_hz": stats.get("freq_hz"), "poste": src, "serveur": packet.get("dst"),
+          "ip": packet.get("ip"), "slot": packet.get("slot"), "refus": bool(packet.get("refus"))}
+    d = stats.setdefault("dmr", {"cc": {}, "slots": [], "appels": {}, "relais": False, "systeme": None})
+    d.setdefault("ars", []).append(ev)
+    archive_ars(ev)
+
+
+def archive_ars(ev):
+    try:
+        os.makedirs(ARS_DIR, exist_ok=True)
+        day = datetime.date.fromtimestamp(ev["t"]).isoformat()
+        with open(os.path.join(ARS_DIR, f"dmr_ars_{day}.jsonl"), "a", encoding="utf-8") as f:
+            f.write(json.dumps(ev, ensure_ascii=False) + "\n")
+    except OSError as exc:
+        print(f"[dmr_registre] connexion ARS non archivee : {exc}")
+
+
+def ars_rows(day):
+    try:
+        with open(os.path.join(ARS_DIR, f"dmr_ars_{day.isoformat()}.jsonl"), encoding="utf-8") as f:
+            for raw in f:
+                try:
+                    yield json.loads(raw)
+                except ValueError:
+                    continue
+    except OSError:
+        return
+
+
+_JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
+         "novembre", "décembre"]
+
+
+def _hm(t):
+    return time.strftime("%H h %M", time.localtime(t))
+
+
+def _liste(items):
+    items = list(items)
+    return items[0] if len(items) == 1 else ", ".join(items[:-1]) + " et " + items[-1]
+
+
+def daily_summary(day):
+    """Resume parle des connexions ARS d'un jour (datetime.date) ; None si aucune."""
+    from phrases import dire_ou
+    rows = [r for r in ars_rows(day) if r.get("poste")]
+    if not rows:
+        return None
+    reg = load()
+    by_freq = {}
+    for r in rows:
+        by_freq.setdefault(key(r["freq_hz"]) if r.get("freq_hz") else "?", []).append(r)
+    jour = f"{_JOURS[day.weekday()]} {day.day} {_MOIS[day.month - 1]}"
+    texts = [dire_ou("dmr.ars_titre", f"Connexions DMR du {jour}.")]
+    all_servers, listen, relays = set(), [], []
+    for k, rs in sorted(by_freq.items(), key=lambda kv: -len(kv[1])):
+        e = reg.get(k, {})
+        hz = e.get("freq_hz") or (int(k) if k != "?" else None)
+        mhz = fr_mhz(hz) if hz else "inconnu"
+        posts = {}
+        for r in rs:
+            posts[r["poste"]] = posts.get(r["poste"], 0) + 1
+        ts = [r["t"] for r in rs]
+        refus = sum(1 for r in rs if r.get("refus"))
+        texts.append(dire_ou("dmr.ars_reseau",
+                             f"Relais {mhz} mégahertz : {nombre_fr(len(posts), 'poste')} se sont annoncés au serveur "
+                             f"de dispatch, {nombre_fr(len(rs), 'connexion')} entre {_hm(min(ts))} et {_hm(max(ts))}."))
+        top = sorted(posts.items(), key=lambda kv: -kv[1])[:6]
+        texts.append(dire_ou("dmr.ars_postes", "Les plus présents : " + _liste(
+            f"le {p}, {nombre_fr(n, 'fois', 'fois')}" for p, n in top) + "."))
+        if refus:
+            texts.append(dire_ou("dmr.ars_refus",
+                                 f"{nombre_fr(refus, 'connexion refusée', 'connexions refusées')} : le serveur de "
+                                 "dispatch était injoignable, les postes réessaient alors en boucle."
+                                 if refus < len(rs) else
+                                 "Le serveur de dispatch n'a répondu à aucune : il semble éteint ou débranché, "
+                                 "les postes réessaient alors en boucle."))
+        all_servers |= {r.get("serveur") for r in rs} - {None}
+        speakers = []
+        for p in posts:
+            info = (e.get("emetteurs") or {}).get(p)
+            if info and info.get("groupes"):
+                g = info["groupes"][:2]
+                speakers.append(f"le {p} dans le groupe {g[0]}" if len(g) == 1
+                                else f"le {p} dans les groupes {_liste(g)}")
+        if speakers:
+            texts.append(dire_ou("dmr.ars_parlent", f"Parmi eux, déjà entendus parler : {_liste(speakers[:5])}."))
+        groups = sorted((e.get("groupes") or {}).items(), key=lambda kv: -kv[1].get("n", 0))[:3]
+        if groups:
+            cc = main_cc(e)
+            listen.append(f"{mhz}" + (f" code couleur {int(cc)}" if cc else "")
+                          + f", groupes {_liste([g for g, _ in groups])}")
+        relays.append((hz, set(posts), set((e.get("groupes") or {}))))
+    for i, (fa, pa, ga) in enumerate(relays):   # meme reseau : postes ET groupes en commun
+        for fb, pb, gb in relays[i + 1:]:
+            if fa and fb and len(pa & pb) >= 2 and ga & gb:
+                texts.append(dire_ou("dmr.ars_meme_reseau",
+                                     f"Les relais {fr_mhz(fa)} et {fr_mhz(fb)} appartiennent au même réseau : "
+                                     f"{nombre_fr(len(pa & pb), 'poste')} en commun, mêmes groupes d'appel."))
+    if all_servers == {ARS_STANDARD_SERVER}:
+        texts.append(dire_ou("dmr.ars_serveur",
+                             "À qui ils se connectent : au service de présence Motorola standard, numéro 16448250, "
+                             "un poste de dispatch relié au relais qui suit quelles radios sont allumées. Le nom de "
+                             "son propriétaire n'est jamais transmis par la radio."))
+    elif all_servers:
+        texts.append(dire_ou("dmr.ars_serveurs", "Serveurs joints : " + _liste(sorted(all_servers)) + "."))
+    if listen:
+        texts.append(dire_ou("dmr.ars_ecouter", "Pour écouter leurs conversations : " + " ; ".join(listen)
+                             + ". La veille DMR y revient d'elle-même, plus souvent juste après des connexions."))
+    return " ".join(texts)
+
+
+def fr_mhz(hz):
+    return f"{hz / 1e6:.4f}".replace(".", ",")
+
+
+def nombre_fr(n, singulier, pluriel=None):
+    from phrases import nombre
+    return nombre(n, singulier, pluriel)
+
+
+def daily_tick(now=None):
+    """Appele par la boucle de radio_watch : a 23 h 50, range le resume du jour
+    au journal messages, sans le dire (prise_vocale.record). Le dernier jour
+    traite est note (SUMMARY_STATE) : un seul resume par jour."""
+    now = now or datetime.datetime.now()
+    if (now.hour, now.minute) < SUMMARY_AT:
+        return
+    day = now.date().isoformat()
+    try:
+        with open(SUMMARY_STATE, encoding="utf-8") as f:
+            done = json.load(f).get("fait")
+    except (OSError, ValueError):
+        done = None
+    if done == day:
+        return
+    with open(SUMMARY_STATE, "w", encoding="utf-8") as f:
+        json.dump({"fait": day}, f)
+
+    def work():
+        try:
+            text = daily_summary(now.date())
+            if text:
+                import prise_vocale
+                prise_vocale.record(text, SUMMARY_SOUND, "message_DMR_resume",
+                                    meta={"protocole": "DMR", "genre": "resume", "jour": day})
+        except Exception as exc:
+            print(f"[dmr_registre] resume du jour : {exc!r}")
+    import threading
+    threading.Thread(target=work, daemon=True).start()
 
 
 def seed(lines):

@@ -34,7 +34,7 @@ from plantes import join_names
 
 STATE_PATH = "/home/vador/autopilot/plantes_alertes.json"
 ACK_PATH = "/home/vador/autopilot/plantes_acquit.json"
-SOUND = "/media/nas/nd1/server/radio_scaner/incoming.mp3"
+SOUND = "/media/nas/nd1/server/plantes/plante_alert1.mp3"  # Epidemic Sound (2026-10-18)
 REPEAT_SEC = 30 * 60 - 60       # la boucle tourne toutes les 30 min : une minute de marge
 GEL_FROM_HOUR = 17
 SOIF_HOURS = (8, 21)

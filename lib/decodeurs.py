@@ -54,6 +54,16 @@ TGT_RE = re.compile(r"TGT[=:]\s*(\d+)")
 ALIAS_RE = re.compile(r"Alias:\s*\[?([^\]]*?)\]?\s*$")
 TEXT_RE = re.compile(r"(?:SMS|ISO7 Text|ISO8 Text|Complete Meta Text|Text):\s*(.+?)\s*$")
 GPS_RE = re.compile(r"GPS:\s*\(?\s*(-?\d+\.\d+)[^\d-]+(-?\d+\.\d+)")
+# Paquets de donnees IP du DMR (2026-10-14) : l'enregistrement automatique
+# Motorola (ARS, port 4005) qu'un poste envoie au serveur de dispatch quand il
+# s'allume ou revient a portee. dsd-fme en affiche la charge utile comme
+# "UTF8 Text: _-- -402__" : ce n'est PAS un texte, c'est le numero du poste.
+# Il va au registre DMR (lib/dmr_registre.ars_event), jamais en annonce.
+DATA_SLOT_RE = re.compile(r"Slot ([12]) Data Header")
+DATA_SRC_RE = re.compile(r"^SRC\(24\):\s*0*(\d+);")
+DATA_DST_RE = re.compile(r"^DST\(24\):\s*0*(\d+);\s*IP:\s*([\d.]+)")
+ARS_RE = re.compile(r"^UDP Protocol;.*\bARS;")
+UNREACHABLE_RE = re.compile(r"^ICMP Protocol;.*Unreachable", re.I)
 
 
 def new_stats(freq_hz=None):
@@ -84,6 +94,8 @@ def dsd_line(stats, text):
         found = regex.search(text)
         if found:
             stats[field] = found.group(1)
+    if _data_packet_line(stats, text):
+        return
     if not dsd_validated(stats):
         return
     for regex, kind in ((ALIAS_RE, "alias"), (TEXT_RE, "texte")):
@@ -94,6 +106,41 @@ def dsd_line(stats, text):
     found = GPS_RE.search(text)
     if found:
         _say("gps", f"{found.group(1)}, {found.group(2)}", stats)
+
+
+def _data_packet_line(stats, text):
+    """Suit un paquet de donnees IP du DMR ligne par ligne. Un refus du reseau
+    (ICMP "Unreachable") arrive AVANT le paquet qu'il renvoie ("Attached
+    Message") : le serveur de dispatch n'a pas ete joint. Rend True quand la
+    ligne est la charge utile d'un enregistrement ARS (rien a dire)."""
+    p = stats.setdefault("paquet", {})
+    m = DATA_SLOT_RE.search(text)
+    if m:
+        stats["paquet"] = {"slot": m.group(1)}
+        return False
+    m = DATA_SRC_RE.search(text)
+    if m:
+        p["src"] = m.group(1)
+        return False
+    m = DATA_DST_RE.search(text)
+    if m:
+        p["dst"], p["ip"] = m.group(1), m.group(2)
+        return False
+    if UNREACHABLE_RE.search(text):
+        p["refus"] = True
+        return False
+    if ARS_RE.search(text):
+        p["ars"] = True
+        return False
+    if p.get("ars") and text.startswith("UTF8 Text:"):
+        try:
+            import dmr_registre
+            dmr_registre.ars_event(stats, p)
+        except Exception as exc:
+            print(f"[decodeurs] ars : {exc!r}")
+        stats["paquet"] = {"slot": p.get("slot")}
+        return True
+    return False
 
 
 def _say(kind, value, stats):

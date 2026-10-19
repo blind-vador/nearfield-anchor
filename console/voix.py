@@ -1,5 +1,6 @@
 """Voix de la console : voix neuronale Microsoft (edge-tts, la meme que les
-annonces) quand elle est choisie et disponible, espeak local sinon.
+annonces) quand elle est choisie et disponible ; voix neuronale locale Piper
+(choisie, ou en secours de Microsoft, 2026-10-18) ; espeak en dernier.
 
 Deux usages distincts :
 - echo de frappe et navigation (say(..., lock=False)) : immediat, sans
@@ -35,6 +36,9 @@ import time
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import espeak_out  # noqa: E402  (espeak -> aplay, jamais de verrou JACK)
+import piper_out  # noqa: E402  (voix neuronales locales, 2026-10-18)
+import phrases_fixes  # noqa: E402  (phrases fixes, cache phrase par phrase)
+import voix_sources  # noqa: E402  (voix par source : console, touches, 2026-10-19)
 import audio_lock  # noqa: E402  (priorites des haut-parleurs)
 import reglages  # noqa: E402
 
@@ -50,8 +54,12 @@ RATE_ECHO = 220
 RATE_REPONSE = 170
 
 ESPEAK = "espeak"
+EDGE_VOICES = ["fr-FR-DeniseNeural", "fr-FR-EloiseNeural", "fr-FR-HenriNeural", "fr-BE-CharlineNeural",
+               "fr-BE-GerardNeural", "fr-CA-ThierryNeural", "fr-CA-AntoineNeural", "fr-CA-JeanNeural",
+               "fr-CA-SylvieNeural", "fr-CH-ArianeNeural", "fr-CH-FabriceNeural"]  # comme speak.EDGE_TTS_VOICES
+PIPER = "piper:"  # voix neuronales locales (lib/piper_out.py) : "piper:siwis"...
 CACHE_DIR = "/home/vador/autopilot/voix_cache"
-CACHE_MAX_BYTES = 100 * 1024 * 1024
+CACHE_MAX_BYTES = 1024 * 1024 * 1024  # toutes les phrases fixes en voix Piper (2026-10-18)
 ECHO_MAX_CHARS = 30      # au-dela : pas un nom de touche, on ne fait pas attendre l'echo
 CACHE_TEXT_MAX = 200     # phrases plus longues : jouees en direct, jamais gardees
 FIRST_AUDIO_SEC = 1.5
@@ -69,7 +77,12 @@ VOLATILE = re.compile(
 _proc = None
 _proc_guard = threading.Lock()
 _generation = 0
-_cloud_down_until = 0.0
+# Etat de Microsoft (2026-10-19) : une seule voix a la fois dans la console.
+# Tant qu'une sonde n'a pas confirme que Microsoft repond, on le tient pour
+# absent : toutes les phrases passent par la voix de secours, jamais un
+# melange "Denise en cache / Piper pour le reste" d'une reponse a l'autre.
+PROBE_SEC = 300
+_cloud_down_until = time.time() + 3600
 _settings = None
 
 
@@ -98,15 +111,43 @@ def _cloud_voice():
 
 
 def _cloud_failed():
+    """Microsoft n'a pas repondu : absent jusqu'a ce que la sonde le retrouve."""
     global _cloud_down_until
-    _cloud_down_until = time.time() + CLOUD_RETRY_SEC
+    _cloud_down_until = time.time() + PROBE_SEC + 60
+
+
+def cloud_ok():
+    return time.time() >= _cloud_down_until
+
+
+def _probe():
+    """Toutes les PROBE_SEC : Microsoft repond-il (voix choisie) ?"""
+    global _cloud_down_until
+    while True:
+        if edge_tts is not None:
+            ok = bool(_synthesize("ok", "fr-FR-DeniseNeural", "+0%"))
+            if ok and not cloud_ok():
+                print("[voix] Microsoft repond : retour aux voix choisies", file=sys.stderr)
+            _cloud_down_until = 0.0 if ok else time.time() + PROBE_SEC + 60
+            voix_sources.noter_microsoft(ok)  # partage avec toutes les veilles
+        time.sleep(PROBE_SEC)
 
 
 # --- Cache -------------------------------------------------------------------
 
 def _cache_path(text, voice, rate):
     digest = hashlib.md5(f"{rate}|{text}".encode("utf-8")).hexdigest()
-    return os.path.join(CACHE_DIR, voice, f"{digest}.wav")
+    return os.path.join(CACHE_DIR, voice.replace(":", "_"), f"{digest}.wav")
+
+
+def is_piper(voice):
+    return bool(voice) and voice.startswith(PIPER)
+
+
+def fallback_voice(source="console"):
+    """Voix Piper qui prend le relais quand Microsoft ne repond pas."""
+    sec = voix_sources.secours(source)
+    return sec["voix"] if sec["moteur"] == "piper" else None
 
 
 def _cached(text, voice, rate):
@@ -168,8 +209,17 @@ def prune_cache():
             pass
 
 
+def _rk(choix):
+    """Cle debit (+ hauteur) d'un choix de voix_sources : "+20%" ou "+20%~-10Hz"."""
+    hauteur = choix.get("hauteur") or voix_sources.NEUTRE_HAUTEUR
+    if choix.get("moteur") != "edge" or hauteur == voix_sources.NEUTRE_HAUTEUR:
+        return choix.get("debit") or voix_sources.NEUTRE_DEBIT
+    return f"{choix.get('debit') or voix_sources.NEUTRE_DEBIT}~{hauteur}"
+
+
 async def _stream(text, voice, rate):
-    async for chunk in edge_tts.Communicate(text, voice, rate=rate).stream():
+    rate, _, pitch = rate.partition("~")
+    async for chunk in edge_tts.Communicate(text, voice, rate=rate, pitch=pitch or "+0Hz").stream():
         if chunk["type"] == "audio":
             yield chunk["data"]
 
@@ -224,16 +274,61 @@ def _prepare(text, voice, rate):
     _jobs.put(job)
 
 
+# Preparation Piper : par lots, voix chargee une fois (lib/piper_out.batch).
+_piper_jobs = queue.Queue()
+PIPER_BATCH = 40
+
+
+def _piper_worker():
+    while True:
+        jobs = [_piper_jobs.get()]
+        time.sleep(0.5)
+        while len(jobs) < PIPER_BATCH:
+            try:
+                jobs.append(_piper_jobs.get_nowait())
+            except queue.Empty:
+                break
+        groups = {}
+        for text, voice, rate in jobs:
+            groups.setdefault((voice, rate), []).append(text)
+        for (voice, rate), texts in groups.items():
+            try:
+                todo = [(t, _cache_path(t, voice, rate)) for t in dict.fromkeys(texts) if not _cached(t, voice, rate)]
+                if todo and piper_out.available():
+                    piper_out.batch(voice, todo, piper_out.length_scale(rate))
+            finally:
+                with _pending_guard:
+                    for t in texts:
+                        _pending.discard((t, voice, rate))
+
+
+threading.Thread(target=_piper_worker, daemon=True).start()
+
+
+def _prepare_piper(text, voice, rate):
+    job = (text, voice, rate)
+    with _pending_guard:
+        if job in _pending:
+            return
+        _pending.add(job)
+    _piper_jobs.put(job)
+
+
 def prewarm(texts):
-    """Prepare en fond les sons d'echo (voix et debit d'echo actuels).
+    """Prepare en fond les sons d'echo (voix et debit des touches du clavier).
     Rend le nombre de sons a preparer."""
-    voice = _cloud_voice()
-    if voice is None:
-        return 0
-    rate = settings().get("debit_echo", "+50%")
-    todo = [t for t in dict.fromkeys(texts) if t and not _cached(t, voice, rate)]
-    for text in todo:
-        _prepare(text, voice, rate)
+    ch = voix_sources.choisir("touches", ms_ok=cloud_ok())
+    todo = []
+    if ch["moteur"] == "edge" and not ch["aleatoire"]:
+        todo = [t for t in dict.fromkeys(texts) if t and not _cached(t, ch["voix"], _rk(ch))]
+        for text in todo:
+            _prepare(text, ch["voix"], _rk(ch))
+        ch = voix_sources.secours("touches")
+    if ch["moteur"] == "piper":
+        missing = [t for t in dict.fromkeys(texts) if t and not _cached(t, ch["voix"], ch["debit"])]
+        for text in missing:
+            _prepare_piper(text, ch["voix"], ch["debit"])
+        todo = todo or missing
     return len(todo)
 
 
@@ -271,8 +366,10 @@ class Cloud:
     relais espeak si rien n'arrive dans FIRST_AUDIO_SEC. keep : chemin ou
     garder le son s'il arrive en entier."""
 
-    def __init__(self, text, voice, rate, espeak_rate, keep=None):
+    def __init__(self, text, voice, rate, espeak_rate, keep=None, keep_backup=None, backup=None):
         self.text, self.voice, self.rate, self.espeak_rate, self.keep = text, voice, rate, espeak_rate, keep
+        self.keep_backup = keep_backup
+        self.backup = backup or (None, rate)   # (voix de secours, son debit)
         self._guard = threading.Lock()
         self._cancel = False
         self._audio = False
@@ -298,7 +395,8 @@ class Cloud:
                 self._audio = True
             return True
         try:
-            complete = asyncio.run(asyncio.wait_for(pump(), timeout=STREAM_TIMEOUT_SEC))
+            complete = asyncio.run(asyncio.wait_for(pump(), timeout=max(STREAM_TIMEOUT_SEC,
+                                                                        espeak_out.duree_max(self.text))))
         except Exception as exc:
             if not self._cancel:
                 print(f"[voix] lecture Microsoft interrompue : {exc!r}", file=sys.stderr)
@@ -323,13 +421,18 @@ class Cloud:
             self._cancel = True
             if self._player.poll() is None:
                 self._player.kill()
-            self._fallback = espeak_out.Speech(self.text, "fr", self.espeak_rate)
+            self._fallback = _local_speech(self.text, self.backup[1], self.espeak_rate, self.keep_backup,
+                                           self.backup[0])
 
     def wait(self, timeout=None):
-        end = None if timeout is None else time.time() + timeout
+        # Sans timeout explicite : borne quand meme (handshake Microsoft peut
+        # rester ouvert jusqu'a STREAM_TIMEOUT_SEC et figer l'appelant).
+        if timeout is None:
+            timeout = espeak_out.duree_max(self.text)
+        end = time.time() + timeout
 
         def left():
-            return None if end is None else max(0.1, end - time.time())
+            return max(0.1, end - time.time())
         self._thread.join(left())
         try:
             self._player.wait(left())
@@ -342,7 +445,13 @@ class Cloud:
             time.sleep(0.05)
         with self._guard:
             fallback = self._fallback
-        return fallback.wait(left()) if fallback is not None else 0
+        if fallback is None:
+            return 0
+        try:
+            return fallback.wait(left())
+        except subprocess.TimeoutExpired:
+            fallback.kill()
+            return None
 
     def kill(self):
         with self._guard:
@@ -377,31 +486,131 @@ def _set_current(p):
     return p
 
 
-def _spawn(text, echo):
-    """Lance la phrase avec le meilleur moteur disponible, sans jamais
-    attendre le reseau pour un echo de touche."""
-    espeak_rate = RATE_ECHO if echo else RATE_REPONSE
-    configured = settings().get("voix") or ESPEAK
-    if "Multilingual" in configured:
-        configured = "fr-FR-DeniseNeural"
-    rate = settings().get("debit_echo" if echo else "debit", "+0%")
-    # Cache SD d'abord, meme si le cloud est marque en panne : sinon un 403
-    # Microsoft (oct. 2026) force espeak alors que 900+ phrases Denise sont
-    # deja en cache.
-    if configured != ESPEAK and edge_tts is not None:
-        path = _cached(text, configured, rate)
+def _local_speech(text, rate, espeak_rate, keep=None, voice=None):
+    """Voix locale : Piper (gardee dans keep si la phrase va au bout), espeak
+    s'il est absent ou que le Pi est trop chaud."""
+    voice = voice or fallback_voice()
+    if voice and piper_out.available():
+        try:
+            return piper_out.Speech(text, voice_id=voice, scale_len=piper_out.length_scale(rate), keep_path=keep)
+        except Exception as exc:
+            print(f"[voix] piper : {exc!r}", file=sys.stderr)
+    return espeak_out.Speech(text, "fr", espeak_rate)
+
+
+def _cacheable(text):
+    return len(text) <= CACHE_TEXT_MAX and not VOLATILE.search(text)
+
+
+def _demande_cached(text, demande):
+    """Ce que la voix demandee (Microsoft, absent en ce moment) a deja en cache."""
+    if not demande:
+        return None
+    rate = _rk(demande)
+    if not demande.get("aleatoire"):
+        return _cached(text, demande["voix"], rate)
+    import random
+    for voice in random.sample(EDGE_VOICES, len(EDGE_VOICES)):
+        path = _cached(text, voice, rate)
         if path:
-            return _set_current(Clip(path))
-    voice = _cloud_voice()
-    if voice is None:
+            return path
+    return None
+
+
+def _piper_spawn(text, voice, rate, echo, espeak_rate, demande=None):
+    """Voix Piper (choisie, ou en secours de Microsoft) : ce que la voix
+    demandee a deja en cache d'abord (2026-10-19 : Denise reste la voix
+    voulue), puis le cache Piper ; un echo pas encore pret = espeak tout de
+    suite et Piper prepare pour la fois suivante ; une reponse = Piper en
+    flux, gardee."""
+    path = _demande_cached(text, demande) or _cached(text, voice, rate)
+    if path:
+        return _set_current(Clip(path))
+    if echo and len(text) <= ECHO_MAX_CHARS:
+        _prepare_piper(text, voice, rate)
         return _set_current(espeak_out.Speech(text, "fr", espeak_rate))
+    # Phrase par phrase (2026-10-18) : les phrases deja pretes (toutes les
+    # phrases fixes de l'interface, preparees d'avance) sont jouees depuis le
+    # cache, seules les autres (reponse de Gemini, valeurs) sont calculees.
+    parts = phrases_fixes.split(text)
+    if len(parts) > 1:
+        return _set_current(Suite(parts, voice, rate, espeak_rate, demande))
+    keep = _cache_path(text, voice, rate) if _cacheable(text) else None
+    return _set_current(_local_speech(text, rate, espeak_rate, keep, voice))
+
+
+class Suite:
+    """Plusieurs phrases a la suite, une voix : cache quand la phrase est
+    prete, Piper en flux sinon (gardee si la phrase est fixe ou courte)."""
+
+    def __init__(self, parts, voice, rate, espeak_rate, demande=None):
+        self.parts, self.voice, self.rate, self.espeak_rate = parts, voice, rate, espeak_rate
+        self.demande = demande
+        self._current = None
+        self._killed = False
+        self._guard = threading.Lock()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self):
+        for part in self.parts:
+            with self._guard:
+                if self._killed:
+                    return
+                path = _demande_cached(part, self.demande) or _cached(part, self.voice, self.rate)
+                if path:
+                    self._current = Clip(path)
+                else:
+                    keep = _cache_path(part, self.voice, self.rate) if (
+                        phrases_fixes.est_fixe(part) or _cacheable(part)) else None
+                    self._current = _local_speech(part, self.rate, self.espeak_rate, keep, self.voice)
+                current = self._current
+            current.wait(espeak_out.duree_max(part, 60))
+
+    def poll(self):
+        return None if self._thread.is_alive() else 0
+
+    def wait(self, timeout=None):
+        self._thread.join(timeout if timeout is not None else espeak_out.duree_max(" ".join(self.parts), 120))
+        if self._thread.is_alive():
+            self.kill()
+            return None
+        return 0
+
+    def kill(self):
+        with self._guard:
+            self._killed = True
+            current = self._current
+        if current is not None:
+            current.kill()
+
+
+def _spawn(text, echo):
+    """Lance la phrase dans la voix de sa source ("touches" pour l'echo du
+    clavier, "console" pour les reponses ; commande "voix") : Microsoft si
+    choisi et present (cache d'abord), sinon la voix de secours pour TOUT
+    (une seule voix a la fois), espeak en dernier. Jamais d'attente reseau
+    pour un echo de touche."""
+    espeak_rate = RATE_ECHO if echo else RATE_REPONSE
+    source = "touches" if echo else "console"
+    ch = voix_sources.choisir(source, ms_ok=cloud_ok())
+    if ch["moteur"] == voix_sources.ESPEAK:
+        return _set_current(espeak_out.Speech(text, "fr", espeak_rate))
+    if ch["moteur"] == "piper":
+        return _piper_spawn(text, ch["voix"], ch["debit"], echo, espeak_rate, ch.get("demande"))
+    voice, rate = ch["voix"], _rk(ch)
+    sec = voix_sources.secours(source)
+    backup, brate = (sec["voix"], sec["debit"]) if sec["moteur"] == "piper" else (None, rate)
+    path = _cached(text, voice, rate)
+    if path:
+        return _set_current(Clip(path))
     if echo and len(text) <= ECHO_MAX_CHARS:
         _prepare(text, voice, rate)  # Microsoft la prochaine fois
-        return _set_current(espeak_out.Speech(text, "fr", espeak_rate))
-    keep = None
-    if len(text) <= CACHE_TEXT_MAX and not VOLATILE.search(text):
-        keep = _cache_path(text, voice, rate)
-    return _set_current(Cloud(text, voice, rate, espeak_rate, keep))
+        path = _cached(text, backup, brate) if backup else None
+        return _set_current(Clip(path) if path else espeak_out.Speech(text, "fr", espeak_rate))
+    keep = _cache_path(text, voice, rate) if _cacheable(text) else None
+    keep_backup = _cache_path(text, backup, brate) if backup and _cacheable(text) else None
+    return _set_current(Cloud(text, voice, rate, espeak_rate, keep, keep_backup, (backup, brate)))
 
 
 def _speak_locked(text, generation):
@@ -413,7 +622,9 @@ def _speak_locked(text, generation):
         # (priorites) : on se tait.
         if generation != _generation or lock.dropped:
             return
-        _spawn(text, echo=False).wait()
+        # Timeout dur : un aplay/mpg123 bloque (carte USB saturee) ne doit
+        # jamais garder le verrou audio ni laisser croire que le clavier est mort.
+        _spawn(text, echo=False).wait(timeout=espeak_out.duree_max(text))
     finally:
         audio_lock.release(lock)
 
@@ -426,7 +637,25 @@ def say(text, lock=False):
     if lock:
         threading.Thread(target=_speak_locked, args=(text, _generation), daemon=True).start()
     else:
-        _spawn(text, echo=True)
+        _tenir(_spawn(text, echo=True))
+
+
+def _tenir(proc):
+    """La console se declare a l'arbitre le temps de la phrase, sans attendre
+    (rang 0) : les sources moins prioritaires passent dessous, attenuees, pendant qu'elle
+    parle, au lieu de parler par-dessus (2026-10-16)."""
+    try:
+        ticket = audio_lock.prendre_sans_attendre("console")
+    except Exception:
+        return
+
+    def fin():
+        try:
+            proc.wait(timeout=espeak_out.duree_max(getattr(proc, "text", "") or "", 120))
+        except Exception:
+            pass
+        audio_lock.release(ticket)
+    threading.Thread(target=fin, daemon=True).start()
 
 
 def say_and_wait(text):
@@ -442,16 +671,32 @@ def say_blocking(text):
     puis un enregistrement sans chevauchement."""
     stop()
     if text:
-        _spawn(text, echo=False).wait(timeout=30)
+        _spawn(text, echo=False).wait(timeout=espeak_out.duree_max(text))
 
 
-def preview(text, voice, rate):
-    """Fait entendre `text` avec une voix et un debit donnes (choix de la
-    voix) : son en cache s'il existe, sinon Microsoft en direct, garde."""
+def preview(text, voice, rate, pitch=None):
+    """Fait entendre `text` avec une voix, un debit et une hauteur (choix de
+    la voix) : son en cache s'il existe, sinon en direct, garde. Voix
+    "aleatoire" : une voix tiree au hasard, comme a l'usage."""
+    import random
     stop()
-    if voice == ESPEAK or edge_tts is None:
+    if voice == voix_sources.ALEATOIRE_PIPER or (voice == voix_sources.ALEATOIRE and not (cloud_ok() and edge_tts)):
+        voice = random.choice(piper_out.announce_voice_ids() or [piper_out.DEFAULT_VOICE])
+    elif voice == voix_sources.ALEATOIRE:
+        voice = random.choice(EDGE_VOICES)
+    if is_piper(voice):
+        voice = piper_out.canonical(voice)
+        path = _cached(text, voice, rate)
+        if path:
+            return _set_current(Clip(path))
+        return _set_current(_local_speech(text, rate, RATE_REPONSE, _cache_path(text, voice, rate), voice))
+    if voice == ESPEAK or edge_tts is None or not cloud_ok():
         return _set_current(espeak_out.Speech(text, "fr", RATE_REPONSE))
-    path = _cached(text, voice, rate)
+    rk = _rk({"moteur": "edge", "debit": rate, "hauteur": pitch or voix_sources.NEUTRE_HAUTEUR})
+    path = _cached(text, voice, rk)
     if path:
         return _set_current(Clip(path))
-    return _set_current(Cloud(text, voice, rate, RATE_REPONSE, _cache_path(text, voice, rate)))
+    return _set_current(Cloud(text, voice, rk, RATE_REPONSE, _cache_path(text, voice, rk)))
+
+
+threading.Thread(target=_probe, daemon=True).start()  # etat de Microsoft, partage (lib/voix_sources.py)

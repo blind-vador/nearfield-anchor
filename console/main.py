@@ -238,6 +238,11 @@ def _match(line):
         return next(c for c in commands.COMMANDS if c.name == name), 100
     if first in ("plante", "plantes"):  # "plante photo" : pas la commande decris
         return next(c for c in commands.COMMANDS if c.name == "plantes"), 100
+    if first in ("piece", "pieces") or (
+        first in ("cherche", "chercher", "recherche", "rechercher")
+        and {"piece", "pieces"} & set(tokens[1:])
+    ):
+        return next(c for c in commands.COMMANDS if c.name == "pièces"), 100
     return matcher.match(line, commands.COMMANDS)
 
 
@@ -264,13 +269,33 @@ def run_command(line, key_source, last_response):
         voix.say(question, lock=True)
         if matcher.normalize(read_line(key_source)) != "oui":
             return dire("commun.annule")
-        def announce(text):
-            out(f"{text}\n")
-            voix.say_and_wait(text)
-        return cmd.handler(announce)
+        if cmd.handler is not None:
+            def announce(text):
+                out(f"{text}\n")
+                voix.say_and_wait(text)
+            return cmd.handler(announce)
+        # Sans handler direct (reapprendre...) : la confirmation est acquise,
+        # on continue vers le traitement par nom ci-dessous.
     import imprimante_cmd
     if imprimante_cmd.handles(cmd.name):
         return imprimante_cmd.run(cmd.name, line, key_source, voix.say, out, read_line)
+    if cmd.name == "calibre plateau":
+        import imprimante_cmd as _ic
+        return _ic.procedure_calibrage()
+    if cmd.name == "reconnecte imprimante":
+        import octoprint as _op
+        from phrases import dire as _dire
+        try:
+            _op.reconnect_imprimante()
+            return _dire("imprimante.connexion_retablie")
+        except Exception:
+            return _dire("imprimante.connexion_bloque")
+    if cmd.name == "filament prêt":
+        import imprimante_print
+        return imprimante_print.filament_pret()
+    if cmd.name == "imprimante chargée":
+        import imprimante_print
+        return imprimante_print.declare_materiau(line)
     if cmd.name == "décris":
         # Tout ce qui n'est pas un simple mot declencheur devient une question
         # posee en plus a l'IA ("photo, la piece est-elle decollee ?").
@@ -302,6 +327,9 @@ def run_command(line, key_source, last_response):
         on = not (words & {"non", "arrete", "arreter", "desactive", "desactiver", "stop", "coupe"})
         reglages_audio.set_auto(on)
         return (dire("console.reglages_automatiques_actives_apres") if on else dire("console.reglages_automatiques_desactives_bilan"))
+    if cmd.name == "réglages son":
+        import reglages_son_cmd
+        return reglages_son_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "réglages audio":
         return bilan.settings_text()
     if cmd.name == "réapprendre":
@@ -311,7 +339,21 @@ def run_command(line, key_source, last_response):
     if cmd.name == "journal":
         return journal.run(key_source, voix.say, out, journaux.from_words(matcher.normalize(line)))
     if cmd.name == "manuel":
-        return manuel.run(key_source, voix.say, out)
+        return manuel.run(key_source, voix.say, out, read_line)
+    if cmd.name == "terrain":
+        return commands.terrain_cmd(line)
+    if cmd.name == "voix locales":
+        import voix_locales_cmd
+        return voix_locales_cmd.run(key_source, voix.say, out)
+    if cmd.name == "telegram":
+        import telegram_cmd
+        return telegram_cmd.run(key_source, voix.say, out, read_line)
+    if cmd.name == "exploration dmr":
+        import dmr_exploration
+        return dmr_exploration.run(key_source, voix.say, out)
+    if cmd.name == "restreint":
+        import restreint_cmd
+        return restreint_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "priorités":
         return priorites.run(key_source, voix.say, out)
     if cmd.name == "conseils":
@@ -363,6 +405,12 @@ def run_command(line, key_source, last_response):
     if cmd.name == "plantes":
         import plantes_cmd
         return plantes_cmd.run(line, key_source, voix.say, out)
+    if cmd.name == "pièces":
+        import pieces_cmd
+        return pieces_cmd.run(line, key_source, voix.say, out, read_line)
+    if cmd.name == "fichiers préparés":
+        import pieces_prets_cmd
+        return pieces_prets_cmd.run(key_source, voix.say, out, read_line)
     if cmd.name == "liste noire":
         import liste_noire_cmd
         return liste_noire_cmd.run(line, key_source, voix.say, out)

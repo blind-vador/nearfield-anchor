@@ -291,6 +291,11 @@ def generate(log=print):
                            "Fiche de style : " + " ".join(fiche.split()),
                            "Ecrit par lib/personnalite.py (Gemini) ; la version neutre est phrases/" + lang + ".ini"])
     save_settings(resume=resume, genere_le=time.time())
+    try:  # nouvelles phrases du jour : leurs voix se preparent tout de suite (2026-10-19)
+        import voix_preparation
+        voix_preparation.kick()
+    except Exception as exc:
+        log(f"[personnalite] preparation des voix non relancee : {exc!r}")
     return {"resume": resume, "reussies": len(new), "gardees": kept + len(base) - len(todo)}, None
 
 

@@ -7,6 +7,8 @@ import subprocess
 
 import audio_lock
 import espeak_out
+import piper_out
+import voix_sources
 import tempfile
 import threading
 
@@ -16,6 +18,7 @@ import edge_langue
 
 edge_langue.force_language()  # requete en francais (edge-tts l'ecrit en anglais)
 
+import sound_player
 from sound_player import play_sound_effect
 from sound_paths import TTS_CACHE_DIR
 from phrases import dire
@@ -94,31 +97,19 @@ def journal_notice():
         audio_lock.release(lock)
 
 
-def speak(text, voice="fr"):
-    """Repli local garanti (espeak) -- zero dependance reseau, toujours
-    disponible. Utilisable directement pour un texte sans son
-    d'accompagnement, et employe en secours automatique par
-    speak_with_lead_sound() si la synthese cloud echoue ou n'est pas prete
-    a temps."""
-    print(text)
-    try:
-        # -b 1 force l'interpretation UTF-8 en entree -- sans ca, espeak
-        # (le vieux binaire, pas espeak-ng) devine l'encodage et se trompe
-        # sur les caracteres accentues (ex: "inondee" -> "inondii",
-        # "troncon" -> lit le c sans le son du cedille).
-        if audio_lock.dropped():
-            return  # source qui a abandonne (priorites) : on se tait
-        espeak_out.say(text, voice, timeout=30, scale=audio_lock.scale)
-    except Exception as exc:
-        print(f"[espeak indisponible: {exc}]")
+def speak(text, voice="fr", source=None):
+    """Annonce sans son d'accompagnement, dans la voix de la source (commande
+    "voix", lib/voix_sources.py) : Microsoft si choisi et present, sinon la
+    voix de secours (Piper), espeak en dernier."""
+    _annoncer(None, text, label="speak", source=source)
 
 
-async def _do_synthesize(text, voice, path):
-    communicate = edge_tts.Communicate(text, voice)
+async def _do_synthesize(text, voice, path, rate="+0%", pitch="+0Hz"):
+    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
     await asyncio.wait_for(communicate.save(path), timeout=EDGE_TTS_TIMEOUT_SEC)
 
 
-def _synthesize_edge_tts(text, result_holder, candidate_voices=None):
+def _synthesize_edge_tts(text, result_holder, candidate_voices=None, rate="+0%", pitch="+0Hz"):
     """Tourne dans un thread separe -- genere l'audio via le service cloud
     de Microsoft Edge (voix tiree au hasard parmi candidate_voices, ou
     EDGE_TTS_VOICES en entier par defaut) et stocke (chemin, voix) dans
@@ -128,13 +119,15 @@ def _synthesize_edge_tts(text, result_holder, candidate_voices=None):
         voice = random.choice(candidate_voices or EDGE_TTS_VOICES)
         fd, path = tempfile.mkstemp(suffix=".mp3", prefix="edge_tts_")
         os.close(fd)
-        asyncio.run(_do_synthesize(text, voice, path))
+        asyncio.run(_do_synthesize(text, voice, path, rate, pitch))
         if os.path.getsize(path) > 0:
             result_holder[0] = (path, voice)
+            voix_sources.noter_microsoft(True)
         else:
             os.remove(path)
     except Exception as exc:
-        print(f"[speak] synthese cloud (edge-tts) echouee : {exc}")
+        print(f"[speak] synthese cloud (edge-tts) echouee : {str(exc)[:120]}")
+        voix_sources.noter_microsoft(False)
         if path and os.path.exists(path):
             try:
                 os.remove(path)
@@ -180,9 +173,68 @@ def _cached_repetitive_sample(text):
         # (EIO, 2026-09-29 -- nas-watch plantait en annoncant justement la
         # perte du disque). Pas de cache = synthese normale, jamais de plantage.
         return None
+    samples = [f for f in samples if not f.startswith(PIPER_PREFIX)]  # Piper : seulement en secours
     if not samples:
         return None
     return os.path.join(cache_dir, random.choice(samples))
+
+
+# Cache Piper (2026-10-18) : meme dossier que les echantillons Microsoft,
+# fichiers "piper-<voix>.wav". Joues seulement si Microsoft ne repond pas et
+# n'a rien en cache ; fabriques une fois (a la volee en secours, ou a
+# l'avance par watchers/voix_preparation.py), puis toujours rejoues.
+PIPER_PREFIX = "piper-"
+TEXT_FILE = "texte.txt"  # le texte exact de la phrase, pour la preparation a l'avance
+
+
+def remember_repetitive(text):
+    """Note le texte exact dans son dossier de cache (preparation a l'avance)."""
+    path = os.path.join(_repetitive_cache_dir(text), TEXT_FILE)
+    if os.path.exists(path):
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path, "w", encoding="utf-8") as f:
+            f.write(text)
+    except OSError:
+        pass
+
+
+def _echantillon(text, choix):
+    """Echantillon en cache pour ce choix de voix : la voix fixee, ou (voix
+    aleatoire) n'importe quel echantillon du meme moteur et du meme debit."""
+    folder = _repetitive_cache_dir(text)
+    if not choix.get("aleatoire"):
+        path = voix_sources.fichier_cache(folder, choix)
+        return path if os.path.exists(path) else None
+    suf = voix_sources.suffixe(choix)
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return None
+    piper = choix["moteur"] == "piper"
+    ext = ".wav" if piper else ".mp3"
+    pool = [n for n in names if n.startswith(PIPER_PREFIX) == piper and n.endswith(suf + ext)
+            and (suf or "@" not in n)]
+    return os.path.join(folder, random.choice(pool)) if pool else None
+
+
+def piper_sample(text, choix=None, make=True):
+    """Echantillon Piper de la phrase pour ce choix (voix de secours de la
+    source par defaut) ; s'il n'existe pas et make=True, il est fait maintenant."""
+    choix = choix or voix_sources.secours(voix_sources.source_pour())
+    if choix["moteur"] != "piper":
+        return None
+    found = _echantillon(text, choix)
+    if found or not make:
+        return found
+    path = voix_sources.fichier_cache(_repetitive_cache_dir(text), choix)
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+    except OSError:
+        return None
+    ok = piper_out.to_file(text, path, voice_id=choix["voix"], scale_len=piper_out.length_scale(choix["debit"]))
+    return path if ok else None
 
 
 def _missing_voices_for(text):
@@ -194,7 +246,8 @@ def _missing_voices_for(text):
     aucun cache n'existe encore (tirage normal parmi toutes les voix)."""
     cache_dir = _repetitive_cache_dir(text)
     try:
-        existing = {os.path.splitext(f)[0] for f in os.listdir(cache_dir) if f.endswith(".mp3")}
+        existing = {os.path.splitext(f)[0] for f in os.listdir(cache_dir)
+                    if f.endswith(".mp3") and not f.startswith(PIPER_PREFIX)}
     except OSError:
         # Cache sur le NAS : dossier absent, mais aussi disque decroche
         # (EIO, 2026-09-29 -- nas-watch plantait en annoncant justement la
@@ -217,82 +270,117 @@ def _save_repetitive_sample(text, voice, src_path):
         print(f"[speak] echec sauvegarde cache repetitif : {exc}")
 
 
-def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=False, reverb=False):
-    """Diffuse sound_path puis annonce text -- lance la synthese cloud
-    (edge-tts) EN PARALLELE du son d'accompagnement plutot qu'apres coup :
-    au moment ou l'appelant declenche le son, il sait deja ce qu'il va dire
-    (idee de l'utilisateur en session 2026-08-30), donc le temps reseau se
-    cache derriere la duree du son -- zero latence percue dans le cas
-    courant (mesure en session : ~0.5s de synthese, largement sous la duree
-    de n'importe quel son d'accompagnement de ce projet). Si la synthese
-    n'est pas prete a temps ou echoue (reseau lent/indisponible, service
-    cloud bloque...), bascule automatiquement sur speak() (espeak local) --
-    jamais de silence total meme si le cloud est hors service.
+def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=False, reverb=False,
+                          source=None):
+    """Diffuse sound_path puis annonce text, dans la voix de la source (commande
+    "voix" : voix principale, debit, hauteur, voix de secours ; lib/voix_sources.py).
 
-    repetitive=True (2026-08-31, demande explicite) : a reserver aux
-    textes FIXES annonces souvent (nom de bande radio, "dongle
-    indisponible"...) -- PAS aux textes qui changent a chaque fois
-    (annonces SNCF, survols, meteo/crue avec leurs valeurs, ACARS
-    traduits). Si un echantillon existe deja pour chacune des voix
-    edge-tts pour ce texte exact, ne fait AUCUN appel reseau : pioche au
-    hasard dans le cache (variete vocale preservee). Sinon, appelle
-    l'API comme d'habitude (en priorisant les voix pas encore
-    echantillonnees pour ce texte) et persiste le resultat dans le cache
-    au lieu de le jeter.
+    Voix Microsoft : la synthese est lancee EN PARALLELE du son
+    d'accompagnement (idee de l'utilisateur, 2026-08-30) : le temps reseau
+    se cache derriere le son. Microsoft absent (etat partage, pas d'attente
+    inutile) ou en echec : voix de secours Piper, espeak en dernier.
 
-    A utiliser a la place de l'enchainement habituel
-    play_sound_effect(son); speak(texte) partout ou ce couple existe deja."""
-    if repetitive:
-        cached_path = _cached_repetitive_sample(text)
-        if cached_path:
-            print(text)
+    repetitive=True : textes FIXES annonces souvent (nom de bande...) : garde
+    en cache par voix (et par debit/hauteur), rejoue sans aucun calcul."""
+    _annoncer(sound_path, text, sound_timeout_sec, label, repetitive, reverb, source)
+
+
+def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=False, reverb=False, source=None):
+    if audio_lock.dropped():
+        print(f"(muet, priorites) {text}")
+        return  # source qui a cede sa place : ni son ni voix, pas de synthese inutile
+    source = source or voix_sources.source_pour()
+    choix = voix_sources.choisir(source)
+    lead_done = [False]
+
+    def lead():
+        if sound_path and not lead_done[0]:
+            lead_done[0] = True
             play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label, reverb=reverb)
-            play_sound_effect(cached_path, timeout_sec=_speech_timeout(cached_path), label=label, reverb=reverb)
+
+    def play(path):
+        print(text)
+        voix = lambda: play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb)  # noqa: E731
+        if sound_path and not lead_done[0]:
+            # Voix prete d'avance (cache) : elle part juste apres la derniere note
+            # du jingle, sur sa traine, au lieu d'attendre la fin du fichier (2026-10-19).
+            lead_done[0] = True
+            sound_player.play_lead_then(sound_path, voix, label=label, reverb=reverb, timeout_sec=sound_timeout_sec)
+        else:
+            voix()
+
+    if repetitive:
+        remember_repetitive(text)
+        # Microsoft absent : ce que la voix demandee a deja dit passe avant le secours.
+        cached = (_echantillon(text, choix["demande"]) if choix.get("demande") else None) or _echantillon(text, choix)
+        if cached:
+            play(cached)
             return
-        candidate_voices = _missing_voices_for(text)
-    else:
-        candidate_voices = None
-
-    result_holder = [None]
-    thread = threading.Thread(target=_synthesize_edge_tts, args=(text, result_holder, candidate_voices), daemon=True)
-    thread.start()
-
-    play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label, reverb=reverb)
-
-    thread.join(EDGE_TTS_EXTRA_WAIT_SEC)
-    result = result_holder[0]
-    print(text)
-    if result:
-        audio_path, voice = result
-        if repetitive:
-            _save_repetitive_sample(text, voice, audio_path)
-        try:
-            play_sound_effect(audio_path, timeout_sec=_speech_timeout(audio_path), label=label, reverb=reverb)
-        finally:
+    if choix["moteur"] == "edge":
+        holder = [None]
+        thread = threading.Thread(target=_synthesize_edge_tts, daemon=True,
+                                  args=(text, holder, [choix["voix"]], choix["debit"], choix["hauteur"]))
+        thread.start()
+        lead()
+        thread.join(EDGE_TTS_EXTRA_WAIT_SEC if sound_path else EDGE_TTS_TIMEOUT_SEC + 2)
+        if holder[0]:
+            audio_path, _ = holder[0]
             try:
-                os.remove(audio_path)
-            except OSError:
-                pass
-    else:
-        # Cloud down / timeout : dernier recours premium = cache partiel
-        # (ex. phrase repetitive incomplete avant le 403 Microsoft).
+                if repetitive:
+                    dest = voix_sources.fichier_cache(_repetitive_cache_dir(text), choix)
+                    try:
+                        os.makedirs(os.path.dirname(dest), exist_ok=True)
+                        if not os.path.exists(dest):
+                            shutil.copyfile(audio_path, dest)
+                    except OSError as exc:
+                        print(f"[speak] echec sauvegarde cache repetitif : {exc}")
+                play(audio_path)
+            finally:
+                try:
+                    os.remove(audio_path)
+                except OSError:
+                    pass
+            return
+        choix = voix_sources.secours(source)  # Microsoft n'a pas repondu a temps
         if repetitive:
-            cached_path = _cached_repetitive_sample(text)
-            if cached_path:
-                play_sound_effect(cached_path, timeout_sec=_speech_timeout(cached_path),
-                                  label=label, reverb=reverb)
+            cached = _echantillon(text, choix)
+            if cached:
+                play(cached)
                 return
-        _espeak_recorded(text, label, reverb=reverb)
+    lead()
+    if repetitive and choix["moteur"] == "piper":
+        path = piper_sample(text, choix)
+        if path:
+            play(path)
+            return
+    print(text)
+    _espeak_recorded(text, label, reverb=reverb, choix=choix)
 
 
-def _espeak_recorded(text, label, reverb=False):
-    """Repli espeak en passant par un fichier : la voix est jouee ET copiee
-    dans l'enregistrement du journal en cours (sinon la prise n'a que le
-    carillon, 2026-10-03)."""
+def _espeak_recorded(text, label, reverb=False, choix=None):
+    """Voix locale : Piper (voix et debit de la source, en flux, copiee au
+    journal en cours, 2026-10-18), puis espeak en passant par un fichier :
+    la voix est jouee ET copiee dans l'enregistrement du journal en cours
+    (sinon la prise n'a que le carillon, 2026-10-03)."""
+    choix = choix or voix_sources.secours(voix_sources.source_pour())
     fd, path = tempfile.mkstemp(suffix=".wav", prefix="espeak_")
     os.close(fd)
+    session = sound_player.get_recording_session()
+    if choix["moteur"] == "piper" and not audio_lock.dropped() and piper_out.say(
+            text, scale=audio_lock.scale, record_path=path, voice_id=choix["voix"],
+            scale_len=piper_out.length_scale(choix["debit"])):
+        try:
+            if session is not None:
+                session.add_audio_file(path)
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        return
     try:
-        subprocess.run(["espeak", "-v", "fr", "-b", "1", "-w", path, text], capture_output=True, timeout=30)
+        subprocess.run(["espeak", "-v", "fr", "-b", "1", "-w", path, text], capture_output=True,
+                       timeout=espeak_out.duree_max(text))
         if os.path.getsize(path) > 0:
             play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb)
             return
@@ -304,53 +392,13 @@ def _espeak_recorded(text, label, reverb=False):
         except OSError:
             pass
     try:
-        espeak_out.say(text, "fr", timeout=30, scale=audio_lock.scale)
+        espeak_out.say(text, "fr", scale=audio_lock.scale)
     except Exception as exc:
         print(f"[espeak indisponible: {exc}]")
 
 
-def speak_cloud(text, repetitive=False):
-    """Comme speak_with_lead_sound(), sans son d'accompagnement -- pour les
-    watchers sans chime dedie (nas_watch.py, 2026-08-31). Sans son a jouer
-    en parallele pour masquer la latence reseau, un cache-miss expose donc
-    le delai complet de la synthese cloud (jusqu'a EDGE_TTS_TIMEOUT_SEC)
-    avant que quoi que ce soit ne se fasse entendre. Acceptable pour ce
-    genre d'annonce de fond (etat des disques...) car transitoire : une
-    fois le cache repetitif rempli pour une phrase donnee, plus aucun
-    appel reseau -- NE PAS utiliser pour une alerte ou chaque milliseconde
-    compte des le premier appel."""
-    if repetitive:
-        cached_path = _cached_repetitive_sample(text)
-        if cached_path:
-            print(text)
-            play_sound_effect(cached_path, timeout_sec=_speech_timeout(cached_path), label="speak")
-            return
-        candidate_voices = _missing_voices_for(text)
-    else:
-        candidate_voices = None
-
-    result_holder = [None]
-    _synthesize_edge_tts(text, result_holder, candidate_voices)
-    result = result_holder[0]
-    print(text)
-    if result:
-        audio_path, voice = result
-        if repetitive:
-            _save_repetitive_sample(text, voice, audio_path)
-        try:
-            play_sound_effect(audio_path, timeout_sec=_speech_timeout(audio_path), label="speak")
-        finally:
-            try:
-                os.remove(audio_path)
-            except OSError:
-                pass
-    else:
-        if repetitive:
-            cached_path = _cached_repetitive_sample(text)
-            if cached_path:
-                play_sound_effect(cached_path, timeout_sec=_speech_timeout(cached_path), label="speak")
-                return
-        try:
-            espeak_out.say(text, "fr", timeout=30, scale=audio_lock.scale)
-        except Exception as exc:
-            print(f"[espeak indisponible: {exc}]")
+def speak_cloud(text, repetitive=False, source=None):
+    """Comme speak_with_lead_sound(), sans son d'accompagnement (veilles sans
+    carillon dedie). Microsoft present : latence reseau entiere au premier
+    passage d'une phrase, puis cache si repetitive."""
+    _annoncer(None, text, label="speak", repetitive=repetitive, source=source)

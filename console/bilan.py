@@ -34,8 +34,27 @@ STABILITE = {"stable": 1.0, "coupures": 0.5, "hache": 0.0}
 FIN = {"correcte": 1.0, "longue": 0.6, "coupee": 0.0}
 
 
+def _quality_degrees(d):
+    """Qualite d'une note en degres (notation par onglets, 2026-10-14) : les
+    nuances comptent (un souffle leger ne vaut pas un souffle fort)."""
+    parts = []
+    if d.get("lisibilite"):
+        parts.append((d["lisibilite"] - 1) / 4)
+    parts.append(1 - d.get("souffle", 0) / 4)
+    parts.append(1 - sum(d.get(c, 0) for c, _ in notation.INTERFERENCES) / 8)
+    parts.append(1 - 0.6 * max(d.get(c, 0) for c in ("etouffe", "metallique", "sature")) / 4)
+    parts.append(1 - d.get("stabilite", 0) / 4)
+    parts.append(1 - d.get("debut", 0) / 4)
+    fin = d.get("fin", 0)
+    parts.append(1 + fin / 2 if fin < 0 else 1 - 0.2 * fin)
+    parts.append(1 - abs(d.get("volume", 0)) / 4)
+    return max(0.0, sum(parts) / len(parts))
+
+
 def quality(note):
     """Qualite entendue, de 0 (inaudible) a 1 (parfait)."""
+    if note.get("degres"):
+        return _quality_degrees(note["degres"])
     r = note.get("reponses", {})
     parts = []
     if isinstance(r.get("lisibilite"), int):
@@ -160,6 +179,37 @@ def suggestions(band_notes, settings):
     return changes, reasons
 
 
+MIN_NOTES_DIGITAL = 4   # voix numerique : seulement l'attente de fin et le volume
+
+
+def suggestions_digital(notes, settings):
+    """Voix numerique (DMR...) : pas de filtres, mais l'attente avant de clore
+    et le volume propres au numerique (2026-10-14 : les fins coupees du DMR
+    n'etaient jamais corrigees, la voix numerique etant ecartee du bilan)."""
+    total = sum(_weight(n) for n in notes)
+
+    def share(test):
+        return sum(_weight(n) for n in notes if test(n["reponses"])) / total
+
+    changes, reasons = {}, []
+    current = settings.get("attente_fin_numerique_s") or 10.0
+    if share(lambda r: r.get("fin") == "coupee") >= SHARE:
+        changes["attente_fin_numerique_s"] = _clamp(current + 3.0, 4.0, 30.0)
+        reasons.append(dire("bilan.fins_coupees_trop_tot"))
+    elif share(lambda r: r.get("fin") == "longue") >= 0.5:
+        changes["attente_fin_numerique_s"] = _clamp(current - 2.0, 4.0, 30.0)
+        reasons.append(dire("bilan.fins_qui_trainent"))
+    gain = settings.get("gain_numerique_db", 0.0)
+    if share(lambda r: r.get("son") == "sature" or r.get("volume") == "fort") >= SHARE:
+        changes["gain_numerique_db"] = _clamp(gain - 3.0, -12.0, 12.0)
+        reasons.append(dire("bilan.son_sature_trop_fort"))
+    elif share(lambda r: r.get("volume") == "faible") >= SHARE:
+        changes["gain_numerique_db"] = _clamp(gain + 3.0, -12.0, 12.0)
+        reasons.append(dire("bilan.volume_trop_faible"))
+    changes = {k: v for k, v in changes.items() if v != settings.get(k)}
+    return changes, reasons
+
+
 def analyse():
     """Par bande : {libelle, notes, depuis, qualite, changements, raisons, regression}."""
     out = {}
@@ -195,6 +245,11 @@ def analyse():
                     print(f"[bilan] captures non notees : {exc!r}")
             if len(after) >= MIN_NOTES and not entry["regression"] and not entry["a_noter"]:
                 entry["changements"], entry["raisons"] = suggestions(after, settings)
+        digital_after = [n for n in all_band if _note_digital(n) and _capture_time(n) > since]
+        if len(digital_after) >= MIN_NOTES_DIGITAL:
+            changes, reasons = suggestions_digital(digital_after, settings)
+            entry["changements"].update(changes)
+            entry["raisons"] += [r for r in reasons if r not in entry["raisons"]]
         out[band] = entry
     return out
 
@@ -215,7 +270,7 @@ def summary():
                   bandes=nombre(len(data), "bande"))]
     for band, e in sorted(data.items(), key=lambda kv: -kv[1]["notes"]):
         line = dire("bilan.qualite_bande", bande=e['libelle'], qualite=round(100 * e['qualite']))
-        if e.get("numerique"):
+        if e.get("numerique") and not e["changements"]:
             line += dire("bilan.numerique_suivi")
         elif e["a_noter"]:
             line += dire("bilan.encore_a_noter", prises=nombre(e["a_noter"], "prise", "prises"))

@@ -21,11 +21,12 @@ import compagnon_resultats
 import lora_messages
 import pont_protocole as proto
 
-NOTIFY_EVERY_SEC = 600
+NOTIFY_EVERY_SEC = 15  # re-avis rapide si le Mac a rate le claim SMB
+FORCE_NOTIFY_SPOOL = "/tmp/compagnon_force_notify"  # une ligne = job id (IPC console -> veille)
 TICK_SEC = 2
 # Resultats : relus aussitot sur l'avis "fini" de la liaison directe ; sinon
 # (mode differe par le NAS) toutes les 12 h, pour ne pas solliciter les disques.
-POLL_SEC = 12 * 3600
+POLL_SEC = 8  # appliquer les resultats decrire_images sans attendre 12 h
 READ_TIMEOUT_SEC = 120
 
 _lock = threading.Lock()
@@ -59,6 +60,7 @@ class _Handler(socketserver.StreamRequestHandler):
             compagnon.update_card(cid, nom=hello.get("nom", card.get("nom")), capacites=hello.get("capacites", []),
                                   adresse_materielle=hello.get("adresse_materielle") or card.get("adresse_materielle"),
                                   ips=hello.get("ips") or [self.client_address[0]], vu=time.time())
+            compagnon.note_state(cid, hello.get("etat"))
             with _lock:
                 old = _channels.pop(cid, None)
                 _channels[cid] = channel
@@ -80,12 +82,17 @@ class _Handler(socketserver.StreamRequestHandler):
                 kind = msg.get("type")
                 if kind == "battement":
                     compagnon.update_card(cid, vu=time.time(), capacites=msg.get("capacites", []))
+                    compagnon.note_state(cid, msg.get("etat"))
                 elif kind == "pris":
                     print(f"[compagnon] travail {msg.get('travail')} pris par {card.get('nom')}")
                 elif kind == "fini":
                     _results_ready.set()
                 if not compagnon.trusted().get(cid):
                     break  # pont retire pendant la connexion
+        except TimeoutError:
+            # Plus aucun battement depuis READ_TIMEOUT_SEC : la machine dort (veille
+            # demandee sur le Mac, 2026-10-14) ; elle se reconnecte en se reveillant.
+            print(f"[compagnon] {cid} silencieuse depuis {READ_TIMEOUT_SEC} s : en veille probablement")
         except (OSError, ValueError) as exc:
             print(f"[compagnon] liaison {cid} : {exc!r}")
         finally:
@@ -95,6 +102,77 @@ class _Handler(socketserver.StreamRequestHandler):
                     _presence.pop(cid, None)
                     _save_presence()
             channel.close()
+
+
+def force_notify(job_id):
+    """Re-envoie l'avis TCP tout de suite (apres depot d'un travail images).
+
+    Appelable depuis la console (autre process) : ecrit un spool lu par la
+    veille meteo qui detient les canaux TCP. Si on est deja dans la veille,
+    notifie directement.
+    """
+    _notified.pop(job_id, None)
+    ok = False
+    with _lock:
+        has_channels = bool(_channels)
+    if has_channels:
+        job = next((j for j in compagnon.open_jobs() if j["id"] == job_id), None)
+        kind = (job or {}).get("type")
+        targets = [c for c in compagnon.companions()
+                   if c.get("presente") and (not kind or kind in (c.get("capacites") or []))]
+        for c in targets:
+            if _notify(c["id"], job_id):
+                print(f"[compagnon] avis force {job_id} -> {c.get('nom')}")
+                ok = True
+    # Spool toujours : la veille relayera meme si on a deja notifie (idempotent)
+    try:
+        with open(FORCE_NOTIFY_SPOOL, "a") as f:
+            f.write(f"{job_id}\n")
+    except OSError as exc:
+        print(f"[compagnon] spool force_notify : {exc!r}")
+    if not ok and not has_channels:
+        print(f"[compagnon] avis force {job_id} : delegate a la veille (spool)")
+    elif not ok:
+        print(f"[compagnon] avis force {job_id} : aucune machine presente")
+    return ok
+
+
+def _drain_force_notify():
+    """Relais IPC : console -> veille (canaux TCP)."""
+    try:
+        with open(FORCE_NOTIFY_SPOOL) as f:
+            lines = [ln.strip() for ln in f if ln.strip()]
+    except FileNotFoundError:
+        return
+    except OSError as exc:
+        print(f"[compagnon] lecture spool : {exc!r}")
+        return
+    try:
+        os.remove(FORCE_NOTIFY_SPOOL)
+    except OSError:
+        pass
+    for job_id in dict.fromkeys(lines):  # dedupe, garde l'ordre
+        _notified.pop(job_id, None)
+        job = next((j for j in compagnon.open_jobs() if j["id"] == job_id), None)
+        if not job:
+            continue
+        kind = job.get("type")
+        targets = [c for c in compagnon.companions()
+                   if c.get("presente") and (not kind or kind in (c.get("capacites") or []))]
+        sent = False
+        for c in targets:
+            if _notify(c["id"], job_id):
+                print(f"[compagnon] avis spool {job_id} -> {c.get('nom')}")
+                sent = True
+        if not sent:
+            # Pas de TCP : tente reveil WoL
+            able = [c for c in compagnon.companions() if kind in c.get("capacites", [])]
+            for c in able:
+                if proto.wake_on_lan(c.get("adresse_materielle"), c.get("ips", [])):
+                    print(f"[compagnon] reveil (spool) de {c['nom']} pour {job_id}")
+                    sent = True
+            if not sent:
+                print(f"[compagnon] spool {job_id} : personne a prevenir")
 
 
 def _notify(cid, job_id):
@@ -159,6 +237,7 @@ def run():
     last_poll = 0
     while True:
         try:
+            _drain_force_notify()
             _dispatch()
             if _results_ready.is_set() or time.time() - last_poll > POLL_SEC:
                 _results_ready.clear()

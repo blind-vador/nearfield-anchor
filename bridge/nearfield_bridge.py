@@ -55,7 +55,7 @@ SHARE_GUESSES = ["/Volumes/server/server/nearfield-anchor-bridge",  # Mac
                  "/mnt/server/server/nearfield-anchor-bridge",      # Linux
                  "/media/nas/nd1/server/nearfield-anchor-bridge"]   # le Pi lui-meme (essais)
 BEAT_SEC = 30
-SCAN_SEC = 300
+SCAN_SEC = 30  # etait 300 : decrire_images restait bloque
 # Sans liaison directe : fonctionnement en DIFFERE par le NAS (decision
 # utilisateur 2026-10-02 : pas d'ecritures ni de lectures frequentes, les
 # disques s'useraient) -> travaux releves et signe de vie depose toutes les 12 h.
@@ -157,7 +157,51 @@ def capabilities():
             caps.append("meteor")
     except ImportError:
         pass
+    try:
+        import decrire_images
+        if decrire_images.available():
+            caps.append("decrire_images")
+    except Exception:
+        pass
+    try:  # sons Piper prepares d'avance pour le Pi (2026-10-19)
+        import voix_piper
+        if voix_piper.available():
+            caps.append("voix")
+    except Exception:
+        pass
     return caps
+
+
+_last_locked = {}
+
+
+def session_state():
+    """Etat de la session macOS, envoye au Pi a chaque battement (2026-10-14) :
+    ecran verrouille ou non, et depuis combien de secondes personne n'a touche
+    clavier ni souris. Lu par ioreg : le Python des outils de developpement n'a
+    pas PyObjC. Un changement de verrouillage est note au journal du pont."""
+    import plistlib
+    state = {}
+    try:
+        out = subprocess.run(["ioreg", "-n", "Root", "-d1", "-a"], capture_output=True, timeout=5).stdout
+        users = plistlib.loads(out).get("IOConsoleUsers", [])
+        me = next((u for u in users if u.get("kCGSSessionOnConsoleKey")), None)
+        state["session_ouverte"] = me is not None
+        state["verrouille"] = bool(me and me.get("CGSSessionScreenIsLocked"))
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(["ioreg", "-c", "IOHIDSystem", "-d", "4"], capture_output=True, text=True, timeout=5).stdout
+        m = re.search(r'"HIDIdleTime" = (\d+)', out)
+        if m:
+            state["inactif_s"] = int(m.group(1)) // 1_000_000_000
+    except Exception:
+        pass
+    if "verrouille" in state and _last_locked.get("v") != state["verrouille"]:
+        if "v" in _last_locked:
+            log("ecran %s" % ("verrouille" if state["verrouille"] else "deverrouille"))
+        _last_locked["v"] = state["verrouille"]
+    return state
 
 
 def network_identity():
@@ -348,14 +392,16 @@ def forget(pi):
 
 # Deux files : les rafales LoRa (petites, a annoncer tout de suite) ne doivent
 # pas attendre derriere un passage Meteor de plusieurs minutes.
-FAST = ("lora",)
+FAST = ("lora", "decrire_images")
 _queues = {"rapide": queue.Queue(), "lourd": queue.Queue()}
 _links = {}  # pi -> Link
 
 
 def _wake_workers(pi):
+    # Au plus 2 avis en file : un decrire_images ne doit pas attendre le
+    # balayage NAS (5 min) si le premier claim a rate (retard SMB).
     for q in _queues.values():
-        if q.empty():  # inutile d'empiler les reveils pendant un long calcul
+        if q.qsize() < 2:
             q.put(pi)
 
 
@@ -426,7 +472,8 @@ class Link(threading.Thread):
         channel = proto.Channel(sock, key())
         mac, ips = network_identity()
         hello = {"type": "bonjour", "compagnon": conf["id"], "pi": self.pi, "nom": conf["nom"],
-                 "capacites": capabilities(), "adresse_materielle": mac, "ips": ips, "nonce": uuid.uuid4().hex}
+                 "capacites": capabilities(), "adresse_materielle": mac, "ips": ips, "nonce": uuid.uuid4().hex,
+                 "etat": session_state()}
         channel.send(hello)
         welcome = channel.receive(card["cle"])
         if not welcome or welcome.get("type") != "bienvenue" or welcome.get("reponse_a") != hello["nonce"]:
@@ -464,7 +511,7 @@ class Link(threading.Thread):
                 channel = self.channel
             if channel is None:
                 return
-            if not self.send({"type": "battement", "capacites": capabilities()}):
+            if not self.send({"type": "battement", "capacites": capabilities(), "etat": session_state()}):
                 return
             time.sleep(BEAT_SEC)
 
@@ -481,6 +528,21 @@ class Link(threading.Thread):
                 update_stats(self.pi, connecte=False, erreur="Pi injoignable (%s)" % exc.__class__.__name__)
             self.stop.wait(delay)
             delay = min(delay * 2, RECONNECT_SEC[1])
+
+
+def _pending_for(share, fast):
+    """True s'il reste un travail.json compatible avec cette file."""
+    folder = os.path.join(share, "travaux")
+    try:
+        names = os.listdir(folder)
+    except OSError:
+        return False
+    caps = capabilities()
+    for job_id in names:
+        job = _read(os.path.join(folder, job_id, "travail.json"))
+        if job and job.get("type") in caps and (job.get("type") in FAST) == fast:
+            return True
+    return False
 
 
 def _claim(share, fast):
@@ -549,6 +611,12 @@ def _process(job, folder):
     if job.get("type") == "meteor":
         import meteor
         return meteor.process(folder, job["params"], BIN_DIR, os.path.join(HOME, "calcul"))
+    if job.get("type") == "decrire_images":
+        import decrire_images
+        return decrire_images.process_via_venv(folder, job.get("params") or {})
+    if job.get("type") == "voix":
+        import voix_piper
+        return voix_piper.process(folder, job.get("params") or {})
     return "echec", [], "cette machine ne sait pas faire « %s »" % job.get("type")
 
 
@@ -558,10 +626,17 @@ def _work(pi, fast):
     if not share:
         update_stats(pi, erreur="disque du NAS absent") if card else None
         return
-    while True:
+    claimed = None
+    for attempt in range(40):  # jusqu'a ~20 s si un travail de CETTE file est attendu
         claimed = _claim(share, fast)
-        if not claimed:
-            return
+        if claimed:
+            break
+        if not _pending_for(share, fast):
+            break  # l'autre file (ex. lourd pendant un decrire_images) sort tout de suite
+        if attempt in (0, 9, 19, 39):
+            log("%s : claim %s en attente SMB (essai %d)" % (pi, "rapide" if fast else "lourd", attempt + 1))
+        time.sleep(0.5)
+    while claimed:
         job_id, folder, job = claimed
         link = _links.get(pi)
         if link:
@@ -598,6 +673,7 @@ def _work(pi, fast):
         log("%s : %s %s (%s), %d s" % (pi, job_id, state, message, duration))
         if link:
             link.send({"type": "fini", "travail": job_id})
+        claimed = _claim(share, fast)
 
 
 def service():

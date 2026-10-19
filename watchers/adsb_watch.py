@@ -10,6 +10,8 @@ import audio_lock
 from sound_paths import FLIGHT_SCANER_DIR, RADIO_SCANER_DIR
 import reglages
 import adsb_local_watch
+import helicos
+import annonce_morceaux as morceaux
 import ogn_watch
 from phrases import Etiquettes, dire, nombre
 
@@ -166,6 +168,8 @@ CATEGORY_NAMES = Etiquettes("avion.categorie", {
 }, "type d'appareil annoncé par un avion")
 
 EARTH_RADIUS_KM = 6371.0
+HELI_IDX = {"icao24": IDX_ICAO24, "callsign": IDX_CALLSIGN, "lat": IDX_LATITUDE, "lon": IDX_LONGITUDE,
+            "alt": IDX_BARO_ALTITUDE, "sol": IDX_ON_GROUND, "categorie": IDX_CATEGORY}
 
 
 def _distance_km(lat1, lon1, lat2, lon2):
@@ -238,7 +242,8 @@ def fetch_aircraft():
     possible, retombe sur l'anonyme sinon). Retourne la liste des "states"
     (un par appareil) ou None en cas d'echec (reseau, API indisponible,
     quota depasse...)."""
-    params = {"lamin": LAT_MIN, "lomin": LON_MIN, "lamax": LAT_MAX, "lomax": LON_MAX}
+    # extended=1 : categorie d'appareil (helicoptere...), sinon absente (2026-10-17).
+    params = {"lamin": LAT_MIN, "lomin": LON_MIN, "lamax": LAT_MAX, "lomax": LON_MAX, "extended": 1}
     headers = {}
     token = _get_access_token()
     if token:
@@ -356,6 +361,13 @@ def main():
 
         _publish_air_context(states)
         _check_emergencies(states, emergencies, now)
+        # Veille helicopteres (lib/helicos.py) : annonces a part, sondage
+        # plus serre tant qu'il y en a un dans le rayon.
+        try:
+            helis, fast_poll = helicos.update(states, REF_LAT, REF_LON, HELI_IDX, now)
+        except Exception as exc:
+            print(f"[adsb_watch] veille helicopteres : {exc!r}")
+            helis, fast_poll = set(), None
         current_aircraft = {}
         nouveaux = []  # appareils nouveaux ce passage : annonce GROUPEE a la fin
         for state in states:
@@ -370,6 +382,8 @@ def main():
                 continue  # hors du rayon de veille reel
 
             icao24 = state[IDX_ICAO24]
+            if icao24 in helis:
+                continue  # deja dit par la veille helicopteres
             callsign = (state[IDX_CALLSIGN] or "").strip() or dire("avion.indicatif_inconnu")
             altitude_m = state[IDX_BARO_ALTITUDE]
             category = state[IDX_CATEGORY] if len(state) > IDX_CATEGORY else None
@@ -400,22 +414,28 @@ def main():
         # appareils du passage ("3 avions detectes : ..."), au lieu d'une
         # annonce par avion.
         if nouveaux:
+            # Morceaux (lib/annonce_morceaux.py, 2026-10-18) : la tete ("Avion
+            # detecte", "3 avions detectes", de 1 a 10 prefabriquees) vient du
+            # cache ; indicatifs et details, qui changent, sont calcules juste avant.
             if len(nouveaux) == 1:
                 callsign, details = nouveaux[0]
-                texte = " ".join([dire("avion.avion_detecte", callsign=callsign)] + details)
+                parts = morceaux.fragments("avion.avion_detecte", callsign=morceaux.Live(callsign))
+                rest = " ".join(details)
             else:
-                entrees = [" ".join([f"{callsign}."] + details) for callsign, details in nouveaux]
-                texte = dire("avion.plusieurs_detectes", nombre=nombre(len(nouveaux), "avion")) + " " + " ".join(entrees)
+                parts = morceaux.whole(dire("avion.plusieurs_detectes", nombre=nombre(len(nouveaux), "avion")))
+                rest = " ".join(" ".join([f"{callsign}."] + details) for callsign, details in nouveaux)
+            if rest:
+                parts += morceaux.whole(rest, live=True)
             lock = audio_lock.acquire()
             try:
-                speak_with_lead_sound(SIMPLE_CONTACT_SOUND, texte, label="adsb_watch")
+                morceaux.say(SIMPLE_CONTACT_SOUND, parts, label="adsb_watch")
             finally:
                 audio_lock.release(lock)
 
         for icao24 in current_aircraft:
             known_aircraft[icao24] = now
         known_aircraft = {k: t for k, t in known_aircraft.items() if now - t <= FORGET_SEC}
-        time.sleep(POLL_INTERVAL_SEC)
+        time.sleep(fast_poll or POLL_INTERVAL_SEC)
 
 
 if __name__ == "__main__":
