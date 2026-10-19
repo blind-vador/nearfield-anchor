@@ -26,6 +26,7 @@ SOURCE = "hw:Loopback,1,0"
 RATE, CANAUX = 48000, 2   # ceux de la boucle (asound.conf, boucle_mix)
 MAX_SEC = 2 * 3600
 MP3_DEBIT = "320k"
+ENCODAGE_X = 4.0   # vitesse d'encodage MP3 du Pi, en fois le temps reel (mesure 2026-10-19)
 
 
 def _lire():
@@ -37,10 +38,17 @@ def _lire():
 
 
 def _vivant(pid):
+    """Vrai si le processus tourne encore. Un ffmpeg fini mais pas encore
+    recueilli par son parent (zombie, "Z") compte comme fini : sinon l'arret
+    attendait 10 s pour rien (2026-10-19)."""
     try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
+        os.waitpid(pid, os.WNOHANG)  # notre enfant : le recueillir s'il est fini
+    except (ChildProcessError, OSError):
+        pass
+    try:
+        with open(f"/proc/{pid}/stat") as f:
+            return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except (OSError, IndexError):
         return False
 
 
@@ -79,8 +87,11 @@ def demarrer():
 
 
 def arreter():
-    """Arrete la capture et fait le MP3. Rend (infos, None) ou (None, raison) ;
-    infos : chemin, nom, duree (s), taille (octets)."""
+    """Arrete la capture tout de suite et lance le MP3 en tache de fond (le
+    Pi encode environ 4 fois plus vite que le temps reel : 23 minutes de
+    capture bloquaient la console 5 minutes, 2026-10-19). Rend (infos, None)
+    ou (None, raison) ; infos : nom, duree (s), mp3, encodeur (Popen) ou
+    None si le MP3 n'a pas pu etre lance (le WAV reste, sous son nom final)."""
     etat = _lire()
     if not etat:
         return None, "aucune"
@@ -99,15 +110,20 @@ def arreter():
     wav = etat["wav"]
     if not os.path.exists(wav) or os.path.getsize(wav) < 1000:
         return None, "vide"
+    duree = _infos(wav)["duree"]
     mp3 = os.path.join(DOSSIER, etat["nom"] + ".mp3")
-    r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-y", "-i", wav,
-                        "-c:a", "libmp3lame", "-b:a", MP3_DEBIT, mp3], capture_output=True, timeout=1800)
-    if r.returncode != 0 or not os.path.exists(mp3):
-        final = os.path.join(DOSSIER, etat["nom"] + ".wav")  # au moins le WAV, sous son nom definitif
-        os.replace(wav, final)
-        return _infos(final), None
-    os.remove(wav)
-    return _infos(mp3), None
+    final_wav = os.path.join(DOSSIER, etat["nom"] + ".wav")
+    os.replace(wav, final_wav)
+    try:  # encodage detache, basse priorite : la console reste libre ; le WAV part une fois le MP3 fait
+        enc = subprocess.Popen(
+            ["nice", "-n", "15", "sh", "-c",
+             'ffmpeg -hide_banner -loglevel error -nostdin -y -i "$1" -c:a libmp3lame -b:a ' + MP3_DEBIT
+             + ' "$2.part.mp3" && mv "$2.part.mp3" "$2" && rm -f "$1" "$1.log"', "encode", final_wav, mp3],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=open(final_wav + ".log", "w"), start_new_session=True)
+    except OSError:
+        enc = None
+    return {"nom": os.path.basename(mp3 if enc else final_wav), "duree": duree, "mp3": mp3,
+            "encodeur": enc, "estimation": max(5, duree / ENCODAGE_X)}, None
 
 
 def _infos(path):

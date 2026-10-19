@@ -132,6 +132,7 @@ def _weather_lines(plants, fc, now, mean_temp, complet=False):
     nommees ensemble."""
     groups = {}  # genre -> {"noms": [...], valeurs}
     single = []
+    a_confirmer = []  # (plante, nombre) : une seule phrase pour toutes (2026-10-19)
     end = now + datetime.timedelta(hours=48)
     temps = pa._hours(fc, "temperature_2m", now, end)
     gusts = pa._hours(fc, "wind_gusts_10m", now, now + datetime.timedelta(hours=36))
@@ -192,15 +193,32 @@ def _weather_lines(plants, fc, now, mean_temp, complet=False):
         if p.get("stade") == "fruits" and fiche.get("maturite") and (complet or ripe_window):
             single.append(dire("plantes.flash_maturite", nom=p["nom"], conseil=str(fiche["maturite"]).strip()))
         if p.get("a_confirmer"):
-            single.append(dire("plantes.flash_a_confirmer", nom=p["nom"],
-                               nombre=nombre(len(p["a_confirmer"]), "observation")))
+            a_confirmer.append((p["nom"], len(p["a_confirmer"])))
     lines = []
     for kind in ("gel", "rentrer", "nuits_fraiches", "vent", "chaleur", "soif_bientot"):
         if kind in groups:
             g = groups[kind]
             values = {k: v for k, v in g.items() if k != "noms"}
             lines.append(dire(f"plantes.flash_{kind}", noms=plantes.join_names(g["noms"]), **values))
+    if a_confirmer:
+        single.append(dire("plantes.flash_a_confirmer_groupe", noms=plantes.join_names([n for n, _ in a_confirmer]),
+                           nombre=nombre(sum(k for _, k in a_confirmer), "observation")))
     return lines + single
+
+
+def _grouper_ravageurs(pests):
+    """Un meme ravageur (cochenilles, pucerons...) sur plusieurs plantes : une
+    seule phrase qui les nomme toutes, signes et traitement dits une fois
+    (demande utilisateur 2026-10-19). L'ordre de premiere apparition est garde."""
+    groupes = {}
+    for r in pests:
+        cle = " ".join(str(r.get("nom") or "").lower().split())
+        g = groupes.get(cle)
+        if g is None:
+            groupes[cle] = dict(r, plantes=[r["plante"]])
+        elif r["plante"] not in g["plantes"]:
+            g["plantes"].append(r["plante"])
+    return list(groupes.values())
 
 
 def _lower_first(text):
@@ -242,8 +260,8 @@ def text(complet=False, now=None):
         if not complet and fc:
             weather = weather_now(fc, now) - {"toujours"}
             pests = [r for r in pests if r["favorise_par"] in weather][:SHORT_PESTS]
-        for r in pests:
-            parts.append(dire("plantes.flash_ravageur", ravageur=r["nom"], plante=r["plante"],
+        for r in _grouper_ravageurs(pests):  # meme ravageur sur plusieurs plantes : dit une fois
+            parts.append(dire("plantes.flash_ravageur", ravageur=r["nom"], plante=plantes.join_names(r["plantes"]),
                               signes=str(r.get("signes") or "").rstrip(". "),
                               traitement=_lower_first(r.get("traitement"))))
         if complet or now.day <= SOWING_DAYS:

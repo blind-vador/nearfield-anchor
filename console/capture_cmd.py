@@ -9,7 +9,9 @@ La phrase de confirmation est dite AVANT de lancer l'enregistrement, et
 l'arret se fait AVANT de parler : la capture ne garde pas la console qui
 parle d'elle-meme.
 """
+import os
 import sys
+import threading
 import time
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
@@ -37,14 +39,24 @@ def _taille(octets):
     return dire("capture.taille", mo=(f"{mo:.1f}".replace(".", ",") if mo < 10 else str(round(mo))))
 
 
-def run(line, say_and_wait):
+def run(line, say_and_wait, say):
     mots = set(matcher.normalize(line).split())
     if mots & FIN:
         infos, raison = capture_son.arreter()  # d'abord arreter : la reponse ne doit pas etre enregistree
         if raison:
             return dire(f"capture.{raison}")
-        return dire("capture.disponible", duree=_duree(infos["duree"]), taille=_taille(infos["taille"]),
-                    nom=infos["nom"])
+        enc = infos["encodeur"]
+        if enc is None:
+            return dire("capture.disponible_wav", duree=_duree(infos["duree"]), nom=infos["nom"])
+
+        def annoncer():  # le MP3 se fait en fond : on le dit quand il est pret
+            enc.wait()
+            if enc.returncode == 0 and os.path.exists(infos["mp3"]):
+                say(dire("capture.mp3_pret", taille=_taille(os.path.getsize(infos["mp3"])), nom=infos["nom"]))
+            else:
+                say(dire("capture.mp3_rate"))
+        threading.Thread(target=annoncer, daemon=True).start()
+        return dire("capture.arretee", duree=_duree(infos["duree"]), attente=_duree(infos["estimation"]))
     if mots & DEBUT:
         if capture_son.en_cours():
             return dire("capture.deja")

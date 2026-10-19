@@ -171,7 +171,7 @@ _async_response = {"text": "", "t": 0.0}
 _last_direct = {"t": 0.0}
 
 
-def _scan_then(produce, busy_key, wait_key, fail_key):
+def _scan_then(produce, busy_key, wait_key, fail_key, speak=None):
     """Balayage du panel radio meteo local par le scanner, PUIS produce(scan,
     scan_failed) en arriere-plan : le clavier reste libre, la reponse est
     dite quand elle est prete (et "repete" la relit)."""
@@ -192,7 +192,7 @@ def _scan_then(produce, busy_key, wait_key, fail_key):
             text = dire(fail_key)
         _async_response.update(text=text, t=time.time())
         out(f"{text}\n> ")
-        voix.say_and_wait(text)
+        (speak or voix.say_and_wait)(text)
 
     threading.Thread(target=run, daemon=True).start()
     if busy:
@@ -217,7 +217,14 @@ def flash_cmd(line):
     tout rassembler -- balayage meteo, agregat, bulletin, routes, trains,
     bus, presse -- puis on met en forme."""
     return _scan_then(flash.texte_complet, "flash.prepare_complet_sans_balayage", "flash.prepare_complet",
-                      "flash.flash_info_echoue_erreur")
+                      "flash.flash_info_echoue_erreur", speak=_lire_d_une_traite)
+
+
+def _lire_d_une_traite(text):
+    """Flash : le son entier d'abord (machine compagne, sinon le Pi), puis
+    joue sans les blancs de calcul entre les phrases (2026-10-19)."""
+    import lecture_longue
+    lecture_longue.lire(text, voix, voix.say_and_wait)
 
 
 def _match(line):
@@ -344,7 +351,7 @@ def run_command(line, key_source, last_response):
         return commands.terrain_cmd(line)
     if cmd.name == "capture":
         import capture_cmd
-        return capture_cmd.run(line, voix.say_and_wait)
+        return capture_cmd.run(line, voix.say_and_wait, lambda t: voix.say(t, lock=True))
     if cmd.name == "antenne":
         import antenne_cmd
         return antenne_cmd.run(line, voix.say, out)

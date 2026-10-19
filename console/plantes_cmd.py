@@ -13,6 +13,7 @@ Liste
   S                         suggestions de Gemini (plantes reconnues sur les photos) :
                             haut / bas, Entree ajoute avec les informations
                             pre-remplies, Retour arriere refuse, Echap revient
+  O                         ecouter la prochaine observation d'une photo a verifier
   C / H                     observation d'une photo verifiee au toucher : C la
                             confirme (le stade suit), H la signale fausse
   Retour arriere            retire la plante ; Ctrl + Z annule
@@ -369,6 +370,13 @@ def run(line, key_source, say, out):
             text = _apply(plants[i], "dehors" if plants[i].get("dedans") else "dedans")
             if not plantes.save(plants):
                 text = dire("plantes.nas_inaccessible")
+        elif key in ("o", "O"):  # ecouter l'observation a verifier (2026-10-19)
+            pending = plants[i].get("a_confirmer") or []
+            if pending:
+                text = dire("plantes.observation_numero", nom=plants[i]["nom"], rang=1, total=len(pending)) + " " \
+                    + plantes.pending_text(plants[i]) + " " + dire("plantes.observation_verdict")
+            else:
+                text = dire("plantes.rien_a_confirmer", nom=plants[i]["nom"])
         elif key in ("c", "C", "h", "H"):
             text = _apply(plants[i], "confirmer" if key in ("c", "C") else "infirmer")
             if not plantes.save(plants):
