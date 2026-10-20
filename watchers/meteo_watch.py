@@ -1,3 +1,4 @@
+import datetime
 import json
 import os
 import threading
@@ -43,12 +44,13 @@ COLOR_NAMES = Etiquettes("vigilance.couleur", {1: "vert", 2: "jaune", 3: "orange
 SIMPLE_MESSAGE_SOUND = "/media/nas/nd1/server/meteo_scaner/simple_message.mp3"
 
 
-def _speak_lightly(text):
+def _speak_lightly(text, repetitive=False):
     """Joue le son 'message sans gravite' puis parle -- pour tout ce qui
-    n'est pas une alarme reelle (orange/rouge)."""
+    n'est pas une alarme reelle (orange/rouge). repetitive : phrase sans
+    valeur mesuree, gardee en cache par voix."""
     lock = audio_lock.acquire()
     try:
-        speak_with_lead_sound(SIMPLE_MESSAGE_SOUND, text, label="meteo_watch")
+        speak_with_lead_sound(SIMPLE_MESSAGE_SOUND, text, label="meteo_watch", repetitive=repetitive)
     finally:
         audio_lock.release(lock)
 
@@ -93,6 +95,27 @@ def _save_vigilance_state(state):
         print(f"[meteo_watch] erreur ecriture etat vigilance : {exc}")
 
 
+def _niveaux(results):
+    """{phenomene: couleur} : le niveau le plus haut parmi les tranches
+    horaires pas encore finies. Meteo-France publie un phenomene en
+    plusieurs tranches (begin_time / end_time) ; comparees une par une,
+    une tranche jaune suivie d'une verte annoncait "monte" puis "baisse"
+    13 secondes plus tard, a chaque releve horaire (2026-10-20)."""
+    now = datetime.datetime.now(datetime.timezone.utc)
+    levels = {}
+    for entry in results:
+        phenomenon, color_id = entry.get("phenomenon"), entry.get("color_id")
+        if phenomenon is None or color_id is None:
+            continue
+        try:
+            if datetime.datetime.fromisoformat(entry["end_time"]) <= now:
+                continue
+        except (KeyError, TypeError, ValueError):
+            pass
+        levels[phenomenon] = max(color_id, levels.get(phenomenon, 0))
+    return levels
+
+
 def _vigilance_watcher():
     """Fil de veille de la vigilance departementale officielle : annonce
     uniquement les CHANGEMENTS de niveau (montee ou descente), rien
@@ -105,18 +128,15 @@ def _vigilance_watcher():
         results = fetch_vigilance()
         if results is not None:
             changed = False
-            for entry in results:
-                phenomenon = entry.get("phenomenon")
-                color_id = entry.get("color_id")
-                if phenomenon is None or color_id is None:
-                    continue
+            for phenomenon, color_id in _niveaux(results).items():
                 previous = known_colors.get(phenomenon)
                 if previous == color_id:
                     continue
                 if previous is not None:
                     _speak_lightly(dire("meteo_watch.niveau_monte" if color_id > previous else "meteo_watch.niveau_baisse",
                                         phenomene=PHENOMENES.get(phenomenon, phenomenon), departement=DEPARTMENT_NAME,
-                                        avant=COLOR_NAMES[previous], apres=COLOR_NAMES[color_id]))
+                                        avant=COLOR_NAMES[previous], apres=COLOR_NAMES[color_id]),
+                                   repetitive=True)
                 known_colors[phenomenon] = color_id
                 changed = True
             if changed:
