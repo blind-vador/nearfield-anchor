@@ -68,6 +68,7 @@ PORT_LADDER = ["port", "port-ancien"]
 # vocal espace (pas toutes les 30 s comme un disque : rien n'est en danger).
 RETRY_AFTER_SEC = 1800
 REMIND_EVERY_SEC = 2 * 3600
+REMIND_HOURS = (8, 22)     # rappels seulement le jour (une annonce a 2 h du matin passe inapercue)
 ABSENT_CYCLES = 2          # ~30 s d'absence avant d'annoncer un debranchement
 ROLE_FAILS_BEFORE_REPAIR = 2
 REPAIR_COOLDOWN_SEC = 120  # entre deux gestes sur le meme appareil
@@ -277,6 +278,10 @@ def _diagnose(role, name, dev):
 
 # --- etat et voix -------------------------------------------------------------
 
+def _jour():
+    return REMIND_HOURS[0] <= time.localtime().tm_hour < REMIND_HOURS[1]
+
+
 def _speak(text):
     print(f"[usb_watch] annonce : {text}")
     lock = audio_lock.acquire()
@@ -317,6 +322,7 @@ class Watch:
         self.seen = _load_seen()
         self.absent = {}        # role -> passages consecutifs sans l'appareil
         self.announced_gone = set()
+        self.role_rappel = {}   # role -> heure du dernier rappel d'absence
         self.role_reason = {}   # role -> code du probleme en cours
         self.role_fails = {}    # role -> passages consecutifs en panne
         self.role_step = {}     # role -> prochain geste de l'echelle de ce probleme
@@ -379,7 +385,7 @@ class Watch:
             given_up = self.port_given_up.get(port)
             if given_up:
                 # Pas de nouvel essai auto apres abandon.
-                if time.time() - given_up["annonce"] >= REMIND_EVERY_SEC:
+                if time.time() - given_up["annonce"] >= REMIND_EVERY_SEC and _jour():
                     given_up["annonce"] = time.time()
                     _speak(dire("usb.port_bloque", ou=dire("usb.ou_pi" if _port_on_pi(port) else "usb.ou_hub")))
                 continue
@@ -389,10 +395,13 @@ class Watch:
                 self._log(f"port {port} : {PORT_LADDER[step]}", _helper(PORT_LADDER[step], port))
                 self.ports_stuck[port] = 0  # laisser le temps a l'enumeration
             elif not given_up:
+                # Un vrai appareil qui ne repond plus (dongle radio, 2026-10-19) :
+                # le port reste ALIMENTE -- coupe pour toujours, l'appareil
+                # rebranche au meme endroit restait invisible. On previent, et
+                # on rappelle le jour (plus haut). La liste des ports ignores ne
+                # sert plus qu'aux ports fantomes du hub.
                 print(f"[usb_watch] {port} : toujours bloque apres reparation, on previent")
                 self.port_given_up[port] = {"essai": time.time(), "annonce": time.time()}
-                _ignore_port(port, "echelle epuisee")
-                self.ports_ignored.add(port)
                 _speak(dire("usb.port_bloque", ou=dire("usb.ou_pi" if _port_on_pi(port) else "usb.ou_hub")))
         for port in set(self.ports_stuck) | set(self.ports_ignored):
             if port in stuck_now:
@@ -447,8 +456,15 @@ class Watch:
         self.absent[role] = self.absent.get(role, 0) + 1
         if self.absent[role] == ABSENT_CYCLES and role not in self.announced_gone:
             self.announced_gone.add(role)
+            self.role_rappel[role] = time.time()
             print(f"[usb_watch] {role} absent depuis {ABSENT_CYCLES} passages")
             _speak(dire("usb.debranche", appareil=NOMS[role]))
+        elif role in self.announced_gone and _jour() and \
+                time.time() - self.role_rappel.get(role, 0) >= REMIND_EVERY_SEC:
+            # Toujours absent : rappel espace, le jour (le dongle radio perdu a
+            # 1 h 54 n'a ete annonce qu'une fois, en pleine nuit, 2026-10-19).
+            self.role_rappel[role] = time.time()
+            _speak(dire("usb.toujours_absent", appareil=NOMS[role]))
 
     def _repair(self, role, problem):
         if problem is None:
