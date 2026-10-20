@@ -15,6 +15,12 @@ bruit de fond compare aux mesures precedentes (HISTORIQUE) dit le reste :
 plancher qui s'effondre partout = plus rien en entree ; plancher qui monte
 = parasite proche (alimentation, USB, ecran).
 
+Les stations FM ne suffisent pas (2026-10-20) : tres fortes, elles entrent
+par le cable USB meme antenne devissee. Apres un rebranchement du 19, la FM
+donnait encore 16 stations alors que plus rien ne passait au-dessus (aucune
+trame de capteur 433 MHz ni d'avion depuis). Le verdict regarde donc aussi
+le trafic reellement decode : la derniere trame de capteur (dernier_capteur).
+
 La cle appartient au scanner (radio-watch) : la console depose une demande
 (request), le scanner mesure entre deux fenetres d'ecoute (take_request,
 measure, done) et la console attend le resultat (wait). Scanner arrete : la
@@ -40,6 +46,8 @@ FM_DEBUT_HZ, FM_FIN_HZ = 87_500_000, 108_000_000
 FM_BON, FM_FAIBLE = 5, 1    # stations fortes : bonne reception / faible / rien
 DERIVE_DB = 4.0             # plancher qui baisse ou monte de plus : on le signale
 DC_GUARD_BINS = 3
+CAPTEURS_GLOB = "/media/nas/nd1/server/radio_log/donnees/capteurs_2*.jsonl"
+CAPTEURS_SILENCE_H = 6      # plus de trame capteur depuis : la reception au-dessus de la FM est suspecte
 
 
 # --- echange console <-> scanner ---------------------------------------------------------
@@ -236,6 +244,25 @@ def _archiver(res):
         _write(HISTORIQUE, hist[-HISTORIQUE_MAX:])
     except OSError:
         pass
+
+
+def dernier_capteur():
+    """Instant de la derniere trame de capteur sans fil decodee (433/868 MHz :
+    une dizaine de stations meteo du voisinage, des centaines par jour), ou None."""
+    import glob
+    for path in sorted(glob.glob(CAPTEURS_GLOB), reverse=True)[:3]:
+        try:
+            with open(path, "rb") as f:
+                f.seek(max(0, os.path.getsize(path) - 4096))
+                lines = f.read().decode(errors="replace").strip().splitlines()
+            for line in reversed(lines):
+                try:
+                    return float(json.loads(line)["t"])
+                except (ValueError, KeyError, TypeError):
+                    continue
+        except OSError:
+            continue
+    return None
 
 
 def derniere():

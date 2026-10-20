@@ -171,6 +171,14 @@ _async_response = {"text": "", "t": 0.0}
 _last_direct = {"t": 0.0}
 
 
+def _annoncer_plus_tard(text):
+    """Reponse d'une commande finie en arriere-plan : affichee, dite, et
+    "repete" la relit."""
+    _async_response.update(text=text, t=time.time())
+    out(f"{text}\n> ")
+    voix.say_and_wait(text)
+
+
 def _scan_then(produce, busy_key, wait_key, fail_key, speak=None):
     """Balayage du panel radio meteo local par le scanner, PUIS produce(scan,
     scan_failed) en arriere-plan : le clavier reste libre, la reponse est
@@ -359,7 +367,7 @@ def run_command(line, key_source, last_response):
         return capture_cmd.run(line, voix.say_and_wait, lambda t: voix.say(t, lock=True))
     if cmd.name == "antenne":
         import antenne_cmd
-        return antenne_cmd.run(line, voix.say, out)
+        return antenne_cmd.run(line, out, _annoncer_plus_tard)
     if cmd.name == "phrases":
         import phrases_cmd
         return phrases_cmd.run(key_source, voix.say, out)
