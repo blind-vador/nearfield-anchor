@@ -40,6 +40,8 @@ commande "usb" de la console (console/usb_cmd.py).
 """
 import glob
 import json
+
+import usb_eteints
 import os
 import subprocess
 import time
@@ -418,7 +420,8 @@ class Watch:
                     _helper("port-on", port)
             for d in (self.ports_stuck, self.port_step, self.port_given_up):
                 d.pop(port, None)
-        return sorted(p for p in stuck_now if p in self.ports_ignored or self.port_step.get(p))
+        # Ports fantomes (ignores, ports vides du hub) : jamais signales a l'utilisateur.
+        return sorted(p for p in stuck_now if p not in self.ports_ignored and self.port_step.get(p))
 
     # 2) et 3) appareils du projet
     def check_roles(self, devices):
@@ -427,6 +430,8 @@ class Watch:
             if not found:
                 self._missing(role)
                 continue
+            if role in usb_eteints.lire():
+                usb_eteints.marquer(role, False)  # rallume : la marque "eteint" part d'elle-meme
             if role in self.announced_gone:
                 self.announced_gone.discard(role)
                 _speak(dire("usb.revenu", appareil=NOMS[role]))
@@ -442,6 +447,12 @@ class Watch:
             self._repair(role, problem)
 
     def _missing(self, role):
+        if role in usb_eteints.lire():
+            # Eteint volontairement ("usb camera off") : ni annonce ni rappel.
+            self.status[role] = "eteint"
+            self.absent[role] = 0
+            self.announced_gone.discard(role)
+            return
         if role == "imprimante":
             self.printer_present = False
             # Pendant une impression, un blanc USB de 1-2 s (moteurs) est

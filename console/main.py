@@ -243,6 +243,8 @@ def _match(line):
     if first in ("journal", "journaux", "archives", "archive"):
         name = "journal" if first.startswith("journ") else "archives"
         return next(c for c in commands.COMMANDS if c.name == name), 100
+    if first == "usb":  # "usb camera off" : pas la commande decris (camera) ni imprimante
+        return next(c for c in commands.COMMANDS if c.name == "usb"), 100
     if first in ("plante", "plantes"):  # "plante photo" : pas la commande decris
         return next(c for c in commands.COMMANDS if c.name == "plantes"), 100
     if first in ("piece", "pieces") or (
@@ -349,6 +351,9 @@ def run_command(line, key_source, last_response):
         return manuel.run(key_source, voix.say, out, read_line)
     if cmd.name == "terrain":
         return commands.terrain_cmd(line)
+    if cmd.name == "usb":
+        import usb_cmd
+        return usb_cmd.run(line)
     if cmd.name == "capture":
         import capture_cmd
         return capture_cmd.run(line, voix.say_and_wait, lambda t: voix.say(t, lock=True))

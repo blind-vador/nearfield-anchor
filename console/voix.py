@@ -321,6 +321,23 @@ def _prepare_piper(text, voice, rate):
     _piper_jobs.put(job)
 
 
+def preparer(text, echo=True):
+    """Calcule d'avance, en fond, les phrases de text dans la voix ou il sera
+    dit (echo : voix des touches, celle des dialogues ; sinon la console) :
+    dit plus tard, il part tout de suite au lieu de laisser des blancs de
+    calcul entre les phrases (touche O des plantes, 2026-10-20). Piper
+    seulement ; rend le nombre de phrases mises en preparation."""
+    ch = voix_sources.choisir("touches" if echo else "console", ms_ok=cloud_ok())
+    if ch["moteur"] != "piper":
+        return 0
+    n = 0
+    for part in phrases_fixes.split(text):
+        if _cacheable(part) and not _cached(part, ch["voix"], ch["debit"]):
+            _prepare_piper(part, ch["voix"], ch["debit"])
+            n += 1
+    return n
+
+
 def prewarm(texts):
     """Prepare en fond les sons d'echo (voix et debit des touches du clavier).
     Rend le nombre de sons a preparer."""

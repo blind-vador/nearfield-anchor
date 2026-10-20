@@ -272,6 +272,23 @@ def photos_now(say):
     return " ".join(said) if said else dire("plantes.photos_rien")
 
 
+def _texte_observation(plant):
+    """Ce que dit la touche O : la prochaine observation, ou chercher, C ou H."""
+    pending = plant.get("a_confirmer") or []
+    return (dire("plantes.observation_numero", nom=plant["nom"], rang=1, total=len(pending)) + " "
+            + plantes.pending_text(plant) + " " + dire("plantes.observation_verdict"))
+
+
+def _preparer_observations(plants):
+    """Les textes de la touche O calcules en fond des l'ouverture : sinon la
+    voix locale les calcule phrase par phrase au moment de les dire, avec
+    des blancs de plusieurs secondes (on croyait qu'elle ne disait rien)."""
+    import threading
+    textes = [_texte_observation(p) for p in plants if p.get("a_confirmer")]
+    if textes:
+        threading.Thread(target=lambda: [voix.preparer(t) for t in textes], daemon=True).start()
+
+
 def run(line, key_source, say, out):
     if set(matcher.normalize(line).split()) & {"photo", "photos"}:
         return photos_now(say)
@@ -294,6 +311,7 @@ def run(line, key_source, say, out):
     say(intro)
     if not adding and plants:
         say(plantes.line(plants[0]))
+    _preparer_observations(plants)
 
     keys_iter = iter(key_source)
     while True:
@@ -371,14 +389,13 @@ def run(line, key_source, say, out):
             if not plantes.save(plants):
                 text = dire("plantes.nas_inaccessible")
         elif key in ("o", "O"):  # ecouter l'observation a verifier (2026-10-19)
-            pending = plants[i].get("a_confirmer") or []
-            if pending:
-                text = dire("plantes.observation_numero", nom=plants[i]["nom"], rang=1, total=len(pending)) + " " \
-                    + plantes.pending_text(plants[i]) + " " + dire("plantes.observation_verdict")
+            if plants[i].get("a_confirmer"):
+                text = _texte_observation(plants[i])
             else:
                 text = dire("plantes.rien_a_confirmer", nom=plants[i]["nom"])
         elif key in ("c", "C", "h", "H"):
             text = _apply(plants[i], "confirmer" if key in ("c", "C") else "infirmer")
+            _preparer_observations([plants[i]])
             if not plantes.save(plants):
                 text = dire("plantes.nas_inaccessible")
         elif key in ("s", "S"):

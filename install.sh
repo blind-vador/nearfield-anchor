@@ -110,6 +110,12 @@ if [ ! -x /usr/local/bin/dec406_scan ]; then
     echo "-- dec406 --"
     rm -rf "$BUILD_DIR/dec406"
     git clone https://github.com/Yverr0y/Decode_sarsat_406_v1g_v2g.git "$BUILD_DIR/dec406"
+    # dec406 fait un reset USB "dur" du dongle a CHAQUE ouverture : toutes les
+    # ~25 min (fenetre balises), le dongle a fini par se bloquer pour de bon
+    # (2026-10-20, erreur -71). Reset desormais seulement si DEC406_USB_RESET.
+    perl -0pi -e 's/(static void reset_rtl_usb\(void\) \{\n)/$1  if (!getenv("DEC406_USB_RESET")) return;  \/* nearfield-anchor *\/\n/' \
+        "$BUILD_DIR/dec406/src/backend_rtlsdr.c" "$BUILD_DIR/dec406/src/main_scan.c"
+    grep -q DEC406_USB_RESET "$BUILD_DIR/dec406/src/backend_rtlsdr.c" || { echo "!! dec406 : correctif du reset USB non applique"; exit 1; }
     (cd "$BUILD_DIR/dec406" && make build/dec406_scan && install -m 755 build/dec406_scan /usr/local/bin/)
 fi
 

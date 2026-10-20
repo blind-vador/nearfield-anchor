@@ -18,8 +18,24 @@ ETATS = Etiquettes("usb.etat", {"ok": "fonctionne", "absent": "absent", "debranc
                                 "sans_pilote": "vu mais pas pris en charge, réparation en cours",
                                 "pilote_tnt": "pris par le pilote TNT, réparation en cours",
                                 "flux_mort": "image figée, réparation en cours",
-                                "deconnectee": "branchée mais déconnectée d'OctoPrint"},
+                                "deconnectee": "branchée mais déconnectée d'OctoPrint",
+                                "eteint": "à l'arrêt, volontairement"},
                    "état d'un appareil USB, après son nom")
+
+
+def run(line):
+    """ "usb camera off" / "usb imprimante on" : appareil eteint volontairement
+    ou rallume (lib/usb_eteints.py) ; sinon l'etat de tous les appareils."""
+    import matcher
+    import usb_eteints
+    mots = set(matcher.normalize(line).split())
+    roles = [usb_eteints.ROLES[m] for m in mots if m in usb_eteints.ROLES]
+    eteint = bool(mots & usb_eteints.OFF)
+    if roles and (eteint or mots & usb_eteints.ON):
+        role = roles[0]
+        usb_eteints.marquer(role, eteint)
+        return dire("usb.marque_eteint" if eteint else "usb.marque_allume", appareil=NOMS[role][:1].lower() + NOMS[role][1:])
+    return usb_status()
 
 
 def usb_status():
