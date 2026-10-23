@@ -112,6 +112,13 @@ def _process(packet):
     if lat is None or lon is None:
         return False
     km = vd.distance_km(lat, lon)
+    # Relais qui annonce sa frequence (lib/relais.py) : appris s'il est a portee
+    # (ajoute a l'ecoute du scanner), note pour information s'il est lointain --
+    # avant le filtre de distance, qui ecartait les relais eloignes (2026-10-23).
+    learned = None
+    if not _via["nom"]:
+        learned = relais.learn((packet.get("object_name") or packet.get("item_name") or call).strip(),
+                               packet.get("comment") or "", packet.get("symbol"), km, lat, lon)
     if _via["nom"]:
         if _via["annonces"] >= VIA_MAX_ANNOUNCES:
             return False
@@ -138,8 +145,6 @@ def _process(packet):
     text = f"{kind.capitalize() if kind else 'Station APRS'} {vd.spell(name)}, {vd.where(lat, lon)}"
     if moving:
         text += dire("aprs.mouvement_kilometres_heure", round=round(speed))
-    # Relais qui annonce sa frequence : appris et ajoute a l'ecoute du scanner (lib/relais.py).
-    learned = relais.learn(name, packet.get("comment") or "", packet.get("symbol"), km)
     if learned:
         print(f"[aprs_watch] relais appris : {name} sur {learned / 1e6:.4f} MHz")
     # Commentaire traduit (reglages de relais, tension, sigles...) : voir lib/aprs_texte.py.

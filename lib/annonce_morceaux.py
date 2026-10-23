@@ -309,15 +309,24 @@ def say(lead_sound, parts, label="annonce", reverb=False, prepared=None, source=
         return
     print(text)
     import sound_player
+    voix = path
+    if reverb:
+        # Effet de quai calcule AVANT le jingle (2026-10-22) : avant, il l'etait
+        # apres sa derniere note (trois passes de sox), d'ou un long blanc. Voix
+        # compressee et normalisee ("pa_voix"), jingle plus "sono" ("pa_jingle").
+        import audio_effets
+        voix = audio_effets.reverb_gare(path, "pa_voix") or path
     try:
         # La voix part juste apres la derniere note du jingle, sur sa traine (2026-10-19).
-        sound_player.play_lead_then(lead_sound, lambda: play_sound_effect(path, timeout_sec=120, label=label,
-                                                                          reverb=reverb), label=label, reverb=reverb)
+        sound_player.play_lead_then(lead_sound, lambda: play_sound_effect(voix, timeout_sec=120, label=label,
+                                                                          reverb=False),
+                                    label=label, reverb="pa_jingle" if reverb else False)
     finally:
-        try:
-            os.remove(path)
-        except OSError:
-            pass
+        for p in {path, voix}:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
 
 
 # --- a preparer d'avance (watchers/voix_preparation.py) -------------------------------

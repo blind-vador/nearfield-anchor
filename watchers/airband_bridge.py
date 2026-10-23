@@ -11,6 +11,8 @@ from speak import journal_notice, speak_with_lead_sound
 import audio_lock
 import radio_log
 import noise_signatures
+import ignores  # commande "ignorer" (2026-10-22)
+import maintien  # tenir une ecoute selon l'interet ; "zapper" (2026-10-22)
 import audio_filters
 import chaine_audio
 from sound_paths import RADIO_SCANER_DIR
@@ -412,6 +414,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         start = time.time()
         last_packet_time = time.time()
         total_bytes = 0
+        max_hold_sec = maintien.plafond(max_hold_sec, window_name, freq_hz)  # plus de coupure d'un echange interessant
         max_bytes = int(AIRBAND_SAMPLE_RATE_HZ * 4 * max_hold_sec)
         captured_chunks = []
         fingerprint_chunks = []  # filtre vocal seul : empreintes comparables aux anciennes
@@ -425,11 +428,15 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         # Chaine de filtres commune (lib/chaine_audio.py : la meme que le
         # balayage et que la touche F du mode manuel) ; son brut garde pour B.
         chain = chaine_audio.nouvelle(window_name, freq_hz, AIRBAND_SAMPLE_RATE_HZ, window.get("mode", "am"))
-        debounce = chain.settings["attente_fin_s"] or window.get("silence_debounce_sec", SILENCE_DEBOUNCE_SEC)
+        debounce = maintien.delai(chain.settings["attente_fin_s"] or window.get("silence_debounce_sec", SILENCE_DEBOUNCE_SEC),
+                                  window_name, freq_hz)
         raw_chunks = []
         try:
             while True:
                 if time.time() - start > max_hold_sec + 5:
+                    break
+                if maintien.zap_depuis(start):
+                    print("[airband_bridge] zapper : ecoute arretee a la demande")
                     break
                 # Au moins MIN_ECOUTE_SEC d'ecoute (2026-10-19) : un clic de
                 # squelch ne ferme pas le canal en 3 s, une reponse n'est pas perdue.
@@ -453,7 +460,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
                 captured_chunks.append(data)
                 total_bytes += len(data)
                 try:
-                    aplay.stdin.write(audio_lock.scale_float(data))
+                    aplay.stdin.write(audio_lock.scale_float(data, canal="ecoute"))
                 except Exception:
                     break
                 if total_bytes >= max_bytes:
@@ -550,8 +557,11 @@ def scan_window(window, dwell_sec=25):
                 pass
             s.setblocking(True)
 
-        deadline = time.time() + dwell_sec
+        debut = time.time()
+        deadline = debut + dwell_sec
         while time.time() < deadline:
+            if maintien.zap_depuis(debut):
+                return False  # zapper : fenetre suivante
             if proc.poll() is not None:
                 print(f"[airband_bridge] rtl_airband s'est arrete de façon inattendue ({window['name']}) : {''.join(stderr_tail[-5:])}")
                 return False
@@ -561,6 +571,12 @@ def scan_window(window, dwell_sec=25):
                 continue
             s = ready[0]
             freq_hz = socks[s]
+            if ignores.frequence_ignoree(freq_hz):  # mise de cote : on ecoute les autres canaux
+                try:
+                    s.recvfrom(65536)
+                except OSError:
+                    pass
+                continue
             print(f"[airband_bridge] activite detectee sur {window['name']} a {freq_hz/1e6:.5f} MHz")
             return _relay_channel(s, freq_hz, window["name_spoken"], max_hold_sec=window.get("max_hold_sec", MAX_HOLD_SEC),
                                   window_name=window["name"])

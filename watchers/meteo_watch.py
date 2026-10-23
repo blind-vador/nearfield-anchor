@@ -498,6 +498,8 @@ def main():
     threading.Thread(target=personnalite.watch, daemon=True).start()
     import bulletin_capteurs  # bulletin horaire des capteurs meteo, journal "meteo" (2026-10-19)
     threading.Thread(target=bulletin_capteurs.watch, daemon=True).start()
+    import trafic_heure  # trafic de donnees non vocalise, resume chaque heure au journal "donnees" (2026-10-23)
+    threading.Thread(target=trafic_heure.watch, daemon=True).start()
     import stats_locales  # releves de capteurs resumes sur la carte SD, bruts effaces apres 48 h
     threading.Thread(target=stats_locales.watch, daemon=True).start()
     import plantes_calendrier  # evenements de vie des plantes (journal "plantes")

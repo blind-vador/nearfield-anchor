@@ -12,12 +12,23 @@ entiere ; pour un fichier (journal), on attend la fin.
 Voix tiree au hasard a chaque annonce (variete voulue, comme pour les voix
 Microsoft). Au-dessus de MAX_TEMP_C, Piper n'est pas lance (le calcul
 ferait encore chauffer) : espeak prend le relais.
+
+Voix d'ailleurs (2026-10-22) : "piper:mac#<voix>" (voix macOS de la machine
+compagne, par le pont), "piper:google#fr" (Google Traduction) et
+"piper:mbrola#frN" (MBROLA, local et tres leger) passent par
+voix_externe.py, qui se presente comme le programme piper. Elles sont donc
+partout ou sont les voix Piper : choix, secours, cache, preparation, et
+dans les tirages des modes aleatoires (voix_sources.tirage) : locales =
+Piper et MBROLA, distantes = Mac et Google. Elles ne chauffent pas le Pi :
+pas de limite de temperature pour elles.
 """
 import json
 import os
 import random
 import subprocess
+import sys
 import threading
+import time
 
 PIPER_DIR = "/home/vador/piper"
 BINARY = os.path.join(PIPER_DIR, "piper")
@@ -45,6 +56,14 @@ NOISE_W_MAX = 0.6
 ANNOUNCE_EXCLUDED_MODELS = {"fr_FR-mls-medium"}
 ANNOUNCE_MIN_QUALITY = ("medium", "high")
 MAX_TEMP_C = 83.0
+HELPER = os.path.join(os.path.dirname(os.path.abspath(__file__)), "voix_externe.py")
+VIRTUELLES = ("piper:mac#", "piper:google#", "piper:mbrola#")
+TAUX_VIRTUELLES = 22050
+GOOGLE_VOIX = ["piper:google#fr"]
+MBROLA_BIN, MBROLA_DIR = "/usr/local/bin/mbrola", "/usr/share/mbrola"
+MBROLA_LABELS = {"fr1": "homme", "fr2": "femme", "fr3": "homme", "fr4": "femme",
+                 "fr5": "homme, accent belge", "fr6": "homme", "fr7": "homme, accent belge"}
+_mac_cache = {"t": 0.0, "voix": []}
 CHUNK = 4410  # 100 ms a 22050 Hz, 16 bits
 
 
@@ -56,8 +75,41 @@ def _temp_c():
         return None
 
 
-def available():
-    """Vrai si Piper et au moins une voix sont la, et que le Pi n'est pas brulant."""
+def virtuelle(voice_id):
+    return canonical(voice_id or "").startswith(VIRTUELLES)
+
+
+def _voix_mac():
+    """Voix macOS des machines compagnes connectees en direct (relu toutes les 10 s)."""
+    if time.time() - _mac_cache["t"] > 10:
+        found = []
+        try:
+            import compagnon
+            for c in compagnon.companions():
+                if c.get("directe") and "voix_mac" in (c.get("capacites") or []):
+                    found += [f"piper:mac#{v}" for v in c.get("voix_mac") or [] if f"piper:mac#{v}" not in found]
+        except Exception:
+            pass
+        _mac_cache.update(t=time.time(), voix=found)
+    return _mac_cache["voix"]
+
+
+def _voix_mbrola():
+    if not os.access(MBROLA_BIN, os.X_OK):
+        return []
+    return [f"piper:mbrola#{n}" for n in sorted(MBROLA_LABELS)
+            if os.path.exists(os.path.join(MBROLA_DIR, n, n))]
+
+
+def voix_virtuelles():
+    return _voix_mac() + GOOGLE_VOIX + _voix_mbrola()
+
+
+def available(voice_id=None):
+    """Vrai si Piper et au moins une voix sont la, et que le Pi n'est pas brulant
+    (voix d'ailleurs : vrai si elle est joignable, sans limite de temperature)."""
+    if voice_id and virtuelle(voice_id):
+        return resolve(voice_id) is not None
     if not os.access(BINARY, os.X_OK) or not _voices():
         return False
     temp = _temp_c()
@@ -109,6 +161,8 @@ def voice_ids(lang=ANNOUNCE_LANG):
         else:
             step = max(1, len(speakers) // MAX_SPEAKERS_PER_MODEL)
             ids += [f"piper:{name}#{spk}" for spk in speakers[::step][:MAX_SPEAKERS_PER_MODEL]]
+    if lang is None or lang == ANNOUNCE_LANG:
+        ids += voix_virtuelles()
     return ids
 
 
@@ -117,6 +171,11 @@ def resolve(voice_id):
     voice_id = canonical(voice_id or "")
     if not voice_id.startswith("piper:"):
         return None
+    if voice_id.startswith(VIRTUELLES):
+        if voice_id not in voix_virtuelles():
+            return None
+        moteur, _, nom = voice_id[6:].partition("#")
+        return moteur, nom
     name, _, spk = voice_id[6:].partition("#")
     cfg = _config(name)
     if cfg is None:
@@ -133,6 +192,14 @@ def label(voice_id):
     """Nom parle d'une voix : "Siwis, qualite moyenne", "Jessica (UPMC)"... """
     voice_id = canonical(voice_id)
     name, _, spk = voice_id[6:].partition("#")
+    if name == "mac":
+        nom = (spk.replace(" (Enhanced)", " améliorée").replace(" (Premium)", " premium")
+               .replace(" (Français (Canada))", ", accent canadien").replace(" (Français (France))", ""))
+        return f"{nom}, voix du Mac"
+    if name == "google":
+        return "Google Traduction"
+    if name == "mbrola":
+        return f"MBROLA {spk[2:]}, {MBROLA_LABELS.get(spk, 'voix')}"
     parts = name.split("-")
     base = parts[1].replace("_", " ").capitalize() if len(parts) > 2 else name
     quality = {"x_low": "très basse", "low": "basse", "medium": "moyenne", "high": "haute"}.get(parts[-1], parts[-1])
@@ -142,9 +209,20 @@ def label(voice_id):
 
 def announce_voice_ids():
     """Voix tirees au hasard pour les annonces (voir ANNOUNCE_EXCLUDED_MODELS)."""
-    ids = [v for v in voice_ids() if resolve(v)[0] not in ANNOUNCE_EXCLUDED_MODELS
+    reelles = [v for v in voice_ids() if not virtuelle(v)]
+    ids = [v for v in reelles if resolve(v)[0] not in ANNOUNCE_EXCLUDED_MODELS
            and resolve(v)[0].rsplit("-", 1)[-1] in ANNOUNCE_MIN_QUALITY]
-    return ids or voice_ids()
+    return ids or reelles
+
+
+def voix_locales():
+    """Tirage "voix locales" : Piper (annonces) et MBROLA, calcules sur le Pi."""
+    return announce_voice_ids() + _voix_mbrola()
+
+
+def voix_distantes():
+    """Voix d'ailleurs hors Microsoft : Mac (s'il est connecte) et Google."""
+    return _voix_mac() + GOOGLE_VOIX
 
 
 def _noise_args(name):
@@ -155,7 +233,7 @@ def _noise_args(name):
 
 
 def _voices():
-    return [resolve(v) for v in announce_voice_ids()]
+    return [resolve(v) for v in announce_voice_ids() if not virtuelle(v)]
 
 
 def length_scale(rate):
@@ -168,7 +246,14 @@ def length_scale(rate):
 
 
 def _pick(voice_id=None, scale_len=1.0):
-    name, speaker = resolve(voice_id) or random.choice(_voices())
+    if not resolve(voice_id):
+        voice_id = random.choice(announce_voice_ids())
+    if virtuelle(voice_id):
+        args = [sys.executable, HELPER, "--voix", canonical(voice_id), "-q"]
+        if scale_len != 1.0:
+            args += ["--length_scale", str(scale_len)]
+        return args, TAUX_VIRTUELLES
+    name, speaker = resolve(voice_id)
     model = os.path.join(VOICE_DIR, name + ".onnx")
     try:
         with open(model + ".json", encoding="utf-8") as f:
@@ -276,7 +361,7 @@ class Speech:
 def say(text, scale=None, timeout=None, record_path=None, voice_id=None, scale_len=1.0):
     """Parle et attend la fin. Rend True si Piper a parle, False sinon
     (indisponible, trop chaud, erreur) : a l'appelant de passer a espeak."""
-    if not text.strip() or not available():
+    if not text.strip() or not available(voice_id):
         return False
     try:
         speech = Speech(text, scale, record_path, voice_id=voice_id, scale_len=scale_len)
@@ -290,7 +375,7 @@ def say(text, scale=None, timeout=None, record_path=None, voice_id=None, scale_l
 
 def to_file(text, path, timeout=None, voice_id=None, scale_len=1.0):
     """Ecrit la voix dans path (WAV). Rend True si le fichier est utilisable."""
-    if not text.strip() or not available():
+    if not text.strip() or not available(voice_id):
         return False
     args, _ = _pick(voice_id, scale_len)
     if timeout is None:
@@ -328,7 +413,10 @@ def batch(voice_id, items, scale_len=1.0, timeout=900):
     if not items or found is None:
         return 0
     name, speaker = found
-    args = [BINARY, "-m", os.path.join(VOICE_DIR, name + ".onnx"), "-q", "--json-input"] + _noise_args(name)
+    if virtuelle(voice_id):
+        args, speaker = [sys.executable, HELPER, "--voix", canonical(voice_id), "--json-input"], None
+    else:
+        args = [BINARY, "-m", os.path.join(VOICE_DIR, name + ".onnx"), "-q", "--json-input"] + _noise_args(name)
     if scale_len != 1.0:
         args += ["--length_scale", str(scale_len)]
     lines = []

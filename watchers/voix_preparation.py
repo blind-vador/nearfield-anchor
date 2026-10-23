@@ -56,8 +56,8 @@ def _cibles(source):
     main = r["voix"]
     if main == vs.ESPEAK:
         return []
-    if main == vs.ALEATOIRE_PIPER:
-        return [(v, r["debit"]) for v in piper_out.announce_voice_ids()]
+    if main == vs.ALEATOIRE_PIPER or main in vs.MODES_MELANGES:
+        return [(v, r["debit"]) for v in vs.a_preparer(main)]
     if main.startswith("piper:"):
         main = piper_out.canonical(main)
         return [(main, r["debit"])] if piper_out.resolve(main) else []
@@ -153,7 +153,7 @@ def presentation_jobs():
         text = voix_cmd._label(v)
         if not voix._cached(text, v, "+0%"):
             jobs.append((v, "+0%", text, voix._cache_path(text, v, "+0%")))
-    for alea in (vs.ALEATOIRE, vs.ALEATOIRE_PIPER):  # "aleatoire" se presente dans une voix du tirage
+    for alea in (vs.ALEATOIRE, vs.ALEATOIRE_PIPER, vs.ALEATOIRE_TOUT, vs.ALEATOIRE_DISTANT):  # presente dans une voix du tirage
         text = voix_cmd._label(alea)
         for v in piper_out.announce_voice_ids():
             if not voix._cached(text, v, "+0%"):
@@ -227,6 +227,21 @@ def confier(jobs):
 def run_once():
     """Un lot ; rend le nombre restant avant ce lot (-1 : travail confie, on attend)."""
     jobs = announce_jobs() + console_jobs() + presentation_jobs()
+    if not jobs:
+        return 0
+    # Voix d'ailleurs (2026-10-22) : jamais confiees en lot a la compagne (pas de
+    # modele a lui envoyer) ; faites sur place, sans attendre la fraicheur (rien a
+    # calculer ici). Google seulement pour la presentation de la voix : des
+    # centaines de phrases d'un coup lui vaudraient un blocage.
+    externes = [j for j in jobs if piper_out.virtuelle(j[0])
+                and (not piper_out.canonical(j[0]).startswith("piper:google#") or j in presentation_jobs())]
+    jobs = [j for j in jobs if not piper_out.virtuelle(j[0])]
+    if externes:
+        voice, rate = externes[0][0], externes[0][1]
+        lot = [(t, p) for v, r, t, p in externes if (v, r) == (voice, rate)][:LOT]
+        done = piper_out.batch(voice, lot, piper_out.length_scale(rate))
+        print(f"[voix_preparation] {done}/{len(lot)} sons {voice} ({rate}), voix d'ailleurs")
+        return len(externes) + len(jobs)
     if not jobs:
         return 0
     try:

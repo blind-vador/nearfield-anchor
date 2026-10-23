@@ -6676,3 +6676,85 @@ DMR n'est pas une logique a part, c'est une facette du balayage. Verifie :
 - Reste : 5 (sifflement FM, attend un enregistrement ou il s'entend),
   6 (gain : mesure lancee, ~/backups/mesure_gain_2026-10-14.json), 7 (Mac
   verrouille : decision utilisateur).
+
+
+## 2026-10-21 au 23 : diagnostic radio, voix, volumes, gare, scanner (fait)
+
+Session de diagnostic puis d'ajouts, tout deploye et teste sur le Pi.
+
+- Antenne : la panne du 19/10 (plus aucune trame 433 MHz) venait du coax N-N
+  neuf (ame coupee, tresse bonne : la FM passait par la tresse a +24 dB). La
+  discone branchee sans coax : 42 trames, 9 capteurs en 3 min. Le verdict
+  "antenne" ecoute maintenant les capteurs 90 s (lib/mesure_antenne.py), la FM
+  ne prouvant rien ; audiographes de la mesure (lib/audiographe.py, commande
+  "antenne", "antenne son").
+- sncf_watch : cle de train sans le suffixe ":RealTime:<uuid>" (un retard
+  relancait annonce et bruitage a chaque mise a jour) ; garde-fou anti-doublon
+  strict (choix et reservation sous verrou, plus de doublon force, bruitage
+  reprogramme remplace) ; "a" sans accent avant une heure (certaines voix
+  lisaient "a accent grave").
+- Annonces de gare : effet de quai calcule avant le jingle (plus de blanc),
+  voix +2 dB sur le jingle, nouvelle reverberation par convolution "grand
+  espace ouvert" (lib/reverb_quai.py : queue de bruit decorrele, decroissance
+  par bande, reflexions legeres, queue entiere ; plus de filtres en peigne).
+- Voix : edge-tts 7.3.1 (Microsoft a change Sec-MS-GEC le 13/10). Pas de test
+  periodique : un refus 403 pendant la parole lance watchers/edge_maj.py
+  (systemd/edge-maj.service) qui essaie la derniere version a part, l'installe,
+  redemarre les services et l'annonce ; journal journal_voix_microsoft.jsonl.
+  Sonde de la console seulement en panne ; seuil du premier son 2,5 s (3
+  retards de suite avant "absent"). Voix d'ailleurs via lib/voix_externe.py,
+  presentees comme Piper : 19 voix macOS par le pont (messages "dire"/"son",
+  aucune ouverture de port sur le Mac), Google Traduction, MBROLA fr1-fr7
+  (compile depuis github.com/numediart/MBROLA, voix dans /usr/share/mbrola).
+  Voix Piper "low" retirees (charabia). Modes aleatoires : toutes, distantes,
+  locales, Microsoft.
+- Commande "volume" (console/volume_cmd.py, lib/volumes.py) : volume general
+  (carte son) et curseurs par veille et par canal, appliques au vol.
+- Scanner (lib/maintien.py) : plus de coupure d'un echange interessant (DMR
+  coupe pile a 120 s) ; interet fort/passion : delai de fermeture x2 ; garde-fou
+  900 s. Commandes "zapper", "ignorer" (frequence, groupe ou appelant DMR,
+  5 min a toujours ; lib/ignores.py), "verrouiller" corrige pendant un appel DMR.
+- Journal "donnees" : resume horaire du trafic non vocalise par Gemini avec un
+  trait d'esprit (lib/trafic_heure.py) ; bipeurs sans texte seulement la.
+- Relais APRS (lib/relais.py, lib/ctcss.py, commande "relais") : formats nus et
+  liaisons "A<=>B", relais lointains notes, tonalite CTCSS retrouvee dans le
+  son brut = relais confirme, audibilite par relais.
+- Notifications : une prise dite a voix haute par une veille est marquee
+  ecoutee (lib/prise_vocale.py) ; journal_vus.mark sous verrou (plusieurs
+  processus).
+- Aviation quasi muette (mesure du 23/10) : ATIS a +3,7 dB au gain 20, moins
+  en montant le gain = tuner sature par la FM (+24 dB) ; cuvette de
+  Saint-Etienne. Le gain 20 est le bon. Remede propose : coupe-bande FM
+  (Nooelec Flamingo FM, RTL-SDR Blog) entre la cle et l'adaptateur SMA-N ;
+  ensuite remesurer les ATIS et adapter la mesure "antenne" (stations FM).
+
+## A faire : utilitaire "materiel" (demande utilisateur 2026-10-23, pas commence)
+
+Un dialogue de la console, du meme style que les autres (fleches, Entree,
+Echap, F1), pour decrire le materiel radio et regler le scanner en
+consequence, couvrant les besoins des radioamateurs.
+
+- Inventaire : peripheriques USB detectes et proposes automatiquement s'ils
+  touchent a la radio (cles RTL-SDR par numero de serie, HackRF, Airspy,
+  SDRplay, cartes son, interfaces serie/CAT FTDI-CP210x-CH340 d'un poste,
+  commutateurs ou multiplexeurs d'antennes pilotables en USB, GPS) ; appareils
+  passifs declares a la main (coupe-bande FM, preampli, coupleur/splitter,
+  bias-tee, antennes et les bandes qu'elles couvrent bien ou mal).
+- Par cle : son antenne, et une strategie :
+  * meme antenne (coupleur) ou antennes separees ;
+  * ecoute ciblee : bandes dediees a la cle dont l'antenne les couvre bien,
+    exclues de celle qui les ecoute mal ;
+  * suiveuse (et qui elle suit) : la cle 1 capte sur une bande, la cle 2 si
+    libre s'y accroche et la cle 1 retourne balayer -- rien n'est perdu ;
+  * balayage reparti : le Pi distribue les bandes entre les cles.
+- Effets des appareils passifs : un coupe-bande FM declare = fm_diffusion
+  sautee, verdict "antenne" sans les stations FM, gains aviation a remesurer.
+- Constat technique (2026-10-23) : le scanner est construit autour d'UNE cle.
+  Une cinquantaine de modules lancent rtl_fm, rtl_power, rtl_433, rtl_airband,
+  dsd-fme, acarsdec, dumpvdl2... presque tous sur l'index 0 implicite, et une
+  seule boucle (watchers/radio_watch.py) les sequence. A prevoir, par etapes :
+  1. choisir chaque cle par son numero de serie (rtl_eeprom ; les index
+     changent au branchement) et passer le peripherique a tous les outils ;
+  2. le dialogue, la detection et les declarations (testables avec une cle) ;
+  3. le moteur multi-cles (ecoute en parallele, suiveuse, reparti, dedie),
+     a ecrire et tester quand une seconde cle sera branchee.

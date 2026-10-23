@@ -33,6 +33,9 @@ def voice_label(voice):
     if voice == voix.ESPEAK:
         return dire("voix.espeak_label")
     if voix.is_piper(voice):
+        moteur = voix.piper_out.canonical(voice)[6:].partition("#")[0]
+        if moteur in ("mac", "google", "mbrola"):  # voix d'ailleurs (2026-10-22)
+            return dire(f"voix.{moteur}_label", nom=voix.piper_out.label(voice))
         return dire("voix.piper_label", nom=voix.piper_out.label(voice))
     _, country, name = voice.split("-", 2)
     multi = "Multilingual" in name
@@ -87,9 +90,13 @@ PITCHES = Etiquettes("hauteur", {"-20Hz": "plus grave", "-10Hz": "un peu plus gr
 
 def _label(voice):
     if voice == voix_sources.ALEATOIRE:
-        return dire("voix.aleatoire_label")
+        return dire("voix.aleatoire_microsoft_label")
     if voice == voix_sources.ALEATOIRE_PIPER:
         return dire("voix.aleatoire_piper_label")
+    if voice == voix_sources.ALEATOIRE_TOUT:
+        return dire("voix.aleatoire_tout_label")
+    if voice == voix_sources.ALEATOIRE_DISTANT:
+        return dire("voix.aleatoire_distant_label")
     text = voice_label(voice)
     if not voix.is_piper(voice) and voice != voix.ESPEAK and not voix.cloud_ok():
         text += ", " + dire("voix.microsoft_absent")
@@ -120,8 +127,9 @@ def _regler(source, key_source, say, out):
     new = dict(r)
     inchange = dire("voix.source_inchangee", source=nom)
     # 1. voix principale
-    # Voix locales (Piper) juste apres les deux "aleatoire" : tout le monde n'utilise pas Microsoft.
-    voices = [voix_sources.ALEATOIRE, voix_sources.ALEATOIRE_PIPER] + voix.piper_out.voice_ids(lang=None) \
+    # Les quatre "aleatoire" (2026-10-22), puis les voix une a une.
+    voices = [voix_sources.ALEATOIRE_TOUT, voix_sources.ALEATOIRE_DISTANT, voix_sources.ALEATOIRE_PIPER,
+              voix_sources.ALEATOIRE] + voix.piper_out.voice_ids(lang=None) \
         + EDGE_TTS_VOICES + [voix.ESPEAK]
     current = voix.piper_out.canonical(r["voix"])
     # Presentation au debit neutre : elle est preparee d'avance pour chaque voix.
@@ -152,7 +160,8 @@ def _regler(source, key_source, say, out):
     # 3 et 4. voix de secours (Piper) et son debit, si la principale passe par Microsoft
     if not voix_sources.locale(choice):
         secours = [voix_sources.ALEATOIRE] + voix.piper_out.voice_ids(lang=None)
-        sec = _pick(secours, [_label(v) for v in secours], voix.piper_out.canonical(r["secours"]),
+        sec = _pick(secours, [dire("voix.aleatoire_label") if v == voix_sources.ALEATOIRE else _label(v)
+                              for v in secours], voix.piper_out.canonical(r["secours"]),
                     lambda i, text: voix.preview(text, secours[i], r["secours_debit"]), key_source, out,
                     dire("voix.etape_secours"), "voix_secours")
         if sec is None:

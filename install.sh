@@ -194,6 +194,23 @@ else
     echo "-- Piper deja installe, saute --"
 fi
 
+# MBROLA (voix locales tres legeres, lib/voix_externe.py, 2026-10-22) : Raspbian
+# n'a pas de binaire mbrola pour armhf, seulement les donnees -> compile depuis
+# les sources officielles (libres depuis 2018), voix fr1 a fr7.
+if [ ! -x /usr/local/bin/mbrola ]; then
+    echo "-- MBROLA --"
+    rm -rf "$BUILD_DIR/mbrola"
+    git clone -q --depth 1 https://github.com/numediart/MBROLA.git "$BUILD_DIR/mbrola"
+    make -s -C "$BUILD_DIR/mbrola"
+    install -m 755 "$BUILD_DIR/mbrola/Bin/mbrola" /usr/local/bin/mbrola
+fi
+for v in fr1 fr2 fr3 fr4 fr5 fr6 fr7; do
+    if [ ! -f "/usr/share/mbrola/$v/$v" ]; then
+        mkdir -p "/usr/share/mbrola/$v"
+        wget -q -O "/usr/share/mbrola/$v/$v" "https://github.com/numediart/MBROLA-voices/raw/master/data/$v/$v"
+    fi
+done
+
 echo "=== 3/6 : dependances Python (pip) ==="
 pip3 install -r "$REPO_DIR/requirements.txt"
 

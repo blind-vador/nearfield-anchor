@@ -86,7 +86,10 @@ def _format_time_spoken(dt):
 def _vehicle_journey_id(entry):
     for link in entry.get("links", []):
         if link.get("type") == "vehicle_journey":
-            return link.get("id")
+            # Train en retard : Navitia ajoute ":RealTime:<uuid>", qui change a
+            # chaque mise a jour temps reel -- sans ce suffixe, le meme train
+            # garde la meme cle (sinon annonce et bruitage relances, 2026-10-21).
+            return (link.get("id") or "").split(":RealTime:")[0] or None
     # repli : combinaison mode+heure théorique, unique en pratique
     info = entry.get("display_informations", {})
     return f"{info.get('trip_short_name')}_{entry['stop_date_time']['base_departure_date_time']}"
@@ -291,19 +294,21 @@ AMBIENCE_FREE_PROB_PER_HOUR = 0.3
 # Anti-doublon (2026-10-09, demande utilisateur) : deux trains ne doivent
 # jamais jouer EXACTEMENT le meme fichier en meme temps (deux sons identiques
 # alignes = ecart/echo bizarre). On tient un registre des fichiers en cours ;
-# le choix evite ceux qui jouent deja. S'il ne reste aucun fichier libre (plus
-# d'evenements simultanes que de fichiers dispo), le doublon est inevitable :
-# on le DECALE (on laisse ~1/4 du son passer) et on le joue plus bas, pour que
-# le recouvrement ne s'entende pas comme un echo.
-DUP_VOLUME = 0.4            # volume d'un doublon force
-DUP_OVERLAP = 0.25         # fraction du son laissee passer avant le doublon
+# le choix evite ceux qui jouent deja.
+# Garde-fou STRICT (2026-10-22, des doublons revenaient de temps en temps) :
+#   - le choix et la reservation se font d'un seul geste sous le verrou (deux
+#     trains a la meme seconde lisaient tous deux "libre" puis prenaient le
+#     meme fichier, en parfaite synchro) ;
+#   - plus de doublon force : si tous les fichiers du dossier jouent deja, le
+#     son est simplement saute (et note dans le journal) ;
+#   - un train reprogramme (sorti puis revenu dans la liste de l'API) remplace
+#     son bruitage en attente au lieu d'en ajouter un second.
 _ambient_playing = {}      # chemin -> instant de fin (epoch)
 _ambient_lock = threading.Lock()
 
 
-def _is_playing(path):
-    with _ambient_lock:
-        return _ambient_playing.get(path, 0.0) > time.time()
+RESERVE_SEC = 600          # reservation le temps de sonder la vraie duree
+_ambient_timers = {}       # (train, action) -> bruitage programme (threading.Timer)
 
 
 def _mark_playing(path, start_in, duration):
@@ -312,14 +317,19 @@ def _mark_playing(path, start_in, duration):
 
 
 def _choose(files):
-    """Un fichier au hasard en EVITANT ceux qui jouent deja. Retourne
-    (chemin, doublon_force) ; doublon_force=True si tous jouent deja."""
+    """Un fichier au hasard parmi ceux qui ne jouent pas, RESERVE dans le meme
+    geste (sous le verrou). Rend (chemin, False), ou (None, False) si tous
+    jouent deja : pas de doublon, jamais."""
     if not files:
         return None, False
-    libres = [f for f in files if not _is_playing(f)]
-    if libres:
-        return random.choice(libres), False
-    return random.choice(files), True
+    with _ambient_lock:
+        now = time.time()
+        libres = [f for f in files if _ambient_playing.get(f, 0.0) <= now]
+        if not libres:
+            return None, False
+        path = random.choice(libres)
+        _ambient_playing[path] = now + RESERVE_SEC
+    return path, False
 
 
 def _pick_ambient(category, action):
@@ -339,14 +349,13 @@ def _play_file(path, duplicate=False):
     en cours faute de mieux -> decale de ~1/4 du son et joue plus bas, pour
     eviter l'echo de deux sons identiques alignes (2026-10-09)."""
     dur = _probe_duration_sec(path)
-    if duplicate:
-        delay = max(0.3, dur * DUP_OVERLAP)
-        _mark_playing(path, delay, dur)
-        threading.Timer(delay, lambda: play_sound_effect(
-            path, timeout_sec=dur + 5, label="sncf_watch", volume=DUP_VOLUME)).start()
-    else:
-        _mark_playing(path, 0.0, dur)
-        play_sound_effect(path, timeout_sec=dur + 5, label="sncf_watch")
+    _mark_playing(path, 0.0, dur + 1)  # la reservation devient la vraie duree
+    print(f"[sncf_watch] bruitage {os.path.basename(os.path.dirname(path))}/{os.path.basename(path)} "
+          f"({dur:.0f} s)")
+    try:
+        play_sound_effect(path, timeout_sec=dur + 5, label="sncf_watch", canal="bruitages")
+    finally:
+        _mark_playing(path, 0.0, 0.0)  # libre des la fin
 
 
 def _play_random_ambience():
@@ -359,12 +368,14 @@ def _play_random_ambience():
         path, dup = _pick_ambient(choix.split("_")[0], "passby")
     if path and os.path.exists(path):
         _play_file(path, duplicate=dup)
+    elif not path:
+        print(f"[sncf_watch] decor {choix} saute : ce son joue deja")
 
 
 def _play_ambient_sound(category, action):
     path, dup = _pick_ambient(category, action)
     if not path:
-        print(f"[sncf_watch] dossier bruitage absent ou vide : {category}_{action}")
+        print(f"[sncf_watch] bruitage {category}_{action} saute : dossier vide ou tous ses sons jouent deja")
         return
     # Evenement secondaire aleatoire lance EN PARALLELE (il se mixe au son
     # principal) avec une faible probabilite, pour animer la gare : a un
@@ -392,14 +403,24 @@ def _ambience_libre():
         time.sleep(max(0.0, debut + 3600 - time.time()))
 
 
-def _schedule_ambient_sound(mode, action, event_dt):
+def _schedule_ambient_sound(mode, action, event_dt, vj_id=None):
     """Lance une tache en attente (thread daemon) qui se reveille pile a
     l'heure reelle de l'evenement (retard deja connu inclus, puisqu'on
-    programme sur l'heure REELLE pas theorique) pour jouer le bruitage."""
+    programme sur l'heure REELLE pas theorique) pour jouer le bruitage. Un
+    bruitage deja programme pour ce train et cette action est remplace."""
     category = _train_category(mode)
     delay = max(0.0, (event_dt - datetime.now()).total_seconds())
     timer = threading.Timer(delay, _play_ambient_sound, args=(category, action))
     timer.daemon = True
+    if vj_id:
+        with _ambient_lock:
+            ancien = _ambient_timers.pop((vj_id, action), None)
+            if ancien is not None and ancien.is_alive():
+                ancien.cancel()
+                print(f"[sncf_watch] bruitage {category}_{action} du train {vj_id} reprogramme (pas de doublon)")
+            _ambient_timers[(vj_id, action)] = timer
+            for cle in [k for k, t in _ambient_timers.items() if not t.is_alive() and t is not timer]:
+                del _ambient_timers[cle]
     timer.start()
 
 
@@ -635,7 +656,7 @@ def _schedule_train_event(state, vj_id, dep, arr, origins_by_id):
         _schedule_announcement(
             _speak_depart_announcement, (mode, destination, scheduled_dt, train_number), actual_dt, state, vj_id,
         )
-        _schedule_ambient_sound(mode, "leaving", actual_dt)
+        _schedule_ambient_sound(mode, "leaving", actual_dt, vj_id)
 
     elif category == "terminus":
         origin = _origin_name(arr, origins_by_id)
@@ -648,7 +669,7 @@ def _schedule_train_event(state, vj_id, dep, arr, origins_by_id):
         _schedule_announcement(
             _speak_terminus_announcement, (mode, origin, scheduled_dt, train_number), actual_dt, state, vj_id,
         )
-        _schedule_ambient_sound(mode, "arriving", actual_dt)
+        _schedule_ambient_sound(mode, "arriving", actual_dt, vj_id)
 
     else:  # stop_and_go
         origin = _origin_name(arr, origins_by_id)
@@ -664,7 +685,7 @@ def _schedule_train_event(state, vj_id, dep, arr, origins_by_id):
         )
         # dossier ter_sag/tgv_sag (nouveau, 2026-08-31) -- silence propre
         # si le dossier n'existe pas encore (voir _play_ambient_sound)
-        _schedule_ambient_sound(mode, "sag", actual_dt)
+        _schedule_ambient_sound(mode, "sag", actual_dt, vj_id)
 
 
 def _process_station(state):

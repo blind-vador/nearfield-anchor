@@ -128,6 +128,7 @@ def _synthesize_edge_tts(text, result_holder, candidate_voices=None, rate="+0%",
     except Exception as exc:
         print(f"[speak] synthese cloud (edge-tts) echouee : {str(exc)[:120]}")
         voix_sources.noter_microsoft(False)
+        voix_sources.erreur_microsoft(exc)
         if path and os.path.exists(path):
             try:
                 os.remove(path)

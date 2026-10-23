@@ -392,6 +392,24 @@ def accroche():
     return (dire("commandes.verrouillage_demande_capte_scanner", label=capture['label'], v1=_ago(capture['time'])))
 
 
+def relais_bilan():
+    """Commande "relais" (2026-10-23) : relais appris par l'APRS et ce qu'on en entend."""
+    import relais_cmd
+    return relais_cmd.texte()
+
+
+def zappe():
+    """Commande "zapper" (2026-10-22) : l'ecoute en cours s'arrete, le scanner
+    passe a la cible suivante ; un verrouillage est leve (sinon il y revient)."""
+    import maintien
+    import noise_signatures as ns
+    maintien.demander_zap()
+    if ns.lock_request():
+        ns.request_unlock()
+        return dire("commandes.zapper_deverrouille")
+    return dire("commandes.zapper_fait")
+
+
 def decroche():
     import noise_signatures as ns
     if not ns.lock_request() and not ns.manual_request():
@@ -496,9 +514,14 @@ COMMANDS = [
     Command("capture", "enregistre tout ce qui sort du haut-parleur ; capture démarre, capture stop", None,
             keywords=["capture", "capturer", "enregistre le son", "enregistrer le son", "enregistrement du son"],
             examples=["capture démarre", "capture stop", "enregistre ce qui sort du haut-parleur"]),
-    Command("antenne", "mesure l'antenne : stations FM, bruit de fond, écart au seuil de détection par bande ; antenne détail", None,
+    Command("volume", "volume général, puis un curseur par veille et par sorte de son : annonces, trains, "
+            "ambiance de la gare, écoutes radio... ; volume 60 règle directement le général", None,
+            keywords=["volume", "volumes", "son plus fort", "son moins fort", "monte le son", "baisse le son",
+                      "niveau sonore", "curseurs de volume", "volume general"],
+            examples=["règle les volumes", "mets le volume à 60"]),
+    Command("antenne", "mesure l'antenne : stations FM, bruit de fond, écart au seuil de détection par bande, capteurs entendus, puis audiographe ; antenne détail ; antenne son pour réentendre l audiographe", None,
             keywords=["antenne", "mesure antenne", "mesurer l'antenne", "test antenne", "tester l'antenne", "cable antenne",
-                      "puissance du signal", "niveau du signal", "force du signal"],
+                      "puissance du signal", "niveau du signal", "force du signal", "audiographe", "antenne son"],
             examples=["est-ce que l'antenne est bien branchée", "quelle est la puissance du signal reçu"]),
     Command("phrases", "phrases gardées en cache par les voix : écouter, recalculer une phrase bafouillée, valider, effacer", None,
             keywords=["phrases", "phrases en cache", "cache des voix", "cache de voix", "cache voix", "phrases des voix",
@@ -814,6 +837,20 @@ COMMANDS = [
             keywords=["accroche", "accrocher", "verrouille", "verrouiller", "verrouillage",
                       "scan verrouiller", "bloque le scan", "reste dessus", "reste sur cette frequence"],
             examples=["fixe toi sur cette fréquence", "garde cette fréquence", "reste sur ce canal"]),
+    Command("relais", "les relais radioamateurs appris par l'APRS : fréquence, tonalité, distance, "
+            "et combien de fois on les entend vraiment", relais_bilan,
+            keywords=["relais", "les relais", "relais radioamateurs", "repeteurs", "repeaters", "relais appris",
+                      "relais audibles", "tonalite d acces"],
+            examples=["quels relais j'entends", "les relais du coin"]),
+    Command("zapper", "le scanner arrête l'écoute en cours et passe à la suivante : bande, fenêtre ou appel DMR",
+            zappe, keywords=["zapper", "zappe", "zap", "suivant", "passe", "passe a la suite", "change de cible",
+                             "ecoute suivante", "appel suivant", "bande suivante"],
+            examples=["passe à autre chose", "change de fréquence"]),
+    Command("ignorer", "mettre de côté ce que l'on entend : la fréquence, ou en DMR le groupe ou l'appelant, "
+            "de 5 minutes à toujours ; ignorer liste ; ignorer effacer", None,
+            keywords=["ignorer", "ignore", "ignores", "ignorees", "mets de cote", "liste des ignores",
+                      "ne plus ignorer", "blacklist", "masquer cette frequence"],
+            examples=["ignore cette fréquence pendant une heure", "ignore ce groupe"]),
     Command("décroche", "le scanner reprend son balayage normal", decroche,
             keywords=["decroche", "decrocher", "deverrouille", "deverrouiller", "scan reprise",
                       "reprend", "reprends", "reprise du scan", "relache"],

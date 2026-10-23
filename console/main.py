@@ -365,6 +365,12 @@ def run_command(line, key_source, last_response):
     if cmd.name == "capture":
         import capture_cmd
         return capture_cmd.run(line, voix.say_and_wait, lambda t: voix.say(t, lock=True))
+    if cmd.name == "ignorer":
+        import ignorer_cmd
+        return ignorer_cmd.run(line, key_source, voix.say, out)
+    if cmd.name == "volume":
+        import volume_cmd
+        return volume_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "antenne":
         import antenne_cmd
         return antenne_cmd.run(line, out, _annoncer_plus_tard)

@@ -500,6 +500,11 @@ def run(key_source, say, out, category="radio"):
                     player.stop()
                     voix.say_blocking(dire("journal.son_brut"))
                     player.play(brut)
+                    try:  # le son brut ecoute compte aussi (commande "notifications")
+                        import journal_vus
+                        journal_vus.mark(recs[rec_i][1])
+                    except Exception as exc:
+                        print(f"[journal] ecoute non notee : {exc!r}")
                 else:
                     text = dire("journal.pas_son_brut")
             elif recs[rec_i][2] is not None and key in ("\x1b[D", "n", "N", "v", "V", "c", "C"):

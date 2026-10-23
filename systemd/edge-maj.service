@@ -1,0 +1,12 @@
+[Unit]
+Description=Reparation des voix Microsoft (edge-tts), lancee par un refus 403 pendant la parole
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -u /home/vador/autopilot/pi_console/edge_maj.py
+User=vador
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+StandardOutput=journal
+StandardError=journal

@@ -21,6 +21,13 @@ donnait encore 16 stations alors que plus rien ne passait au-dessus (aucune
 trame de capteur 433 MHz ni d'avion depuis). Le verdict regarde donc aussi
 le trafic reellement decode : la derniere trame de capteur (dernier_capteur).
 
+Ecoute des capteurs en direct (2026-10-22) : la mesure ecoute aussi
+ECOUTE_CAPTEURS_SEC sur 433,92 MHz (rtl_433). C'est la vraie preuve : le
+22/10, avec le coax N-N defectueux (ame coupee, tresse bonne), la FM donnait
+20 stations a +24 dB mais 0 trame ; la meme discone branchee sans le coax :
+42 trames de 9 capteurs en 3 minutes. Une passe UHF large (400-470 MHz) et la
+courbe FM sont gardees pour les audiographes (lib/audiographe.py).
+
 La cle appartient au scanner (radio-watch) : la console depose une demande
 (request), le scanner mesure entre deux fenetres d'ecoute (take_request,
 measure, done) et la console attend le resultat (wait). Scanner arrete : la
@@ -33,6 +40,8 @@ import statistics
 import subprocess
 import tempfile
 import time
+
+import audiographe
 
 REQUEST_PATH = "/tmp/radio_watch_antenne.json"
 DONE_PATH = "/tmp/radio_watch_antenne_fait.json"
@@ -48,6 +57,8 @@ DERIVE_DB = 4.0             # plancher qui baisse ou monte de plus : on le signa
 DC_GUARD_BINS = 3
 CAPTEURS_GLOB = "/media/nas/nd1/server/radio_log/donnees/capteurs_2*.jsonl"
 CAPTEURS_SILENCE_H = 6      # plus de trame capteur depuis : la reception au-dessus de la FM est suspecte
+ECOUTE_CAPTEURS_SEC = 90    # un LaCrosse emet toutes les ~50 s : 90 s en entendent la plupart
+UHF_AUDIO = (400_000_000, 470_000_000, 25_000)
 
 
 # --- echange console <-> scanner ---------------------------------------------------------
@@ -169,11 +180,33 @@ def _stations_fm(bins, floor):
     return gardees
 
 
+def _ecoute_capteurs(sec=ECOUTE_CAPTEURS_SEC):
+    """Trames de capteurs decodees en direct sur 433,92 MHz : [{"modele", "id", "snr"}],
+    ou None si rtl_433 n'a pas pu tourner."""
+    try:
+        r = subprocess.run(["rtl_433", "-d", "0", "-f", "433.92M", "-F", "json", "-M", "level",
+                            "-T", str(int(sec))],
+                           capture_output=True, text=True, errors="replace", timeout=sec + 30)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    trames = []
+    for line in r.stdout.splitlines():
+        try:
+            d = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(d, dict) and d.get("model"):
+            trames.append({"modele": d["model"], "id": d.get("id"), "snr": d.get("snr")})
+    if not trames and ("No supported devices" in r.stderr or "usb_claim_interface" in r.stderr):
+        return None
+    return trames
+
+
 def measure(bands, seuil_extra=None):
     """bands : radio_watch.BANDS (type sweep). seuil_extra(nom) : reglage
     "marge_detection_db" de la bande. Rend le resultat (dict, JSON)."""
     started = time.time()
-    res = {"t": started, "bandes": [], "erreur": None}
+    res = {"t": started, "bandes": [], "erreur": None, "courbes": []}
     for band in bands:
         if band.get("type") != "sweep":
             continue
@@ -198,7 +231,15 @@ def measure(bands, seuil_extra=None):
             entry["plancher_fm"] = round(fm_floor, 1)
             entry["stations"] = [(round(f / 1e6, 1), round(db - fm_floor, 1))
                                  for f, db in _stations_fm([b for b in bins if FM_DEBUT_HZ <= b[0] <= FM_FIN_HZ], fm_floor)]
+            fm_bins = [b for b in bins if FM_DEBUT_HZ <= b[0] <= FM_FIN_HZ]
+            if fm_bins:
+                res["courbes"].append(dict(audiographe.courbe(fm_bins), nom="fm", graduation=5))
         res["bandes"].append(entry)
+    if not res["erreur"]:
+        _levels, bins = _passe(*UHF_AUDIO)
+        if _levels is not None:
+            res["courbes"].append(dict(audiographe.courbe(bins), nom="uhf", graduation=10))
+        res["capteurs"] = _ecoute_capteurs()
     res["duree"] = round(time.time() - started)
     if not res["erreur"]:
         res["verdict"] = _verdict(res)
@@ -231,15 +272,18 @@ def _verdict(res):
         etat = "faible"
     else:
         etat = "rien"
+    trames = res.get("capteurs")
     return {"etat": etat, "stations_fm": n_fm, "derive_plancher": derive, "mesures_avant": n_hist,
-            "au_dessus": [b["nom"] for b in res["bandes"] if b.get("ecart", -1) > 0]}
+            "au_dessus": [b["nom"] for b in res["bandes"] if b.get("ecart", -1) > 0],
+            "trames": None if trames is None else len(trames),
+            "capteurs": None if trames is None else len({(t["modele"], t["id"]) for t in trames})}
 
 
 def _archiver(res):
     hist = _read(HISTORIQUE) or []
     hist.append({"t": res["t"], "bandes": [{k: b[k] for k in ("nom", "plancher", "pic", "ecart") if k in b}
                                            for b in res["bandes"]],
-                 "stations_fm": res["verdict"]["stations_fm"]})
+                 "stations_fm": res["verdict"]["stations_fm"], "trames": res["verdict"]["trames"]})
     try:
         _write(HISTORIQUE, hist[-HISTORIQUE_MAX:])
     except OSError:

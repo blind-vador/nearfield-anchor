@@ -169,7 +169,85 @@ def capabilities():
             caps.append("voix")
     except Exception:
         pass
+    if mac_voices():  # voix macOS dites en direct pour le Pi (2026-10-22)
+        caps.append("voix_mac")
     return caps
+
+
+# --- voix macOS en direct (2026-10-22) ---------------------------------------------
+# Le Pi demande "dire" {id, texte, voix, debit} par la liaison ; la machine fait
+# parler "say" dans un fichier et renvoie le son en morceaux signes ("son", PCM
+# 16 bits mono a SAY_RATE Hz, en base64), puis "son_fin". Aucun port a ouvrir :
+# tout passe par la connexion que le Mac a deja etablie vers le Pi.
+SAY = "/usr/bin/say"
+SAY_RATE = 22050
+SAY_CHUNK = 36000          # octets PCM par message (ligne < MAX_LINE une fois en base64)
+SAY_WPM = 185              # debit "+0%" en mots par minute
+SAY_LOCALES = ("fr_",)
+_mac_voices = {"t": 0, "liste": []}
+
+
+def mac_voices():
+    """Noms des voix macOS en francais installees (liste relue toutes les heures)."""
+    if not os.access(SAY, os.X_OK):
+        return []
+    if time.time() - _mac_voices["t"] > 3600:
+        voices = []
+        try:
+            out = subprocess.run([SAY, "-v", "?"], capture_output=True, text=True, timeout=20).stdout
+            for line in out.splitlines():
+                m = re.match(r"^(.+?)\s+([a-z]{2}_[A-Z]{2})\s+#", line)
+                if m and m.group(2).startswith(SAY_LOCALES):
+                    voices.append(m.group(1).strip())
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        _mac_voices.update(t=time.time(), liste=voices)
+    return _mac_voices["liste"]
+
+
+def _say_rate(debit):
+    try:
+        pct = float(str(debit or "0").strip().rstrip("%") or 0)
+    except ValueError:
+        pct = 0.0
+    return str(int(SAY_WPM * max(0.3, 1 + pct / 100)))
+
+
+def say_to_pi(link, msg):
+    import base64
+    import tempfile
+    import wave
+    req = msg.get("id")
+    voice = msg.get("voix")
+    text = (msg.get("texte") or "").strip()
+    if not req or voice not in mac_voices() or not text:
+        link.send({"type": "son_fin", "reponse_a": req, "ok": False, "erreur": "voix ou texte invalide"})
+        return
+    tmp = tempfile.mkdtemp(prefix="voix_mac_")
+    try:
+        src, wav = os.path.join(tmp, "texte.txt"), os.path.join(tmp, "son.wav")
+        with open(src, "w", encoding="utf-8") as f:
+            f.write(text)
+        subprocess.run([SAY, "-v", voice, "-r", _say_rate(msg.get("debit")), "-f", src, "-o", wav,
+                        "--data-format=LEI16@%d" % SAY_RATE], capture_output=True, timeout=60)
+        with wave.open(wav) as w:
+            if w.getnchannels() != 1 or w.getsampwidth() != 2:
+                raise ValueError("format inattendu")
+            n = 0
+            while True:
+                data = w.readframes(SAY_CHUNK // 2)
+                if not data:
+                    break
+                if not link.send({"type": "son", "reponse_a": req, "n": n,
+                                  "pcm": base64.b64encode(data).decode()}):
+                    return
+                n += 1
+        link.send({"type": "son_fin", "reponse_a": req, "ok": True, "taux": SAY_RATE})
+    except Exception as exc:
+        log("voix mac : %r" % exc)
+        link.send({"type": "son_fin", "reponse_a": req, "ok": False, "erreur": repr(exc)[:200]})
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
 
 
 _last_locked = {}
@@ -473,7 +551,7 @@ class Link(threading.Thread):
         mac, ips = network_identity()
         hello = {"type": "bonjour", "compagnon": conf["id"], "pi": self.pi, "nom": conf["nom"],
                  "capacites": capabilities(), "adresse_materielle": mac, "ips": ips, "nonce": uuid.uuid4().hex,
-                 "etat": session_state()}
+                 "etat": session_state(), "voix_mac": mac_voices()}
         channel.send(hello)
         welcome = channel.receive(card["cle"])
         if not welcome or welcome.get("type") != "bienvenue" or welcome.get("reponse_a") != hello["nonce"]:
@@ -496,6 +574,8 @@ class Link(threading.Thread):
                 if msg.get("type") == "travail":
                     log("%s : travail %s annonce" % (self.pi, msg.get("travail")))
                     _wake_workers(self.pi)
+                elif msg.get("type") == "dire":
+                    threading.Thread(target=say_to_pi, args=(self, msg), daemon=True).start()
         except (OSError, ValueError) as exc:
             log("%s : liaison coupee (%r)" % (self.pi, exc))
         finally:
@@ -511,7 +591,8 @@ class Link(threading.Thread):
                 channel = self.channel
             if channel is None:
                 return
-            if not self.send({"type": "battement", "capacites": capabilities(), "etat": session_state()}):
+            if not self.send({"type": "battement", "capacites": capabilities(), "etat": session_state(),
+                              "voix_mac": mac_voices()}):
                 return
             time.sleep(BEAT_SEC)
 

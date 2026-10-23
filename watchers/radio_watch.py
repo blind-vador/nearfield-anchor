@@ -35,6 +35,9 @@ import reglages_audio
 import relais
 import meteo_locale
 import mesure_antenne
+import ignores  # cibles mises de cote par la commande "ignorer" (2026-10-22)
+import maintien  # tenir une ecoute selon l'interet ; "zapper" (2026-10-22)
+import ctcss  # tonalite d'acces des relais, retrouvee dans le son capte (2026-10-23)
 import adsb_local_watch
 import aprs_watch
 import balises_watch
@@ -815,13 +818,16 @@ _dmr_turn = [0]
 DMR_TOP = 4
 
 
-def _dmr_window(dwell_sec=20):
+def _dmr_window(dwell_sec=20, freq_hz=None):
     import dmr_registre
     # Toutes les frequences DMR connues sont revisitees a tour de role (pas
     # seulement les mieux notees) : on veut capter TOUT ce qui est ouvert
     # (2026-10-08). Les plus prometteuses passent plus souvent (DMR_TOP en
     # tete, puis le reste en rotation).
-    known = [e for e in dmr_registre.targets() if dmr_filtres.freq_state(e["freq_hz"]) != "ignore"]
+    if freq_hz is not None:
+        return _dmr_ecoute(freq_hz, dwell_sec)
+    known = [e for e in dmr_registre.targets() if dmr_filtres.freq_state(e["freq_hz"]) != "ignore"
+             and not ignores.frequence_ignoree(e["freq_hz"])]
     if not known:
         return False
     # Ciblage (exploration dmr) : frequences favorites d'abord.
@@ -830,8 +836,14 @@ def _dmr_window(dwell_sec=20):
     target = (head + known)[_dmr_turn[0] % (len(head) + len(known))]
     _dmr_turn[0] += 1
     freq = target["freq_hz"]
-    label = dire("dmr.libelle_veille")
     print(f"[radio_watch] veille DMR : {freq / 1e6:.4f} MHz ({len(known)} frequence(s) suivie(s))")
+    return _dmr_ecoute(freq, dwell_sec)
+
+
+def _dmr_ecoute(freq, dwell_sec=20):
+    """Une ecoute DMR sur cette frequence : veille DMR, ou verrouillage dessus
+    (2026-10-22 : le verrouillage reecoutait un appel DMR comme de la FM)."""
+    label = dire("dmr.libelle_veille")
     # Meme habillage qu'une capture du balayage (_handle_candidate) : verrou
     # audio, session du journal radio, son de fin, empreinte de la capture.
     lock = audio_lock.acquire()
@@ -849,8 +861,9 @@ def _dmr_window(dwell_sec=20):
         play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
         morceaux.say(None, morceaux.whole(dire("radio.reception_terminee", protocol=protocol)), label="radio_watch")
         path = log_session.finalize()
-        noise_signatures.record_capture("rtl_fm", freq, "nfm", label, "dmr", path, None,
-                                        {"numerique": True, "veille_dmr": True})
+        noise_signatures.record_capture("dmr", freq, "nfm", label, "dmr", path, None,
+                                        {"numerique": True, "veille_dmr": True,
+                                         "dmr": getattr(try_digital_voice_decode, "last_dmr", {})})
         saved = True
         return True
     finally:
@@ -964,6 +977,16 @@ def _annonce_dmr(protocol, band_label, ticket):
         print(f"[radio_watch] annonce DMR : {exc!r}")
 
 
+def _dmr_courant(stats):
+    """{"groupe", "appelant"} de l'appel DMR entendu en dernier, ou {}."""
+    d = (stats or {}).get("dmr") or {}
+    slot = d.get("dernier_intervalle")
+    if not slot:
+        return {}
+    out = {"groupe": (d.get("en_cours") or {}).get(slot), "appelant": (d.get("parle") or {}).get(slot)}
+    return {k: v for k, v in out.items() if v}
+
+
 def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=None, target=None):
     """Tente un decodage vocal numerique (DMR/P25/NXDN/D-STAR/YSF/dPMR/X2-TDMA)
     directement depuis le dongle RTL-SDR via dsd-fme. dsd-fme n'a pas de
@@ -1000,7 +1023,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         # Reglages de la voix numerique (2026-10-14) : attente de fin et volume
         # propres, ajustes par le bilan (fins coupees) ou a la main ("reglages son").
         digital = _settings(target) if target else {}
-        idle_sec = digital.get("attente_fin_numerique_s") or DSD_FME_IDLE_SEC
+        idle_sec = maintien.delai(digital.get("attente_fin_numerique_s") or DSD_FME_IDLE_SEC, target or "dmr", freq_hz)
         gain = 10 ** ((digital.get("gain_numerique_db") or 0.0) / 20)
         stdout_thread = threading.Thread(target=_dsdfme_stdout_watcher, args=(proc, stats), daemon=True)
         stdout_thread.start()
@@ -1012,12 +1035,24 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         validated = False
         annonce, attente, validated_at = None, [], 0.0
         filtered_out = False
-        max_sec = min(DSD_FME_MAX_SEC, dmr_filtres.max_duration())
+        # Plus de coupure d'un appel en cours (2026-10-22 : des conversations coupees
+        # pile a 2 minutes) : la duree max ne vaut que pour ce qui interesse peu.
+        max_sec = maintien.plafond(min(DSD_FME_MAX_SEC, dmr_filtres.max_duration()), target or "dmr", freq_hz)
         captured_chunks = []
         start = time.time()
         deadline = start + (probe_sec or DSD_FME_PROBE_SEC)
         muted = False  # appel prive ou chiffre : ni joue ni enregistre (regle utilisateur)
+        dmr_vu = {}
+        try_digital_voice_decode.last_dmr = {}
         while time.time() < deadline:
+            if maintien.zap_depuis(start):
+                print("[radio_watch] zapper : ecoute numerique arretee a la demande")
+                break
+            courant = _dmr_courant(stats)
+            if courant and courant != dmr_vu:  # qui parle : pour "ignorer" et "verrouiller"
+                dmr_vu = courant
+                try_digital_voice_decode.last_dmr = courant
+                noise_signatures.update_live(dmr=courant)
             try:
                 data, _ = sock.recvfrom(65536)
             except socket.timeout:
@@ -1047,6 +1082,10 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                                            args=(protocol, band_label, audio_lock.ticket_courant()))
                 annonce.start()
                 validated_at = time.time()
+                if target == "dmr":  # veille DMR : "verrouiller" et "ignorer" visent cet appel
+                    noise_signatures.capture_started("dmr", freq_hz, "dmr", band_label, "dmr")
+                    if dmr_vu:
+                        noise_signatures.update_live(dmr=dmr_vu)
                 attente, pending, data = list(pending), [], None
             if validated and annonce is not None:
                 if data:
@@ -1085,7 +1124,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 data = audioop.mul(data, 2, gain)
             captured_chunks.append(data)
             try:
-                aplay.stdin.write(audio_lock.scale(data))
+                aplay.stdin.write(audio_lock.scale(data, canal="ecoute"))
             except Exception:
                 break
 
@@ -1412,12 +1451,13 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     aplay_stderr_thread.start()
 
     settings = _settings(target)
-    debounce = settings["attente_fin_s"] or SILENCE_DEBOUNCE_SEC
+    debounce = maintien.delai(settings["attente_fin_s"] or SILENCE_DEBOUNCE_SEC, target, freq_hz)
     quiet_windows_needed = int(debounce * 1000 / ANALYSIS_WINDOW_MS)
     quiet_windows_seen = 0
     consecutive_signal_windows = 0
     total_bytes = 0
-    max_bytes = int(sample_rate * 2 * MAX_HOLD_SEC)
+    hold_sec = maintien.plafond(MAX_HOLD_SEC, target, freq_hz)  # plus de coupure d'un echange interessant
+    max_bytes = int(sample_rate * 2 * hold_sec)
     heard_signal = True  # deja confirme par la pre-ecoute (_prelisten)
     decoded_messages = list(decoded_early)
 
@@ -1441,7 +1481,10 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     probs_seen, trigger_prob, early_cut = [], None, False
     start = signal_at = time.time()
     try:
-        while total_bytes < max_bytes and time.time() - start < MAX_HOLD_SEC + 5:
+        while total_bytes < max_bytes and time.time() - start < hold_sec + 5:
+            if maintien.zap_depuis(start):
+                print("[radio_watch] zapper : ecoute arretee a la demande")
+                break
             # Timeout (pas un .get() bloquant sans limite) : une attente
             # bloquante pure sur Condition.wait() ne se reveille QUE quand la
             # file recoit quelque chose, et un signal (SIGTERM, "systemctl
@@ -1472,7 +1515,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
             filtered, chunk = chain.process_s16le(chunk)
             filtered_chunks.append(filtered)
             try:
-                aplay.stdin.write(audio_lock.scale(chunk))
+                aplay.stdin.write(audio_lock.scale(chunk, canal="ecoute"))
             except Exception:
                 # Le detail de l'erreur remonte via le fil aplay_stderr_thread
                 # (surveillance continue, voir _aplay_stderr_watcher) -- ne pas
@@ -1547,6 +1590,11 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         "duree_s": round(total_bytes / (sample_rate * 2), 1),
         "coupure_precoce": early_cut,
     }
+    if mode == "nfm" and raw_chunks:  # son brut : la tonalite y est encore (le filtre vocal la retire)
+        try:
+            _last_stream_metrics["ctcss_hz"] = ctcss.detecter(b"".join(raw_chunks), sample_rate)
+        except Exception as exc:
+            print(f"[radio_watch] tonalite non mesuree : {exc!r}")
 
     if multimon_queue is not None:
         time.sleep(0.2)
@@ -1888,6 +1936,9 @@ def _thermal_pause_wait(duration):
 
 
 def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
+    if ignores.frequence_ignoree(freq):
+        print(f"[radio_watch] {freq / 1e6:.4f} MHz ignoree (commande ignorer), on passe")
+        return False
     # Verrou audio partage avec adsb_watch.py (processus separe) : garantit
     # qu'aucune annonce d'avion ne chevauche l'annonce/diffusion/son de fin
     # d'un candidat radio. Tenu pendant tout le cycle actif, relache des que
@@ -1915,7 +1966,8 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             morceaux.say(None, morceaux.whole(dire("radio.reception_terminee", protocol=protocol)), label="radio_watch")
             path = log_session.finalize()
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
-                                            {"niveau_db": level_db, "numerique": True})
+                                            {"niveau_db": level_db, "numerique": True,
+                                             "dmr": getattr(try_digital_voice_decode, "last_dmr", {})})
             saved = True
             return True
         if stream_until_quiet(freq, mode, band_label, target=target):
@@ -1923,6 +1975,16 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             path = log_session.finalize()
             _save_raw(path)
             metrics = dict(_last_stream_metrics, niveau_db=level_db)
+            try:  # relais connu : entendu, et confirme si sa tonalite y est (2026-10-23)
+                verdict = relais.note_capture(freq, metrics.get("ctcss_hz"))
+                if verdict:
+                    metrics["relais"] = verdict
+                    print(f"[radio_watch] relais {freq / 1e6:.4f} MHz : {verdict}"
+                          + (f" (tonalite {metrics['ctcss_hz']} Hz)" if metrics.get("ctcss_hz") else ""))
+                elif metrics.get("ctcss_hz"):
+                    print(f"[radio_watch] tonalite {metrics['ctcss_hz']} Hz sur {freq / 1e6:.4f} MHz")
+            except Exception as exc:
+                print(f"[radio_watch] audibilite du relais : {exc!r}")
             if freq < HF_ANALYSIS_MAX_HZ:
                 # CB, 10 m : vraie emission ou artefact de la cle saturee ?
                 # (largeur du signal, baisse avec le gain ; lib/stations.py)
@@ -2020,6 +2082,8 @@ def scan_fm_band(band):
     margin_db = band.get("margin_db", NOISE_MARGIN_DB) + _settings(band["name"])["marge_detection_db"]
     span_hz = band.get("span_hz", 25_000)
     candidates = check_channels_relative(band["channels"], span_hz=span_hz, margin_db=margin_db)
+    if band["name"].startswith("relais_"):
+        relais.note_ecoutes(band["channels"])  # audibilite des relais appris (commande "relais")
     for freq, db in candidates:
         print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.5f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")
         if band["name"].startswith("stations_"):
@@ -2058,6 +2122,8 @@ def _scan_locked(capture):
     demandee par la console ("accroche"). Meme chaine que le balayage
     normal (squelch reel, annonce, diffusion, journal), sur une seule
     frequence. Retourne True si une transmission a ete relayee."""
+    if capture.get("source") == "dmr" or capture.get("target") == "dmr":
+        return _dmr_ecoute(capture["freq_hz"], dwell_sec=20)
     if capture["source"] == "airband":
         window = next((w for w in airband_bridge.AIRBAND_WINDOWS if w["name"] == capture["target"]), None)
         port = next((pt for f, pt in window["channels"] if f == capture["freq_hz"]), None) if window else None

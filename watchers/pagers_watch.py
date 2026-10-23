@@ -67,6 +67,11 @@ def _other_page(line, freq):
     mhz = f"{freq / 1e6:.4f}".rstrip("0").replace(".", ",")
     n = NUMERIC.search(line)
     digits = " ".join((n.group(1) or n.group(2) or "").split()) if n else ""
+    if not digits:
+        # Bip sans texte (2026-10-23, demande utilisateur) : ni annonce ni prise a
+        # part ; il est archive (pagers_AAAA-MM-JJ.jsonl) et compte dans le resume
+        # horaire du journal "donnees" (lib/trafic_heure.py).
+        return False
     if not _memory.due(f"pager_adresse|{address}|{digits}", REPEAT_SEC):
         return False
     if digits:

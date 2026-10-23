@@ -133,6 +133,12 @@ def audible(tg):
     """Ce groupe peut-il etre entendu ? tg None (pas encore identifie) :
     oui, sauf focus ou mode cible (on attend de savoir qui parle)."""
     data = load()
+    try:  # commande "ignorer" (2026-10-22) : groupe mis de cote pour une duree
+        import ignores
+        if ignores.groupe_ignore(tg):
+            return False
+    except Exception:
+        pass
     if data.get("focus"):
         return tg is not None and str(tg) == data["focus"]
     state = group_state(tg)
@@ -147,13 +153,22 @@ def slot_gains(stats):
     """(gain intervalle 1, gain intervalle 2, quelque chose d'audible) d'apres
     les appels en cours vus par dsd-fme (dmr_registre.line -> "en_cours")."""
     current = ((stats or {}).get("dmr") or {}).get("en_cours") or {}
+    parle = ((stats or {}).get("dmr") or {}).get("parle") or {}
     if not current:
         ok = audible(None)
         return (1.0, 1.0, ok) if ok else (0.0, 0.0, False)
+    try:
+        import ignores
+        muet = ignores.appelant_ignore
+    except Exception:
+        muet = lambda src: False  # noqa: E731
+
+    def ok(slot):
+        return audible(current[slot]) and not muet(parle.get(slot))
     gains = []
     for slot in ("1", "2"):
-        gains.append(1.0 if (slot not in current or audible(current[slot])) else 0.0)
-    heard = any(audible(tg) for tg in current.values())
+        gains.append(1.0 if (slot not in current or ok(slot)) else 0.0)
+    heard = any(ok(slot) for slot in current)
     return gains[0], gains[1], heard
 
 

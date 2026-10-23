@@ -9,7 +9,18 @@ reconnaissent par leurs cles echangees a l'appairage). Ensuite :
 Travail sans machine connectee : paquet de reveil (Wake-on-LAN) toutes les
 10 minutes, la machine se reconnecte en se reveillant. Les resultats sont
 relus des qu'une machine dit "fini" (et chaque minute par securite).
+
+Voix macOS en direct (2026-10-22) : les programmes du Pi qui parlent
+demandent une phrase par la prise locale VOIX_MAC_SOCKET (une ligne JSON
+{texte, voix, debit}) ; on la transmet ("dire") a une machine connectee qui
+a cette voix, et le son revient en morceaux ("son", PCM 16 bits mono en
+base64, puis "son_fin"), relaye tel quel sur la prise au fil de l'eau.
+Rien d'ecrit sur le NAS. Pas de machine, ou rien sous VOIX_MAC_DELAI_SEC :
+la prise se ferme sans son, l'appelant passe a la voix suivante.
 """
+import base64
+import queue
+import uuid
 import json
 import os
 import socketserver
@@ -28,12 +39,16 @@ TICK_SEC = 2
 # (mode differe par le NAS) toutes les 12 h, pour ne pas solliciter les disques.
 POLL_SEC = 8  # appliquer les resultats decrire_images sans attendre 12 h
 READ_TIMEOUT_SEC = 120
+VOIX_MAC_SOCKET = "/tmp/voix_mac.sock"
+VOIX_MAC_DELAI_SEC = 15      # premier morceau
+VOIX_MAC_ENTRE_SEC = 10      # entre deux morceaux
 
 _lock = threading.Lock()
 _channels = {}  # id -> Channel
 _presence = {}  # id -> {depuis, vu}
 _notified = {}  # travail -> heure du dernier avis ou reveil
 _results_ready = threading.Event()
+_demandes_voix = {}  # id de "dire" -> queue des morceaux recus
 
 
 def _save_presence():
@@ -59,7 +74,8 @@ class _Handler(socketserver.StreamRequestHandler):
             channel.send({"type": "bienvenue", "pi": compagnon.pi_id(), "reponse_a": hello.get("nonce")})
             compagnon.update_card(cid, nom=hello.get("nom", card.get("nom")), capacites=hello.get("capacites", []),
                                   adresse_materielle=hello.get("adresse_materielle") or card.get("adresse_materielle"),
-                                  ips=hello.get("ips") or [self.client_address[0]], vu=time.time())
+                                  ips=hello.get("ips") or [self.client_address[0]], vu=time.time(),
+                                  voix_mac=hello.get("voix_mac") or [])
             compagnon.note_state(cid, hello.get("etat"))
             with _lock:
                 old = _channels.pop(cid, None)
@@ -81,8 +97,13 @@ class _Handler(socketserver.StreamRequestHandler):
                     _save_presence()
                 kind = msg.get("type")
                 if kind == "battement":
-                    compagnon.update_card(cid, vu=time.time(), capacites=msg.get("capacites", []))
+                    compagnon.update_card(cid, vu=time.time(), capacites=msg.get("capacites", []),
+                                          voix_mac=msg.get("voix_mac") or [])
                     compagnon.note_state(cid, msg.get("etat"))
+                elif kind in ("son", "son_fin"):
+                    file = _demandes_voix.get(msg.get("reponse_a"))
+                    if file is not None:
+                        file.put(msg)
                 elif kind == "pris":
                     print(f"[compagnon] travail {msg.get('travail')} pris par {card.get('nom')}")
                 elif kind == "fini":
@@ -227,7 +248,59 @@ def _decode_locally(job):
         print(f"[compagnon] secours LoRa {job['id']} : {exc!r}")
 
 
+class _VoixMac(socketserver.StreamRequestHandler):
+    """Une phrase en voix macOS : demande en JSON, son brut en retour."""
+
+    def handle(self):
+        try:
+            req = json.loads(self.rfile.readline(65536) or b"{}")
+        except ValueError:
+            return
+        voix = req.get("voix")
+        with _lock:
+            cibles = [(cid, ch) for cid, ch in _channels.items()
+                      if voix in ((compagnon.trusted().get(cid) or {}).get("voix_mac") or [])]
+        if not cibles or not (req.get("texte") or "").strip():
+            return
+        cid, channel = cibles[0]
+        rid = uuid.uuid4().hex
+        file = queue.Queue()
+        _demandes_voix[rid] = file
+        try:
+            channel.send({"type": "dire", "id": rid, "texte": req["texte"], "voix": voix,
+                          "debit": req.get("debit") or "+0%"})
+            delai = VOIX_MAC_DELAI_SEC
+            while True:
+                msg = file.get(timeout=delai)
+                if msg.get("type") == "son_fin":
+                    if not msg.get("ok"):
+                        print(f"[compagnon] voix mac {voix} : {msg.get('erreur')}")
+                    return
+                self.wfile.write(base64.b64decode(msg.get("pcm") or ""))
+                self.wfile.flush()
+                delai = VOIX_MAC_ENTRE_SEC
+        except queue.Empty:
+            print(f"[compagnon] voix mac {voix} : pas de reponse de {cid}")
+        except (OSError, ValueError) as exc:
+            if not isinstance(exc, BrokenPipeError):
+                print(f"[compagnon] voix mac {voix} : {exc!r}")
+        finally:
+            _demandes_voix.pop(rid, None)
+
+
+def _serveur_voix_mac():
+    try:
+        os.remove(VOIX_MAC_SOCKET)
+    except OSError:
+        pass
+    socketserver.ThreadingUnixStreamServer.daemon_threads = True
+    server = socketserver.ThreadingUnixStreamServer(VOIX_MAC_SOCKET, _VoixMac)
+    os.chmod(VOIX_MAC_SOCKET, 0o600)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
 def run():
+    _serveur_voix_mac()
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     server = socketserver.ThreadingTCPServer(("0.0.0.0", proto.PORT), _Handler)
     server.daemon_threads = True

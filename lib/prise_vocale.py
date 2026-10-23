@@ -51,8 +51,9 @@ def _edge(text, path, choix):
                                                     pitch=choix["hauteur"]).save(path), timeout=SYNTH_TIMEOUT_SEC)
     try:
         asyncio.run(run())
-    except Exception:
+    except Exception as exc:
         voix_sources.noter_microsoft(False)
+        voix_sources.erreur_microsoft(exc)
         raise
     ok = os.path.exists(path) and os.path.getsize(path) > 0
     voix_sources.noter_microsoft(ok)
@@ -77,7 +78,7 @@ def _piper(text, path, choix):
     import annonce_morceaux as morceaux
     import phrases_fixes
     import piper_out
-    if choix["moteur"] != "piper" or not piper_out.available():
+    if choix["moteur"] != "piper" or not piper_out.available(choix.get("voix")):
         return False
     parts = []
     for sentence in phrases_fixes.split(text):
@@ -162,6 +163,15 @@ def play(path, label):
             sound_player.play_sound_effect(path, timeout_sec=600, label=label)
     finally:
         audio_lock.release(lock)
+    if not lock.dropped and not getattr(lock, "silent", False):
+        # Dite a voix haute : deja entendue, plus "nouvelle" pour la commande
+        # "notifications" (2026-10-23 : bipeurs, transports, plantes, bulletins
+        # entendus en direct restaient comptes comme jamais ecoutes).
+        try:
+            import journal_vus
+            journal_vus.mark(path)
+        except Exception as exc:
+            print(f"[prise_vocale] ecoute non notee : {exc!r}")
     if getattr(lock, "silent", False) and time.time() - _notice["t"] >= NOTICE_EVERY_SEC:
         # journal ouvert : enregistree sans bruit, un mot pour prevenir (pas a chaque releve)
         _notice["t"] = time.time()

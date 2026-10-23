@@ -25,7 +25,7 @@ def _load():
 
 def _save(data):
     try:
-        tmp = PATH + ".tmp"
+        tmp = PATH + f".{os.getpid()}.tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump(data, f)
         os.replace(tmp, PATH)
@@ -34,12 +34,17 @@ def _save(data):
 
 
 def mark(path):
-    """Enregistrement joue dans un journal : il n'est plus nouveau."""
-    data = _load()
-    now = time.time()
-    data["ecoutes"][os.path.basename(path)] = now
-    data["ecoutes"] = {k: t for k, t in data["ecoutes"].items() if now - t < KEEP_SEC}
-    _save(data)
+    """Enregistrement joue dans un journal, ou dit a voix haute par une veille
+    (lib/prise_vocale.py) : il n'est plus nouveau. Plusieurs processus marquent
+    (console, veilles) : lire-modifier-ecrire sous verrou (2026-10-23)."""
+    import fcntl
+    with open(PATH + ".verrou", "a") as verrou:
+        fcntl.flock(verrou, fcntl.LOCK_EX)
+        data = _load()
+        now = time.time()
+        data["ecoutes"][os.path.basename(path)] = now
+        data["ecoutes"] = {k: t for k, t in data["ecoutes"].items() if now - t < KEEP_SEC}
+        _save(data)
 
 
 def is_new(path):

@@ -1,5 +1,5 @@
 requests
-edge-tts
+edge-tts>=7.3.1  # 2026-10-22 : Microsoft a change Sec-MS-GEC (403 avant 7.3)
 numpy
 beautifulsoup4
 aprslib

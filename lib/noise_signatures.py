@@ -355,6 +355,18 @@ def capture_started(source, freq_hz, mode, label, target):
         print(f"[noise_signatures] ecoute en cours non memorisee : {exc}")
 
 
+def update_live(**fields):
+    """Complete l'ecoute en cours de ce processus (groupe et appelant DMR qui
+    parlent, 2026-10-22 : pour "ignorer" et "verrouiller")."""
+    live = _read_json(LIVE_CAPTURE_PATH, None)
+    if live and live.get("pid") == os.getpid():
+        live.update(fields)
+        try:
+            _atomic_write_json(LIVE_CAPTURE_PATH, live)
+        except OSError:
+            pass
+
+
 def capture_ended():
     live = _read_json(LIVE_CAPTURE_PATH, None)
     if live and live.get("pid") == os.getpid():

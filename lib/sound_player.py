@@ -76,6 +76,7 @@ def play_lead_then(lead_path, then, label="sound_player", reverb=False, timeout_
         return then()
     ticket = audio_lock.ticket_courant()
     started = threading.Event()
+    fin = fin_audible(lead_path)  # calcule AVANT le jingle (2026-10-22 : ~0,75 s de blanc en plus sinon)
 
     def lead():
         audio_lock._local.ticket = ticket
@@ -84,14 +85,15 @@ def play_lead_then(lead_path, then, label="sound_player", reverb=False, timeout_
     t = threading.Thread(target=lead, daemon=True)
     t.start()
     if started.wait(10):
-        time.sleep(fin_audible(lead_path) + LEAD_GAP_SEC)
+        time.sleep(fin + LEAD_GAP_SEC)
     try:
         return then()
     finally:
         t.join(timeout_sec + 5)
 
 
-def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, volume=1.0, on_start=None):
+def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, volume=1.0, on_start=None,
+                      canal=None):
     """Joue un court effet sonore (mp3) sur le peripherique audio partage,
     de maniere bloquante. Module commun a radio_watch.py, adsb_watch.py et
     meteo_watch.py -- une seule implementation, evite la divergence entre
@@ -136,7 +138,7 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
             data = decoder.stdout.read(chunk)
             if not data:
                 break
-            data = audio_lock.scale(data)
+            data = audio_lock.scale(data, canal=canal)  # canal : curseur de la commande "volume"
             if volume != 1.0:  # doublon d'ambiance joue plus bas (sncf_watch)
                 data = audioop.mul(data, 2, volume)
             player.stdin.write(data)

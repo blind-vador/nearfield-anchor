@@ -75,6 +75,8 @@ def line(stats, text):
         slot, tgt, src, kind = m.group(1), m.group(2), m.group(3), m.group(4).strip()
         if "group" in kind.lower():  # groupe qui parle sur cet intervalle (filtres : lib/dmr_filtres.py)
             d.setdefault("en_cours", {})[slot] = tgt
+            d.setdefault("parle", {})[slot] = src  # appelant (commande "ignorer", 2026-10-22)
+            d["dernier_intervalle"] = slot
         call = d["appels"].setdefault((slot, tgt, src), {"type": kind, "n": 0})
         call["n"] += 1
         if "private" in kind.lower():

@@ -425,7 +425,7 @@ class ManualStream:
                 return False  # un nouveau recepteur a pris le relais
             try:
                 # Fil de relais : le ticket est passe explicitement (priorites).
-                self._aplay.stdin.write(audio_lock.scale(data, self._lock))
+                self._aplay.stdin.write(audio_lock.scale(data, self._lock, canal="ecoute"))
                 return True
             except (BrokenPipeError, ValueError, OSError):
                 return False

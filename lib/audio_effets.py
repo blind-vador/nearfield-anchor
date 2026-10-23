@@ -87,6 +87,41 @@ _PA_WET = _PA_COLOR + [
 # --- Profil "hall" : sons d'ambiance (train qui passe, klaxon) ----------------
 # Pas de coloration haut-parleur (pas de mono, pas de coupe des graves) : un TGV
 # garde son grondement. Juste la salle, legere et pleine bande.
+# --- Profils "pa_jingle" et "pa_voix" (2026-10-22, demande utilisateur) ------
+# Avec "pa" pour tout, la voix des annonces sortait trop faible a cote du
+# jingle (une voix de synthese est moins "dense" qu'un jingle masterise) et le
+# jingle n'avait pas assez l'air de sortir d'une sono de quai.
+#   pa_jingle : pavillon plus marque (bosse nasillarde +7 dB, bande plus
+#               etroite 300-4000 Hz) et salle plus presente (voie humide a
+#               -4 au lieu de -8, queue plus longue), puis normalise a -10 dBFS (+3 dB a peine sur l ancien) ;
+#   pa_voix   : meme sono que "pa", puis compresseur (la voix garde un niveau
+#               regulier, les syllabes faibles remontent) et normalisation a
+#               -4,5 dBFS : la voix passe 2 dB au-dessus du jingle (mesure sox stats).
+_JINGLE_COLOR = [
+    "channels", "1", "channels", "2",
+    "highpass", "300",
+    "equalizer", "2000", "1.4q", "3",
+    "lowpass", "4000",
+    "gain", "-8",
+]
+_JINGLE_DRY = _JINGLE_COLOR + [
+    "equalizer", "950", "1.0q", "7",
+    "equalizer", "2500", "1.4q", "4",
+    "pad", "0", PAD_SEC,
+]
+_JINGLE_WET = _JINGLE_COLOR + [
+    "highpass", "500",
+    "pad", "0", PAD_SEC,
+    "reverb", "-w", "75", "70", "100", "100", "140", "0",
+    "gain", "-4",
+]
+_FINAL = {
+    "pa_jingle": ["gain", "-n", "-10"],
+    "pa_voix": ["compand", "0.01,0.25", "-70,-70,-60,-36,-24,-14,0,-6", "0", "-90", "0.05",
+                "gain", "-n", "-4.5"],
+}
+CACHE_DIR = "/tmp/gare_effets"     # jingles traites gardes (calcules une fois)
+
 HALL_CHAIN = [
     "gain", "-3",
     "pad", "0", "2",
@@ -114,6 +149,57 @@ def _sox(args):
 
 
 def reverb_gare(src, profile="pa"):
+    """Comme _reverb_gare ; le jingle traite ("pa_jingle") est garde dans
+    CACHE_DIR et rendu en copie : calcule une seule fois, il part tout de suite."""
+    if profile != "pa_jingle":
+        return _reverb_gare(src, profile)
+    import hashlib
+    import shutil
+    try:
+        cle = hashlib.md5(f"{src}|{os.path.getmtime(src)}|{profile}".encode()).hexdigest()
+    except OSError:
+        return _reverb_gare(src, profile)
+    garde = os.path.join(CACHE_DIR, cle + ".wav")
+    if not os.path.exists(garde):
+        fait = _reverb_gare(src, profile)
+        if not fait:
+            return None
+        os.makedirs(CACHE_DIR, exist_ok=True)
+        os.replace(fait, garde)
+    fd, copie = tempfile.mkstemp(suffix=".wav", prefix="gare_reverb_")
+    os.close(fd)
+    shutil.copyfile(garde, copie)
+    return copie
+
+
+def _quai(dec, out, profile):
+    """Sono de quai (2026-10-22) : coloration haut-parleur par sox (sans reverb,
+    sans silence ajoute), compresseur pour la voix, puis la salle par
+    convolution (reverb_quai : grand espace ouvert, queue entiere). Faux si
+    quelque chose manque : l'appelant reprend l'ancienne chaine sox."""
+    couleur = _JINGLE_DRY if profile == "pa_jingle" else _PA_DRY
+    if couleur[-3:] == ["pad", "0", PAD_SEC]:
+        couleur = couleur[:-3]
+    if profile == "pa_voix":
+        couleur = couleur + _FINAL["pa_voix"][:6]  # compand seul : le niveau est regle ensuite
+    fd, sec = tempfile.mkstemp(suffix=".wav", prefix="gare_sec_")
+    os.close(fd)
+    try:
+        import reverb_quai
+        _sox([dec, "-t", "wav", "-r", str(reverb_quai.FS), sec] + couleur)
+        reverb_quai.appliquer(sec, out, profile)
+        return True
+    except Exception as exc:
+        print(f"[audio_effets] reverb de quai indisponible ({exc!r}) : ancienne reverb")
+        return False
+    finally:
+        try:
+            os.remove(sec)
+        except OSError:
+            pass
+
+
+def _reverb_gare(src, profile="pa"):
     """Rend `src` traite facon gare dans un .wav temporaire (chemin retourne,
     l'appelant le supprime). profile="pa" : voix/jingles facon haut-parleur de
     quai dans un grand espace (direct sec + reverb seule dosee). profile="hall"
@@ -126,14 +212,17 @@ def reverb_gare(src, profile="pa"):
         dec = _decode_to_wav(src)
         if profile == "hall":
             _sox([dec, "-t", "wav", out] + HALL_CHAIN)
-        else:  # "pa" : deux voies paralleles puis mixage
+        elif _quai(dec, out, profile):
+            pass  # reverb de grand espace ouvert par convolution (lib/reverb_quai.py)
+        else:  # secours : l'ancienne reverb sox, deux voies paralleles puis mixage
+            dry, wet = (_JINGLE_DRY, _JINGLE_WET) if profile == "pa_jingle" else (_PA_DRY, _PA_WET)
             fd, tmp_dry = tempfile.mkstemp(suffix=".wav", prefix="gare_dry_")
             os.close(fd)
             fd, tmp_wet = tempfile.mkstemp(suffix=".wav", prefix="gare_wet_")
             os.close(fd)
-            _sox([dec, tmp_dry] + _PA_DRY)
-            _sox([dec, tmp_wet] + _PA_WET)
-            _sox(["-m", tmp_dry, tmp_wet, "-t", "wav", out])
+            _sox([dec, tmp_dry] + dry)
+            _sox([dec, tmp_wet] + wet)
+            _sox(["-m", tmp_dry, tmp_wet, "-t", "wav", out] + _FINAL.get(profile, []))
         if os.path.getsize(out) <= 44:  # 44 o = entete wav vide
             raise RuntimeError("sortie vide")
         return out

@@ -388,9 +388,22 @@ def _ramp(t, gain):
     return start, gain
 
 
-def scale(data, ticket=None):
-    """Volume courant applique a un morceau de PCM entier 16 bits."""
-    gain = current_gain(ticket)
+def _volume(ticket, canal):
+    """Curseurs de la commande "volume" (lib/volumes.py, 2026-10-22) pour la
+    source du ticket (ou du service) et ce canal."""
+    t = ticket or getattr(_local, "ticket", None)
+    try:
+        import volumes
+        return volumes.facteur(t.source if t is not None else default_source(), canal)
+    except Exception:
+        return 1.0
+
+
+def scale(data, ticket=None, canal=None):
+    """Volume courant applique a un morceau de PCM entier 16 bits : priorites
+    x curseurs de volume (canal : "ecoute", "bruitages"... ; aucun = le
+    premier canal de la veille, ses annonces)."""
+    gain = current_gain(ticket) * _volume(ticket, canal)
     start, gain = _ramp(ticket, gain)
     if (gain == 1.0 and start == 1.0) or not data:
         return data
@@ -406,9 +419,9 @@ def scale(data, ticket=None):
     return np.clip(samples, -32768, 32767).astype(np.int16).tobytes()
 
 
-def scale_float(data, ticket=None):
+def scale_float(data, ticket=None, canal=None):
     """Meme chose pour du PCM flottant 32 bits (RTLSDR-Airband)."""
-    gain = current_gain(ticket)
+    gain = current_gain(ticket) * _volume(ticket, canal)
     start, gain = _ramp(ticket, gain)
     if (gain == 1.0 and start == 1.0) or not data:
         return data

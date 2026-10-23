@@ -13,6 +13,17 @@ Etat de Microsoft partage par tous les services (MS_ETAT, tenu par la sonde
 de la console et par chaque echec ou succes) : on ne fait plus attendre une
 annonce 8 s sur un service qui ne repond pas.
 
+Modes aleatoires (2026-10-22) : "aleatoire" (voix Microsoft), "aleatoire_tout"
+(toutes les voix : Microsoft, Mac, Google, Piper, MBROLA), "aleatoire_distant"
+(voix calculees ailleurs que sur le Pi : Microsoft, Mac, Google) et
+"aleatoire_piper" (voix locales seulement : Piper et MBROLA). Microsoft
+absent : ses voix sortent simplement du tirage des modes melanges.
+
+Refus Microsoft (2026-10-22) : pas de test regulier ; erreur_microsoft(exc),
+appelee la ou une synthese echoue, reconnait un refus 403, le note dans le
+journal et lance la reparation (edge-maj.service) ; noter_microsoft(True)
+note le retour.
+
 choisir(source) rend {"moteur": "edge"|"piper"|"espeak", "voix", "debit",
 "hauteur", "aleatoire"} ; fichier_cache() nomme un echantillon en cache pour
 ce choix (le debit et la hauteur entrent dans le nom s'ils ne sont pas
@@ -27,7 +38,14 @@ import time
 from phrases import Etiquettes
 
 ALEATOIRE = "aleatoire"
-ALEATOIRE_PIPER = "aleatoire_piper"   # une voix locale (Piper) differente a chaque fois
+ALEATOIRE_PIPER = "aleatoire_piper"   # une voix locale (Piper, MBROLA) differente a chaque fois
+ALEATOIRE_TOUT = "aleatoire_tout"     # toutes les voix (2026-10-22)
+ALEATOIRE_DISTANT = "aleatoire_distant"  # voix calculees ailleurs : Microsoft, Mac, Google
+MODES_MELANGES = (ALEATOIRE_TOUT, ALEATOIRE_DISTANT)
+JOURNAL_MS = "/home/vador/autopilot/journal_voix_microsoft.jsonl"
+JOURNAL_MS_NAS = "/media/nas/nd1/server/logs/journal_voix_microsoft.jsonl"
+REPARATION = "/tmp/microsoft_reparation.json"
+REPARATION_ECART_SEC = 1800
 ESPEAK = "espeak"
 MS_ETAT = "/tmp/microsoft_etat.json"
 MS_VALIDITE_SEC = 20 * 60
@@ -121,7 +139,66 @@ def microsoft_ok():
         return False
 
 
+def journal_microsoft(evenement, **details):
+    """Une ligne JSON dans le journal des voix Microsoft (et sa copie sur le NAS)."""
+    ligne = json.dumps(dict(t=time.time(), date=time.strftime("%Y-%m-%d %H:%M:%S"), evenement=evenement,
+                            service=os.path.basename(sys.argv[0] or "?"), **details), ensure_ascii=False)
+    print(f"[voix] microsoft : {ligne}", flush=True)
+    for chemin in (JOURNAL_MS, JOURNAL_MS_NAS):
+        if chemin == JOURNAL_MS_NAS and not os.path.ismount("/media/nas/nd1"):
+            continue
+        try:
+            with open(chemin, "a", encoding="utf-8") as f:
+                f.write(ligne + "\n")
+        except OSError:
+            pass
+
+
+def _reparation():
+    try:
+        with open(REPARATION, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _ecrire_reparation(data):
+    try:
+        tmp = REPARATION + f".{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, REPARATION)
+    except OSError:
+        pass
+
+
+def erreur_microsoft(exc):
+    """Une synthese Microsoft a echoue. Refus 403 (Microsoft a change son acces) :
+    note dans le journal (une fois par panne) et reparation lancee, au plus
+    toutes les REPARATION_ECART_SEC. Les autres erreurs (reseau) : rien."""
+    texte = repr(exc)
+    if "403" not in texte:
+        return
+    etat = _reparation()
+    if etat.get("ouverte") and time.time() - etat.get("t", 0) < REPARATION_ECART_SEC:
+        return
+    if not etat.get("ouverte"):
+        journal_microsoft("refus_microsoft", erreur=texte[:300])
+    _ecrire_reparation({"ouverte": True, "t": time.time(), "depuis": etat.get("depuis") or time.time()})
+    try:
+        import subprocess
+        subprocess.Popen(["sudo", "-n", "systemctl", "start", "edge-maj"],  # regle sudo d'install.sh
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
 def noter_microsoft(ok):
+    if ok:
+        etat = _reparation()
+        if etat.get("ouverte"):
+            _ecrire_reparation({"ouverte": False, "t": time.time()})
+            journal_microsoft("retabli", panne_minutes=round((time.time() - etat.get("depuis", time.time())) / 60))
     try:
         tmp = MS_ETAT + f".{os.getpid()}"
         with open(tmp, "w", encoding="utf-8") as f:
@@ -155,7 +232,29 @@ def secours(source):
 
 def _pool():
     import piper_out
-    return piper_out.announce_voice_ids()
+    return piper_out.voix_locales()
+
+
+def tirage(mode, ms_ok=None):
+    """Voix du tirage d'un mode aleatoire (identifiants "piper:..." ou voix Microsoft)."""
+    import piper_out
+    ms_ok = microsoft_ok() if ms_ok is None else ms_ok
+    if mode == ALEATOIRE_PIPER:
+        return _pool()
+    if mode == ALEATOIRE:
+        return list(_microsoft_voix()) if ms_ok else []
+    distantes = (list(_microsoft_voix()) if ms_ok else []) + piper_out.voix_distantes()
+    if mode == ALEATOIRE_DISTANT:
+        return distantes
+    if mode == ALEATOIRE_TOUT:
+        return _pool() + distantes
+    return []
+
+
+def a_preparer(mode):
+    """Voix d'un tirage dont les phrases fixes se preparent d'avance : pas
+    Microsoft (son propre cache), pas Google (il bloquerait)."""
+    return [v for v in tirage(mode, ms_ok=False) if v.startswith("piper:") and not v.startswith("piper:google#")]
 
 
 def choisir(source, ms_ok=None):
@@ -166,6 +265,14 @@ def choisir(source, ms_ok=None):
     r = reglage(source)
     ms_ok = microsoft_ok() if ms_ok is None else ms_ok
     voix = r["voix"]
+    if voix in MODES_MELANGES:
+        pool = tirage(voix, ms_ok)
+        if not pool:
+            return secours(source)
+        v = random.choice(pool)
+        if v.startswith("piper:"):
+            return {"moteur": "piper", "voix": v, "debit": r["debit"], "hauteur": NEUTRE_HAUTEUR, "aleatoire": True}
+        return {"moteur": "edge", "voix": v, "debit": r["debit"], "hauteur": r["hauteur"], "aleatoire": True}
     if voix == ALEATOIRE_PIPER:
         pool = _pool()
         if pool:
@@ -213,8 +320,8 @@ def voix_piper_source(source):
     import piper_out
     r = reglage(source)
     voix = r["voix"]
-    if voix == ALEATOIRE_PIPER:
-        return {(v, r["debit"]) for v in _pool()}
+    if voix in MODES_MELANGES or voix == ALEATOIRE_PIPER:
+        return {(v, r["debit"]) for v in a_preparer(voix)}
     if voix.startswith("piper:"):
         voix = piper_out.canonical(voix)
         return {(voix, r["debit"])} if piper_out.resolve(voix) else set()
@@ -235,7 +342,7 @@ def voix_piper_en_service():
 
 def locale(voix):
     """Voix principale qui ne passe pas par Microsoft (pas d'etape secours)."""
-    return voix == ALEATOIRE_PIPER or voix == ESPEAK or voix.startswith("piper:")
+    return voix in (ALEATOIRE_PIPER,) + MODES_MELANGES or voix == ESPEAK or voix.startswith("piper:")
 
 
 def resume(source):
@@ -250,6 +357,10 @@ def nom_voix(voix):
         return "aléatoire"
     if voix == ALEATOIRE_PIPER:
         return "aléatoire, voix locales"
+    if voix == ALEATOIRE_TOUT:
+        return "aléatoire, toutes les voix"
+    if voix == ALEATOIRE_DISTANT:
+        return "aléatoire, voix distantes"
     if voix == ESPEAK:
         return "espeak"
     if voix.startswith("piper:"):

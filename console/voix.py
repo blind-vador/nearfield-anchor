@@ -24,6 +24,7 @@ Voix Microsoft (reglages console.json, commande "voix") :
   plus attendre personne pendant ce temps).
 """
 import asyncio
+import audioop
 import hashlib
 import os
 import queue
@@ -63,7 +64,8 @@ CACHE_DIR = "/home/vador/autopilot/voix_cache"
 CACHE_MAX_BYTES = 1024 * 1024 * 1024  # toutes les phrases fixes en voix Piper (2026-10-18)
 ECHO_MAX_CHARS = 30      # au-dela : pas un nom de touche, on ne fait pas attendre l'echo
 CACHE_TEXT_MAX = 200     # phrases plus longues : jouees en direct, jamais gardees
-FIRST_AUDIO_SEC = 1.5
+FIRST_AUDIO_SEC = 2.5    # mesure 2026-10-22 : 0,7 a 1,6 s selon la voix (edge-tts 7.3)
+LENTS_MAX = 3            # retards de suite avant de declarer Microsoft absent
 CLOUD_RETRY_SEC = 60
 SYNTH_TIMEOUT_SEC = 10
 STREAM_TIMEOUT_SEC = 120
@@ -77,6 +79,30 @@ VOLATILE = re.compile(
 
 _proc = None
 _proc_guard = threading.Lock()
+_canal = "reponses"   # curseur de la commande "volume" de la phrase en cours (2026-10-22)
+
+
+def _facteur():
+    try:
+        import volumes
+        return volumes.facteur("console", _canal)
+    except Exception:
+        return 1.0
+
+
+def _echelle():
+    """Volume de la console pour les voix qui relaient le son (Piper, espeak),
+    ou None s'il n'y a rien a changer."""
+    f = _facteur()
+    if abs(f - 1.0) < 0.005:
+        return None
+
+    def appliquer(data, ticket=None):
+        try:
+            return audioop.mul(data[: len(data) - len(data) % 2], 2, f)
+        except audioop.error:
+            return data
+    return appliquer
 _generation = 0
 # Etat de Microsoft (2026-10-19) : une seule voix a la fois dans la console.
 # Tant qu'une sonde n'a pas confirme que Microsoft repond, on le tient pour
@@ -111,6 +137,24 @@ def _cloud_voice():
     return voice
 
 
+_lents = 0
+
+
+def _cloud_lent(arrive):
+    """Premier son Microsoft a temps (arrive) ou non. Un retard : cette phrase
+    seule passe en secours ; Microsoft nest declare absent quapres LENTS_MAX
+    retards de suite (2026-10-22 : des voix a 1,5 s pile, une hesitation
+    basculait toute la console en secours pour 6 minutes)."""
+    global _lents
+    if arrive:
+        _lents = 0
+        return
+    _lents += 1
+    if _lents >= LENTS_MAX:
+        _lents = 0
+        _cloud_failed()
+
+
 def _cloud_failed():
     """Microsoft n'a pas repondu : absent jusqu'a ce que la sonde le retrouve."""
     global _cloud_down_until
@@ -122,10 +166,12 @@ def cloud_ok():
 
 
 def _probe():
-    """Toutes les PROBE_SEC : Microsoft repond-il (voix choisie) ?"""
+    """Microsoft repond-il ? Seulement au demarrage et pendant une panne, toutes
+    les PROBE_SEC (2026-10-22 : plus de sonde quand tout va bien, la parole
+    elle-meme signale les refus -- voix_sources.erreur_microsoft)."""
     global _cloud_down_until
     while True:
-        if edge_tts is not None:
+        if edge_tts is not None and not cloud_ok():
             ok = bool(_synthesize("ok", "fr-FR-DeniseNeural", "+0%"))
             if ok and not cloud_ok():
                 print("[voix] Microsoft repond : retour aux voix choisies", file=sys.stderr)
@@ -242,6 +288,7 @@ def _synthesize(text, voice, rate):
         return asyncio.run(asyncio.wait_for(run(), timeout=SYNTH_TIMEOUT_SEC)) or None
     except Exception as exc:
         print(f"[voix] synthese Microsoft echouee : {exc!r}", file=sys.stderr)
+        voix_sources.erreur_microsoft(exc)
         return None
 
 
@@ -367,7 +414,10 @@ class Clip:
     """Son deja en cache."""
 
     def __init__(self, path):
-        self._p = subprocess.Popen(["aplay", "-q", "-D", "default", path], stderr=subprocess.DEVNULL)
+        f = _facteur()
+        args = ["aplay", "-q", "-D", "default", path] if abs(f - 1.0) < 0.005 \
+            else ["play", "-q", "-v", f"{f:.3f}", path]  # sox : le volume de la console
+        self._p = subprocess.Popen(args, stderr=subprocess.DEVNULL)
 
     def wait(self, timeout=None):
         try:
@@ -399,7 +449,8 @@ class Cloud:
         self._audio = False
         self._fallback = None
         self._done = threading.Event()
-        self._player = subprocess.Popen(["mpg123", "-q", "-o", "alsa", "-a", "default", "-"],
+        self._player = subprocess.Popen(["mpg123", "-q", "-o", "alsa", "-a", "default",
+                                         "-f", str(int(32768 * _facteur())), "-"],
                                         stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self._thread = threading.Thread(target=self._feed, daemon=True)
         self._thread.start()
@@ -424,6 +475,7 @@ class Cloud:
         except Exception as exc:
             if not self._cancel:
                 print(f"[voix] lecture Microsoft interrompue : {exc!r}", file=sys.stderr)
+                voix_sources.erreur_microsoft(exc)
         finally:
             try:
                 self._player.stdin.close()
@@ -439,9 +491,11 @@ class Cloud:
             time.sleep(0.05)
         with self._guard:
             if self._cancel or self._audio:
+                if self._audio:
+                    _cloud_lent(True)
                 return
-            # Rien a temps (reseau, service Microsoft) : espeak prend le relais.
-            _cloud_failed()
+            # Rien a temps (reseau, service Microsoft) : la voix de secours dit cette phrase.
+            _cloud_lent(False)
             self._cancel = True
             if self._player.poll() is None:
                 self._player.kill()
@@ -514,12 +568,13 @@ def _local_speech(text, rate, espeak_rate, keep=None, voice=None):
     """Voix locale : Piper (gardee dans keep si la phrase va au bout), espeak
     s'il est absent ou que le Pi est trop chaud."""
     voice = voice or fallback_voice()
-    if voice and piper_out.available():
+    if voice and piper_out.available(voice):
         try:
-            return piper_out.Speech(text, voice_id=voice, scale_len=piper_out.length_scale(rate), keep_path=keep)
+            return piper_out.Speech(text, scale=_echelle(), voice_id=voice, scale_len=piper_out.length_scale(rate),
+                                    keep_path=keep)
         except Exception as exc:
             print(f"[voix] piper : {exc!r}", file=sys.stderr)
-    return espeak_out.Speech(text, "fr", espeak_rate)
+    return espeak_out.Speech(text, "fr", espeak_rate, scale=_echelle())
 
 
 def _cacheable(text):
@@ -552,7 +607,7 @@ def _piper_spawn(text, voice, rate, echo, espeak_rate, demande=None):
         return _set_current(Clip(path))
     if echo and len(text) <= ECHO_MAX_CHARS:
         _prepare_piper(text, voice, rate)
-        return _set_current(espeak_out.Speech(text, "fr", espeak_rate))
+        return _set_current(espeak_out.Speech(text, "fr", espeak_rate, scale=_echelle()))
     # Phrase par phrase (2026-10-18) : les phrases deja pretes (toutes les
     # phrases fixes de l'interface, preparees d'avance) sont jouees depuis le
     # cache, seules les autres (reponse de Gemini, valeurs) sont calculees.
@@ -615,11 +670,13 @@ def _spawn(text, echo):
     choisi et present (cache d'abord), sinon la voix de secours pour TOUT
     (une seule voix a la fois), espeak en dernier. Jamais d'attente reseau
     pour un echo de touche."""
+    global _canal
+    _canal = "touches" if echo else "reponses"
     espeak_rate = RATE_ECHO if echo else RATE_REPONSE
     source = "touches" if echo else "console"
     ch = voix_sources.choisir(source, ms_ok=cloud_ok())
     if ch["moteur"] == voix_sources.ESPEAK:
-        return _set_current(espeak_out.Speech(text, "fr", espeak_rate))
+        return _set_current(espeak_out.Speech(text, "fr", espeak_rate, scale=_echelle()))
     if ch["moteur"] == "piper":
         return _piper_spawn(text, ch["voix"], ch["debit"], echo, espeak_rate, ch.get("demande"))
     voice, rate = ch["voix"], _rk(ch)
@@ -631,7 +688,7 @@ def _spawn(text, echo):
     if echo and len(text) <= ECHO_MAX_CHARS:
         _prepare(text, voice, rate)  # Microsoft la prochaine fois
         path = _cached(text, backup, brate) if backup else None
-        return _set_current(Clip(path) if path else espeak_out.Speech(text, "fr", espeak_rate))
+        return _set_current(Clip(path) if path else espeak_out.Speech(text, "fr", espeak_rate, scale=_echelle()))
     keep = _cache_path(text, voice, rate) if _cacheable(text) else None
     keep_backup = _cache_path(text, backup, brate) if backup and _cacheable(text) else None
     return _set_current(Cloud(text, voice, rate, espeak_rate, keep, keep_backup, (backup, brate)))
@@ -703,8 +760,12 @@ def preview(text, voice, rate, pitch=None):
     la voix) : son en cache s'il existe, sinon en direct, garde. Voix
     "aleatoire" : une voix tiree au hasard, comme a l'usage."""
     import random
+    global _canal
     stop()
-    if voice == voix_sources.ALEATOIRE_PIPER or (voice == voix_sources.ALEATOIRE and not (cloud_ok() and edge_tts)):
+    _canal = "reponses"
+    if voice in voix_sources.MODES_MELANGES or voice == voix_sources.ALEATOIRE_PIPER:
+        voice = random.choice(voix_sources.tirage(voice, bool(cloud_ok() and edge_tts)) or [piper_out.DEFAULT_VOICE])
+    elif voice == voix_sources.ALEATOIRE and not (cloud_ok() and edge_tts):
         voice = random.choice(piper_out.announce_voice_ids() or [piper_out.DEFAULT_VOICE])
     elif voice == voix_sources.ALEATOIRE:
         voice = random.choice(EDGE_VOICES)
@@ -715,7 +776,7 @@ def preview(text, voice, rate, pitch=None):
             return _set_current(Clip(path))
         return _set_current(_local_speech(text, rate, RATE_REPONSE, _cache_path(text, voice, rate), voice))
     if voice == ESPEAK or edge_tts is None or not cloud_ok():
-        return _set_current(espeak_out.Speech(text, "fr", RATE_REPONSE))
+        return _set_current(espeak_out.Speech(text, "fr", RATE_REPONSE, scale=_echelle()))
     rk = _rk({"moteur": "edge", "debit": rate, "hauteur": pitch or voix_sources.NEUTRE_HAUTEUR})
     path = _cached(text, voice, rk)
     if path:

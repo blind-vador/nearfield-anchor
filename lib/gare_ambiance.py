@@ -14,7 +14,13 @@ normal, pluie, neige, vent. Dossier vide = pas de son, sans erreur. Chaque
 lit est un ffmpeg (-stream_loop -1) decode en PCM, joue par aplay sur
 "default" : il boucle et se mixe sans prendre le verrou audio (il doit
 rester en fond, sous les annonces et le scanner).
+
+Volume (2026-10-22, commande "volume") : le son passe par un relais qui
+applique au vol les curseurs "ambiance du hall" (lit normal) ou "ambiance
+meteo" (pluie, orage, vent, neige) de la gare : un changement s'entend tout
+de suite, sans attendre la boucle suivante.
 """
+import audioop
 import os
 import random
 import subprocess
@@ -34,6 +40,7 @@ WEATHER_SOURCES = ("pluie", "orage", "neige", "vent")
 WEATHER_CACHE_SEC = 600
 POLL_SEC = 60
 CROSSFADE_SEC = 5.0                  # fondus croises entre boucles (2026-10-09)
+RELAIS_OCTETS = RATE * 2 * 2 // 10   # 100 ms de stereo 16 bits
 _weather = {"t": 0, "actifs": set()}
 
 
@@ -154,13 +161,34 @@ class _Bed:
                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
             ap = subprocess.Popen(
                 ["aplay", "-q", "-D", "default", "-f", "S16_LE", "-r", str(RATE), "-c", "2"],
-                stdin=ff.stdout, stderr=subprocess.DEVNULL)
-            ff.stdout.close()  # aplay tient le tube
+                stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            threading.Thread(target=self._relais, args=(ff, ap), daemon=True).start()
             self._procs.append((ff, ap))
             return fade
         except OSError as exc:
             print(f"[gare_ambiance] lit '{self.name}' : {exc!r}")
             return None
+
+    def _relais(self, ff, ap):
+        """ffmpeg -> aplay, au volume du curseur de la commande "volume"."""
+        import volumes
+        canal = "meteo" if self.name in WEATHER_SOURCES else "ambiance"
+        try:
+            while True:
+                data = ff.stdout.read(RELAIS_OCTETS)
+                if not data:
+                    break
+                f = volumes.facteur("trains", canal)
+                if f != 1.0:
+                    data = audioop.mul(data[: len(data) - len(data) % 2], 2, f)
+                ap.stdin.write(data)
+        except (BrokenPipeError, ValueError, OSError):
+            pass
+        finally:
+            try:
+                ap.stdin.close()
+            except OSError:
+                pass
 
     def _prune(self):
         """Recupere les segments termines (evite les zombies), garde les vivants."""
@@ -188,7 +216,11 @@ class _Bed:
             files = _files(self.name)
             if not files:
                 break
-            path = random.choice(files)  # variete : un segment peut differer du precedent
+            # variete, et jamais le meme fichier que le segment precedent (2026-10-22) :
+            # au fondu croise, deux copies du meme son se chevauchaient
+            autres = [f for f in files if f != getattr(self, "_dernier", None)]
+            path = random.choice(autres or files)
+            self._dernier = path
             dur = _duration(path)
             fade = self._play_segment(path, dur)
             self._prune()
