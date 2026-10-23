@@ -224,6 +224,12 @@ def confier(jobs):
     print(f"[voix_preparation] {len(entries)} sons confies a la machine compagne ({job_id})")
 
 
+# Phrases qu'une voix d'ailleurs n'a pas su dire (2026-10-23 : MBROLA ne rend
+# rien pour la touche ".", reessayee toutes les 7 s pendant des heures) : plus
+# retentees avant le prochain demarrage du service.
+_ECHECS_EXTERNES = set()
+
+
 def run_once():
     """Un lot ; rend le nombre restant avant ce lot (-1 : travail confie, on attend)."""
     jobs = announce_jobs() + console_jobs() + presentation_jobs()
@@ -234,13 +240,17 @@ def run_once():
     # calculer ici). Google seulement pour la presentation de la voix : des
     # centaines de phrases d'un coup lui vaudraient un blocage.
     externes = [j for j in jobs if piper_out.virtuelle(j[0])
-                and (not piper_out.canonical(j[0]).startswith("piper:google#") or j in presentation_jobs())]
+                and (not piper_out.canonical(j[0]).startswith("piper:google#") or j in presentation_jobs())
+                and (j[0], j[1], j[2]) not in _ECHECS_EXTERNES]
     jobs = [j for j in jobs if not piper_out.virtuelle(j[0])]
     if externes:
         voice, rate = externes[0][0], externes[0][1]
         lot = [(t, p) for v, r, t, p in externes if (v, r) == (voice, rate)][:LOT]
         done = piper_out.batch(voice, lot, piper_out.length_scale(rate))
         print(f"[voix_preparation] {done}/{len(lot)} sons {voice} ({rate}), voix d'ailleurs")
+        for t, chemin in lot:
+            if not os.path.exists(chemin):
+                _ECHECS_EXTERNES.add((voice, rate, t))
         return len(externes) + len(jobs)
     if not jobs:
         return 0

@@ -131,12 +131,16 @@ def enregistrer(source, valeurs):
 # --- Microsoft -------------------------------------------------------------------------
 
 def microsoft_ok():
+    """Microsoft est-il utilisable ? Un echec ne l'ecarte que MS_VALIDITE_SEC,
+    puis il est retente (2026-10-23 : sans sonde reguliere, un seul rate le 23 a
+    13 h 12 l'avait sorti des tirages pour de bon, sans jamais de retour).
+    Pas encore d'etat ou dernier essai reussi : utilisable."""
     try:
         with open(MS_ETAT, encoding="utf-8") as f:
             etat = json.load(f)
-        return bool(etat.get("ok")) and time.time() - etat.get("t", 0) < MS_VALIDITE_SEC
     except (OSError, ValueError):
-        return False
+        return True
+    return bool(etat.get("ok")) or time.time() - etat.get("t", 0) >= MS_VALIDITE_SEC
 
 
 def journal_microsoft(evenement, **details):
