@@ -31,7 +31,7 @@ msgpack==1.1.2
 networkx==3.2.1
 noisereduce==3.0.3
 numba==0.60.0
-numpy==1.26.4
+numpy==2.5.4
 packaging==23.2
 panns-inference==0.1.1
 pillow==11.3.0
