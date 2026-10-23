@@ -30,7 +30,8 @@ REPEAT_SEC = 900
 GONE_SEC = 300
 TRACK_SEC = 900
 FAST_POLL_SEC = 30
-SOUND = f"{FLIGHT_SCANER_DIR}/simple_contact.mp3"
+import sons
+SOUND = sons.chemin("helico", f"{FLIGHT_SCANER_DIR}/simple_contact.mp3")  # son propre (2026-10-23, sons.py)
 CATEGORY_HELI = 8
 HELI_MAKERS = ("helicop", "eurocopter", "robinson", "bell ", "bell-", "agusta", "leonardo", "sikorsky",
                "guimbal", "aerospatiale", "sud aviation", "md helicopters", "kaman", "enstrom", "schweizer")

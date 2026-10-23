@@ -55,8 +55,9 @@ MAX_ANNOUNCE_AGE_SEC = 3 * 3600
 # Au plus tant d'annonces par tour (un canal tout juste abonne en a vingt
 # d'un coup) : les autres vont au journal, une phrase dit combien.
 MAX_SAY_PER_ROUND = 6
-SOUND = f"{RADIO_SCANER_DIR}/incoming.mp3"
-SOUND_URGENT = f"{RADIO_SCANER_DIR}/scaner_error.mp3"
+import sons
+SOUND = sons.chemin("terrain_alerte", f"{RADIO_SCANER_DIR}/incoming.mp3")  # sons propres (2026-10-23, sons.py)
+SOUND_URGENT = sons.chemin("terrain_urgence", f"{RADIO_SCANER_DIR}/scaner_error.mp3")
 
 PROFIL_PATH = "/home/vador/autopilot/terrain_profil.json"
 PROFIL_TTL_SEC = 7 * 86400

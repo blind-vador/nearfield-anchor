@@ -24,7 +24,8 @@ SERVER = ("aprs.glidernet.org", 14580)
 RADIUS_KM = 30
 ANNOUNCE_EVERY_SEC = 3600
 RECONNECT_SEC = 60
-SOUND = f"{FLIGHT_SCANER_DIR}/simple_contact.mp3"
+import sons
+SOUND = sons.chemin("avion_leger", f"{FLIGHT_SCANER_DIR}/simple_contact.mp3")  # son propre (2026-10-23, sons.py)
 STATE_PATH = "/tmp/ogn_watch_state.json"
 IGNORED_DEST = ("OGNSDR", "OGADSB", "OGADSL", "OGNDSX")
 AIRCRAFT_ID = re.compile(r"\bid([0-9A-F]{2})([0-9A-F]{6})\b")

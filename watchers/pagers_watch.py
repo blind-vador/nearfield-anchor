@@ -18,7 +18,8 @@ from phrases import dire
 
 FREQUENCIES_HZ = [466_025_000, 466_050_000, 466_075_000, 466_175_000, 466_206_250, 466_231_250]
 SAMPLE_RATE = 22050
-SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_morse.mp3")
+import sons
+SOUND = sons.chemin("bipeur", os.path.join(RADIO_SCANER_DIR, "decoding_morse.mp3"))  # son propre (2026-10-23, sons.py)
 STATE_PATH = "/tmp/pagers_watch_state.json"
 REPEAT_SEC = 300          # retransmission d'un meme appel (reseau qui repete), pas un nouvel appel
 MIN_ALNUM = 2             # en dessous : trame de service ou bruit, pas un message

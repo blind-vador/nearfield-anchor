@@ -23,7 +23,8 @@ from phrases import dire, nombre
 from sound_paths import METEO_SCANER_DIR
 
 RELEVES_PATH = "/home/vador/autopilot/capteurs_heure.json"
-SOUND = os.path.join(METEO_SCANER_DIR, "simple_message.mp3")
+import sons
+SOUND = sons.chemin("jingle_meteo", os.path.join(METEO_SCANER_DIR, "simple_message.mp3"))  # son propre (2026-10-23, sons.py)
 GARDE_SEC = 3 * 3600
 ALERTE_NIVEAU = 2
 CHAMPS = {"temperature_C": "temperature", "humidity": "humidite", "wind_avg_km_h": "vent_kmh",

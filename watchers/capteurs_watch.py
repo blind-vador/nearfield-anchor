@@ -34,6 +34,9 @@ from phrases import Etiquettes, dire
 
 FREQUENCIES = ["433.92M", "868.3M"]
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
+import sons
+VOITURE_SOUND = sons.chemin("voiture", SOUND)  # son propre (2026-10-23, sons.py)
+NOUVEAU_SOUND = sons.chemin("nouveau_capteur", SOUND)
 # Carte SD, pas /tmp (vide a chaque demarrage) : valeurs deja dites, anti-repetitions.
 STATE_PATH = "/home/vador/autopilot/capteurs_watch_state.json"
 READINGS_PATH = "/tmp/capteurs_releves.json"
@@ -216,7 +219,7 @@ def _process(event, freq, tpms, at):
                  + (f", {values}" if values else "") + ".")
         text = plain if kind == "meteo" else (lambda: _fun_explanation(event, what, freq_txt) or plain)
         _memory.due(f"bouton|{key}", BUTTON_EVERY_SEC)  # le premier appui est deja raconte
-        vd.announce(text, SOUND, f"capteur_nouveau_{key}", "capteurs_watch",
+        vd.announce(text, NOUVEAU_SOUND, f"capteur_nouveau_{key}", "capteurs_watch",
                     fiche={"protocole": "rtl_433", "frequence_hz": _hz(freq), "source": _name(event)})
         _said(key, event)
         return True
@@ -390,7 +393,7 @@ def _cars(tpms, freq, listened_sec):
     announced = False
     for sentence in sentences:
         if _memory.due(f"voiture|{sentence[:40]}", 600):
-            vd.announce(sentence, SOUND, "voiture", "capteurs_watch")
+            vd.announce(sentence, VOITURE_SOUND, "voiture", "capteurs_watch")
             announced = True
     return announced
 

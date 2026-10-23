@@ -1,0 +1,21 @@
+[Unit]
+Description=Sons d'allumage et d'extinction du Pi, et annonce d'une coupure (son_allumage.py)
+DefaultDependencies=no
+After=local-fs.target sound.target systemd-journald.service
+Wants=sound.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+User=vador
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+WorkingDirectory=/home/vador/autopilot/pi_console
+ExecStart=/usr/bin/python3 -u /home/vador/autopilot/pi_console/son_allumage.py demarrage
+ExecStop=/usr/bin/python3 -u /home/vador/autopilot/pi_console/son_allumage.py arret
+TimeoutStartSec=300
+TimeoutStopSec=20
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

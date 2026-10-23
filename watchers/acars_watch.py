@@ -101,7 +101,8 @@ def _extract_q_fields(label, txt):
 
 
 SOUND_EFFECTS_DIR = "/media/nas/nd1/server/radio_scaner"
-ACARS_SOUND = f"{SOUND_EFFECTS_DIR}/decoding_numeric.mp3"
+import sons
+ACARS_SOUND = sons.chemin("message_avion", f"{SOUND_EFFECTS_DIR}/decoding_numeric.mp3")  # son propre (2026-10-23, sons.py)
 
 
 # Historique de deduplication, en memoire seulement (remis a zero a chaque

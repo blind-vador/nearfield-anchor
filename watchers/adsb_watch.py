@@ -110,6 +110,9 @@ FLYBY_SOUND = f"{FLIGHT_SCANER_DIR}/flyer_by.mp3"  # chemin de base centralise d
 # (pas un survol direct, qui a deja son propre son FLYBY_SOUND).
 SIMPLE_CONTACT_SOUND = f"{FLIGHT_SCANER_DIR}/simple_contact.mp3"
 EMERGENCY_SOUND = f"{RADIO_SCANER_DIR}/scaner_error.mp3"  # son d'alerte des urgences avion
+import sons
+# Un son par code (2026-10-23, sons.py) : 7700 detresse, 7600 panne radio, 7500 detournement.
+EMERGENCY_SOUNDS = {code: sons.chemin(f"urgence_{code}", EMERGENCY_SOUND) for code in ("7700", "7600", "7500")}
 
 # Intervalle entre deux interrogations. Relache volontairement en session
 # (2026-08-30) : 30s jugee trop frequente/gourmande en CPU pour une veille
@@ -324,7 +327,8 @@ def _check_emergencies(states, emergencies, now):
             parts.append(dire("avion.altitude_metres", altitude_m=format(alt, ".0f")))
         lock = audio_lock.acquire()
         try:
-            speak_with_lead_sound(EMERGENCY_SOUND, " ".join(parts), label="adsb_watch")
+            speak_with_lead_sound(EMERGENCY_SOUNDS.get(str(squawk).strip(), EMERGENCY_SOUND), " ".join(parts),
+                                  label="adsb_watch")
         finally:
             audio_lock.release(lock)
         print(f"[adsb_watch] URGENCE {squawk} : {callsign} ({icao24})")

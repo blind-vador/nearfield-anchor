@@ -26,6 +26,8 @@ from phrases import dire, etiquette
 
 STATE_PATH = "/home/vador/autopilot/plantes_calendrier.json"  # carte SD : survit au redemarrage
 SOUND = "/media/nas/nd1/server/radio_scaner/incoming.mp3"
+import sons
+PHOTO_SOUND = sons.chemin("plante_photo", SOUND)  # son propre (2026-10-23, sons.py)
 POLL_SEC = 1800
 QUIET_HOURS = (22, 7)
 LATE_DAYS = 3
@@ -254,7 +256,7 @@ def _photos(announce=None):
     if said and not _quiet():
         if announce is None:
             import veille_donnees as vd
-            announce = lambda text: vd.announce(text, SOUND, "plante_photo", "plantes")  # noqa: E731
+            announce = lambda text: vd.announce(text, PHOTO_SOUND, "plante_photo", "plantes")  # noqa: E731
         announce(" ".join(said))
     return said
 

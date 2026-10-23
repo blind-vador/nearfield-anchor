@@ -264,6 +264,9 @@ SCANER_ERROR_SOUND = os.path.join(SOUND_EFFECTS_DIR, "scaner_error.mp3")
 INCOMING_SOUND = os.path.join(SOUND_EFFECTS_DIR, "incoming.mp3")
 DECODING_NUMERIC_SOUND = os.path.join(SOUND_EFFECTS_DIR, "decoding_numeric.mp3")
 DECODING_MORSE_SOUND = os.path.join(SOUND_EFFECTS_DIR, "decoding_morse.mp3")
+import sons
+DMR_VOCAL_SOUND = sons.chemin("dmr_vocal", DECODING_NUMERIC_SOUND)  # son propre (2026-10-23, sons.py)
+DMR_NOUVEAU_SOUND = sons.chemin("dmr_nouveau", DECODING_NUMERIC_SOUND)
 
 # --- Bandes surveillees ---
 # type "fm_channels" : liste de frequences fixes en FM etroite (PMR446, marine...)
@@ -801,10 +804,10 @@ def _dmr_learn(stats):
         news = dmr_registre.record(stats)
         mhz = vd.fr_number(stats["freq_hz"] / 1e6, 4)
         if news["nouvelle_frequence"]:
-            vd.announce(dire("dmr.nouvelle_frequence", frequence=mhz), DECODING_NUMERIC_SOUND, "message_dmr", "radio_watch")
+            vd.announce(dire("dmr.nouvelle_frequence", frequence=mhz), DMR_NOUVEAU_SOUND, "message_dmr", "radio_watch")
         elif news["nouveaux_groupes"]:
             vd.announce(dire("dmr.nouveaux_groupes", frequence=mhz, groupes=", ".join(news["nouveaux_groupes"])),
-                        DECODING_NUMERIC_SOUND, "message_dmr", "radio_watch")
+                        DMR_NOUVEAU_SOUND, "message_dmr", "radio_watch")
     except Exception as exc:  # le registre ne doit jamais casser une ecoute
         print(f"[radio_watch] registre DMR : {exc!r}")
 
@@ -969,7 +972,7 @@ def _annonce_dmr(protocol, band_label, ticket):
         parts = morceaux.whole(dire("radio.reception", protocol=protocol) + ("," if band_label else "."))
         if band_label:
             parts += morceaux.whole(band_label + ".")
-        morceaux.say(DECODING_NUMERIC_SOUND, parts, label="radio_watch")
+        morceaux.say(DMR_VOCAL_SOUND, parts, label="radio_watch")
         # Meme encadrement que la voix analogique (2026-10-02) : son
         # d'ouverture avant la voix, son de fin apres (_handle_candidate).
         play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")

@@ -47,7 +47,8 @@ ARS_FRESH_SEC = 1800
 ARS_STANDARD_SERVER = "16448250"   # identifiant du serveur ARS Motorola par defaut (IP 13.250.250.250)
 SUMMARY_STATE = "/home/vador/autopilot/dmr_resume.json"
 SUMMARY_AT = (23, 50)
-SUMMARY_SOUND = "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3"
+import sons
+SUMMARY_SOUND = sons.chemin("dmr_vocal", "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3")  # son propre (2026-10-23, sons.py)
 
 CC_RE = re.compile(r"Color Code=(\d{1,2})")
 SLOT_RE = re.compile(r"\[SLOT([12])\]")

@@ -19,7 +19,8 @@ from sound_paths import RADIO_SCANER_DIR
 from lecture_flux import lire
 from phrases import Etiquettes, dire
 
-SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
+import sons
+SOUND = sons.chemin("satellite", os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3"))  # son propre (2026-10-23, sons.py)
 # Encadrement de toute diffusion dans le journal, comme le scanner (2026-10-02).
 INCOMING_SOUND = os.path.join(RADIO_SCANER_DIR, "incoming.mp3")
 FREQ_OPEN_SOUND = os.path.join(RADIO_SCANER_DIR, "freq_open.mp3")

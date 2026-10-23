@@ -20,7 +20,8 @@ from sound_paths import RADIO_SCANER_DIR
 from phrases import dire
 
 LOCAL_BINARY = "/home/vador/autopilot/bin/dec406_scan"
-SOUND = os.path.join(RADIO_SCANER_DIR, "scaner_error.mp3")
+import sons
+SOUND = sons.chemin("balise_detresse", os.path.join(RADIO_SCANER_DIR, "scaner_error.mp3"))  # son propre (2026-10-23, sons.py)
 STATE_PATH = "/tmp/balises_watch_state.json"
 REPEAT_SEC = 600
 POSITION = re.compile(r"Position[^:]*:\s*(-?[\d.]+)\s*([NS]),\s*(-?[\d.]+)\s*([EW])")

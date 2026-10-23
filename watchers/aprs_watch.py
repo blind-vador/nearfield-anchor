@@ -31,7 +31,8 @@ from phrases import dire
 
 APRS_FREQ_HZ = 144_800_000
 SAMPLE_RATE = 22050
-SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
+import sons
+SOUND = sons.chemin("aprs", os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3"))  # son propre (2026-10-23, sons.py)
 STATE_PATH = "/tmp/aprs_watch_state.json"
 WX_PATH = "/tmp/meteo_stations_aprs.json"
 STATION_EVERY_SEC = 6 * 3600

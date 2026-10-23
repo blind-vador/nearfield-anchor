@@ -23,7 +23,8 @@ from phrases import dire, nombre
 from sound_paths import METEO_SCANER_DIR
 
 DONNEES_DIR = "/media/nas/nd1/server/radio_log/donnees"
-SOUND = os.path.join(METEO_SCANER_DIR, "simple_message.mp3")
+import sons
+SOUND = sons.chemin("jingle_flashinfo", os.path.join(METEO_SCANER_DIR, "simple_message.mp3"))  # son propre (2026-10-23, sons.py)
 ETIQUETTE = "trafic_donnees"
 EXEMPLES = 6
 # source -> (ce que c'est, pour Gemini ; champs gardes dans les exemples)
