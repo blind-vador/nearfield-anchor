@@ -350,7 +350,11 @@ systemctl mask getty@tty1.service
 
 echo "=== 6/6 : unites systemd ==="
 cp "$REPO_DIR"/systemd/*.service /etc/systemd/system/
+cp "$REPO_DIR"/systemd/*.timer /etc/systemd/system/  # securite-audit (2026-10-23)
 systemctl daemon-reload
+for timer in "$REPO_DIR"/systemd/*.timer; do
+    systemctl enable --now "$(basename "$timer")"
+done
 for unit in "$REPO_DIR"/systemd/*.service; do
     name="$(basename "$unit")"
     systemctl enable "$name"

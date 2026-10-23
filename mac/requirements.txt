@@ -1,6 +1,10 @@
+# Venv de l'analyse IA (~/pcw-analyse/venv), Python 3.9 des outils de ligne de commande macOS.
+# 2026-10-23 : les correctifs de securite de pillow, urllib3, requests, fsspec, msgpack,
+# filelock et torch exigent Python >= 3.10 ; ces versions sont les dernieres installables en
+# 3.9. A faire : migrer ce venv (ROADMAP, section securite) et tester DeepFilterNet.
 appdirs==1.4.4
 audioread==3.1.0
-certifi==2026.7.22
+certifi==2026.10.19
 cffi==2.0.0
 charset-normalizer==3.5.2
 contourpy==1.3.0

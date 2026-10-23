@@ -1,0 +1,13 @@
+[Unit]
+Description=Controle de securite hebdomadaire : mises a jour systeme en attente et failles des paquets pip
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -u /home/vador/autopilot/pi_console/audit_securite.py
+User=vador
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Nice=10
+StandardOutput=journal
+StandardError=journal

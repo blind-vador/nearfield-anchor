@@ -4,3 +4,5 @@ numpy
 beautifulsoup4
 aprslib
 pyModeS
+certifi>=2026.10.19  # 2026-10-23 : autorites emSign compromises retirees
+aiohttp>=3.14.4  # 2026-10-23 : DoS memoire/CPU (dependance d'edge-tts)

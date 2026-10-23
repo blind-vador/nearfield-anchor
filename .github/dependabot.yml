@@ -1,0 +1,30 @@
+# Mises a jour proposees chaque semaine (2026-10-23).
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+    open-pull-requests-limit: 5
+    labels: ["dependances"]
+  - package-ecosystem: "pip"
+    directory: "/mac"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+    open-pull-requests-limit: 5
+    labels: ["dependances", "mac"]
+    # Bloques par Python 3.9 tant que le venv d'analyse n'est pas migre (ROADMAP) :
+    # leurs versions corrigees ne s'installent pas en 3.9, et torch/numpy cassent
+    # DeepFilterNet 0.5.6 au-dela de torch 2.2 / numpy 1.x.
+    ignore:
+      - dependency-name: "torch"
+      - dependency-name: "torchaudio"
+      - dependency-name: "numpy"
+      - dependency-name: "pillow"
+      - dependency-name: "urllib3"
+      - dependency-name: "requests"
+      - dependency-name: "fsspec"
+      - dependency-name: "msgpack"
+      - dependency-name: "filelock"

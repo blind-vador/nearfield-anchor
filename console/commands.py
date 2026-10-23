@@ -392,6 +392,13 @@ def accroche():
     return (dire("commandes.verrouillage_demande_capte_scanner", label=capture['label'], v1=_ago(capture['time'])))
 
 
+def securite(line=""):
+    """Commande "securite" (2026-10-23) : dernier controle de securite du Pi ;
+    "securite pip" met a jour les paquets pip signales."""
+    import securite_cmd
+    return securite_cmd.run(line)
+
+
 def relais_bilan():
     """Commande "relais" (2026-10-23) : relais appris par l'APRS et ce qu'on en entend."""
     import relais_cmd
@@ -837,6 +844,11 @@ COMMANDS = [
             keywords=["accroche", "accrocher", "verrouille", "verrouiller", "verrouillage",
                       "scan verrouiller", "bloque le scan", "reste dessus", "reste sur cette frequence"],
             examples=["fixe toi sur cette fréquence", "garde cette fréquence", "reste sur ce canal"]),
+    Command("sécurité", "dernier contrôle de sécurité du Pi : mises à jour système en attente et failles des "
+            "paquets Python ; sécurité pip met ces paquets à jour, mise à jour applique le reste", securite,
+            keywords=["securite", "controle de securite", "failles", "vulnerabilites", "alertes de securite",
+                      "securite pip"],
+            examples=["y a-t-il des failles de sécurité", "le Pi est-il à jour"]),
     Command("relais", "les relais radioamateurs appris par l'APRS : fréquence, tonalité, distance, "
             "et combien de fois on les entend vraiment", relais_bilan,
             keywords=["relais", "les relais", "relais radioamateurs", "repeteurs", "repeaters", "relais appris",

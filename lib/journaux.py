@@ -37,7 +37,7 @@ PREFIXES = {
     "capteurs": ("voiture", "capteur_", "capteurs_", "sonde_"),
     # anciens noms (avant le 2026-10-03) : ACARS, vdl2, pager, meshtastic -> messages
     "messages": ("message_", "ACARS", "vdl2", "pager", "meshtastic"),
-    "donnees": ("APRS", "OGN_", "balise_", "lora", "terrain_", "trafic_"),  # trafic_ : resume horaire (2026-10-23)
+    "donnees": ("APRS", "OGN_", "balise_", "lora", "terrain_", "trafic_", "securite_"),  # trafic_ : resume horaire (2026-10-23)
     "meteo": ("meteo_",),   # "meteor" (satellites) a deja ete pris plus haut
 }
 # Mots qui designent un journal dans une commande ("journal capteurs",

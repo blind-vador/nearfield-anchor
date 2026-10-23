@@ -6761,3 +6761,32 @@ consequence, couvrant les besoins des radioamateurs.
   2. le dialogue, la detection et les declarations (testables avec une cle) ;
   3. le moteur multi-cles (ecoute en parallele, suiveuse, reparti, dedie),
      a ecrire et tester quand une seconde cle sera branchee.
+
+## 2026-10-23 : securite et mises a jour (fait)
+
+- Revue des alertes : base OSV avec les versions REELLEMENT installees (gh absent
+  du Mac). Sur le Pi, les paquets Python de Debian (/usr/lib/python3) sont
+  corriges par apt sans changer de version : OSV les croit a tort vulnerables.
+- Pi : apt full-upgrade, 55 paquets dont OpenSSL 3.0.22, nginx, haproxy, PHP
+  8.2.35 (ports 80/443 ouverts), python3-lxml ; sans redemarrage (noyau
+  inchange). pip : certifi 2026.10.19, aiohttp 3.14.5 (edge-tts teste).
+- Mac : certifi partout ; conda : urllib3 2.8 ; vlm-venv : Pillow 13, stanza
+  1.15 (argostranslate exige stanza==1.10.1 mais la traduction marche, testee).
+- Suivi : tools/audit_securite.py chaque dimanche a 4 h (securite-audit.timer) :
+  mises a jour apt en attente (services exposes en tete) + failles OSV des
+  paquets pip ; bilan en prise au journal "donnees" (securite_..., non jouee) ;
+  commande console "securite" ("securite pip" met ces paquets a jour, "mise a
+  jour" le systeme). Dependabot (.github/dependabot.yml), hebdomadaire.
+- Conflits deja presents, non lies : scipy Debian 1.10 contre numpy 2.4 (pip)
+  sur le Pi ; ruamel-yaml dans conda sur le Mac.
+
+## A faire : migrer le venv d'analyse du Mac (securite)
+
+~/pcw-analyse/venv tourne en Python 3.9 (outils macOS) avec torch 2.2.2 : faille
+critique de torch.load (code arbitraire a partir d'un fichier de poids) et les
+correctifs de pillow, urllib3, requests, fsspec, msgpack, filelock exigent
+Python >= 3.10. A faire : un venv Python recent a cote, torch recent, verifier
+que DeepFilterNet 0.5.6 et panns-inference marchent (analyse.py --dry), puis
+basculer les agents launchd et retirer les "ignore" de Dependabot pour /mac.
+Exposition actuelle faible : les poids charges viennent de zenodo (PANNs) et du
+cache DeepFilterNet, les clips sont ceux du NAS.
