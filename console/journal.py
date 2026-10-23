@@ -3,7 +3,8 @@ famille (lib/journaux.py) : radio (par defaut), donnees, capteurs,
 satellites -- "journal capteurs", "journal satellites"...
 
   Tab / Maj+Tab            jour suivant / precedent (annonce le jour)
-  fleches haut / bas       enregistrement precedent / suivant, joue aussitot
+  fleches haut / bas       enregistrement precedent / suivant, joue aussitot ;
+                           au bout de la journee, continue dans le jour d a cote (2026-10-23)
                            (pas d'annonce : l'enregistrement commence par
                            l'annonce de la bande, enregistree avec)
   Ctrl + fleche haut / bas premier / dernier enregistrement du jour
@@ -477,6 +478,20 @@ def run(key_source, say, out, category="radio"):
                     new_i = -1  # deja avant le premier
                 if 0 <= new_i < len(recs):
                     rec_i = new_i
+                    play(rec_i)
+                elif key == "\x1b[B" and new_i >= len(recs) and day_i + 1 < len(order):
+                    # Les fleches traversent les jours (2026-10-23) : au bout de la
+                    # journee, on continue dans la precedente -- tout le journal se
+                    # parcourt aux fleches, et ce qui est ecoute n'est plus "nouveau".
+                    player.stop()
+                    day_i, rec_i = day_i + 1, 0
+                    voix.say_blocking(announce_day())
+                    play(rec_i)
+                elif key == "\x1b[A" and new_i < 0 and rec_i >= 0 and day_i > 0:
+                    player.stop()
+                    day_i = day_i - 1
+                    rec_i = len(days[order[day_i]]) - 1
+                    voix.say_blocking(announce_day())
                     play(rec_i)
                 else:
                     bound = dire("nav.debut_journee" if new_i < 0 else "nav.fin_journee")

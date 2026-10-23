@@ -6719,9 +6719,12 @@ Session de diagnostic puis d'ajouts, tout deploye et teste sur le Pi.
 - Relais APRS (lib/relais.py, lib/ctcss.py, commande "relais") : formats nus et
   liaisons "A<=>B", relais lointains notes, tonalite CTCSS retrouvee dans le
   son brut = relais confirme, audibilite par relais.
-- Notifications : une prise dite a voix haute par une veille est marquee
-  ecoutee (lib/prise_vocale.py) ; journal_vus.mark sous verrou (plusieurs
-  processus).
+- Notifications : les fleches du journal traversent les jours (au bout de la
+  journee on continue dans la precedente) -- le journal se parcourt en entier,
+  et tout ce qui est ecoute n'est plus "nouveau" ; avant, les entrees des jours
+  precedents restaient comptees. Une prise dite a voix haute N'EST PAS marquee
+  ecoutee (l'utilisateur n'est pas toujours dans la piece). journal_vus.mark
+  sous verrou (plusieurs processus) ; touche B (son brut) compte comme ecoute.
 - Aviation quasi muette (mesure du 23/10) : ATIS a +3,7 dB au gain 20, moins
   en montant le gain = tuner sature par la FM (+24 dB) ; cuvette de
   Saint-Etienne. Le gain 20 est le bon. Remede propose : coupe-bande FM
