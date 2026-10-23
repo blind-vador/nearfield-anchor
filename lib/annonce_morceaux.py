@@ -300,6 +300,11 @@ def say(lead_sound, parts, label="annonce", reverb=False, prepared=None, source=
     if audio_lock.dropped():
         print(f"(muet, priorites) {text}")
         return
+    import sons
+    if lead_sound and sons.mode_chemin(lead_sound) != "son_phrase":  # commande "sons" : le son seul, ou rien
+        print(f"(son seul) {text}")
+        play_sound_effect(lead_sound, label=label, reverb="pa_jingle" if reverb else False)
+        return
     path = (prepared or prepare(parts, source)).wait()
     if not path:
         if lead_sound:

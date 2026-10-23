@@ -219,6 +219,10 @@ def _apply(plant, action):
     if action == "arrosee":
         _son("plante_arrosage_valide")
         plant["arrosee_le"] = plantes._today()
+        import plantes_sonde
+        if plantes_sonde.a_une_sonde(plant["id"]):  # mesure apres stabilisation, sans bloquer la console
+            plantes_sonde.demander(plant["id"])
+            return dire("plantes.note_arrosee", nom=plant["nom"]) + " " + dire("plantes.sonde_attendra")
         return dire("plantes.note_arrosee", nom=plant["nom"])
     if action in ("dedans", "dehors"):
         plant["dedans"] = action == "dedans"

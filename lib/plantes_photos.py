@@ -258,6 +258,27 @@ def _clean(folder, keep_days=PHOTO_KEEP_DAYS):
                     pass
 
 
+def _son_photo():
+    """Photo trouvee, envoyee a l'analyse (2026-10-23, sons.py) ; pas la nuit."""
+    try:
+        import plantes_calendrier
+        if plantes_calendrier._quiet():
+            return
+        import audio_lock
+        import sons
+        from sound_player import play_sound_effect
+        chemin = sons.chemin("plante_photo")
+        if not chemin:
+            return
+        lock = audio_lock.acquire()
+        try:
+            play_sound_effect(chemin, label="plantes_photos")
+        finally:
+            audio_lock.release(lock)
+    except Exception as exc:
+        print(f"[plantes_photos] son : {exc!r}")
+
+
 def run_once():
     """Traite les nouvelles photos. Rend [phrases a dire] ; [] si rien."""
     plants = plantes.load()
@@ -277,6 +298,7 @@ def run_once():
             if time.time() - mtime < 60:
                 continue  # copie peut-etre en cours
             budget -= 1
+            _son_photo()
             result = _identify(path) if plant is None else _analyse(plant, path, mtime)
             if result is None:
                 continue  # Gemini indisponible : nouvel essai au prochain passage

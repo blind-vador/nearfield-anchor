@@ -181,6 +181,11 @@ def _run():
                 continue
             print(f"[{item['tag']}] annonce : {text}")
             path = record(text, item["son"], item["etiquette"], item["fiche"], item.get("source"))
+            import sons
+            if item["son"] and sons.mode_chemin(item["son"]) != "son_phrase":
+                # commande "sons" : la prise reste au journal ; on ne fait entendre que le son, ou rien
+                play(item["son"], item["tag"])
+                continue
             if path:
                 play(path, item["tag"])
             else:  # synthese impossible : on dit quand meme, en direct

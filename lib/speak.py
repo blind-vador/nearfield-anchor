@@ -290,6 +290,11 @@ def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=
     if audio_lock.dropped():
         print(f"(muet, priorites) {text}")
         return  # source qui a cede sa place : ni son ni voix, pas de synthese inutile
+    import sons
+    if sound_path and sons.mode_chemin(sound_path) != "son_phrase":  # commande "sons" : le son seul, ou rien
+        print(f"(son seul) {text}")
+        play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label, reverb=reverb)
+        return
     source = source or voix_sources.source_pour()
     choix = voix_sources.choisir(source)
     lead_done = [False]

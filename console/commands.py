@@ -521,6 +521,10 @@ COMMANDS = [
     Command("capture", "enregistre tout ce qui sort du haut-parleur ; capture démarre, capture stop", None,
             keywords=["capture", "capturer", "enregistre le son", "enregistrer le son", "enregistrement du son"],
             examples=["capture démarre", "capture stop", "enregistre ce qui sort du haut-parleur"]),
+    Command("sons", "le son de chaque événement : l'écouter, et choisir son et phrase, son seul, ou rien",
+            None, keywords=["sons", "les sons", "reglage des sons", "regler les sons", "sons des evenements",
+                            "ecouter les sons", "sons de notification"],
+            examples=["règle les sons des alertes", "fais-moi écouter les sons"]),
     Command("volume", "volume général, puis un curseur par veille et par sorte de son : annonces, trains, "
             "ambiance de la gare, écoutes radio... ; volume 60 règle directement le général", None,
             keywords=["volume", "volumes", "son plus fort", "son moins fort", "monte le son", "baisse le son",

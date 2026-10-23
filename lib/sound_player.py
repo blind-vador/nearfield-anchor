@@ -105,6 +105,12 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
     sons d'ambiance poses dans la salle, pleine bande ; False = aucun effet.
     Le journal garde malgre tout la source propre (non traitee). Si l'effet
     echoue, on joue le son d'origine, jamais de silence."""
+    try:  # evenement regle sur "rien" (commande "sons", lib/sons.py, 2026-10-23)
+        import sons
+        if sons.mode_chemin(path) == "rien":
+            return
+    except Exception:
+        pass
     # Priorites (audio_lock, 2026-10-01) : decode en PCM puis relais par
     # morceaux de 100 ms, pour appliquer le volume du moment (attenue si une
     # source plus prioritaire parle par-dessus) ; rien si la source a abandonne.

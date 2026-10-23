@@ -152,6 +152,21 @@ AIR_TARGET_CAP = 3.0
 # lookup de modele d'appareil precis (ex: "Airbus A320"), meme authentifie
 # (confirme en session par lecture de la doc officielle) -- ceci est
 # l'information la plus precise disponible sur le TYPE d'appareil.
+# Son selon la categorie ADS-B annoncee par l'appareil (2026-10-23, sons.py) :
+# drone ; avion leger, petit, planeur, ballon, parachutiste, ULM ; sinon le son habituel.
+CATEGORIES_LEGERES = {2, 3, 9, 10, 11, 12}
+CATEGORIE_DRONE = 14
+
+
+def _son_groupe(categories):
+    import sons
+    if CATEGORIE_DRONE in categories:
+        return sons.chemin("drone", SIMPLE_CONTACT_SOUND)
+    if categories and all(c in CATEGORIES_LEGERES for c in categories):
+        return sons.chemin("avion_leger", SIMPLE_CONTACT_SOUND)
+    return SIMPLE_CONTACT_SOUND
+
+
 CATEGORY_NAMES = Etiquettes("avion.categorie", {
     0: None,  # aucune info -- on ne dit rien plutot que "categorie inconnue"
     1: None,
@@ -374,6 +389,7 @@ def main():
             helis, fast_poll = set(), None
         current_aircraft = {}
         nouveaux = []  # appareils nouveaux ce passage : annonce GROUPEE a la fin
+        familles = []  # categorie de chaque nouvel appareil : son du groupe
         for state in states:
             if state[IDX_ON_GROUND]:
                 continue  # pas interessant pour une veille "dans le ciel"
@@ -404,6 +420,7 @@ def main():
                     details.append(dire("avion.altitude_metres", altitude_m=format(altitude_m, ".0f")))
                 details.append(dire("avion.distance_kilometres", dist=format(dist, ".0f")))
                 nouveaux.append((callsign, details))
+                familles.append(category)
                 print(f"[adsb_watch] nouvel appareil : {callsign} ({icao24}), {dist:.0f} km")
 
             if dist <= OVERHEAD_RADIUS_KM:
@@ -432,7 +449,7 @@ def main():
                 parts += morceaux.whole(rest, live=True)
             lock = audio_lock.acquire()
             try:
-                morceaux.say(SIMPLE_CONTACT_SOUND, parts, label="adsb_watch")
+                morceaux.say(_son_groupe(familles), parts, label="adsb_watch")
             finally:
                 audio_lock.release(lock)
 

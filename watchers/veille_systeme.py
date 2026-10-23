@@ -300,13 +300,19 @@ def _antenne():
         _jouer("antenne_muette", dire("systeme_veille.antenne_muette", heures=nombre(round(age / 3600), "heure")))
 
 
+def _sonde_sol():
+    """Arrosage et mesure de la sonde de sol apres stabilisation (lib/plantes_sonde.py)."""
+    import plantes_sonde
+    plantes_sonde.verifier(lambda evenement, phrase: _plus_tard(_jouer, evenement, phrase))
+
+
 def main():
     _log("demarrage")
     threading.Thread(target=_noyau, daemon=True).start()
     horloge, reseau, services, ignores_ = _Horloge(), _Reseau(), _Services(), _Ignores()
     while True:
         for verif in (_alimentation, horloge.verifier, reseau.verifier, _disques, services.verifier,
-                      ignores_.verifier, _antenne):
+                      ignores_.verifier, _antenne, _sonde_sol):
             try:
                 verif()
             except Exception as exc:

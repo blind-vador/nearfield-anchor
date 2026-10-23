@@ -42,6 +42,10 @@ SONS = {
     "pmr446_fin": "radio_scaner/pmr446_fin.mp3",
     "trame_non_dite": "radio_scaner/trame_non_dite.mp3",
     # meteo et flash info
+    "vigilance_1": "meteo_scaner/vigilence_1.mp3",
+    "vigilance_2": "meteo_scaner/vigilence_2.mp3",
+    "vigilance_3": "meteo_scaner/vigilence_3.mp3",
+    "vigilance_4": "meteo_scaner/vigilence_4.mp3",
     "vigilance_baisse": "meteo_scaner/vigilence_baisse.mp3",
     "jingle_flashinfo": "jingles/flashinfo.mp3",
     "jingle_meteo": "jingles/meteo.mp3",
@@ -58,6 +62,7 @@ SONS = {
     "plante_observation_a_lire": "plantes/observation_a_lire.mp3",
     "plante_observation_a_confirmer": "plantes/observation_a_confirmer.mp3",
     "plante_observation_validee": "plantes/observation_validee.mp3",
+    "sonde_stabilisation": "plantes/sonde_stabilisation_loop.mp3",   # boucle : la sonde attend que l'eau se repartisse
     "camera_coupee": "camera/camera_coupee.mp3",
     # systeme
     "demarrage": "systeme/demarrage.mp3",
@@ -101,6 +106,60 @@ def chemin(evenement, repli=None):
         return local
     except OSError:
         return nas
+
+
+# --- reglages de la commande "sons" (console/sons_cmd.py) ---------------------------
+# Par evenement : "son_phrase" (par defaut), "son_seul" (la phrase n'est pas
+# dite ; une prise reste gardee au journal) ou "rien". Appliques la ou le son
+# est joue (sound_player, speak, annonce_morceaux, prise_vocale), reconnu a son
+# chemin : un changement vaut tout de suite, sans redemarrer les veilles.
+MODES = ["son_phrase", "son_seul", "rien"]
+REGLAGES = os.path.join(os.path.dirname(LOCAL_BASE), "sons_reglages.json")
+_reglages = {"mtime": None, "data": {}}
+
+
+def _lire_reglages():
+    import json
+    try:
+        mtime = os.path.getmtime(REGLAGES)
+    except OSError:
+        return {}
+    if mtime != _reglages["mtime"]:
+        try:
+            with open(REGLAGES, encoding="utf-8") as f:
+                _reglages.update(mtime=mtime, data=json.load(f))
+        except (OSError, ValueError):
+            return {}
+    return _reglages["data"]
+
+
+def mode(evenement):
+    m = _lire_reglages().get(evenement)
+    return m if m in MODES else MODES[0]
+
+
+def regler(evenement, nouveau):
+    import json
+    data = dict(_lire_reglages())
+    if nouveau == MODES[0]:
+        data.pop(evenement, None)
+    else:
+        data[evenement] = nouveau
+    tmp = f"{REGLAGES}.{os.getpid()}"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, REGLAGES)
+    _reglages.update(mtime=os.path.getmtime(REGLAGES), data=data)  # deux reglages dans le meme instant
+
+
+def mode_chemin(chemin):
+    """Mode de l'evenement dont c'est le son ; "son_phrase" pour tout autre son."""
+    if not chemin or not _lire_reglages():
+        return MODES[0]
+    for evenement, rel in SONS.items():
+        if chemin.endswith("/" + rel):
+            return mode(evenement)
+    return MODES[0]
 
 
 def manquants():
