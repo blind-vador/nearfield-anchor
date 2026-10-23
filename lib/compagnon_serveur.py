@@ -58,6 +58,44 @@ def _save_presence():
     os.replace(tmp, compagnon.PRESENCE)
 
 
+# Sons du pont (2026-10-23, sons.py) : Mac connecte, Mac endormi ou parti
+# (apres DECONNEXION_SEC sans retour : une reconnexion rapide ne sonne pas),
+# connexion refusee (une fois par adresse et par heure).
+DECONNEXION_SEC = 30
+_sons_vus = {}
+
+
+def _son(evenement, cle=None, ecart=0):
+    if cle is not None:
+        if time.time() - _sons_vus.get(cle, 0) < ecart:
+            return
+        _sons_vus[cle] = time.time()
+
+    def jouer():
+        try:
+            import audio_lock
+            import sons
+            from sound_player import play_sound_effect
+            chemin = sons.chemin(evenement)
+            if not chemin:
+                return
+            lock = audio_lock.acquire()
+            try:
+                play_sound_effect(chemin, timeout_sec=60, label="compagnon")
+            finally:
+                audio_lock.release(lock)
+        except Exception as exc:
+            print(f"[compagnon] son {evenement} : {exc!r}")
+    threading.Thread(target=jouer, daemon=True).start()
+
+
+def _parti(cid):
+    with _lock:
+        revenu = cid in _channels
+    if not revenu:
+        _son("mac_deconnecte")
+
+
 class _Handler(socketserver.StreamRequestHandler):
     def handle(self):
         self.request.settimeout(READ_TIMEOUT_SEC)
@@ -70,6 +108,7 @@ class _Handler(socketserver.StreamRequestHandler):
             if (not card or hello.get("type") != "bonjour" or hello.get("pi") != compagnon.pi_id()
                     or not proto.verify(card["cle"], hello)):
                 print(f"[compagnon] connexion refusee ({self.client_address[0]}, {cid})")
+                _son("pont_intrus", cle=("intrus", self.client_address[0]), ecart=3600)
                 return
             channel.send({"type": "bienvenue", "pi": compagnon.pi_id(), "reponse_a": hello.get("nonce")})
             compagnon.update_card(cid, nom=hello.get("nom", card.get("nom")), capacites=hello.get("capacites", []),
@@ -84,6 +123,8 @@ class _Handler(socketserver.StreamRequestHandler):
                 _save_presence()
             if old:
                 old.close()
+            elif time.time() - _sons_vus.get(("parti", cid), 0) > DECONNEXION_SEC:
+                _son("mac_connecte")  # vraie arrivee, pas une reconnexion eclair
             print(f"[compagnon] {hello.get('nom')} connectee depuis {self.client_address[0]}")
             _results_ready.set()  # un "fini" a pu se perdre pendant la coupure
             for job in compagnon.open_jobs():  # ce qui l'attendait
@@ -122,6 +163,10 @@ class _Handler(socketserver.StreamRequestHandler):
                     del _channels[cid]
                     _presence.pop(cid, None)
                     _save_presence()
+                    _sons_vus[("parti", cid)] = time.time()
+                    minuteur = threading.Timer(DECONNEXION_SEC, _parti, args=(cid,))
+                    minuteur.daemon = True
+                    minuteur.start()
             channel.close()
 
 

@@ -241,7 +241,7 @@ def _alerts(announce=None):
     import plantes_alertes
     if announce is None:
         import veille_donnees as vd
-        announce = lambda text: vd.announce(text, plantes_alertes.SOUND, "plante_alerte", "plantes")  # noqa: E731
+        announce = lambda text, son=None: vd.announce(text, son or plantes_alertes.SOUND, "plante_alerte", "plantes")  # noqa: E731
     return plantes_alertes.run_once(plantes.load(), _quiet(), announce)
 
 
@@ -256,7 +256,11 @@ def _photos(announce=None):
     if said and not _quiet():
         if announce is None:
             import veille_donnees as vd
-            announce = lambda text: vd.announce(text, PHOTO_SOUND, "plante_photo", "plantes")  # noqa: E731
+            # observation a confirmer au toucher, ou evolution a ecouter (2026-10-23)
+            evenement = "plante_observation_a_confirmer" if dire("plantes.photo_a_confirmer") in said \
+                else "plante_observation_a_lire"
+            son = sons.chemin(evenement, PHOTO_SOUND)
+            announce = lambda text: vd.announce(text, son, "plante_photo", "plantes")  # noqa: E731
         announce(" ".join(said))
     return said
 

@@ -223,6 +223,25 @@ def active():
     return [a for a in _load(STATE_PATH).get("alertes", {}).values() if a["premiere"] > acked]
 
 
+SONS_ALERTES = {"soif": "plante_besoin_eau", "soif_sonde": "plante_besoin_eau"}  # (2026-10-23, sons.py)
+
+
+def _dire(announce, texte, key):
+    """announce(texte), avec le son du genre d'alerte si l'appelant le prend (son=)."""
+    import inspect
+    import sons
+    genre = key.split("|")[1] if "|" in key else ""
+    son = sons.chemin(SONS_ALERTES[genre]) if genre in SONS_ALERTES else None
+    try:
+        prend_son = "son" in inspect.signature(announce).parameters
+    except (TypeError, ValueError):
+        prend_son = False
+    if prend_son:
+        announce(texte, son=son)
+    else:
+        announce(texte)
+
+
 def run_once(plants, quiet, announce, now=None):
     """Met a jour les alertes et dit ce qui doit l'etre. Rend les textes dits."""
     state = _load(STATE_PATH)
@@ -242,7 +261,7 @@ def run_once(plants, quiet, announce, now=None):
         if quiet or alert["premiere"] <= acked or t - alert["derniere"] < REPEAT_SEC:
             continue
         spoken = text if not alert["derniere"] else dire("plantes.rappel", texte=text)
-        announce(spoken + " " + dire("plantes.dis_compris"))
+        _dire(announce, spoken + " " + dire("plantes.dis_compris"), key)
         alert["derniere"] = t
         said.append(spoken)
     state["alertes"] = alerts

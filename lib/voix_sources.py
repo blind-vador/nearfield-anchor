@@ -75,7 +75,7 @@ ANNONCES = [s for s in SOURCES if s not in ("console", "touches")]
 SCRIPTS = {"radio_watch": "radio", "sncf_watch": "trains", "meteo_watch": "alertes", "crue_watch": "alertes",
            "adsb_watch": "avions", "stas_watch": "bus", "nas_watch": "disques", "main": "console",
            "imprimante_watch": "imprimante", "veille_terrain": "terrain", "usb_watch": "systeme",
-           "compagnon_watch": "systeme"}
+           "compagnon_watch": "systeme", "veille_systeme": "systeme"}
 TAGS = {"meteo_capteurs": "capteurs", "plantes": "plantes", "veille_terrain": "terrain", "terrain": "terrain", "helicos": "helicos",
         "compagnon": "systeme", "usb": "systeme"}
 

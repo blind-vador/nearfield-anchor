@@ -204,12 +204,20 @@ def quick(line):
     return text
 
 
+def _son(evenement):
+    """Son de l'action notee (2026-10-23, sons.py), avant la phrase."""
+    import lecture_longue
+    lecture_longue._jingle(evenement, voix)
+
+
 def _apply(plant, action):
     if action == "confirmer":
+        _son("plante_observation_validee")
         return plantes.confirm(plant)
     if action == "infirmer":
         return plantes.refute(plant)
     if action == "arrosee":
+        _son("plante_arrosage_valide")
         plant["arrosee_le"] = plantes._today()
         return dire("plantes.note_arrosee", nom=plant["nom"])
     if action in ("dedans", "dehors"):

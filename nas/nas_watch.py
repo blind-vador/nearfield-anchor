@@ -33,6 +33,17 @@ DISKS = [
      "label": "disque principal de stockage"},
 ]
 
+def _son_erreur():
+    try:
+        import sons
+        from sound_player import play_sound_effect
+        chemin = sons.chemin("nas_injoignable")
+        if chemin:
+            play_sound_effect(chemin, label="nas_watch")
+    except Exception as exc:
+        print(f"[nas_watch] son : {exc!r}")
+
+
 def _speak(text, repetitive=True):
     """Voix cloud (edge-tts) avec repli espeak automatique -- comme le
     reste du projet, plutot que l'espeak brut d'origine (2026-08-31,
@@ -128,6 +139,7 @@ def main():
                 fail_streak[mount_point] += 1
                 print(f"[nas_watch] {mount_point} : disque absent (UUID introuvable)")
                 if fail_streak[mount_point] == 1 or fail_streak[mount_point] % WARNING_REMINDER_EVERY == 0:
+                    _son_erreur()  # son d'erreur (2026-10-23, sons.py)
                     _speak(f"Attention, {disk['label']} introuvable. Vérifie la connexion.")
                 continue
 

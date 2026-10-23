@@ -134,11 +134,14 @@ def main():
         json.dump(rapport, f, ensure_ascii=False, indent=1)
     os.replace(tmp, RAPPORT)
     print(f"[audit_securite] {rapport['texte']}", flush=True)
-    if systeme or pip:
+    if True:  # chaque bilan au journal, avec son son : faille ou rien a signaler (2026-10-23, sons.py)
         try:
             import prise_vocale
+            import sons
             from sound_paths import METEO_SCANER_DIR
-            prise_vocale.record(rapport["texte"], os.path.join(METEO_SCANER_DIR, "simple_message.mp3"), ETIQUETTE,
+            son = sons.chemin("securite_faille" if (systeme or pip) else "securite_bilan",
+                              os.path.join(METEO_SCANER_DIR, "simple_message.mp3"))
+            prise_vocale.record(rapport["texte"], son, ETIQUETTE,
                                 meta={"source": "controle de securite", **rapport}, source="systeme")
         except Exception as exc:
             print(f"[audit_securite] prise non enregistree : {exc!r}", flush=True)

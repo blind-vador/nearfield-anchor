@@ -203,8 +203,12 @@ def note_capture(freq_hz, ctcss_hz=None):
     else:
         verdict = "entendu"
 
+    premier = []
+
     def ajoute(data):
         e = data.setdefault(str(f), {})
+        if not e.get("captures"):
+            premier.append(True)
         e["captures"] = e.get("captures", 0) + 1
         e["dernier_entendu"] = time.time()
         if verdict == "confirme":
@@ -213,6 +217,15 @@ def note_capture(freq_hz, ctcss_hz=None):
             tons = e.setdefault("tonalites_entendues", {})
             tons[str(ctcss_hz)] = tons.get(str(ctcss_hz), 0) + 1
     _maj_audibilite(ajoute)
+    if premier:  # relais entendu pour la premiere fois : decouverte (2026-10-23, sons.py)
+        try:
+            import sons
+            from sound_player import play_sound_effect
+            chemin = sons.chemin("nouvel_emetteur")
+            if chemin:
+                play_sound_effect(chemin, label="relais")
+        except Exception as exc:
+            print(f"[relais] son : {exc!r}")
     return verdict
 
 

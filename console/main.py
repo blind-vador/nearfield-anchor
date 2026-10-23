@@ -133,11 +133,30 @@ def keytest(key_source):
     return dire("console.fin_reperage_touches")
 
 
+ABSENCE_SEC = 30 * 60
+_derniere_touche = [time.time()]
+
+
+def _retour():
+    """Premiere touche apres une absence (2026-10-23) : un son, sans parole,
+    s'il y a des entrees pas encore ecoutees dans les journaux."""
+    try:
+        if os.path.ismount("/media/nas/nd1") and journal.unheard_counts():
+            import lecture_longue
+            lecture_longue._jingle("non_lus", voix)
+    except Exception as exc:
+        print(f"[console] retour : {exc!r}", file=sys.stderr)
+
+
 def read_line(key_source):
     """Lit une ligne avec echo vocal de la frappe ; rend la ligne a
     l'appui sur Entree (eventuellement vide)."""
     line = ""
     for key in key_source:
+        if time.time() - _derniere_touche[0] >= ABSENCE_SEC:
+            import threading
+            threading.Thread(target=_retour, daemon=True).start()
+        _derniere_touche[0] = time.time()
         voix.stop()
         if key in ("\r", "\n"):
             out("\n")
@@ -411,7 +430,7 @@ def run_command(line, key_source, last_response):
     if cmd.name == "trafic":
         import trafic
         voix.say(dire("console.regarde_etat_routes"))
-        return trafic.summary()
+        return flash.flash_info.son("jingle_transport") + " " + trafic.summary()  # jingle (2026-10-23)
     if cmd.name == "environnement":
         import donnees_ouvertes
         voix.say(dire("console.rassemble_donnees"))
@@ -427,7 +446,8 @@ def run_command(line, key_source, last_response):
         return dmr_cmd.run(line)
     if cmd.name in ("bus", "tram", "métro", "transports"):
         import transports_cmd
-        return transports_cmd.run(cmd.name, line, key_source, voix.say, out)
+        reponse = transports_cmd.run(cmd.name, line, key_source, voix.say, out)
+        return (flash.flash_info.son("jingle_transport") + " " + reponse) if reponse else reponse
     if cmd.name == "mes capteurs":
         import capteurs_cmd
         return capteurs_cmd.run(line, key_source, voix.say, out)
@@ -526,7 +546,15 @@ def main():
             if response and cmd_is_not_repeat(line):
                 last_response = response
                 _last_direct["t"] = time.time()
+            # Jingle en tete de reponse (2026-10-23, reperes de flash_info.son()) :
+            # joue, puis la reponse est dite sans son repere.
+            debut = flash.flash_info.MARQUE_SON.match(response or "")
+            if response:
+                response = flash.flash_info.sans_sons(response)
             out(f"{response}\n> ")
+            if debut:
+                import lecture_longue
+                lecture_longue._jingle(debut.group(1), voix)
             voix.say(response, lock=True)
     except EOFError:
         pass

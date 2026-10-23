@@ -66,13 +66,14 @@ SONS = {
     "voix_en_calcul": "systeme/voix_en_calcul.mp3",
     "horloge_perdue": "systeme/horloge_perdue.mp3",
     "peripherique_decroche": "systeme/peripherique_decroche.mp3",
+    "peripherique_branche": "systeme/peripherique_branche.mp3",
     "sous_tension": "systeme/sous_tension.mp3",
-    "surintensite": "systeme/surintensite.mp3",
-    "bridage_chaleur": "systeme/bridage_chaleur.mp3",
-    "trop_chaud": "systeme/trop_chaud.mp3",
+    "alarme_electrique": "systeme/alarme_electrique.mp3",     # surintensite USB, tension : en boucle avec la voix
+    "pi_bride_chaleur": "systeme/pi_bride_chaleur.mp3",       # UNITE_TOO_HOT
+    "pause_thermique": "radio_scaner/pause_thermique.mp3",    # POWER_LIMITED_DUE_TO_TEMPERATURE
     "nas_injoignable": "systeme/nas_injoignable.mp3",
     "journal_non_sauve": "systeme/journal_non_sauve.mp3",
-    "injoignable": "systeme/injoignable.mp3",
+    "veille_plantee": "systeme/veille_plantee.mp3",           # MICROSOFT-VOICES-UNREACHABLE : veille en boucle
     "mac_connecte": "systeme/mac_connecte.mp3",
     "mac_deconnecte": "systeme/mac_deconnecte.mp3",
     "pont_intrus": "systeme/pont_intrus.mp3",

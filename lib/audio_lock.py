@@ -72,7 +72,7 @@ DEFAULT_VOLUME = 0.3
 SCRIPT_SOURCES = {
     "radio_watch": "radio", "sncf_watch": "trains", "meteo_watch": "alertes", "crue_watch": "alertes",
     "adsb_watch": "avions", "stas_watch": "bus", "nas_watch": "disques", "main": "console",
-    "imprimante_watch": "imprimante",
+    "imprimante_watch": "imprimante", "veille_systeme": "disques",
 }
 
 # Journal ouvert dans la console (console/journal.py, archives.py) : les

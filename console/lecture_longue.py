@@ -48,8 +48,43 @@ def _par_compagne(text, voice, rate, dest):
     return False
 
 
+def _morceaux(text):
+    """[(evenement du jingle ou None, texte)] selon les reperes de flash_info.son()."""
+    import flash_info
+    parts = flash_info.MARQUE_SON.split(text)
+    out = [(None, parts[0].strip())] + [(parts[i], parts[i + 1].strip()) for i in range(1, len(parts), 2)]
+    return [(e, t) for e, t in out if e or t]
+
+
+def _jingle(evenement, voix):
+    import sons
+    chemin = sons.chemin(evenement)
+    if not chemin:
+        return
+    voix.stop()
+    ticket = audio_lock.acquire("console", timeout=30)
+    try:
+        sound_player.play_sound_effect(chemin, timeout_sec=30, label="lecture")
+    finally:
+        audio_lock.release(ticket)
+
+
 def lire(text, voix, say_and_wait):
-    """Dit text d'une traite (voir en-tete). voix : console/voix.py."""
+    """Dit text d'une traite (voir en-tete), jingles compris (2026-10-23 :
+    reperes de flash_info.son(), chaque morceau entre deux jingles est fait
+    d'une traite). voix : console/voix.py."""
+    morceaux = _morceaux(text)
+    if len(morceaux) > 1 or (morceaux and morceaux[0][0]):
+        for i, (evenement, morceau) in enumerate(morceaux):
+            if evenement:
+                _jingle(evenement, voix)
+            if morceau:
+                _lire_bloc(morceau, voix, say_and_wait, annonce=i == 0 or not any(m for _, m in morceaux[:i]))
+        return
+    _lire_bloc(text, voix, say_and_wait)
+
+
+def _lire_bloc(text, voix, say_and_wait, annonce=True):
     choix = voix_sources.choisir("console", ms_ok=voix.cloud_ok())
     if choix["moteur"] != "piper" or not text.strip():
         say_and_wait(text)
@@ -62,12 +97,22 @@ def lire(text, voix, say_and_wait):
         machine = compagnon.available("voix")
         ok = False
         if machine and machine.get("presente"):
-            say_and_wait(dire("lecture.preparation_compagne"))
-            ok = _par_compagne(text, choix["voix"], choix["debit"], dest)
+            if annonce:
+                say_and_wait(dire("lecture.preparation_compagne"))
+            attente = piper_out.Attente(0)  # boucle d'attente pendant le calcul (2026-10-23)
+            try:
+                ok = _par_compagne(text, choix["voix"], choix["debit"], dest)
+            finally:
+                attente.stop()
         if not ok:
-            say_and_wait(dire("lecture.preparation_pi"))
-            ok = piper_out.to_file(text, dest, timeout=espeak_out.duree_max(text, 120) * 4, voice_id=choix["voix"],
-                                   scale_len=piper_out.length_scale(choix["debit"]))
+            if annonce:
+                say_and_wait(dire("lecture.preparation_pi"))
+            attente = piper_out.Attente(0)
+            try:
+                ok = piper_out.to_file(text, dest, timeout=espeak_out.duree_max(text, 120) * 4, voice_id=choix["voix"],
+                                       scale_len=piper_out.length_scale(choix["debit"]))
+            finally:
+                attente.stop()
         if not ok:
             say_and_wait(text)  # dernier recours : la lecture habituelle
             return

@@ -38,6 +38,14 @@ AIRBAND_PROC_STOP_TIMEOUT_SEC = 3
 SOUND_EFFECTS_DIR = RADIO_SCANER_DIR  # chemin de base centralise dans sound_paths.py (2026-08-31)
 FREQ_OPEN_SOUND = f"{SOUND_EFFECTS_DIR}/freq_open.mp3"
 FREQ_OVER_SOUND = f"{SOUND_EFFECTS_DIR}/freq_over.mp3"
+
+
+def _son_fin(freq_hz):
+    """Son de fin d'ecoute : celui du PMR446 sur ses canaux (2026-10-23, sons.py)."""
+    import sons
+    if 446.0e6 <= freq_hz <= 446.2e6:
+        return sons.chemin("pmr446_fin", FREQ_OVER_SOUND)
+    return FREQ_OVER_SOUND
 INCOMING_SOUND = f"{SOUND_EFFECTS_DIR}/incoming.mp3"
 
 # 1,5 -> 3 s (2026-09-30) : une fin coupee trop tot est pire qu'un peu de
@@ -485,14 +493,14 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
             # Simple eclat de squelch (2026-10-03 : des prises de 0,1 s dans le
             # journal) : rien a garder.
             print(f"[airband_bridge] canal ignore : {audio_sec:.1f} s de son seulement")
-            play_sound_effect(FREQ_OVER_SOUND, label="airband_bridge")
+            play_sound_effect(_son_fin(freq_hz), label="airband_bridge")
             log_session.discard()
             return False
         if captured_chunks:
             log_session.add_raw_pcm(b"".join(captured_chunks), AIRBAND_SAMPLE_RATE_HZ, "f32le")
 
         print(f"[airband_bridge] canal termine : {total_bytes} octets relayes")
-        play_sound_effect(FREQ_OVER_SOUND, label="airband_bridge")
+        play_sound_effect(_son_fin(freq_hz), label="airband_bridge")
         path = log_session.finalize()
         if path and raw_chunks:
             _save_raw(path, b"".join(raw_chunks))

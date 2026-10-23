@@ -268,6 +268,51 @@ def _pick(voice_id=None, scale_len=1.0):
     return args, rate
 
 
+ATTENTE_SEC = 1.0
+
+
+class Attente:
+    """Boucle d'attente (2026-10-23, son "voix_en_calcul" de sons.py) pendant
+    qu'une voix se calcule : elle commence apres ATTENTE_SEC sans aucun son
+    et s'arrete des que la voix parle (stop())."""
+
+    def __init__(self, delai=ATTENTE_SEC):
+        self._delai = delai
+        self._fini = threading.Event()
+        self._proc = None
+        self._garde = threading.Lock()
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        if self._fini.wait(self._delai):
+            return
+        import sons
+        chemin = sons.chemin("voix_en_calcul")
+        if not chemin:
+            return
+        with self._garde:
+            if self._fini.is_set():
+                return
+            try:
+                self._proc = subprocess.Popen(
+                    ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-stream_loop", "-1", "-i", chemin,
+                     "-af", "volume=0.7", "-f", "alsa", "default"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                self._proc = None
+
+    def stop(self):
+        with self._garde:
+            self._fini.set()
+            proc, self._proc = self._proc, None
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+
+
 class Speech:
     """Une phrase en cours : piper (en flux) | relais du volume | aplay."""
 
@@ -297,6 +342,7 @@ class Speech:
         self._piper.stdin.close()
         self._aplay = subprocess.Popen(["aplay", "-q", "-D", "default", "-r", str(rate), "-f", "S16_LE", "-c", "1"],
                                        stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        self._attente = Attente()  # voix lente : boucle jusqu'au premier son
         self._relay = threading.Thread(target=self._pump, args=(scale,), daemon=True)
         self._relay.start()
 
@@ -304,6 +350,7 @@ class Speech:
         try:
             while True:
                 data = self._piper.stdout.read(CHUNK)
+                self._attente.stop()
                 if not data:
                     break
                 if self._record is not None:
@@ -348,6 +395,7 @@ class Speech:
 
     def kill(self):
         self._killed = True
+        self._attente.stop()
         for proc in (self._aplay, self._piper):
             if proc.poll() is None:
                 proc.kill()

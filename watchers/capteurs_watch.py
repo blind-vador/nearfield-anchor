@@ -484,4 +484,17 @@ def scan_window(dwell_sec=30):
         connus.save()
     if count:
         print(f"[capteurs_watch] {count} trame(s) capteurs sur {freq}")
+        try:  # antenne vivante (veille_systeme : antenne muette)
+            with open("/home/vador/autopilot/capteurs_derniere_trame", "w") as f:
+                f.write(str(time.time()))
+        except OSError:
+            pass
+        if not announced:  # captees sans rien a dire : un son en fin de fenetre (2026-10-23)
+            import audio_lock
+            from sound_player import play_sound_effect
+            lock = audio_lock.acquire()
+            try:
+                play_sound_effect(sons.chemin("trame_non_dite", SOUND), label="capteurs_watch")
+            finally:
+                audio_lock.release(lock)
     return announced

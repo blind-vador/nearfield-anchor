@@ -55,7 +55,7 @@ def texte_complet(scan=None, scan_failed=None):
     text = built["texte"]
     if built["remarque"]:
         text += " " + dire("flash.flash_lu_sans_redaction", remarque=built['remarque'])
-    return text
+    return text  # avec ses reperes de jingles : lu par lecture_longue
 
 
 def run(line, key_source, say, out):

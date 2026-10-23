@@ -77,7 +77,7 @@ WMO = Etiquettes("meteo.temps", {0: "ciel dégagé", 1: "ciel peu nuageux", 2: "
 # pas de "journalisme de prefecture". La regle des faits reste entiere : rien
 # d'invente, l'analyse est donnee comme analyse. Changer PROMPT_VERSION
 # reecrit le flash suivant meme si la peche n'a pas change.
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3  # 3 (2026-10-23) : le sport a part, precede de son jingle
 PROMPT = """Tu es journaliste dans une radio locale libre française. Rédige le flash
 d'information locale de {commune} ({departement}), à lire à voix haute par une
 synthèse vocale, à partir UNIQUEMENT des sujets ci-dessous.
@@ -115,13 +115,14 @@ Règles sur les faits (elles passent avant tout) :
   partout.
 - Laisse de côté les titres racoleurs ou vagues qui n'apportent aucun fait
   concret (classements, "au top", "on vous dit tout"...).
-- Regroupe à la fin le sport, puis la culture et les sorties.
+- Mets le sport à part, dans "sport" (chaîne vide s'il n'y en a pas) ;
+  regroupe la culture et les sorties à la fin de "flash".
 - 180 à 300 mots, phrases courtes, style radio, en français. Pas de markdown,
   pas de liste, pas de titre, pas de formule de fin.
 - Écris les nombres en chiffres, sans abréviation (pas de "M€", écris
   "millions d'euros").
 
-Réponds en JSON : {{"flash": "texte du flash", "rubriques": {{"id du sujet":
+Réponds en JSON : {{"flash": "texte du flash", "sport": "le sport, ou vide", "rubriques": {{"id du sujet":
 "rubrique"}}}} avec pour chaque sujet une rubrique parmi : À la une, Luttes
 et mobilisations, Faits divers et justice, Politique et société, Économie,
 Transports, Sport, Culture et sorties, Autres.
@@ -130,6 +131,21 @@ Sujets :
 {sujets}
 """
 INDEPENDENT_STORIES = 6   # sujets de la veille terrain toujours confies a Gemini, en plus du haut du classement
+
+
+# --- Jingles (2026-10-23) ----------------------------------------------------
+# Reperes poses dans le texte du flash complet : console/lecture_longue.py joue
+# le son de l'evenement (lib/sons.py) a cet endroit ; sans_sons() les retire
+# pour une lecture ordinaire.
+MARQUE_SON = re.compile(r"\s*⟦son:(\w+)⟧\s*")
+
+
+def son(evenement):
+    return f"⟦son:{evenement}⟧"
+
+
+def sans_sons(text):
+    return MARQUE_SON.sub(" ", text).strip()
 
 
 # --- Collecte --------------------------------------------------------------
@@ -358,6 +374,9 @@ def write_news(lieu, stories):
         if isinstance(rubrique, str):
             rubriques[s["cle"]] = rubrique
     text = " ".join(data["flash"].replace("*", "").split())
+    sport = " ".join(str(data.get("sport") or "").replace("*", "").split())
+    if sport:
+        text += f" {son('jingle_sport')} {sport}"
     return text, rubriques, None
 
 
@@ -559,12 +578,16 @@ def build(complet=False, scan=None, scan_failed=None):
     found = collect(lieu, complet, scan, scan_failed)
     news, rubriques, stories, fresh, remark = found["presse"]
     if complet:
-        sections = [found["meteo"], found["plantes"],
-                    (dire("flash.sur_les_routes") + " " + found["routes"]) if found["routes"] else "",
-                    found["trains"], found["bus"]]
+        transport = [(dire("flash.sur_les_routes") + " " + found["routes"]) if found["routes"] else "",
+                     found["trains"], found["bus"]]
+        sections = [(son("jingle_meteo") + " " + found["meteo"]) if found["meteo"] else "", found["plantes"],
+                    " ".join([son("jingle_transport")] + [t for t in transport if t]) if any(transport) else ""]
+        intro = son("jingle_flashinfo") + " "
     else:
         sections = [found["alertes"], found["meteo"], found["station"], found["plantes"], found["trains"], found["bus"]]
-    text = (dire("flash.flash_info", commune=lieu['commune'], v1=_spoken_now(), news=news) + " ") + \
+        intro = ""
+        news = sans_sons(news)
+    text = intro + (dire("flash.flash_info", commune=lieu['commune'], v1=_spoken_now(), news=news) + " ") + \
         " ".join(t for t in sections if t)
     for story in stories:
         story["rubrique"] = rubriques.get(story["cle"], "Autres infos")

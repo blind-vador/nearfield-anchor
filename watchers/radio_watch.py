@@ -254,6 +254,14 @@ from phrases import dire
 SOUND_EFFECTS_DIR = RADIO_SCANER_DIR
 FREQ_OPEN_SOUND = os.path.join(SOUND_EFFECTS_DIR, "freq_open.mp3")
 FREQ_OVER_SOUND = os.path.join(SOUND_EFFECTS_DIR, "freq_over.mp3")
+
+
+def _son_fin(freq_hz):
+    """Son de fin d'ecoute : celui du PMR446 sur ses canaux (2026-10-23, sons.py)."""
+    import sons
+    if 446.0e6 <= freq_hz <= 446.2e6:
+        return sons.chemin("pmr446_fin", FREQ_OVER_SOUND)
+    return FREQ_OVER_SOUND
 SCANER_ERROR_SOUND = os.path.join(SOUND_EFFECTS_DIR, "scaner_error.mp3")
 # Sons fournis par l'utilisateur en session (2026-08-30) : "incoming" joue
 # avant l'annonce d'une reception capturee (tampon pendant la synthese
@@ -1604,6 +1612,9 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         while not multimon_queue.empty():
             decoded_messages.append(multimon_queue.get_nowait())
 
+    if hold_sec >= maintien.SECURITE_SEC and total_bytes >= max_bytes:
+        # Coupee par le garde-fou, pas perdue (2026-10-23) : on le dit.
+        speak(dire("radio.coupe_garde_fou", minutes=round(hold_sec / 60)))
     meaningful_messages = [m for m in decoded_messages if _is_meaningful_decoded_message(m)]
     ignored_count = len(decoded_messages) - len(meaningful_messages)
     if ignored_count:
@@ -1974,7 +1985,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             saved = True
             return True
         if stream_until_quiet(freq, mode, band_label, target=target):
-            play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
+            play_sound_effect(_son_fin(freq), label="radio_watch")
             path = log_session.finalize()
             _save_raw(path)
             metrics = dict(_last_stream_metrics, niveau_db=level_db)
@@ -2406,7 +2417,7 @@ def main():
                 manual_stream.stop()  # la securite thermique coupe aussi l'ecoute manuelle
                 _speak_pause(
                     dire("radio.pause_scanner_radio_temperature", temp=format(temp, ".0f")),
-                    sound=SCANER_ERROR_SOUND,
+                    sound=sons.chemin("pause_thermique", SCANER_ERROR_SOUND),  # son propre (2026-10-23)
                 )
                 meteo_locale.set_scanner_state("pause_thermique")
                 _meteo_pause["announced"] = False
@@ -2442,6 +2453,7 @@ def main():
                                   f"{PLATEAU_RESUME_MAX_C:.0f}C -- pause maintenue")
                             _speak_pause(dire("radio.pi_refroidit_plus_reste", temp=format(temp, ".0f")))
                 last_pause_end_time = time.time()
+                play_sound_effect(sons.chemin("scanner_reprise", FREQ_OVER_SOUND), label="radio_watch")  # reprise
                 pause_duration = last_pause_end_time - pause_actual_start
 
                 if pause_durations:

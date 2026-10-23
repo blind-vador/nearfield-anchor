@@ -26,7 +26,8 @@ from phrases import dire
 
 DECODER_DIR = "/home/vador/autopilot/bin"
 DECODERS = {"RS41": "rs41mod", "M10": "m10m20mod", "M20": "m10m20mod", "DFM": "dfm09mod"}
-SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
+import sons
+SOUND = sons.chemin("capteur_meteo", os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3"))  # son propre (2026-10-23, sons.py)
 STATE_PATH = "/tmp/sondes_watch_state.json"
 PROFILE_PATH = "/tmp/sondes_profil.json"
 MAX_RANGE_KM = 250          # au-dela, pas de reception possible avec une antenne de toit
