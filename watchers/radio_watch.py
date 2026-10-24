@@ -1098,6 +1098,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
     proc = None
     aplay = None
     brut, stats = None, None
+    validated = muted = filtered_out = False
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:  # marge si la boucle prend du retard (le tampon principal reste "attente")
@@ -1263,27 +1264,53 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 sock.close()
             except Exception:
                 pass
-        _garder_brut(brut, stats)
+        _garder_brut(brut, freq_hz, mode_flag, stats, validated and not muted, muted or filtered_out)
 
 
-# Son brut du dongle tel que dsd-fme le recoit (2026-10-24, option -6, 48 kHz) :
-# garde quand des synchros numeriques y ont ete vues, pour rejouer ce son devant
-# tous les decodeurs sans le dongle (passage systematique, essai en cours).
+# Son brut du dongle tel que dsd-fme le recoit (2026-10-24, option -6, 48 kHz),
+# avec sa fiche .json : rejoue ensuite devant tous les decodeurs, sans le dongle,
+# par juges_watch.py (qui le retire une fois tous les juges passes).
 BRUT_DIR = "/home/vador/autopilot/brut_dsd"
-BRUT_GARDES = 8
+BRUT_MIN_OCTETS = 48000           # moins d'une demi-seconde : rien a juger
+_bruts_candidat = None            # sons bruts du candidat en cours (_handle_candidate), sinon None
 
 
-def _garder_brut(chemin, stats):
+def _garder_brut(chemin, freq_hz, mode_flag, stats, valide, muet):
     if not chemin or not os.path.exists(chemin):
         return
     try:
-        if not stats or not stats.get("total"):
-            os.remove(chemin)
-        fichiers = sorted(glob.glob(os.path.join(BRUT_DIR, "*.wav")), key=os.path.getmtime)
-        for vieux in fichiers[:-BRUT_GARDES]:
-            os.remove(vieux)
+        if muet or os.path.getsize(chemin) < BRUT_MIN_OCTETS:
+            os.remove(chemin)  # appel prive, chiffre ou groupe ignore : rien n'est garde (regle utilisateur)
+            return
+        stats = stats or {}
+        fiche = {"freq_hz": int(freq_hz), "mode": mode_flag, "t": time.time(),
+                 "etiquette": "reference" if valide else ("en_cours" if _bruts_candidat is not None else "inconnu"),
+                 "direct": {"valide": bool(valide), "protocole": stats.get("protocol"),
+                            "propres": stats.get("clean", 0), "total": stats.get("total", 0)}}
+        with open(chemin[:-4] + ".json", "w", encoding="utf-8") as f:
+            json.dump(fiche, f, ensure_ascii=False)
+        if _bruts_candidat is not None:
+            _bruts_candidat.append(chemin)
     except OSError as exc:
         print(f"[radio_watch] son brut : {exc}")
+
+
+def _etiqueter_bruts(etiquette=None):
+    """Fin du candidat : rejet (ecarte comme bruit) ou analogique (voix FM) servent
+    de parasites aux juges ; sans verdict, un son reste "inconnu"."""
+    for chemin in _bruts_candidat or []:
+        fiche_path = chemin[:-4] + ".json"
+        try:
+            with open(fiche_path, encoding="utf-8") as f:
+                fiche = json.load(f)
+            if fiche.get("etiquette") == "reference":
+                continue
+            if etiquette or fiche.get("etiquette") == "en_cours":
+                fiche["etiquette"] = etiquette or "inconnu"
+                with open(fiche_path, "w", encoding="utf-8") as f:
+                    json.dump(fiche, f, ensure_ascii=False)
+        except (OSError, ValueError):
+            pass
 
 
 try_digital_voice_decode.last_muted = False  # derniere session : son coupe (appel prive ou chiffre) ?
@@ -2075,6 +2102,8 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     saved = False
     # Ce qu'on entend maintenant : cible de "verrouille" pendant l'ecoute.
     noise_signatures.capture_started("rtl_fm", freq, mode, band_label, target)
+    global _bruts_candidat
+    _bruts_candidat = []
     try:
         protocol = try_digital_voice_decode(freq, band_label=band_label, target=target) if mode == "nfm" else None
         if protocol and try_digital_voice_decode.last_muted:  # appel prive ou chiffre : rien n'est garde
@@ -2090,6 +2119,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             saved = True
             return True
         if stream_until_quiet(freq, mode, band_label, target=target):
+            _etiqueter_bruts("analogique")
             if mode == "nfm":  # canal mixte : la suite de la conversation peut venir en DMR (2026-10-24)
                 _noter_mixte(freq)
                 canal = _canal_mixte(freq)
@@ -2148,6 +2178,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
                 return True
             log_session.discard()
         print("[radio_watch] candidat ecarte (bruit, pas de signal reel)")
+        _etiqueter_bruts("rejet")
         if reject_path:  # extrait garde pour le journal des rejets
             try:
                 import rejets
@@ -2162,6 +2193,8 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             print(f"[radio_watch] empreinte de bruit non apprise : {exc!r}")
         return False
     finally:
+        _etiqueter_bruts()
+        _bruts_candidat = None
         noise_signatures.capture_ended()
         sound_player.set_recording_session(None)
         audio_lock.release(lock)
