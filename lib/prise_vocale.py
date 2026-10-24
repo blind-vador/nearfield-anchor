@@ -119,12 +119,15 @@ def synthesize(text, path, source=None):
         return False
 
 
-def record(text, sound, label, meta=None, source=None):
-    """Fabrique la prise (carillon + voix) au journal ; rend son chemin ou None."""
+def record(text, sound, label, meta=None, source=None, voix=None):
+    """Fabrique la prise (carillon + voix) au journal ; rend son chemin ou None.
+    voix : message deja synthetise (alarmes, lib/alarmes.py) : rien a recalculer."""
     tmp = tempfile.mkdtemp(prefix="prise_")
     try:
         voice = os.path.join(tmp, "voix.mp3")
-        if not synthesize(text, voice, source):
+        if voix and os.path.exists(voix):
+            shutil.copyfile(voix, voice)
+        elif not synthesize(text, voice, source):
             return None
         parts = [p for p in (sound, voice) if p and os.path.exists(p)]
         listing = os.path.join(tmp, "liste.txt")

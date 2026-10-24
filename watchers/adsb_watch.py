@@ -340,12 +340,8 @@ def _check_emergencies(states, emergencies, now):
         alt = state[IDX_BARO_ALTITUDE]
         if alt:
             parts.append(dire("avion.altitude_metres", altitude_m=format(alt, ".0f")))
-        lock = audio_lock.acquire()
-        try:
-            speak_with_lead_sound(EMERGENCY_SOUNDS.get(str(squawk).strip(), EMERGENCY_SOUND), " ".join(parts),
-                                  label="adsb_watch")
-        finally:
-            audio_lock.release(lock)
+        import alarmes  # en boucle jusqu'au "compris" (2026-10-24)
+        alarmes.declencher(f"urgence_{str(squawk).strip()}", " ".join(parts))
         print(f"[adsb_watch] URGENCE {squawk} : {callsign} ({icao24})")
     for key in [k for k, t in emergencies.items() if now - t > EMERGENCY_FORGET_SEC]:
         del emergencies[key]

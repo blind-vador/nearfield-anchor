@@ -455,11 +455,17 @@ def run_command(line, key_source, last_response):
         import capteurs_cmd
         return capteurs_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "compris":
+        import alarmes
         import plantes_alertes
+        arretees = alarmes.acquitter()  # alarmes en boucle de tous les services (2026-10-24)
         silenced = plantes_alertes.ack()
-        if not silenced:
-            return dire("plantes.compris_rien")
-        return dire("plantes.compris", nombre=nombre(len(silenced), "alerte"))
+        reponse = []
+        if arretees:
+            noms = list(dict.fromkeys(dire(f"sons.evenement_{a['evenement']}") for a in arretees))
+            reponse.append(dire("alarmes.arretee", liste=", ".join(noms)))
+        if silenced:
+            reponse.append(dire("plantes.compris", nombre=nombre(len(silenced), "alerte")))
+        return " ".join(reponse) or dire("alarmes.rien")
     if cmd.name == "plantes":
         import plantes_cmd
         return plantes_cmd.run(line, key_source, voix.say, out)

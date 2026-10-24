@@ -162,6 +162,11 @@ def mode_chemin(chemin):
     return MODES[0]
 
 
+# Evenements joues en alarme : sonnerie en boucle, message par-dessus, jusqu'au
+# "compris" (lib/alarmes.py, 2026-10-24). Ceux qui appellent alarmes.declencher().
+ALARMES = ["urgence_7700", "urgence_7600", "urgence_7500", "balise_detresse", "alarme_electrique", "antenne_muette"]
+
+
 def manquants():
     """Evenements sans son ni sur la carte ni sur le NAS."""
     return [e for e in SONS if chemin(e) is None]

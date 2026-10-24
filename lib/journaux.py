@@ -21,16 +21,19 @@ ses propres archives (extraits gardes, fleche droite).
               (watchers/stas_watch.py, 2026-10-07)
   meteo       bulletin horaire des capteurs meteo du voisinage
               (lib/bulletin_capteurs.py, 2026-10-19)
+  alarmes     toutes les alarmes jouees (lib/alarmes.py, 2026-10-24) : une
+              sonnerie et le message, avec la fin (compris ou sans reponse)
 La veille terrain (sites militants, Mastodon, Telegram) va dans "donnees"
 (2026-10-19 : elle s'entassait dans le journal radio).
 """
 import os
 
 KEEP_DIR = "/media/nas/nd2/storage/radio"
-ORDER = ["radio", "messages", "donnees", "meteo", "capteurs", "satellites", "plantes", "transports"]
-NAMES = {"radio": "radio", "messages": "messages", "donnees": "données", "meteo": "météo", "capteurs": "capteurs",
+ORDER = ["alarmes", "radio", "messages", "donnees", "meteo", "capteurs", "satellites", "plantes", "transports"]
+NAMES = {"alarmes": "alarmes", "radio": "radio", "messages": "messages", "donnees": "données", "meteo": "météo", "capteurs": "capteurs",
          "satellites": "satellites", "plantes": "plantes", "transports": "transports"}
 PREFIXES = {
+    "alarmes": ("alarme_",),
     "plantes": ("plante_",),
     "transports": ("transport_",),
     "satellites": ("passage_", "satellite", "meteor"),
@@ -43,6 +46,7 @@ PREFIXES = {
 # Mots qui designent un journal dans une commande ("journal capteurs",
 # "archives satellites"...), sans accents (matcher.normalize).
 WORDS = {
+    "alarmes": ("alarme", "alarmes", "urgence", "urgences", "sonnerie", "sonneries"),
     "satellites": ("satellite", "satellites", "meteor", "spatial"),
     "capteurs": ("capteur", "capteurs", "voiture", "voitures", "sonde", "sondes", "thermometre", "thermometres"),
     "messages": ("message", "messages", "acars", "vdl2", "avion", "avions", "bipeur", "bipeurs", "pager", "pagers", "dab",
@@ -66,7 +70,7 @@ def category_of(filename):
 def from_words(normalized_text):
     """Journal designe dans une commande deja normalisee ; radio par defaut."""
     words = set(normalized_text.split())
-    for category in ("satellites", "meteo", "capteurs", "messages", "donnees", "plantes", "transports", "radio"):
+    for category in ("alarmes", "satellites", "meteo", "capteurs", "messages", "donnees", "plantes", "transports", "radio"):
         if words & set(WORDS[category]):
             return category
     return "radio"

@@ -796,12 +796,13 @@ COMMANDS = [
     Command("archives", "écouter les extraits gardés, sans rien supprimer ; archives messages, capteurs, satellites, données", None,
             keywords=["archives", "archive", "extraits", "extraits interessants", "mes extraits"],
             examples=["écouter les archives", "les extraits gardés", "ce que j'ai gardé"]),
-    Command("journal", "écouter et trier les enregistrements radio : garder ou rejeter ; journal messages, capteurs, "
-            "satellites ou données pour les autres", None,
-            keywords=["journal", "journal radio", "enregistrements", "enregistrement", "captures",
+    Command("journal", "écouter et trier les enregistrements radio : garder ou rejeter ; journal alarmes, messages, "
+            "capteurs, satellites ou données pour les autres", None,
+            keywords=["journal", "journal radio", "journal alarmes", "journal des alarmes", "enregistrements", "enregistrement", "captures",
                       "log", "logs radio"],
             examples=["écouter les enregistrements", "ce que la radio a capté", "les réceptions de la nuit"]),
-    Command("compris", "fait taire les alertes en cours pour tes plantes (gel, vent, chaleur, soif)", None,
+    Command("compris", "arrête les alarmes qui sonnent en boucle, et fait taire les alertes en cours pour tes "
+            "plantes (gel, vent, chaleur, soif)", None,
             keywords=["compris", "ok", "okay", "bien recu", "bien pris", "c est note", "d accord", "j ai compris"],
             examples=["c'est bon j'ai compris", "message reçu"]),
     Command("plantes", "tes plantes : les ajouter, noter leur stade, l'arrosage, si elles sont rentrées ; "

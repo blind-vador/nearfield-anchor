@@ -89,7 +89,8 @@ def scan_window(dwell_sec=55):
         vd.archive("balises", {"sortie": block[:2000]})
         hex_id, sentence = _describe(block)
         if _memory.due(f"balise|{hex_id or sentence}", REPEAT_SEC):
-            vd.announce(sentence, SOUND, f"balise_406_{hex_id}", "balises_watch")
+            import alarmes  # en boucle jusqu'au "compris", rangee au journal des alarmes (2026-10-24)
+            alarmes.declencher("balise_detresse", sentence)
             announced = True
     _memory.save()
     return announced

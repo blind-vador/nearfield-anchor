@@ -21,6 +21,7 @@ import subprocess
 import threading
 import time
 
+import alarmes
 import audio_lock
 import sons
 from phrases import dire, nombre
@@ -34,7 +35,6 @@ PLEIN_POURCENT = 90
 PLEIN_RAPPEL_SEC = 24 * 3600
 BOUCLE_FENETRE_SEC = 15 * 60
 BOUCLE_REDEMARRAGES = 3
-ALARME_TOURS = 3
 ALARME_ECART_SEC = 10 * 60      # une seule alarme electrique par episode
 USB_REGROUPE_SEC = 2.0          # un hub qui revient = une rafale d'evenements, un seul son
 CHALEUR_ECART_SEC = 30 * 60
@@ -78,8 +78,7 @@ def _plus_tard(fonction, *args):
 # --- noyau --------------------------------------------------------------------
 
 def _alarme_electrique(texte):
-    for _ in range(ALARME_TOURS):
-        _jouer("alarme_electrique", texte)
+    alarmes.declencher("alarme_electrique", texte, source="systeme")  # en boucle jusqu'au "compris" (2026-10-24)
 
 
 class _Usb:
@@ -279,25 +278,31 @@ class _Ignores:
 DERNIERE_TRAME = "/home/vador/autopilot/capteurs_derniere_trame"   # touche par capteurs_watch.scan_window
 ANTENNE_MUETTE_SEC = 2 * 3600    # d'habitude une trame toutes les 10 minutes environ
 ANTENNE_RAPPEL_SEC = 3 * 3600
-ANTENNE_TOURS = 2                # son en boucle
 
 
 def _antenne():
     if _sortie(["systemctl", "is-active", "radio-watch"]) != "active":
         return
     try:
-        age = time.time() - os.path.getmtime(DERNIERE_TRAME)
+        derniere = os.path.getmtime(DERNIERE_TRAME)
     except OSError:
         return  # pas encore de trame notee depuis l'installation
+    if _derniers.get("antenne_compris") == derniere:
+        return  # "compris" dit : plus d'alarme tant qu'aucune trame n'est revenue
+    age = time.time() - derniere
     actif_depuis = _sortie(["systemctl", "show", "-p", "ActiveEnterTimestampMonotonic", "--value", "radio-watch"])
     try:
         actif_sec = time.monotonic() - int(actif_depuis) / 1e6
     except ValueError:
         actif_sec = ANTENNE_MUETTE_SEC
     if age >= ANTENNE_MUETTE_SEC and actif_sec >= ANTENNE_MUETTE_SEC and _une_fois("antenne", ANTENNE_RAPPEL_SEC):
-        for _ in range(ANTENNE_TOURS - 1):
-            _jouer("antenne_muette")
-        _jouer("antenne_muette", dire("systeme_veille.antenne_muette", heures=nombre(round(age / 3600), "heure")))
+        def fini(resultat):
+            if resultat == "compris":
+                _derniers["antenne_compris"] = derniere
+        _log("antenne_muette")
+        alarmes.declencher("antenne_muette", dire("systeme_veille.antenne_muette",
+                                                  heures=nombre(round(age / 3600), "heure")),
+                           source="systeme", quand_fini=fini)
 
 
 def _sonde_sol():
