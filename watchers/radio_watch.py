@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import json
+import glob
 import os
 import time
 import audioop
@@ -1096,6 +1097,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
     sock = None
     proc = None
     aplay = None
+    brut, stats = None, None
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:  # marge si la boucle prend du retard (le tampon principal reste "attente")
@@ -1105,9 +1107,11 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         sock.bind((DSD_FME_UDP_HOST, DSD_FME_UDP_PORT))
         sock.settimeout(0.5)
 
+        os.makedirs(BRUT_DIR, exist_ok=True)
+        brut = os.path.join(BRUT_DIR, f"{int(freq_hz)}_{mode_flag.lstrip('-')}_{time.strftime('%Y%m%d_%H%M%S')}.wav")
         proc = subprocess.Popen(
             ["dsd-fme", mode_flag, "-i", f"rtl:0:{int(freq_hz)}:0:0:12:0:2",
-             "-o", f"udp:{DSD_FME_UDP_HOST}:{DSD_FME_UDP_PORT}"],
+             "-o", f"udp:{DSD_FME_UDP_HOST}:{DSD_FME_UDP_PORT}", "-6", brut],
             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
         )
         stats = decodeurs.new_stats(freq_hz)  # textes transportes (alias, SMS, GPS) : lib/decodeurs.py
@@ -1259,6 +1263,27 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 sock.close()
             except Exception:
                 pass
+        _garder_brut(brut, stats)
+
+
+# Son brut du dongle tel que dsd-fme le recoit (2026-10-24, option -6, 48 kHz) :
+# garde quand des synchros numeriques y ont ete vues, pour rejouer ce son devant
+# tous les decodeurs sans le dongle (passage systematique, essai en cours).
+BRUT_DIR = "/home/vador/autopilot/brut_dsd"
+BRUT_GARDES = 8
+
+
+def _garder_brut(chemin, stats):
+    if not chemin or not os.path.exists(chemin):
+        return
+    try:
+        if not stats or not stats.get("total"):
+            os.remove(chemin)
+        fichiers = sorted(glob.glob(os.path.join(BRUT_DIR, "*.wav")), key=os.path.getmtime)
+        for vieux in fichiers[:-BRUT_GARDES]:
+            os.remove(vieux)
+    except OSError as exc:
+        print(f"[radio_watch] son brut : {exc}")
 
 
 try_digital_voice_decode.last_muted = False  # derniere session : son coupe (appel prive ou chiffre) ?
