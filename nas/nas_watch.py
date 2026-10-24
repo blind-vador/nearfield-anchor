@@ -33,6 +33,9 @@ DISKS = [
      "label": "disque principal de stockage"},
 ]
 
+RAPPEL_SEC = 15 * 60
+
+
 def _son_erreur():
     try:
         import sons
@@ -138,9 +141,12 @@ def main():
             if not _disk_present(disk["uuid"]):
                 fail_streak[mount_point] += 1
                 print(f"[nas_watch] {mount_point} : disque absent (UUID introuvable)")
-                if fail_streak[mount_point] == 1 or fail_streak[mount_point] % WARNING_REMINDER_EVERY == 0:
-                    _son_erreur()  # son d'erreur (2026-10-23, sons.py)
-                    _speak(f"Attention, {disk['label']} introuvable. Vérifie la connexion.")
+                if fail_streak[mount_point] == 1:
+                    # alarme redite de temps en temps tant que le disque manque, jusqu'au "compris" (2026-10-24)
+                    import alarmes
+                    alarmes.declencher("nas_injoignable", f"Attention, {disk['label']} introuvable. Vérifie la connexion.",
+                                       rappel_sec=RAPPEL_SEC,
+                                       encore=lambda mp=mount_point: not _mount_is_healthy(mp))
                 continue
 
             print(f"[nas_watch] {mount_point} en erreur -- tentative de remontage automatique")

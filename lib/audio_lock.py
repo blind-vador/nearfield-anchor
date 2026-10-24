@@ -324,6 +324,21 @@ def acquire(source=None, timeout=ACQUIRE_TIMEOUT_SEC):
     return ticket
 
 
+def rafraichir(ticket=None):
+    """Son tres long (alarme sans limite, lib/alarmes.py) : son entree n'est pas
+    purgee au bout d'ENTRY_MAX_AGE_SEC, les autres sources restent dessous."""
+    ticket = ticket or getattr(_local, "ticket", None)
+    if ticket is None or ticket.dropped:
+        return
+    try:
+        with _Registry() as reg:
+            for entry in reg.entries:
+                if entry["id"] == ticket.id:
+                    entry["t"] = time.time()
+    except OSError as exc:
+        print(f"[audio_lock] rafraichissement impossible : {exc}")
+
+
 def release(ticket):
     if ticket is None:
         return

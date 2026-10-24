@@ -5,6 +5,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import json
 import os
 import time
 import audioop
@@ -851,6 +852,78 @@ def _dmr_window(dwell_sec=20, freq_hz=None):
     return _dmr_ecoute(freq, dwell_sec)
 
 
+# Canaux mixtes (2026-10-24, signale par l'utilisateur : "l'interlocuteur
+# semblait repondre a une parole qu'on n'entendait pas") : un meme relais porte
+# du DMR et de la FM analogique (467,2375 MHz : postes FM a tonalite 199,5 Hz
+# et postes DMR). La veille DMR n'entendait que le cote numerique, le balayage
+# FM que l'autre, en deux entrees separees du journal. Sur un canal mixte,
+# l'ecoute alterne : la parole numerique finie, on passe aussitot en FM sur le
+# meme canal, puis de nouveau en DMR, tant que quelqu'un parle ; le tout dans la
+# meme entree du journal. Un canal devient mixte des qu'une voix FM est captee
+# a moins de MIXTE_ECART_HZ d'une frequence DMR du registre.
+MIXTES_PATH = "/home/vador/autopilot/canaux_mixtes.json"
+MIXTE_ECART_HZ = 7000
+MIXTE_TOURS = 12
+MIXTE_SONDE_SEC = 4
+MIXTE_VIDES = 2          # tours de suite sans rien entendre : fin de la conversation
+
+
+def _mixtes():
+    try:
+        with open(MIXTES_PATH, encoding="utf-8") as f:
+            return json.load(f).get("canaux", [])
+    except (OSError, ValueError):
+        return []
+
+
+def _canal_mixte(freq_hz):
+    """{"fm": hz, "dmr": hz} du canal mixte de cette frequence, ou None."""
+    for canal in _mixtes():
+        if abs(canal["fm"] - freq_hz) <= MIXTE_ECART_HZ or abs(canal["dmr"] - freq_hz) <= MIXTE_ECART_HZ:
+            return canal
+    return None
+
+
+def _noter_mixte(freq_fm):
+    """Voix FM captee : canal mixte si une frequence DMR connue est tout pres."""
+    if _canal_mixte(freq_fm):
+        return
+    try:
+        import dmr_registre
+        dmr = next((e["freq_hz"] for e in dmr_registre.targets()
+                    if abs(e["freq_hz"] - freq_fm) <= MIXTE_ECART_HZ), None)
+    except Exception as exc:
+        print(f"[radio_watch] canal mixte : {exc!r}")
+        return
+    if dmr is None:
+        return
+    canaux = _mixtes() + [{"fm": int(freq_fm), "dmr": int(dmr)}]
+    tmp = MIXTES_PATH + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"canaux": canaux}, f)
+    os.replace(tmp, MIXTES_PATH)
+    print(f"[radio_watch] canal mixte : FM {freq_fm / 1e6:.4f} et DMR {dmr / 1e6:.4f} MHz")
+
+
+def _suivi_mixte(canal, label, target=None, numerique_d_abord=False):
+    """Alterne DMR et FM sur un canal mixte, dans la session du journal en
+    cours, tant que quelqu'un parle. Rend True si quelque chose a ete entendu."""
+    entendu, vides, numerique = False, 0, numerique_d_abord
+    for _ in range(MIXTE_TOURS):
+        if numerique:
+            ok = try_digital_voice_decode(canal["dmr"], "-fs", label, probe_sec=MIXTE_SONDE_SEC, target="dmr")
+            ok = bool(ok) and not try_digital_voice_decode.last_muted
+        else:
+            ok = stream_until_quiet(canal["fm"], "nfm", label, target=target)
+        print(f"[radio_watch] canal mixte, {'DMR' if numerique else 'FM'} : {'entendu' if ok else 'rien'}")
+        entendu = entendu or ok
+        vides = 0 if ok else vides + 1
+        if vides >= MIXTE_VIDES:
+            break
+        numerique = not numerique
+    return entendu
+
+
 def _dmr_ecoute(freq, dwell_sec=20):
     """Une ecoute DMR sur cette frequence : veille DMR, ou verrouillage dessus
     (2026-10-22 : le verrouillage reecoutait un appel DMR comme de la FM)."""
@@ -863,12 +936,19 @@ def _dmr_ecoute(freq, dwell_sec=20):
     saved = False
     try:
         protocol = try_digital_voice_decode(freq, "-fs", label, probe_sec=dwell_sec, target="dmr")
-        if not protocol:
+        canal = _canal_mixte(freq)
+        if not protocol and not canal:
             log_session.discard()
             return False
-        if try_digital_voice_decode.last_muted:  # appel prive ou chiffre : rien n'est garde
+        if protocol and try_digital_voice_decode.last_muted:  # appel prive ou chiffre : rien n'est garde
             log_session.discard()
             return True
+        if canal:  # canal mixte : l'autre cote de la conversation, en FM
+            fm = _suivi_mixte(canal, label, numerique_d_abord=False)
+            if not protocol and not fm:
+                log_session.discard()
+                return False
+            protocol = f"{protocol} et FM" if protocol and fm else (protocol or "FM")
         play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
         morceaux.say(None, morceaux.whole(dire("radio.reception_terminee", protocol=protocol)), label="radio_watch")
         path = log_session.finalize()
@@ -1985,6 +2065,11 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             saved = True
             return True
         if stream_until_quiet(freq, mode, band_label, target=target):
+            if mode == "nfm":  # canal mixte : la suite de la conversation peut venir en DMR (2026-10-24)
+                _noter_mixte(freq)
+                canal = _canal_mixte(freq)
+                if canal:
+                    _suivi_mixte(canal, band_label, target, numerique_d_abord=True)
             play_sound_effect(_son_fin(freq), label="radio_watch")
             path = log_session.finalize()
             _save_raw(path)

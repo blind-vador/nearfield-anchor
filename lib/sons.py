@@ -164,7 +164,9 @@ def mode_chemin(chemin):
 
 # Evenements joues en alarme : sonnerie en boucle, message par-dessus, jusqu'au
 # "compris" (lib/alarmes.py, 2026-10-24). Ceux qui appellent alarmes.declencher().
-ALARMES = ["urgence_7700", "urgence_7600", "urgence_7500", "balise_detresse", "alarme_electrique", "antenne_muette"]
+ALARMES = ["urgence_7700", "urgence_7600", "urgence_7500", "balise_detresse", "alarme_electrique", "antenne_muette",
+           "sous_tension", "pi_bride_chaleur", "veille_plantee", "nas_injoignable"]
+# pi_bride_chaleur : un seul tour ; veille_plantee, nas_injoignable : rappels espaces.
 
 
 def manquants():

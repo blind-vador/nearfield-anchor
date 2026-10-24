@@ -10,8 +10,12 @@ l'utilisateur tape "compris" a la console (acquitter()).
   - la voix part sur un temps de la sonnerie (multiples d'une demi-sonnerie),
     jamais sur elle-meme : apres la fin du message, au temps suivant ; la
     sonnerie baisse (SOUS_LA_VOIX) le temps qu'elle parle ;
-  - garde-fou : au bout de MAX_SEC sans "compris", l'alarme s'arrete ; elle
-    reste au journal des alarmes, notee sans reponse ;
+  - sans limite de duree, nuit comprise (choix de l'utilisateur, 2026-10-24) ;
+  - deux autres formes : une_fois=True, un seul tour (sonnerie et message
+    superposes, puis fin : Pi bride par la chaleur, pour ne pas le faire
+    chauffer davantage) ; rappel_sec=N, un tour redit toutes les N secondes
+    tant que encore() le dit et que personne n'a dit "compris" (veille qui
+    plante en boucle, NAS injoignable : de temps en temps, jamais en continu) ;
   - journal des alarmes (lib/journaux.py, prefixe "alarme_") : chaque alarme
     jouee y est rangee, une seule sonnerie suivie du message, avec sa fiche
     (evenement, texte, et comment elle a fini) ;
@@ -38,13 +42,14 @@ from phrases import dire
 ACTIVES_DIR = "/tmp/alarmes_actives"      # une fiche par alarme qui sonne (pid : purge des morts)
 ACK_PATH = "/home/vador/autopilot/alarmes_acquit.json"
 CACHE_DIR = "/tmp/alarmes_voix"           # messages synthetises, le temps de l'alarme
-MAX_SEC = 30 * 60
+ENCORE_SEC = 60                           # rappel : on regarde toutes les minutes si le probleme dure
+RAFRAICHIR_SEC = 60                       # alarme sans fin : son entree au verrou audio reste vivante
 PREMIERE_VOIX_MAX_SEC = 4.0               # sonnerie longue (7500 : 1 min) : la voix n'attend pas 30 s
 SOUS_LA_VOIX = 0.45
 SOURCE_AUDIO = "alertes"
 RATE = 44100
 CANAUX = 2
-_une_a_la_fois = threading.Lock()
+_une_a_la_fois = threading.Lock()         # un seul son d'alarme a la fois dans ce service
 _en_cours = set()                         # evenements deja en file ou qui sonnent, dans ce service
 
 
@@ -135,9 +140,10 @@ def _voix(texte, source):
     return None
 
 
-def _sonner(sonnerie, voix, debut):
+def _sonner(sonnerie, voix, debut, une_fois=False):
     """Sonnerie en boucle, voix par-dessus a chaque demi-sonnerie, jusqu'au
-    "compris" ; rend "compris" ou "sans_reponse"."""
+    "compris" ; rend "compris". une_fois : un seul tour (la sonnerie, et le
+    message une fois), rend "fini"."""
     alarme = _pcm(sonnerie)
     if alarme is None:
         _log(f"sonnerie illisible : {sonnerie}")
@@ -149,17 +155,30 @@ def _sonner(sonnerie, voix, debut):
     prochaine = min(demi, int(PREMIERE_VOIX_MAX_SEC * RATE) * CANAUX)
     voix_debut = None
     pos = 0
-    fin = debut + MAX_SEC
+    voix_dite = False
+    rafraichi = time.time()
     lecteur = subprocess.Popen(["aplay", "-q", "-D", "default", "-r", str(RATE), "-f", "S16_LE", "-c", str(CANAUX)],
                                stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    resultat = "sans_reponse"
+    resultat = "interrompue"
     try:
-        while time.time() < fin:
+        while True:
             if _acquittee(debut):
                 resultat = "compris"
                 break
-            a = alarme[np.arange(pos, pos + morceau) % n]
-            if parole is not None:
+            if une_fois and pos >= n and (parole is None or voix_dite):
+                resultat = "fini"
+                break
+            if time.time() - rafraichi >= RAFRAICHIR_SEC:
+                audio_lock.rafraichir()
+                rafraichi = time.time()
+            idx = np.arange(pos, pos + morceau)
+            if une_fois:
+                a = np.zeros(morceau, dtype=np.float32)
+                dans_sonnerie = idx < n
+                a[dans_sonnerie] = alarme[idx[dans_sonnerie]]
+            else:
+                a = alarme[idx % n]
+            if parole is not None and not (une_fois and voix_dite):
                 if voix_debut is None and pos + morceau > prochaine:
                     voix_debut = prochaine
                 if voix_debut is not None:
@@ -175,6 +194,7 @@ def _sonner(sonnerie, voix, debut):
                         fin_voix = voix_debut + len(parole)
                         prochaine = (fin_voix // demi + 1) * demi
                         voix_debut = None
+                        voix_dite = True
             data = np.clip(a, -32768, 32767).astype(np.int16).tobytes()
             lecteur.stdin.write(audio_lock.scale(data))
             pos += morceau
@@ -185,10 +205,10 @@ def _sonner(sonnerie, voix, debut):
             lecteur.stdin.close()
         except OSError:
             pass
-        if resultat == "compris" or lecteur.poll() is None:
+        if resultat != "fini":
             lecteur.terminate()  # "compris" : on coupe net, sans attendre la fin du tampon
         try:
-            lecteur.wait(timeout=3)
+            lecteur.wait(timeout=5)
         except subprocess.TimeoutExpired:
             lecteur.kill()
     return resultat
@@ -224,46 +244,74 @@ def _noter_fin(prise, resultat, debut):
 
 # --- declenchement -----------------------------------------------------------------
 
-def _alarme(evenement, texte, source, quand_fini):
-    with _une_a_la_fois:
-        sonnerie = sons.chemin(evenement)
-        mode = sons.mode(evenement)
-        message = f"{texte} {dire('alarmes.dis_compris')}" if texte else None
-        voix = _voix(message, source) if message and mode == "son_phrase" else None
-        prise = [None]
-        rangement = threading.Thread(target=lambda: prise.__setitem__(
-            0, _au_journal(evenement, texte or dire(f"sons.evenement_{evenement}"), sonnerie,
-                           voix if mode == "son_phrase" else None, source)), daemon=True)
-        rangement.start()
-        _log(f"{evenement} ({mode}) : {texte}")
-        resultat = "muette"
-        fiche_active = None
-        debut = time.time()
-        if mode != "rien":
-            lock = audio_lock.acquire(SOURCE_AUDIO)
+def _attendre(debut, rappel_sec, encore):
+    """Entre deux rappels : "compris", "resolue" (encore() dit que c'est
+    fini) ou "rappel" (le moment de redire)."""
+    fin = time.time() + rappel_sec
+    vu = time.time()
+    while time.time() < fin:
+        if _acquittee(debut):
+            return "compris"
+        if encore and time.time() - vu >= ENCORE_SEC:
+            vu = time.time()
             try:
-                debut = time.time()
-                os.makedirs(ACTIVES_DIR, exist_ok=True)
-                fiche_active = os.path.join(ACTIVES_DIR, f"{debut:.3f}_{os.getpid()}.json")
-                with open(fiche_active, "w", encoding="utf-8") as f:
-                    json.dump({"evenement": evenement, "texte": texte or "", "pid": os.getpid(), "debut": debut},
-                              f, ensure_ascii=False)
-                resultat = _sonner(sonnerie, voix, debut)
-            finally:
-                audio_lock.release(lock)
-                if fiche_active:
+                if not encore():
+                    return "resolue"
+            except Exception as exc:
+                _log(f"encore() : {exc!r}")
+        time.sleep(2)
+    return "rappel"
+
+
+def _alarme(evenement, texte, source, quand_fini, une_fois=False, rappel_sec=None, encore=None):
+    sonnerie = sons.chemin(evenement)
+    mode = sons.mode(evenement)
+    fin_message = "" if une_fois else dire("alarmes.dis_compris_rappel" if rappel_sec else "alarmes.dis_compris")
+    message = f"{texte} {fin_message}".strip() if texte else None
+    voix = _voix(message, source) if message and mode == "son_phrase" else None
+    prise = [None]
+    rangement = threading.Thread(target=lambda: prise.__setitem__(
+        0, _au_journal(evenement, texte or dire(f"sons.evenement_{evenement}"), sonnerie,
+                       voix if mode == "son_phrase" else None, source)), daemon=True)
+    rangement.start()
+    forme = "une fois" if une_fois else (f"rappel toutes les {rappel_sec // 60} min" if rappel_sec else "en boucle")
+    _log(f"{evenement} ({mode}, {forme}) : {texte}")
+    resultat = "muette"
+    debut = time.time()
+    fiche_active = None
+    if mode != "rien":
+        try:
+            os.makedirs(ACTIVES_DIR, exist_ok=True)
+            fiche_active = os.path.join(ACTIVES_DIR, f"{debut:.3f}_{os.getpid()}.json")
+            with open(fiche_active, "w", encoding="utf-8") as f:
+                json.dump({"evenement": evenement, "texte": texte or "", "pid": os.getpid(), "debut": debut},
+                          f, ensure_ascii=False)
+            while True:
+                with _une_a_la_fois:
+                    lock = audio_lock.acquire(SOURCE_AUDIO)
                     try:
-                        os.remove(fiche_active)
-                    except OSError:
-                        pass
-        rangement.join(timeout=120)
-        _noter_fin(prise[0], resultat, debut)
-        if voix:
-            try:
-                os.remove(voix)
-            except OSError:
-                pass
-        _log(f"{evenement} : fin ({resultat})")
+                        resultat = _sonner(sonnerie, voix, debut, une_fois=une_fois or bool(rappel_sec))
+                    finally:
+                        audio_lock.release(lock)
+                if resultat != "fini" or not rappel_sec:
+                    break
+                resultat = _attendre(debut, rappel_sec, encore)  # le verrou n'est pas garde entre deux rappels
+                if resultat != "rappel":
+                    break
+        finally:
+            if fiche_active:
+                try:
+                    os.remove(fiche_active)
+                except OSError:
+                    pass
+    rangement.join(timeout=120)
+    _noter_fin(prise[0], resultat, debut)
+    if voix:
+        try:
+            os.remove(voix)
+        except OSError:
+            pass
+    _log(f"{evenement} : fin ({resultat})")
     if quand_fini:
         try:
             quand_fini(resultat)
@@ -272,18 +320,20 @@ def _alarme(evenement, texte, source, quand_fini):
     return resultat
 
 
-def _alarme_sure(evenement, *args):
+def _alarme_sure(evenement, *args, **reglages):
     try:
-        _alarme(evenement, *args)
+        _alarme(evenement, *args, **reglages)
     except Exception as exc:  # une alarme ratee n'arrete pas la veille
         _log(f"{evenement} : echec {exc!r}")
     finally:
         _en_cours.discard(evenement)
 
 
-def declencher(evenement, texte, source=None, quand_fini=None, attendre=False):
+def declencher(evenement, texte, source=None, quand_fini=None, attendre=False, une_fois=False, rappel_sec=None,
+               encore=None):
     """Lance l'alarme (fil a part : la veille continue). quand_fini(resultat) :
-    "compris", "sans_reponse", "muette" (reglee sur rien) ou "sans_son"."""
+    "compris", "fini" (une_fois), "resolue" (rappel : encore() a dit non),
+    "muette" (reglee sur rien), "sans_son" ou "interrompue"."""
     if evenement in _en_cours:
         _log(f"{evenement} sonne deja : pas de seconde alarme")
         return None
@@ -292,6 +342,7 @@ def declencher(evenement, texte, source=None, quand_fini=None, attendre=False):
         import voix_sources
         source = voix_sources.source_pour()
     fil = threading.Thread(target=_alarme_sure, args=(evenement, texte, source, quand_fini), daemon=True,
+                           kwargs={"une_fois": une_fois, "rappel_sec": rappel_sec, "encore": encore},
                            name=f"alarme_{evenement}")
     fil.start()
     if attendre:

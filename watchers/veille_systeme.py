@@ -35,6 +35,7 @@ PLEIN_POURCENT = 90
 PLEIN_RAPPEL_SEC = 24 * 3600
 BOUCLE_FENETRE_SEC = 15 * 60
 BOUCLE_REDEMARRAGES = 3
+RAPPEL_SEC = 15 * 60            # veille en boucle : alarme redite de temps en temps
 ALARME_ECART_SEC = 10 * 60      # une seule alarme electrique par episode
 USB_REGROUPE_SEC = 2.0          # un hub qui revient = une rafale d'evenements, un seul son
 CHALEUR_ECART_SEC = 30 * 60
@@ -122,7 +123,7 @@ def _noyau():
                         _plus_tard(_alarme_electrique, texte)
                 elif "undervoltage" in bas or "under-voltage" in bas:
                     if _une_fois("sous_tension", CHALEUR_ECART_SEC):
-                        _plus_tard(_jouer, "sous_tension")
+                        _sous_tension()
                 elif "new usb device found" in bas:
                     usb.note("branche")
                 elif "usb disconnect" in bas:
@@ -147,9 +148,16 @@ def _alimentation():
         return
     bits = int(m.group(1), 16)
     if bits & 0x1 and _une_fois("sous_tension", CHALEUR_ECART_SEC):
-        _jouer("sous_tension")
+        _sous_tension()
     if bits & 0xC and _une_fois("chaleur", CHALEUR_ECART_SEC):   # bride ou limite de temperature, maintenant
-        _jouer("pi_bride_chaleur")
+        # un seul tour, sonnerie et message : une alarme en boucle le ferait chauffer davantage (2026-10-24)
+        alarmes.declencher("pi_bride_chaleur", dire("systeme_veille.chaleur_alarme"), source="systeme",
+                           une_fois=True)
+
+
+def _sous_tension():
+    """Alarme en boucle jusqu'au "compris" (2026-10-24, "oui absolument")."""
+    alarmes.declencher("sous_tension", dire("systeme_veille.sous_tension_alarme"), source="systeme")
 
 
 class _Horloge:
@@ -237,6 +245,18 @@ class _Services:
     def _etat(self, unite):
         return _sortie(["systemctl", "is-active", unite])
 
+    def _encore(self, veille):
+        """Pour le rappel : vrai tant que la veille a encore redemarre depuis la derniere fois."""
+        vu = [self.redemarrages[veille][-1][1]]
+
+        def encore():
+            n = _sortie(["systemctl", "show", "-p", "NRestarts", "--value", veille])
+            if not n.isdigit():
+                return False
+            plus, vu[0] = int(n) > vu[0], int(n)
+            return plus or self._etat(veille) != "active"
+        return encore
+
     def verifier(self):
         for veille in VEILLES:
             n = _sortie(["systemctl", "show", "-p", "NRestarts", "--value", veille])
@@ -247,7 +267,10 @@ class _Services:
             hist.append((now, int(n)))
             self.redemarrages[veille] = hist
             if hist[-1][1] - hist[0][1] >= BOUCLE_REDEMARRAGES and _une_fois(f"boucle_{veille}", BOUCLE_FENETRE_SEC):
-                _jouer("veille_plantee", dire("systeme_veille.veille_en_boucle", veille=veille.replace("-", " ")))
+                # rappel de temps en temps, jamais en continu, tant qu'elle redemarre (2026-10-24)
+                alarmes.declencher("veille_plantee", dire("systeme_veille.veille_en_boucle",
+                                                          veille=veille.replace("-", " ")),
+                                   source="systeme", rappel_sec=RAPPEL_SEC, encore=self._encore(veille))
         for unite, evenement in (("log-ship", "journal_non_sauve"), ("webcamd", "camera_coupee")):
             etat = self._etat(unite)
             avant = self.etats.get(unite)
@@ -278,6 +301,8 @@ class _Ignores:
 DERNIERE_TRAME = "/home/vador/autopilot/capteurs_derniere_trame"   # touche par capteurs_watch.scan_window
 ANTENNE_MUETTE_SEC = 2 * 3600    # d'habitude une trame toutes les 10 minutes environ
 ANTENNE_RAPPEL_SEC = 3 * 3600
+ANTENNE_FENETRES_MIN = 6         # au moins 6 ecoutes des capteurs de suite, toutes sans trame
+FENETRES_VIDES = "/home/vador/autopilot/capteurs_fenetres_vides"
 
 
 def _antenne():
@@ -289,6 +314,12 @@ def _antenne():
         return  # pas encore de trame notee depuis l'installation
     if _derniers.get("antenne_compris") == derniere:
         return  # "compris" dit : plus d'alarme tant qu'aucune trame n'est revenue
+    try:  # ecoutes des capteurs vraiment faites, sans trame (mode restreint : aucune, 2026-10-24)
+        with open(FENETRES_VIDES) as f:
+            if int(f.read().strip() or 0) < ANTENNE_FENETRES_MIN:
+                return
+    except (OSError, ValueError):
+        return
     age = time.time() - derniere
     actif_depuis = _sortie(["systemctl", "show", "-p", "ActiveEnterTimestampMonotonic", "--value", "radio-watch"])
     try:

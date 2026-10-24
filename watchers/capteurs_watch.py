@@ -437,6 +437,25 @@ def pairing_session():
     return True
 
 
+FENETRES_VIDES = "/home/vador/autopilot/capteurs_fenetres_vides"
+
+
+def _compter_fenetre_vide(vide):
+    """Ecoutes des capteurs faites de suite sans aucune trame (2026-10-24) :
+    l'alarme antenne muette ne compte que des ecoutes reellement faites (le
+    mode restreint les sautait, et elle sonnait a tort)."""
+    try:
+        with open(FENETRES_VIDES) as f:
+            n = int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        n = 0
+    try:
+        with open(FENETRES_VIDES, "w") as f:
+            f.write(str(n + 1 if vide else 0))
+    except OSError:
+        pass
+
+
 def scan_window(dwell_sec=30):
     """Une passe rtl_433, sur la frequence suivante. Rend True si annonce."""
     global _next
@@ -497,4 +516,5 @@ def scan_window(dwell_sec=30):
                 play_sound_effect(sons.chemin("trame_non_dite", SOUND), label="capteurs_watch")
             finally:
                 audio_lock.release(lock)
+    _compter_fenetre_vide(not count)
     return announced
