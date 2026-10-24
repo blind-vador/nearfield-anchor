@@ -1204,7 +1204,11 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
             # Ecoute au moins MIN_ECOUTE_SEC apres la confirmation : un clic de
             # micro ne ferme pas l'ecoute, une reponse qui suit n'est pas perdue.
             deadline = min(max(time.time() + idle_sec, validated_at + MIN_ECOUTE_SEC), start + max_sec)
-            if (stats.get("prive") or stats.get("chiffre")) and not muted:
+            # Seul le chiffrement coupe le son (regle utilisateur, 2026-10-25 : un
+            # appel prive en clair, simple adressage point a point, nous interesse
+            # aussi). Un chiffrement a clef connue reste du son chiffre tant qu'on
+            # ne dechiffre pas : on ne le garde pas.
+            if stats.get("chiffre") and not muted:
                 muted = True
                 captured_chunks = []
                 if aplay is not None:
@@ -1212,8 +1216,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                         aplay.terminate()
                     except Exception:
                         pass
-                print(f"[radio_watch] dsd-fme : appel {'prive' if stats.get('prive') else 'chiffre'}, "
-                      f"son coupe et non enregistre (donnees seulement)")
+                print("[radio_watch] dsd-fme : appel chiffre, son coupe et non enregistre (donnees seulement)")
             if muted:
                 continue
             if gain != 1.0:
@@ -1264,7 +1267,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 sock.close()
             except Exception:
                 pass
-        _garder_brut(brut, freq_hz, mode_flag, stats, validated and not muted, muted or filtered_out)
+        _garder_brut(brut, freq_hz, mode_flag, band_label, stats, validated and not muted, muted or filtered_out)
 
 
 # Son brut du dongle tel que dsd-fme le recoit (2026-10-24, option -6, 48 kHz),
@@ -1275,18 +1278,19 @@ BRUT_MIN_OCTETS = 48000           # moins d'une demi-seconde : rien a juger
 _bruts_candidat = None            # sons bruts du candidat en cours (_handle_candidate), sinon None
 
 
-def _garder_brut(chemin, freq_hz, mode_flag, stats, valide, muet):
+def _garder_brut(chemin, freq_hz, mode_flag, band_label, stats, valide, muet):
     if not chemin or not os.path.exists(chemin):
         return
     try:
         if muet or os.path.getsize(chemin) < BRUT_MIN_OCTETS:
-            os.remove(chemin)  # appel prive, chiffre ou groupe ignore : rien n'est garde (regle utilisateur)
+            os.remove(chemin)  # chiffre ou groupe ignore : rien n'est garde (regle utilisateur)
             return
         stats = stats or {}
-        fiche = {"freq_hz": int(freq_hz), "mode": mode_flag, "t": time.time(),
+        fiche = {"freq_hz": int(freq_hz), "mode": mode_flag, "band": band_label, "t": time.time(),
                  "etiquette": "reference" if valide else ("en_cours" if _bruts_candidat is not None else "inconnu"),
                  "direct": {"valide": bool(valide), "protocole": stats.get("protocol"),
-                            "propres": stats.get("clean", 0), "total": stats.get("total", 0)}}
+                            "propres": stats.get("clean", 0), "total": stats.get("total", 0),
+                            "prive": bool(stats.get("prive")), "chiffre": bool(stats.get("chiffre"))}}
         with open(chemin[:-4] + ".json", "w", encoding="utf-8") as f:
             json.dump(fiche, f, ensure_ascii=False)
         if _bruts_candidat is not None:

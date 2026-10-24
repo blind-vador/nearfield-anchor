@@ -557,6 +557,11 @@ COMMANDS = [
                       "qualite de l air", "pollution", "pollen", "pollens", "meteo des aeroports", "crue de la riviere"],
             examples=["la rivière monte-t-elle", "y a-t-il eu un séisme", "comment est l'air"]),
     # Avant "satellites" : "machine compagne" ne doit pas lister les passages.
+    Command("juges", "tes retours sur les décodages différés : « juges » les liste, "
+            "« juges faux » ou « juges bon » (avec le numéro, le dernier sinon) corrige le seuil d'un juge sur sa bande",
+            None, keywords=["juges", "juge faux", "juges faux", "juge bon", "juges bon", "décodage différé",
+                            "décodages différés", "décodeurs différés"],
+            examples=["juges", "juges faux", "juges bon 3", "le juge s'est trompé", "décodage différé faux"]),
     # Avant "dmr" : "exploration dmr" contient le mot-cle "dmr" (2026-10-17).
     Command("exploration dmr", "écouter les fréquences DMR groupe d'appel par groupe d'appel, ignorer ou mettre en favori, "
             "chercher de nouvelles fréquences", None,
