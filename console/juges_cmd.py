@@ -1,30 +1,31 @@
-"""Commande "juges" (2026-10-25) : tes retours sur les decodages differes.
+"""Commande "juge(s)" (2026-10-25) : trier les decodeurs a la volee, comme
+"zapper" ou "ignorer", sur ce que l'on entend en ce moment.
 
-Les juges rejouent les sons bruts devant les decodeurs ; parfois ils prennent
-un son hache pour de la voix (du dPMR pris pour du DMR). Tu ecoutes l'entree
-"decodage differe" au journal radio, puis tu notes :
-  "juges" / "juges derniers" : les derniers decodages differes, avec leur numero
-  "juges faux [n]" : le n-ieme (ou le dernier) etait faux -> ce juge ne sera plus
-                     cru en dessous de ce niveau, sur cette bande
-  "juges bon [n]"  : c'etait bon -> ce niveau compte comme vraie voix
-Tes notes fixent les seuils ; les juges ne les deduisent plus seuls."""
+  "juge" / "juge suivant" : ce decodage n'est pas le bon -> on passe au decodeur
+                            suivant sur le meme signal (sa confiance baisse).
+  "juge ok"               : c'est le bon decodeur -> sa confiance monte.
+Si la communication se termine avant, son flux brut est garde pour que les
+autres juges l'examinent apres."""
 import re
 import sys
 
 sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
-import juges_watch  # noqa: E402
+import juge_live  # noqa: E402
 
 
-def _num(line):
-    m = re.search(r"\d+", line)
-    return int(m.group()) if m else None
+def _mhz(etat):
+    return str(etat.get("freq_hz", 0) / 1e6).rstrip("0").rstrip(".").replace(".", ",")
 
 
 def run(line, key_source=None, say=None, out=None):
     low = " " + re.sub(r"[^\w ]", " ", line.lower()) + " "
-    if any(mot in low for mot in (" faux", " mauvais", " rate", " tort")):
-        return juges_watch.retour_utilisateur(_num(line), bon=False)
-    if any(mot in low for mot in (" bon", " juste", " vrai", " bien")):
-        return juges_watch.retour_utilisateur(_num(line), bon=True)
-    return juges_watch.derniers_retours_texte()
+    etat = juge_live.courant()
+    if etat is None:
+        return "Rien n'est en cours de décodage en ce moment."
+    ok = any(mot in low for mot in (" ok ", " oui ", " bon ", " garde ", " juste "))
+    juge_live.demander("ok" if ok else "suivant")
+    proto = etat.get("protocole") or "ce décodage"
+    if ok:
+        return f"Noté : {proto} sur {_mhz(etat)} mégahertz est le bon décodeur."
+    return f"Je passe au décodeur suivant sur {_mhz(etat)} mégahertz."

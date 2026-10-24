@@ -11,6 +11,8 @@ import os
 import time
 import audioop
 import threading
+
+import juge_live
 import queue
 import socket
 
@@ -1079,7 +1081,7 @@ def _dmr_courant(stats):
     return {k: v for k, v in out.items() if v}
 
 
-def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=None, target=None):
+def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=None, target=None, live=False):
     """Tente un decodage vocal numerique (DMR/P25/NXDN/D-STAR/YSF/dPMR/X2-TDMA)
     directement depuis le dongle RTL-SDR via dsd-fme. dsd-fme n'a pas de
     sortie ALSA directe -- on le fait sortir en UDP local (PCM brut, voix
@@ -1123,6 +1125,11 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         gain = 10 ** ((digital.get("gain_numerique_db") or 0.0) / 20)
         stdout_thread = threading.Thread(target=_dsdfme_stdout_watcher, args=(proc, stats), daemon=True)
         stdout_thread.start()
+        if live:
+            try:
+                juge_live.debut(freq_hz, band_label, mode_flag)
+            except Exception:
+                pass
 
         # Sonde silencieuse : on garde le son recu en attente, sans rien jouer,
         # tant que les synchros n'ont pas confirme un vrai decodage.
@@ -1138,17 +1145,39 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         start = time.time()
         deadline = start + (probe_sec or DSD_FME_PROBE_SEC)
         muted = False  # appel prive ou chiffre : ni joue ni enregistre (regle utilisateur)
+        juge_suivant = False
         dmr_vu = {}
         try_digital_voice_decode.last_dmr = {}
         while time.time() < deadline:
             if maintien.zap_depuis(start):
                 print("[radio_watch] zapper : ecoute numerique arretee a la demande")
                 break
+            if live:
+                acte = juge_live.action_depuis(start)
+                if acte == "suivant":   # ce decodeur n'est pas le bon : au suivant, meme signal
+                    try:
+                        juge_live.noter(band_label, mode_flag, ok=False)
+                    except Exception:
+                        pass
+                    print(f"[radio_watch] juge suivant : on quitte {mode_flag} a la demande")
+                    juge_suivant = True
+                    break
+                elif acte == "ok":      # c'est le bon decodeur
+                    try:
+                        juge_live.noter(band_label, mode_flag, ok=True)
+                    except Exception:
+                        pass
+                    print(f"[radio_watch] juge ok : {mode_flag} confirme sur {band_label}")
             courant = _dmr_courant(stats)
             if courant and courant != dmr_vu:  # qui parle : pour "ignorer" et "verrouiller"
                 dmr_vu = courant
                 try_digital_voice_decode.last_dmr = courant
                 noise_signatures.update_live(dmr=courant)
+                if live:
+                    try:
+                        juge_live.rafraichir(stats.get("protocol"))
+                    except Exception:
+                        pass
             try:
                 data, _ = sock.recvfrom(65536)
             except socket.timeout:
@@ -1227,6 +1256,8 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
             except Exception:
                 break
 
+        if juge_suivant:
+            return "SUIVANT"
         if not validated and filtered_out:
             # Decode mais groupe ignore / hors cible : on apprend quand meme
             # (registre), rien n'est joue ; "muet" pour les appelants.
@@ -1265,6 +1296,11 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         if sock is not None:
             try:
                 sock.close()
+            except Exception:
+                pass
+        if live:
+            try:
+                juge_live.fin()
             except Exception:
                 pass
         _garder_brut(brut, freq_hz, mode_flag, band_label, stats, validated and not muted, muted or filtered_out)
@@ -2085,6 +2121,24 @@ def _thermal_pause_wait(duration):
         time.sleep(METEO_PAUSE_TICK_SEC)
 
 
+def _numerique_live(freq, band_label, target):
+    """Ecoute numerique en direct : commence par le decodeur le plus sur pour la
+    bande (ordre de confiance), et "juge suivant" fait passer au decodeur suivant
+    sur le MEME signal. Sans action de l'utilisateur, se comporte comme avant
+    (un seul passage, auto-detection d'abord)."""
+    try:
+        import juges_watch
+        modes = juges_watch.ordre(juges_watch._scores(), band_label, list(juges_watch.JUGES))
+    except Exception:
+        modes = ["-fa"]
+    for mode_flag in modes:
+        res = try_digital_voice_decode(freq, mode_flag, band_label, target=target, live=True)
+        if res == "SUIVANT":          # l'utilisateur veut un autre decodeur
+            continue
+        return res
+    return None
+
+
 def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     if ignores.frequence_ignoree(freq):
         print(f"[radio_watch] {freq / 1e6:.4f} MHz ignoree (commande ignorer), on passe")
@@ -2109,7 +2163,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     global _bruts_candidat
     _bruts_candidat = []
     try:
-        protocol = try_digital_voice_decode(freq, band_label=band_label, target=target) if mode == "nfm" else None
+        protocol = _numerique_live(freq, band_label, target) if mode == "nfm" else None
         if protocol and try_digital_voice_decode.last_muted:  # appel prive ou chiffre : rien n'est garde
             log_session.discard()
             return True

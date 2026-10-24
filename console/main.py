@@ -408,7 +408,7 @@ def run_command(line, key_source, last_response):
     if cmd.name == "exploration dmr":
         import dmr_exploration
         return dmr_exploration.run(key_source, voix.say, out)
-    if cmd.name == "juges":
+    if cmd.name == "juge":
         import juges_cmd
         return juges_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "restreint":
