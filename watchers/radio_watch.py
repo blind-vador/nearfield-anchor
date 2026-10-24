@@ -2019,8 +2019,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
         # et le recalibrage. Si c'etait en fait du numerique (extra ci-dessous),
         # on efface cet extrait : ce n'etait pas un rejet.
         reject_path = log_session.finalize(subdir="rejets")
-        extra = _extra_digital_mode(freq) if mode == "nfm" else None
-        if extra:
+        for extra in (decodeurs.extra_modes(freq) if mode == "nfm" else []):
             # Ecarte comme voix : peut-etre un mode numerique que -fa ne tente pas.
             log_session = radio_log.RadioLogSession(band_label)
             sound_player.set_recording_session(log_session)

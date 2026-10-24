@@ -24,8 +24,15 @@ DSD_EXTRA_MODES = [
     (446_000_000, 446_200_000, "-fm", "dPMR"),
     (144_000_000, 146_000_000, "-fz", "M17"),
     (430_000_000, 440_000_000, "-fz", "M17"),
+    # Bandes professionnelles (2026-10-24 : bribes de voix numerique non
+    # decodees vers 460 MHz) : NXDN etroit, dPMR, puis NXDN large, essayes
+    # lun apres lautre quand la voix FM est ecartee (extra_modes).
     (148_000_000, 174_000_000, "-fi", "NXDN"),
+    (148_000_000, 174_000_000, "-fm", "dPMR"),
+    (148_000_000, 174_000_000, "-fn", "NXDN"),
     (440_000_000, 470_000_000, "-fi", "NXDN"),
+    (440_000_000, 470_000_000, "-fm", "dPMR"),
+    (440_000_000, 470_000_000, "-fn", "NXDN"),
 ]
 DSD_MONO_MODES = {"-fm", "-fz", "-fi", "-fn"}
 MULTIMON_ARGS = [
@@ -153,6 +160,15 @@ def _say(kind, value, stats):
 
 def dsd_validated(stats):
     return stats["clean"] >= DSD_MIN_CLEAN_SYNC and stats["clean"] >= DSD_MIN_CLEAN_RATIO * stats["total"]
+
+
+def extra_modes(freq_hz):
+    """[(option, nom)] de tous les modes a essayer sur cette frequence, sans doublon."""
+    out = []
+    for low, high, flag, name in DSD_EXTRA_MODES:
+        if low <= freq_hz <= high and flag not in [f for f, _ in out]:
+            out.append((flag, name))
+    return out
 
 
 def extra_mode(freq_hz):
