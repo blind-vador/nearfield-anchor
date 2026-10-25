@@ -6816,3 +6816,24 @@ cache DeepFilterNet, les clips sont ceux du NAS.
 - Suite prevue : dsd-fme sur les machines compagnes (capacite "radio"),
   travail differe radio_juges, prise unique du dongle sur le Pi, decodage en
   direct delegue, pre-classement du signal, memoire par canal.
+
+## 2026-10-25 (suite) : juges du scanner confies aux machines compagnes (fait)
+
+- dsd-fme sur les machines compagnes, meme commit que le Pi (4fe32db) :
+  bridge/construire_dsd.sh (environnement conda dedie, mbelib, et un PulseAudio
+  "muet" bridge/pulse_muet/ : dsd-fme l exige pour se compiler mais la machine
+  ne joue jamais de son, -o null). Sans Homebrew ni droits administrateur.
+  Verifie : sorties identiques a l octet pres a celles du Pi sur 6 juges, environ
+  8 fois plus vite sur le Mac M4 (0,4 s contre 3 s par juge).
+- bridge/juges_radio.py : le juge (comptage des synchros, verdict) commun au
+  Pi, aux machines compagnes et au direct (decodeurs.py le reprend).
+- Travail "radio_juges" (capacite du meme nom) : juges_watch confie tous les
+  juges restants d un son a la machine connectee qui finira le plus tot, meme
+  jusqu a 3 fois plus lente que le Pi (on epargne sa chaleur), et cela MEME
+  PENDANT UNE PAUSE DE CHALEUR du Pi ; le Pi ne juge lui-meme que sans machine
+  capable. 8 sons confies au plus a la fois, reprise par le Pi au bout de 15 min
+  sans verdict. Sur la machine : juges en parallele, autant que sa part libre
+  le permet. Verdicts deposes par compagnon_resultats dans brut_dsd/retours/,
+  appliques par juges_watch (seul ecrivain des fiches et des scores).
+  Essai reel : Pi en pause a 74,5 C, 4 sons juges par le Mac (10 juges en 1 a
+  4 s chacun), aucun juge passe sur le Pi.

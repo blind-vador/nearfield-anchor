@@ -45,6 +45,32 @@ def _lora(job, result, folder):
     lora_messages.handle(job, frames, card.get("nom") or dire("compagnon.la_machine"))
 
 
+RETOURS_RADIO = "/home/vador/autopilot/brut_dsd/retours"
+
+
+def _radio_juges(job, result, folder):
+    """Verdicts des juges du scanner rendus par une machine compagne (2026-10-25) :
+    deposes dans brut_dsd/retours/<son>/ pour juges_watch, seul a ecrire les
+    fiches et les scores. Un echec ne depose rien : le Pi reprendra la main."""
+    import json
+    brut = (job.get("params") or {}).get("brut", "")
+    if result.get("etat") != "fait" or not brut.endswith(".wav"):
+        print(f"[compagnon] juges radio {job.get('id')} : {result.get('message')}")
+        return
+    dest = os.path.join(RETOURS_RADIO, brut[:-4])
+    tmp = dest + ".tmp"
+    shutil.rmtree(tmp, ignore_errors=True)
+    os.makedirs(tmp)
+    for name in result.get("sorties", {}):
+        shutil.copy(os.path.join(folder, name), tmp)
+    card = compagnon.trusted().get(result.get("compagnon"), {})
+    with open(os.path.join(tmp, "retour.json"), "w", encoding="utf-8") as f:
+        json.dump({"machine": card.get("nom") or result.get("compagnon"), "travail": job.get("id"),
+                   "duree": result.get("duree")}, f, ensure_ascii=False)
+    shutil.rmtree(dest, ignore_errors=True)
+    os.replace(tmp, dest)
+
+
 
 def _decrire_images(job, result, folder):
     """Range la description VLM dans le cache fiche pieces (pas d'annonce vocale)."""
@@ -109,7 +135,8 @@ def _voix(job, result, folder):
         pass
 
 
-HANDLERS = {"meteor": _meteor, "lora": _lora, "decrire_images": _decrire_images, "voix": _voix}
+HANDLERS = {"meteor": _meteor, "lora": _lora, "decrire_images": _decrire_images, "voix": _voix,
+            "radio_juges": _radio_juges}
 
 
 def poll_once():

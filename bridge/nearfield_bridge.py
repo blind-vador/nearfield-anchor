@@ -171,7 +171,42 @@ def capabilities():
         pass
     if mac_voices():  # voix macOS dites en direct pour le Pi (2026-10-22)
         caps.append("voix_mac")
+    if os.access(RADIO_DSD, os.X_OK):  # juges du scanner radio (2026-10-25, construire_dsd.sh)
+        caps.append("radio_juges")
     return caps
+
+
+# --- juges du scanner radio (2026-10-25) ---------------------------------------------
+# Le Pi confie un son brut du dongle et la liste des juges (modes de dsd-fme) a
+# passer ; ils tournent ici en parallele, autant a la fois que la part libre de
+# la machine le permet (puissance.py), et les verdicts repartent signes.
+RADIO_DSD = os.path.join(HOME, "radio", "bin", "dsd-fme")
+
+
+def _radio_juges(job, folder):
+    from concurrent.futures import ThreadPoolExecutor
+    import juges_radio
+    p = job["params"]
+    wav = os.path.join(folder, p["fichier"])
+    juges = list(p.get("juges") or [])
+    m = power(session_state()) or {}
+    part = (m.get("disponible") or 0) / m["puissance"] if m.get("puissance") else 0.5
+    workers = max(1, min(len(juges) or 1, int(round((m.get("coeurs") or 2) * part))))
+
+    def un(juge):
+        voix = os.path.join(folder, "voix_%s.wav" % juge.lstrip("-"))
+        return juge, juges_radio.juger(juge, wav, dsd=RADIO_DSD, voix=voix, priorite=("nice", "-n", "10"))
+
+    verdicts, sorties = {}, ["verdicts.json"]
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        for juge, (verdict, voix) in pool.map(un, juges):
+            verdicts[juge] = verdict
+            if voix:
+                sorties.append(os.path.basename(voix))
+    _write(os.path.join(folder, "verdicts.json"), verdicts)
+    props = sum(1 for v in verdicts.values() if v.get("propose"))
+    return "fait", sorties, "%d juges (%d a la fois), %d proposition%s" % (
+        len(verdicts), workers, props, "s" if props > 1 else "")
 
 
 # --- voix macOS en direct (2026-10-22) ---------------------------------------------
@@ -489,7 +524,7 @@ def forget(pi):
 
 # Deux files : les rafales LoRa (petites, a annoncer tout de suite) ne doivent
 # pas attendre derriere un passage Meteor de plusieurs minutes.
-FAST = ("lora", "decrire_images")
+FAST = ("lora", "decrire_images", "radio_juges")
 _queues = {"rapide": queue.Queue(), "lourd": queue.Queue()}
 _links = {}  # pi -> Link
 
@@ -723,6 +758,8 @@ def _process(job, folder):
     if job.get("type") == "voix":
         import voix_piper
         return voix_piper.process(folder, job.get("params") or {})
+    if job.get("type") == "radio_juges":
+        return _radio_juges(job, folder)
     return "echec", [], "cette machine ne sait pas faire « %s »" % job.get("type")
 
 

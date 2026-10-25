@@ -11,9 +11,10 @@ tous les decodeurs fonctionnent pareil partout (demande utilisateur
 """
 import re
 
-DSD_PROTOCOLS = {"DMR": "DMR", "P25p1": "P25", "P25p2": "P25", "YSF": "YSF", "DSTAR": "D-Star",
-                 "M17": "M17", "NXDN48": "NXDN", "NXDN96": "NXDN", "NXDN": "NXDN", "dPMR": "dPMR",
-                 "X2-TDMA": "X2-TDMA"}
+# Comptage des synchros commun au direct et aux juges, du Pi comme des
+# machines compagnes (bridge/juges_radio.py, 2026-10-25).
+from juges_radio import PROTOCOLES as DSD_PROTOCOLS, compter_synchro  # noqa: F401
+
 DSD_MIN_CLEAN_SYNC = 2
 DSD_MIN_CLEAN_RATIO = 0.25
 DSD_STEREO_DATAGRAM = 640   # 16 bits, deux slots TDMA
@@ -55,7 +56,6 @@ MIN_DECODED_MESSAGE_CHARS = 4
 MIN_TRANSPORTED_TEXT_CHARS = 2
 
 
-SYNC_RE = re.compile(r"Sync: [+-]([\w-]+)")
 # Textes transportes avec la voix (2026-10-03) : lignes de dsd-fme.
 SRC_RE = re.compile(r"SRC[=:]\s*(\d+)")
 TGT_RE = re.compile(r"TGT[=:]\s*(\d+)")
@@ -76,44 +76,6 @@ UNREACHABLE_RE = re.compile(r"^ICMP Protocol;.*Unreachable", re.I)
 
 def new_stats(freq_hz=None):
     return {"clean": 0, "total": 0, "protocol": None, "freq_hz": freq_hz, "src": None, "tgt": None}
-
-
-def _propre(stats, protocole):
-    stats["clean"] += 1
-    stats["protocol"] = protocole
-    vus = stats.setdefault("vus", {})
-    vus[protocole] = vus.get(protocole, 0) + 1
-
-
-def compter_synchro(stats, text):
-    """Compte une synchro de dsd-fme, propre ou en erreur (commun au direct et
-    aux juges de juges_watch).
-
-    Sanity check du 2026-10-25 : en dPMR, la ligne "Sync:" ne porte jamais
-    ERR, le verdict est sur la ligne qui suit ("TG=(CRC ERR) Src=...") ; en
-    M17, une ligne "Sync: +M17 STR" seule ne prouve rien. Sur du bruit, les
-    deux comptaient 100 % de synchros propres : 41 faux "dPMR confirme" en
-    3 jours. Desormais une synchro dPMR n'est propre que si la ligne suivante
-    a un groupe ou un emetteur lu sans erreur (ni chiffre incertain "*"), et
-    une synchro M17 que si son en-tete (LSF) est lu sans erreur."""
-    m = SYNC_RE.search(text)
-    if m:
-        protocole = DSD_PROTOCOLS.get(m.group(1), m.group(1))
-        stats["total"] += 1
-        stats["preuve"] = None
-        if protocole == "dPMR":
-            stats["preuve"] = protocole   # verdict a la ligne suivante
-        elif protocole == "M17":
-            if "LSF" in text and "ERR" not in text:
-                _propre(stats, protocole)
-        elif "ERR" not in text:
-            _propre(stats, protocole)
-        return
-    attente = stats.get("preuve")
-    if attente and text.strip():
-        stats["preuve"] = None
-        if ("TG=" in text or "Src=" in text) and "ERR" not in text and "*" not in text:
-            _propre(stats, attente)
 
 
 def _readable(value):

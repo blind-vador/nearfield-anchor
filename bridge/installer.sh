@@ -8,6 +8,8 @@
 #     ~/.nearfield-bridge/bin ;
 #   - GNU Radio (conda-forge, dans ~/.nearfield-bridge/gnuradio) et
 #     gr-lora_sdr compile dessus : decodage LoRa / Meshtastic des rafales ;
+#   - dsd-fme (meme version que le Pi) dans ~/.nearfield-bridge/radio, par
+#     construire_dsd.sh : juges du scanner radio ("radio_juges") ;
 #   - le service, lance a l'ouverture de session (LaunchAgent sur Mac,
 #     unite systemd utilisateur sur Linux), a basse priorite ;
 #   - sur Mac, l'application "Nearfield Bridge" (dialogues lus par
@@ -41,7 +43,7 @@ fi
 
 echo "-- module compagnon : fichiers --"
 mkdir -p "$DEST/bin" "$BUILD"
-cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/puissance.py" "$HERE/lora_decode.py" "$HERE/decrire_images.py" \
+cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/puissance.py" "$HERE/juges_radio.py" "$HERE/lora_decode.py" "$HERE/decrire_images.py" \
     "$HERE/voix_piper.py" "$HERE/voix_piper_worker.py" "$DEST/"
 
 echo "-- numpy, cryptography, cmake --"
@@ -122,6 +124,9 @@ if ! "$GR/bin/python" -c "import gnuradio.lora_sdr" 2>/dev/null; then
         -DPYTHON_EXECUTABLE="$GR/bin/python" >/dev/null && make -j4 >/dev/null && make install >/dev/null)
 fi
 "$GR/bin/python" -c "import gnuradio.lora_sdr; print('gr-lora_sdr : pret')"
+
+echo "-- dsd-fme (juges du scanner radio) --"
+bash "$HERE/construire_dsd.sh"
 rm -rf "$BUILD"
 
 echo "-- service --"
