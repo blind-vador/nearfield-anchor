@@ -116,6 +116,7 @@ class _Handler(socketserver.StreamRequestHandler):
                                   ips=hello.get("ips") or [self.client_address[0]], vu=time.time(),
                                   voix_mac=hello.get("voix_mac") or [])
             compagnon.note_state(cid, hello.get("etat"))
+            compagnon.note_power(cid, hello.get("puissance"))
             with _lock:
                 old = _channels.pop(cid, None)
                 _channels[cid] = channel
@@ -141,6 +142,7 @@ class _Handler(socketserver.StreamRequestHandler):
                     compagnon.update_card(cid, vu=time.time(), capacites=msg.get("capacites", []),
                                           voix_mac=msg.get("voix_mac") or [])
                     compagnon.note_state(cid, msg.get("etat"))
+                    compagnon.note_power(cid, msg.get("puissance"))
                 elif kind in ("son", "son_fin"):
                     file = _demandes_voix.get(msg.get("reponse_a"))
                     if file is not None:
@@ -270,6 +272,8 @@ def _dispatch():
                 _local.add(job["id"])
                 threading.Thread(target=_decode_locally, args=(job,), daemon=True).start()
             continue
+        if _attribute(job):
+            continue
         if time.time() - _notified.get(job["id"], 0) < NOTIFY_EVERY_SEC:
             continue
         if any(_notify(c["id"], job["id"]) for c in able if c["presente"]):
@@ -281,6 +285,37 @@ def _dispatch():
             if proto.wake_on_lan(c.get("adresse_materielle"), c.get("ips", [])):
                 print(f"[compagnon] reveil de {c['nom']} pour {job['id']}")
         _notified[job["id"]] = time.time()
+
+
+def _attribute(job):
+    """Confie le travail a la machine connectee qui le finira le plus tot
+    (compagnon.rank, 2026-10-25) et ne previent qu'elle. Elle a
+    ATTRIBUTION_SEC pour le prendre ; sinon on passe a la suivante, et quand
+    toutes ont eu leur chance, le travail redevient ouvert a toutes (rend False :
+    l'ancien envoi a toutes / reveil prend le relais)."""
+    job_id = job["id"]
+    a = compagnon.attribution(job_id)
+    if a and a.get("jusqu", 0) > time.time():
+        if time.time() - _notified.get(job_id, 0) >= NOTIFY_EVERY_SEC:
+            _notify(a["pour"], job_id)
+        return True
+    tried = (a or {}).get("essayees", [])
+    size = compagnon.job_size_mb(job_id)
+    direct = [c for c in compagnon.rank(job["type"], size, exclude=tried) if c.get("directe")]
+    if not direct:
+        if a:
+            compagnon.release(job_id)
+        return False
+    best = direct[0]
+    compagnon.attribute(job_id, best, tried + [best["id"]], size)
+    fin = best.get("fin_estimee")
+    part = best.get("part_libre")
+    print(f"[compagnon] {job_id} confie a {best.get('nom')}"
+          + (f" (libre a {round(part * 100)} %" if part is not None else " (")
+          + (f", fin estimee {fin:.0f} s)" if fin is not None else ")")
+          + (f", {len(direct) - 1} autre(s) en reserve" if len(direct) > 1 else ""))
+    _notify(best["id"], job_id)
+    return True
 
 
 _local = set()

@@ -31,6 +31,7 @@ import tempfile
 import threading
 import time
 
+import decodeurs
 import radio_log
 
 BRUT_DIR = "/home/vador/autopilot/brut_dsd"
@@ -47,10 +48,6 @@ TRUST_SUR = 0.8                     # au-dessus, un juge decode tout seul au jou
 JUGES = {"-fa": None, "-fs": "DMR", "-fi": "NXDN", "-fn": "NXDN", "-fm": "dPMR", "-fz": "M17",
          "-f1": "P25", "-fd": "D-Star", "-fy": "YSF", "-fx": "X2-TDMA"}
 DEFAUT_ORDRE = list(JUGES)
-PROTOCOLES = {"DMR": "DMR", "P25p1": "P25", "P25p2": "P25", "YSF": "YSF", "DSTAR": "D-Star",
-              "M17": "M17", "NXDN48": "NXDN", "NXDN96": "NXDN", "NXDN": "NXDN", "dPMR": "dPMR",
-              "X2-TDMA": "X2-TDMA"}
-SYNC_RE = re.compile(r"Sync: [+-]([\w-]+)")
 ENC_RE = re.compile(r"\b(ENC|Encrypt\w*|ALG ID|Key ID|KID)\b", re.I)
 
 SEUIL_MIN = 2                       # en dessous, pas meme une question (bruit pur)
@@ -146,17 +143,10 @@ def juger(juge, wav):
         texte = r.stderr.decode(errors="replace")
     except subprocess.TimeoutExpired:
         texte = ""
-    total = propres = 0
-    vus = {}
-    for ligne in texte.splitlines():
-        m = SYNC_RE.search(ligne)
-        if not m:
-            continue
-        total += 1
-        if "ERR" not in ligne:
-            propres += 1
-            p = PROTOCOLES.get(m.group(1), m.group(1))
-            vus[p] = vus.get(p, 0) + 1
+    stats = decodeurs.new_stats()
+    for ligne in texte.splitlines():  # meme comptage que le direct (dPMR, M17 : preuve exigee)
+        decodeurs.compter_synchro(stats, ligne)
+    total, propres, vus = stats["total"], stats["clean"], stats.get("vus", {})
     protocole = max(vus, key=vus.get) if vus else None
     voix_sec = _duree(voix) if os.path.exists(voix) and os.path.getsize(voix) > 44 else 0.0
     verdict = {"total": total, "propres": propres, "protocole": protocole, "voix_s": round(voix_sec, 1),

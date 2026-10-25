@@ -41,7 +41,7 @@ fi
 
 echo "-- module compagnon : fichiers --"
 mkdir -p "$DEST/bin" "$BUILD"
-cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/lora_decode.py" "$HERE/decrire_images.py" \
+cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/puissance.py" "$HERE/lora_decode.py" "$HERE/decrire_images.py" \
     "$HERE/voix_piper.py" "$HERE/voix_piper_worker.py" "$DEST/"
 
 echo "-- numpy, cryptography, cmake --"

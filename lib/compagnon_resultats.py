@@ -124,5 +124,11 @@ def poll_once():
         compagnon.update_card(result["compagnon"], stats={
             "faits": stats.get("faits", 0) + ok, "echecs": stats.get("echecs", 0) + (not ok),
             "secondes": stats.get("secondes", 0) + result.get("duree", 0), "dernier": time.time()})
+        if ok:  # vitesse reelle de cette machine sur ce type de travail (choix de la machine, 2026-10-25)
+            a = compagnon.attribution(job["id"]) or {}
+            mine = a.get("pour") == result["compagnon"]
+            compagnon.learn_duration(result["compagnon"], job.get("type"), result.get("duree", 0),
+                                     a.get("taille_mo") if mine else compagnon.job_size_mb(job["id"]),
+                                     a.get("part_libre") if mine else compagnon.free_share(card))
         shutil.rmtree(folder, ignore_errors=True)  # le pont ne garde que l'en-cours
     compagnon.drop_stale(STALE_SEC)

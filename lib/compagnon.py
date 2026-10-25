@@ -149,12 +149,146 @@ def companions():
 
 def available(capability):
     """Machine de confiance qui sait faire capability et sur laquelle on peut
-    compter : connectee, ou vue cette semaine (le Pi la reveillera)."""
+    compter : connectee, ou vue cette semaine (le Pi la reveillera). Parmi les
+    connectees, celle qui finirait le plus tot (rank)."""
+    ranked = rank(capability)
+    if ranked:
+        return ranked[0]
     for c in companions():
         if capability in c.get("capacites", []) and (
                 c["presente"] or time.time() - c.get("vu", 0) < WAKEABLE_SEC):
             return c
     return None
+
+
+# --- choix de la machine qui epaule (2026-10-25) --------------------------------------
+# Chaque machine envoie sa puissance reelle et sa disponibilite du moment
+# (bridge/puissance.py) ; le Pi confie chaque travail a celle qui le FINIRA LE
+# PLUS TOT, d'apres la duree apprise de ce type de travail sur elle (ramenee a
+# pleine puissance), sa part libre et les travaux qu'elle a deja. Une machine
+# jamais vue sur ce travail est estimee depuis une autre, au prorata de la
+# puissance d'un coeur. La machine choisie a ATTRIBUTION_SEC pour le prendre
+# (attribution.json dans le dossier du travail), sinon on passe a la suivante.
+ATTRIBUTION_SEC = 45
+PUISSANCE_FRAICHE_SEC = 120
+FILES_PAR_MACHINE = 2   # le pont traite deux files a la fois (rapide, lourd)
+APPRENTISSAGE = 0.3     # poids d'une nouvelle duree dans la moyenne
+
+
+def note_power(cid, power):
+    """Mesure envoyee par la machine (battement) ; datee a la reception par le
+    Pi, pour ne pas dependre de l'horloge de la machine."""
+    if isinstance(power, dict) and power.get("puissance"):
+        update_card(cid, puissance=dict(power, recu=time.time()))
+
+
+def free_share(c):
+    """Part libre de la machine (0..1) d'apres sa derniere mesure ; None sans mesure."""
+    p = c.get("puissance") or {}
+    if not p.get("puissance"):
+        return None
+    if time.time() - p.get("recu", 0) > PUISSANCE_FRAICHE_SEC:
+        return 0.5  # mesure ancienne (mode differe par le NAS) : prudence
+    return max(0.02, min(1.0, p.get("disponible", 0) / p["puissance"]))
+
+
+def _duration_of(d, size_mb):
+    if size_mb > 0.05 and d.get("s_mo"):
+        return d["s_mo"] * size_mb
+    return d.get("s")
+
+
+def _full_power_seconds(c, kind, size_mb, machines):
+    d = (c.get("durees") or {}).get(kind)
+    if d:
+        return _duration_of(d, size_mb)
+    mine = (c.get("puissance") or {}).get("puissance_coeur")
+    for o in machines:
+        od, oc = (o.get("durees") or {}).get(kind), (o.get("puissance") or {}).get("puissance_coeur")
+        if od and oc and mine:
+            return _duration_of(od, size_mb) * oc / mine
+    return 1000.0 / mine if mine else None  # personne n'a d'historique : la puissance seule departage
+
+
+def job_size_mb(job_id):
+    total = 0
+    for name in _list("travaux", job_id):
+        if not name.endswith(".json"):
+            try:
+                total += os.path.getsize(_path("travaux", job_id, name))
+            except OSError:
+                pass
+    return total / (1024 * 1024)
+
+
+def jobs_per_machine():
+    """{id: travaux pris et pas finis + travaux qui lui sont confies et pas encore pris}."""
+    count = {}
+    for job_id in _list("travaux"):
+        if os.path.exists(_path("travaux", job_id, "resultat.json")):
+            continue
+        taken = _read(_path("travaux", job_id, "travail.pris.json"))
+        if taken and taken.get("pris_par"):
+            who = taken["pris_par"]
+        else:
+            a = attribution(job_id)
+            who = a.get("pour") if a and a.get("jusqu", 0) > time.time() else None
+        if who:
+            count[who] = count.get(who, 0) + 1
+    return count
+
+
+def rank(kind, size_mb=0.0, exclude=()):
+    """Machines presentes capables de kind, de celle qui finira le plus tot a la
+    moins rapide ; chacune avec "fin_estimee" (s, ou None) et "part_libre"."""
+    machines = [c for c in companions() if kind in c.get("capacites", []) and c["presente"]]
+    load = jobs_per_machine()
+    out = []
+    for c in machines:
+        if c["id"] in exclude:
+            continue
+        share = free_share(c)
+        base = _full_power_seconds(c, kind, size_mb, machines)
+        c = dict(c, part_libre=share)
+        c["fin_estimee"] = (None if base is None or share is None
+                            else base / share * (1 + load.get(c["id"], 0) / FILES_PAR_MACHINE))
+        out.append(c)
+    return sorted(out, key=lambda c: (c["fin_estimee"] is None, c["fin_estimee"] or 0))
+
+
+def attribution(job_id):
+    return _read(_path("travaux", job_id, "attribution.json"))
+
+
+def attribute(job_id, c, tried, size_mb):
+    _write(_path("travaux", job_id, "attribution.json"),
+           {"pour": c["id"], "jusqu": time.time() + ATTRIBUTION_SEC, "essayees": tried, "taille_mo": size_mb,
+            "part_libre": c.get("part_libre"), "fin_estimee": c.get("fin_estimee"), "t": time.time()})
+
+
+def release(job_id):
+    """Plus personne a qui le confier : le travail est ouvert a toute machine capable."""
+    _remove(_path("travaux", job_id, "attribution.json"))
+
+
+def learn_duration(cid, kind, seconds, size_mb, share):
+    """Duree reelle d'un travail, ramenee a pleine puissance (duree x part libre
+    au moment ou il a ete confie), en moyenne glissante par type."""
+    card = trusted().get(cid)
+    if not card or not kind:
+        return
+    full = max(float(seconds or 0), 0.5) * (share if share else 1.0)
+    durees = card.get("durees") or {}
+    d = dict(durees.get(kind) or {})
+    a = APPRENTISSAGE if d else 1.0
+    d["s"] = round((1 - a) * d.get("s", full) + a * full, 2)
+    if size_mb and size_mb > 0.05:
+        per_mb = full / size_mb
+        a_mb = APPRENTISSAGE if d.get("s_mo") else 1.0
+        d["s_mo"] = round((1 - a_mb) * d.get("s_mo", per_mb) + a_mb * per_mb, 3)
+    d["n"] = d.get("n", 0) + 1
+    durees[kind] = d
+    update_card(cid, durees=durees)
 
 
 def forget(cid):
@@ -365,6 +499,9 @@ def status():
         session = _session_text(c)
         if session:
             text += ", " + session
+        share = free_share(c) if c.get("presente") else None
+        if share is not None:
+            text += ", " + dire_ou("compagnon.part_libre", f"libre à {round(share * 100)} %", pourcent=round(share * 100))
         done, failed = stats.get("faits", 0), stats.get("echecs", 0)
         if done or failed:
             text += ", " + dire("compagnon.bilan_travaux", reussis=nombre(done, "travail réussi", "travaux réussis"),

@@ -282,6 +282,25 @@ def session_state():
     return state
 
 
+def power(etat=None):
+    """Puissance reelle et disponibilite du moment (puissance.py), envoyees au Pi
+    a chaque battement (2026-10-25) : il confie chaque travail a la machine qui
+    finira le plus tot. Jamais bloquant : une mesure ratee n'envoie rien."""
+    try:
+        import puissance
+        return puissance.mesure(os.path.join(HOME, "puissance_etalon.json"), etat)
+    except Exception:
+        traceback.print_exc()
+        return None
+
+
+def _attributed_elsewhere(folder):
+    """Le Pi a confie ce travail a une AUTRE machine (attribution.json, 2026-10-25),
+    et elle a encore le temps de le prendre : on le lui laisse."""
+    a = _read(os.path.join(folder, "attribution.json"))
+    return bool(a and a.get("pour") not in (None, config()["id"]) and a.get("jusqu", 0) > time.time())
+
+
 def network_identity():
     """(adresse materielle, [ips]) de l'interface de la route par defaut."""
     iface, mac, ips = None, None, []
@@ -494,7 +513,8 @@ def _nas_beat(pi, card):
     mac, ips = network_identity()
     _write(os.path.join(share, "compagnons", "%s.battement.json" % conf["id"]),
            proto.sign(key(), {"type": "battement", "compagnon": conf["id"], "pi": pi, "nom": conf["nom"],
-                              "capacites": capabilities(), "adresse_materielle": mac, "ips": ips}))
+                              "capacites": capabilities(), "adresse_materielle": mac, "ips": ips,
+                              "puissance": power(session_state())}))
 
 
 class Link(threading.Thread):
@@ -549,9 +569,10 @@ class Link(threading.Thread):
             return False
         channel = proto.Channel(sock, key())
         mac, ips = network_identity()
+        etat = session_state()
         hello = {"type": "bonjour", "compagnon": conf["id"], "pi": self.pi, "nom": conf["nom"],
                  "capacites": capabilities(), "adresse_materielle": mac, "ips": ips, "nonce": uuid.uuid4().hex,
-                 "etat": session_state(), "voix_mac": mac_voices()}
+                 "etat": etat, "voix_mac": mac_voices(), "puissance": power(etat)}
         channel.send(hello)
         welcome = channel.receive(card["cle"])
         if not welcome or welcome.get("type") != "bienvenue" or welcome.get("reponse_a") != hello["nonce"]:
@@ -591,8 +612,9 @@ class Link(threading.Thread):
                 channel = self.channel
             if channel is None:
                 return
-            if not self.send({"type": "battement", "capacites": capabilities(), "etat": session_state(),
-                              "voix_mac": mac_voices()}):
+            etat = session_state()
+            if not self.send({"type": "battement", "capacites": capabilities(), "etat": etat,
+                              "voix_mac": mac_voices(), "puissance": power(etat)}):
                 return
             time.sleep(BEAT_SEC)
 
@@ -621,7 +643,8 @@ def _pending_for(share, fast):
     caps = capabilities()
     for job_id in names:
         job = _read(os.path.join(folder, job_id, "travail.json"))
-        if job and job.get("type") in caps and (job.get("type") in FAST) == fast:
+        if (job and job.get("type") in caps and (job.get("type") in FAST) == fast
+                and not _attributed_elsewhere(os.path.join(folder, job_id))):
             return True
     return False
 
@@ -639,7 +662,9 @@ def _claim(share, fast):
         job = _read(src)
         if not job or job.get("type") not in caps or (job.get("type") in FAST) != fast:
             continue
-        dst = os.path.join(folder, job_id, "travail.pris.json")
+        if _attributed_elsewhere(os.path.join(folder, job_id)):
+            continue  # confie a une machine plus libre
+        dst =os.path.join(folder, job_id, "travail.pris.json")
         try:
             os.rename(src, dst)
         except OSError:

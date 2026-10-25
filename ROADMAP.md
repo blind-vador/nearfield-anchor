@@ -6790,3 +6790,29 @@ que DeepFilterNet 0.5.6 et panns-inference marchent (analyse.py --dry), puis
 basculer les agents launchd et retirer les "ignore" de Dependabot pour /mac.
 Exposition actuelle faible : les poids charges viennent de zenodo (PANNs) et du
 cache DeepFilterNet, les clips sont ceux du NAS.
+
+## 2026-10-25 : sanity check du scanner, puissance reelle des machines (fait)
+
+- Faux dPMR : dsd-fme n ecrit jamais ERR sur la ligne "Sync:" du dPMR (le
+  verdict est a la ligne suivante, "TG=(CRC ERR) Src=..."), et une ligne
+  "Sync: +M17 STR" seule ne prouve rien. Sur du bruit, les deux comptaient
+  100 % de synchros propres : 41 "decodage dPMR confirme" en 3 jours, tous
+  "2 sur 2", et 18 propositions dPMR des juges, toutes fausses (verifie par
+  rejeu et par le spectre : pas de raie a la vitesse symbole). Comptage commun
+  au direct et aux juges : decodeurs.compter_synchro (dPMR : groupe ou emetteur
+  lu sans erreur a la ligne suivante ; M17 : en-tete LSF sans erreur).
+- Delegation aux machines compagnes selon leur puissance REELLE (demande
+  utilisateur) : bridge/puissance.py, commun au Pi et aux machines. Etalonnage
+  du meme calcul sur tous les coeurs (meilleur score de la semaine ; Mac M4 ~36 100,
+  Pi 4 ~4 400), puis a chaque battement charge, chaleur (sonde du Pi, pmset
+  sur macOS), memoire, mini-test de vitesse (bridage thermique) ; reserve de
+  25 % quand quelqu un est au clavier (la machine travaille quand meme).
+- Le Pi confie chaque travail a la machine connectee qui le FINIRA LE PLUS TOT
+  (compagnon.rank) : duree apprise par type et par machine ramenee a pleine
+  puissance, part libre, travaux deja en cours ; une machine jamais vue sur ce
+  travail est estimee depuis une autre au prorata d un coeur. attribution.json :
+  45 s pour le prendre, sinon la suivante, puis ouvert a toutes. Valable pour
+  N machines ; un pont pas a jour marche comme avant. "compagnon" dit "libre a N %".
+- Suite prevue : dsd-fme sur les machines compagnes (capacite "radio"),
+  travail differe radio_juges, prise unique du dongle sur le Pi, decodage en
+  direct delegue, pre-classement du signal, memoire par canal.
