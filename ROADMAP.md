@@ -6837,3 +6837,24 @@ cache DeepFilterNet, les clips sont ceux du NAS.
   appliques par juges_watch (seul ecrivain des fiches et des scores).
   Essai reel : Pi en pause a 74,5 C, 4 sons juges par le Mac (10 juges en 1 a
   4 s chacun), aucun juge passe sur le Pi.
+
+## 2026-10-25 (suite) : prise unique du dongle, tous les decodeurs en meme temps (fait)
+
+- lib/prise_unique.py : un seul rtl_fm a 48 kHz par candidat FM etroite ; son
+  flux est copie EN MEME TEMPS vers un dsd-fme par mode utile sur la bande
+  ("-i -" : auto-detection + NXDN/dPMR/M17 selon decodeurs.extra_modes), vers
+  la chaine analogique (ramenee a 22 050 Hz avec un vrai filtre anti-repliement)
+  et vers le son brut garde une seule fois pour les juges. Avant : un decodeur
+  apres l autre, 6 s chacun, dongle rouvert a chaque fois ; l emission etait
+  souvent finie avant le bon decodeur.
+- Verifie avant : "rtl_fm -s 48000 | dsd-fme -i -" donne autant de synchros
+  propres que l entree rtl de dsd-fme (276/280 contre 276/278, relais DMR
+  467,2375 MHz) ; "-s 12500 -r 48000" ne donne rien.
+- Arbitre : le premier decodeur numerique valide prend la parole, meme a une
+  voix FM deja ouverte (la FM s efface) ; synchros vues, la FM attend 2 s avant
+  de s ouvrir ; les autres decodeurs restent a l ecoute en silence, et "juge
+  suivant" passe la parole au suivant sur la meme emission.
+- Essai hors ligne (son brut rejoue en temps reel) : DMR confirme en moins
+  d une seconde, la FM ne s ouvre pas, 38 s de voix decodee, son brut garde
+  comme reference.
+- Interrupteur : touch ~/autopilot/prise_unique_off remet l ancien enchainement.

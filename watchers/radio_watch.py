@@ -42,6 +42,7 @@ import mesure_antenne
 import ignores  # cibles mises de cote par la commande "ignorer" (2026-10-22)
 import maintien  # tenir une ecoute selon l'interet ; "zapper" (2026-10-22)
 import ctcss  # tonalite d'acces des relais, retrouvee dans le son capte (2026-10-23)
+import prise_unique  # un seul rtl_fm, tous les decodeurs en meme temps (2026-10-25)
 import adsb_local_watch
 import aprs_watch
 import balises_watch
@@ -776,17 +777,18 @@ def _chunk_is_signal(chunk_bytes, sample_rate, rnnoise_state, resample_state, sm
     return is_signal, rms, resample_state, smoothed_prob
 
 
-def _dsdfme_stdout_watcher(proc, stats=None):
+def _dsdfme_stdout_watcher(proc, stats=None, etiquette=""):
     """Affiche en continu la sortie texte de dsd-fme (statut de synchro,
     identifiants, etc.) dans les logs -- utile pour comprendre en pratique ce
     qui accroche ou pas, sans avoir a rejouer manuellement. stats (dict) :
-    compte les synchros propres ou en erreur et retient le protocole."""
+    compte les synchros propres ou en erreur et retient le protocole.
+    etiquette : le mode, quand plusieurs dsd-fme ecoutent ensemble (prise unique)."""
     try:
         for raw_line in proc.stdout:
             text = raw_line.decode(errors="replace").strip()
             if not text:
                 continue
-            print(f"[radio_watch] dsd-fme: {text}")
+            print(f"[radio_watch] dsd-fme{etiquette}: {text}")
             if stats is not None:
                 decodeurs.dsd_line(stats, text)  # regles communes avec le mode manuel
     except Exception:
@@ -1081,7 +1083,8 @@ def _dmr_courant(stats):
     return {k: v for k, v in out.items() if v}
 
 
-def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=None, target=None, live=False):
+def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=None, target=None, live=False,
+                             prise=None, port=None, arbitre=None):
     """Tente un decodage vocal numerique (DMR/P25/NXDN/D-STAR/YSF/dPMR/X2-TDMA)
     directement depuis le dongle RTL-SDR via dsd-fme. dsd-fme n'a pas de
     sortie ALSA directe -- on le fait sortir en UDP local (PCM brut, voix
@@ -1093,7 +1096,13 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
     accroche quelque chose -- pas de decode = pas d'envoi). Depuis le
     2026-10-01 : rien n'est joue ni annonce tant que des synchros propres
     n'ont pas confirme le decodage (voir DSD_FME_MIN_CLEAN_SYNC) ; rend alors
-    le nom du protocole (vrai), sinon None."""
+    le nom du protocole (vrai), sinon None.
+
+    Prise unique (2026-10-25, prise/port/arbitre) : dsd-fme lit le flux commun
+    ("-i -") au lieu d'ouvrir le dongle, plusieurs modes ecoutent en meme temps
+    (chacun son port UDP), et seul celui que l'arbitre laisse parler joue ; les
+    autres se taisent et s'arretent. L'ecoute dure tant que la prise est ouverte
+    (une voix FM peut etre suivie de numerique sur le meme canal)."""
     if not DSD_FME_AVAILABLE:
         return False
     sock = None
@@ -1101,33 +1110,47 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
     aplay = None
     brut, stats = None, None
     validated = muted = filtered_out = False
+    port = port or DSD_FME_UDP_PORT
+    live_ouvert = False
     try:
         sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:  # marge si la boucle prend du retard (le tampon principal reste "attente")
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 1 << 20)
         except OSError:
             pass
-        sock.bind((DSD_FME_UDP_HOST, DSD_FME_UDP_PORT))
+        sock.bind((DSD_FME_UDP_HOST, port))
         sock.settimeout(0.5)
 
-        os.makedirs(BRUT_DIR, exist_ok=True)
-        brut = os.path.join(BRUT_DIR, f"{int(freq_hz)}_{mode_flag.lstrip('-')}_{time.strftime('%Y%m%d_%H%M%S')}.wav")
-        proc = subprocess.Popen(
-            ["dsd-fme", mode_flag, "-i", f"rtl:0:{int(freq_hz)}:0:0:12:0:2",
-             "-o", f"udp:{DSD_FME_UDP_HOST}:{DSD_FME_UDP_PORT}", "-6", brut],
-            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        )
+        if prise is not None:  # son brut garde une seule fois, par la prise (_ecoute_prise)
+            proc = subprocess.Popen(
+                ["dsd-fme", mode_flag, "-i", "-", "-s", str(prise_unique.TAUX), "-o", f"udp:{DSD_FME_UDP_HOST}:{port}"],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
+            prise.vers_processus(proc.stdin)
+        else:
+            os.makedirs(BRUT_DIR, exist_ok=True)
+            brut = os.path.join(BRUT_DIR, f"{int(freq_hz)}_{mode_flag.lstrip('-')}_{time.strftime('%Y%m%d_%H%M%S')}.wav")
+            proc = subprocess.Popen(
+                ["dsd-fme", mode_flag, "-i", f"rtl:0:{int(freq_hz)}:0:0:12:0:2",
+                 "-o", f"udp:{DSD_FME_UDP_HOST}:{port}", "-6", brut],
+                stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+            )
         stats = decodeurs.new_stats(freq_hz)  # textes transportes (alias, SMS, GPS) : lib/decodeurs.py
+        if arbitre is not None:
+            arbitre.stats[mode_flag] = stats
         # Reglages de la voix numerique (2026-10-14) : attente de fin et volume
         # propres, ajustes par le bilan (fins coupees) ou a la main ("reglages son").
         digital = _settings(target) if target else {}
         idle_sec = maintien.delai(digital.get("attente_fin_numerique_s") or DSD_FME_IDLE_SEC, target or "dmr", freq_hz)
         gain = 10 ** ((digital.get("gain_numerique_db") or 0.0) / 20)
-        stdout_thread = threading.Thread(target=_dsdfme_stdout_watcher, args=(proc, stats), daemon=True)
+        stdout_thread = threading.Thread(target=_dsdfme_stdout_watcher,
+                                         args=(proc, stats, f" {mode_flag}" if arbitre is not None else ""),
+                                         daemon=True)
         stdout_thread.start()
-        if live:
+        if live and arbitre is None:  # prise unique : annonce seulement par le decodeur qui prend la parole
             try:
                 juge_live.debut(freq_hz, band_label, mode_flag)
+                live_ouvert = True
             except Exception:
                 pass
 
@@ -1147,12 +1170,20 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         muted = False  # appel prive ou chiffre : ni joue ni enregistre (regle utilisateur)
         juge_suivant = False
         dmr_vu = {}
-        try_digital_voice_decode.last_dmr = {}
-        while time.time() < deadline:
+        if arbitre is None:
+            try_digital_voice_decode.last_dmr = {}
+        # Prise unique : tant que la prise est ouverte, on reste a l'ecoute, meme
+        # en silence quand un autre decodeur a la parole ("juge suivant" peut la
+        # lui passer, et une voix FM peut etre suivie de numerique).
+        while (time.time() < deadline
+               or (arbitre is not None and not validated and not filtered_out and prise.ouverte
+                   and not arbitre.termine.is_set())):
             if maintien.zap_depuis(start):
                 print("[radio_watch] zapper : ecoute numerique arretee a la demande")
                 break
-            if live:
+            if arbitre is not None and mode_flag in arbitre.cedes:
+                break  # ecarte par "juge suivant" sur cette ecoute
+            if live and (arbitre is None or validated):
                 acte = juge_live.action_depuis(start)
                 if acte == "suivant":   # ce decodeur n'est pas le bon : au suivant, meme signal
                     try:
@@ -1161,6 +1192,8 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                         pass
                     print(f"[radio_watch] juge suivant : on quitte {mode_flag} a la demande")
                     juge_suivant = True
+                    if arbitre is not None:  # la parole passe a un autre decodeur deja a l'ecoute
+                        arbitre.ceder(mode_flag)
                     break
                 elif acte == "ok":      # c'est le bon decodeur
                     try:
@@ -1169,11 +1202,11 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                         pass
                     print(f"[radio_watch] juge ok : {mode_flag} confirme sur {band_label}")
             courant = _dmr_courant(stats)
-            if courant and courant != dmr_vu:  # qui parle : pour "ignorer" et "verrouiller"
+            if courant and courant != dmr_vu and (arbitre is None or validated):  # qui parle : "ignorer", "verrouiller"
                 dmr_vu = courant
                 try_digital_voice_decode.last_dmr = courant
                 noise_signatures.update_live(dmr=courant)
-                if live:
+                if live_ouvert:
                     try:
                         juge_live.rafraichir(stats.get("protocol"))
                     except Exception:
@@ -1188,8 +1221,20 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
             # Ciblage DMR (lib/dmr_filtres.py) : un groupe ignore ne declenche
             # ni carillon ni annonce, et ne retient pas le scanner.
             if not validated and pending and _dsdfme_validated(stats) and not dmr_filtres.slot_gains(stats)[2]:
+                if not filtered_out and arbitre is not None:
+                    arbitre.prendre(mode_flag, stats["protocol"])  # en silence : la voix FM ne s'ouvre pas dessus
                 filtered_out = True
             if not validated and pending and _dsdfme_validated(stats) and dmr_filtres.slot_gains(stats)[2]:
+                if arbitre is not None:
+                    if not arbitre.prendre(mode_flag, stats["protocol"]):
+                        continue  # un autre decodeur numerique a la parole : on attend en silence
+                    try_digital_voice_decode.last_dmr = dmr_vu
+                    if live:
+                        try:
+                            juge_live.debut(freq_hz, band_label, mode_flag, stats["protocol"])
+                            live_ouvert = True
+                        except Exception:
+                            pass
                 validated = True
                 size = len(pending[0])
                 if size == DSD_FME_STEREO_DATAGRAM:
@@ -1263,7 +1308,8 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
             # (registre), rien n'est joue ; "muet" pour les appelants.
             print(f"[radio_watch] dsd-fme : groupe {(stats.get('dmr') or {}).get('en_cours')} filtre, on passe")
             _dmr_learn(stats)
-            try_digital_voice_decode.last_muted = True
+            if arbitre is None or arbitre.gagnant == mode_flag:
+                try_digital_voice_decode.last_muted = True
             return stats["protocol"] or "numérique"
         if not validated:
             if pending:
@@ -1272,7 +1318,8 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
             return None
 
         _dmr_learn(stats)
-        try_digital_voice_decode.last_muted = muted
+        if arbitre is None or arbitre.gagnant == mode_flag:
+            try_digital_voice_decode.last_muted = muted
         log_session = sound_player.get_recording_session()
         if log_session is not None and captured_chunks and not muted:
             log_session.add_raw_pcm(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, "s16le",
@@ -1298,7 +1345,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 sock.close()
             except Exception:
                 pass
-        if live:
+        if live_ouvert:
             try:
                 juge_live.fin()
             except Exception:
@@ -1481,7 +1528,7 @@ def _rtl_fm_reader(stream, out_queue, chunk_size):
         out_queue.put(None)
 
 
-def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None):
+def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None, prise=None, arbitre=None):
     """Diffuse en direct sur les haut-parleurs tant qu'il y a un vrai signal
     (pas juste du bruit), coupe des que le canal redevient silencieux/bruite
     (avec un court debounce), plafonne a MAX_HOLD_SEC. Pour les canaux FM, tente
@@ -1517,7 +1564,9 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         rtl_fm_cmd = ["rtl_fm", "-f", str(int(freq_hz)), "-M", rtl_fm_mode,
                       "-s", str(sample_rate), "-l", "0", "-E", "dc"]
 
-    rtl_fm = _open_rtl_fm(rtl_fm_cmd)
+    # Prise unique (2026-10-25) : le meme flux que les decodeurs numeriques,
+    # ramene a sample_rate ; sinon rtl_fm a soi, comme avant.
+    rtl_fm = prise.flux(sample_rate) if prise is not None else _open_rtl_fm(rtl_fm_cmd)
 
     chunk_size = int(sample_rate * 2 * ANALYSIS_WINDOW_MS / 1000)
     audio_queue = queue.Queue()
@@ -1604,6 +1653,22 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
                     proc.kill()
         return False
 
+    # Prise unique : une voix FM ne s'ouvre pas sur du numerique. Des synchros
+    # deja vues : on laisse aux decodeurs ATTENTE_NUMERIQUE_SEC pour se confirmer.
+    if arbitre is not None:
+        if arbitre.numerique_en_vue():
+            arbitre.attendre_numerique(ATTENTE_NUMERIQUE_SEC)
+        if not arbitre.prendre("analogique"):
+            print(f"[radio_watch] {mhz:.4f} MHz : voix numerique ({arbitre.protocole}), la FM ne s'ouvre pas")
+            for proc in (rtl_fm, multimon):
+                if proc is not None:
+                    try:
+                        proc.terminate()
+                        proc.wait(timeout=2)
+                    except Exception:
+                        proc.kill()
+            return False
+
     speak_with_lead_sound(INCOMING_SOUND, band_label, label="radio_watch", repetitive=True)
     play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
 
@@ -1667,6 +1732,9 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         while total_bytes < max_bytes and time.time() - start < hold_sec + 5:
             if maintien.zap_depuis(start):
                 print("[radio_watch] zapper : ecoute arretee a la demande")
+                break
+            if arbitre is not None and arbitre.numerique_gagne():
+                print(f"[radio_watch] voix numerique ({arbitre.protocole}) sur le canal : la FM s'efface")
                 break
             # Timeout (pas un .get() bloquant sans limite) : une attente
             # bloquante pure sur Condition.wait() ne se reveille QUE quand la
@@ -1799,6 +1867,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
 
 
 PRELISTEN_MAX_SEC = 6.0   # pre-ecoute silencieuse au plus ; voix reconnue = ouverture aussitot
+ATTENTE_NUMERIQUE_SEC = 2.0  # prise unique : synchros vues, la voix FM attend que le numerique se confirme
 
 
 def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multimon, multimon_queue):
@@ -2139,6 +2208,65 @@ def _numerique_live(freq, band_label, target):
     return None
 
 
+def _ouvrir_prise(freq):
+    """Prise unique sur freq (lib/prise_unique.py), ou None : l'ancien
+    enchainement prend alors le relais."""
+    try:
+        return prise_unique.Prise(_open_rtl_fm(prise_unique.commande(freq)))
+    except Exception as exc:
+        print(f"[radio_watch] prise unique impossible ({exc!r}), ancien enchainement")
+        return None
+
+
+def _ecoute_prise(prise, freq, band_label, target):
+    """Tous les decodeurs sur le meme flux, en meme temps (2026-10-25) : un
+    dsd-fme par mode utile sur la bande (auto-detection + NXDN/dPMR/M17 selon
+    decodeurs.extra_modes) et la voix FM, l'arbitre donnant la parole. Le son
+    brut de toute l'ecoute est garde une fois pour les juges. Rend (protocole
+    numerique entendu ou None, voix FM entendue)."""
+    arbitre = prise_unique.Arbitre()
+    modes = list(dict.fromkeys(["-fa"] + [f for f, _ in decodeurs.extra_modes(freq)]))
+    resultats = {}
+    os.makedirs(BRUT_DIR, exist_ok=True)
+    brut = os.path.join(BRUT_DIR, f"{int(freq)}_prise_{time.strftime('%Y%m%d_%H%M%S')}.wav")
+    arreter_brut = prise.enregistrer(brut)
+
+    def ecouter(i, mode_flag):
+        resultats[mode_flag] = try_digital_voice_decode(freq, mode_flag, band_label, target=target, live=True,
+                                                        prise=prise, port=DSD_FME_UDP_PORT + 1 + i, arbitre=arbitre)
+    fils = {m: threading.Thread(target=ecouter, args=(i, m), daemon=True) for i, m in enumerate(modes)}
+    for f in fils.values():
+        f.start()
+    print(f"[radio_watch] prise unique {freq / 1e6:.4f} MHz : FM + {' '.join(modes)} en meme temps")
+    analogique = False
+    try:
+        analogique = stream_until_quiet(freq, "nfm", band_label, target=target, prise=prise, arbitre=arbitre)
+        if not arbitre.numerique_gagne() and arbitre.numerique_en_vue():
+            arbitre.attendre_numerique(ATTENTE_NUMERIQUE_SEC)  # un decodeur etait sur le point de se confirmer
+        while True:  # le numerique a la parole : il finit de lui-meme au silence
+            gagnant = arbitre.gagnant if arbitre.numerique_gagne() else None
+            if gagnant and fils[gagnant].is_alive():
+                fils[gagnant].join(0.5)
+                continue
+            if not gagnant and arbitre.cedes and arbitre.attendre_numerique(4.0):
+                continue  # "juge suivant" : un autre decodeur reprend la parole
+            break
+    finally:
+        arbitre.termine.set()
+        prise.fermer()
+        for f in fils.values():
+            f.join(timeout=5)
+        arreter_brut()
+    gagnant = arbitre.gagnant if arbitre.numerique_gagne() else None
+    protocol = resultats.get(gagnant) if gagnant else None
+    if protocol == "SUIVANT":
+        protocol = None
+    muet = bool(protocol) and try_digital_voice_decode.last_muted
+    _garder_brut(brut, freq, gagnant or "prise", band_label, arbitre.stats.get(gagnant) or {},
+                 bool(protocol) and not muet, muet)
+    return protocol, bool(analogique) and not gagnant
+
+
 def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     if ignores.frequence_ignoree(freq):
         print(f"[radio_watch] {freq / 1e6:.4f} MHz ignoree (commande ignorer), on passe")
@@ -2163,7 +2291,14 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     global _bruts_candidat
     _bruts_candidat = []
     try:
-        protocol = _numerique_live(freq, band_label, target) if mode == "nfm" else None
+        # Prise unique (2026-10-25) : FM et decodeurs numeriques sur le meme flux,
+        # en meme temps ; sinon (interrupteur, echec) l'ancien enchainement.
+        prise = _ouvrir_prise(freq) if mode == "nfm" and prise_unique.active() else None
+        if prise is not None:
+            try_digital_voice_decode.last_muted = False
+            protocol, entendu_fm = _ecoute_prise(prise, freq, band_label, target)
+        else:
+            protocol = _numerique_live(freq, band_label, target) if mode == "nfm" else None
         if protocol and try_digital_voice_decode.last_muted:  # appel prive ou chiffre : rien n'est garde
             log_session.discard()
             return True
@@ -2176,7 +2311,8 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
                                              "dmr": getattr(try_digital_voice_decode, "last_dmr", {})})
             saved = True
             return True
-        if stream_until_quiet(freq, mode, band_label, target=target):
+        heard = entendu_fm if prise is not None else stream_until_quiet(freq, mode, band_label, target=target)
+        if heard:
             _etiqueter_bruts("analogique")
             if mode == "nfm":  # canal mixte : la suite de la conversation peut venir en DMR (2026-10-24)
                 _noter_mixte(freq)
@@ -2217,8 +2353,9 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
         # et le recalibrage. Si c'etait en fait du numerique (extra ci-dessous),
         # on efface cet extrait : ce n'etait pas un rejet.
         reject_path = log_session.finalize(subdir="rejets")
-        for extra in (decodeurs.extra_modes(freq) if mode == "nfm" else []):
-            # Ecarte comme voix : peut-etre un mode numerique que -fa ne tente pas.
+        for extra in (decodeurs.extra_modes(freq) if mode == "nfm" and prise is None else []):
+            # Ecarte comme voix : peut-etre un mode numerique que -fa ne tente pas
+            # (avec la prise unique, ils ont deja ecoute en meme temps que la FM).
             log_session = radio_log.RadioLogSession(band_label)
             sound_player.set_recording_session(log_session)
             if try_digital_voice_decode(freq, extra[0], band_label, target=target):
