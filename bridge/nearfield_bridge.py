@@ -173,6 +173,12 @@ def capabilities():
         caps.append("voix_mac")
     if os.access(RADIO_DSD, os.X_OK):  # juges du scanner radio (2026-10-25, construire_dsd.sh)
         caps.append("radio_juges")
+    try:  # TETRA : decode en direct le flux rtl_tcp du Pi (2026-10-26, dsd-neo)
+        import tetra_neo
+        if tetra_neo.disponible():
+            caps.append("tetra")
+    except Exception:
+        pass
     return caps
 
 
@@ -283,6 +289,61 @@ def say_to_pi(link, msg):
         link.send({"type": "son_fin", "reponse_a": req, "ok": False, "erreur": repr(exc)[:200]})
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
+
+
+# --- TETRA en direct (2026-10-26) ---------------------------------------------------
+# Le Pi sert son dongle par rtl_tcp pendant une fenetre du scanner et demande
+# "tetra" {id, host, port, freq_hz, gain, secondes} par la liaison ; cette
+# machine decode (dsd-neo -fT, bridge/tetra_neo.py), renvoie l'identite reseau
+# (metadonnees en clair) par "tetra_resultat", et, si une voix EN CLAIR a ete
+# synthetisee, la renvoie d'abord en morceaux "tetra_voix" (PCM 16 bits mono
+# 48 kHz, base64) -- jamais rien de dechiffre. Le Pi ne decode jamais lui-meme.
+TETRA_CHUNK = 36000        # octets PCM par message (ligne < MAX_LINE une fois en base64)
+
+
+def tetra_to_pi(link, msg):
+    import base64
+    import wave
+    import tetra_neo
+    rid = msg.get("id")
+    if not rid:
+        return
+    try:
+        res = tetra_neo.decoder(msg["host"], msg["port"], msg["freq_hz"], msg.get("gain", 32),
+                                msg.get("secondes", 12), ppm=msg.get("ppm", 0))
+    except Exception as exc:
+        link.send({"type": "tetra_resultat", "reponse_a": rid, "ok": False, "erreur": repr(exc)[:200]})
+        return
+    tmp = res.pop("_tmp", None)
+    voix_envoyee = False
+    try:
+        voix = res.get("voix_wav")
+        if voix and os.path.exists(voix):
+            try:
+                with wave.open(voix) as w:
+                    taux = w.getframerate()
+                    if w.getnchannels() == 1 and w.getsampwidth() == 2:
+                        n = 0
+                        while True:
+                            data = w.readframes(TETRA_CHUNK // 2)
+                            if not data:
+                                break
+                            if not link.send({"type": "tetra_voix", "reponse_a": rid, "n": n,
+                                              "taux": taux, "pcm": base64.b64encode(data).decode()}):
+                                break
+                            n += 1
+                        voix_envoyee = n > 0
+            except Exception as exc:
+                log("tetra voix illisible : %r" % exc)
+        link.send({"type": "tetra_resultat", "reponse_a": rid, "ok": bool(res.get("ok")),
+                   "erreur": res.get("erreur"), "reseau": res.get("reseau") or {},
+                   "bsch": res.get("bsch", 0), "sysinfo": res.get("sysinfo", 0),
+                   "enc": res.get("enc") or [], "clair": bool(res.get("clair")),
+                   "mac_resource": res.get("mac_resource", 0), "clip": bool(res.get("clip")),
+                   "voix": voix_envoyee, "resume": tetra_neo.resume_fr(res)})
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
 
 
 _last_locked = {}
@@ -632,6 +693,8 @@ class Link(threading.Thread):
                     _wake_workers(self.pi)
                 elif msg.get("type") == "dire":
                     threading.Thread(target=say_to_pi, args=(self, msg), daemon=True).start()
+                elif msg.get("type") == "tetra":
+                    threading.Thread(target=tetra_to_pi, args=(self, msg), daemon=True).start()
         except (OSError, ValueError) as exc:
             log("%s : liaison coupee (%r)" % (self.pi, exc))
         finally:

@@ -6858,3 +6858,60 @@ cache DeepFilterNet, les clips sont ceux du NAS.
   d une seconde, la FM ne s ouvre pas, 38 s de voix decodee, son brut garde
   comme reference.
 - Interrupteur : touch ~/autopilot/prise_unique_off remet l ancien enchainement.
+
+## 2026-10-26 : TETRA dans le scanner, decode par la machine compagne (fait)
+
+- Objectif : capter le TETRA comme le reste (balayage recurrent + mode manuel),
+  ecoute passive de bonne foi, JAMAIS de dechiffrement. On ne lit que les
+  metadonnees diffusees en clair sur le canal de controle et la voix non
+  chiffree que dsd-neo sait decoder. Motivation : securite/info locale pour
+  l'utilisateur aveugle (voir memoire nearfield-tetra).
+- Decision tranchee en session : le decodage differe par FICHIER I/Q est
+  ABANDONNE. dsd-neo ne decode le TETRA (-fT) que par le pipeline live
+  RTL/rtl_tcp ; ses entrees fichier (.wav/.bin) sont de l'audio demodule, pas
+  de l'I/Q. D'ou l'echec des essais de relecture. L'archi retenue est la
+  FENETRE LIVE : le Pi sert son dongle par rtl_tcp pendant la fenetre, la
+  machine compagne decode en direct, exactement comme les fenetres acars/
+  airband prennent le dongle quelques secondes.
+- Le Pi ne decode JAMAIS le TETRA lui-meme (chaleur) : tout passe par la
+  machine compagne la plus libre (meme systeme d'autodecouverte et de choix par
+  puissance reelle que les autres travaux du pont).
+- Chaine : radio_watch._tetra_window sert `rtl_tcp -a 0.0.0.0 -p 1234`, puis
+  lib/tetra.decoder() -> prise locale /tmp/tetra_pont.sock (compagnon_serveur,
+  service compagnon-watch) -> message signe "tetra" sur la liaison directe ->
+  Mac bridge tetra_to_pi -> bridge/tetra_neo.decoder (dsd-neo -fT -i
+  rtltcp:IP:1234:freq:gain:0:72) -> metadonnees + voix en clair renvoyees
+  signees. Verifie de bout en bout le 2026-10-26 (429,600 MHz, reseau 208-29,
+  CC=21, zone LA=11, 232 synchros BSCH, enc=none donc trafic en clair, pas
+  d'ecretage, aucune voix sur ce passage).
+- Autodecouverte : lib/tetra.py tient un magasin de porteuses (graines connues
+  + decouvertes). Un pic trouve au balayage dans une bande TETRA civile
+  (410-430 / 450-470 MHz ; 380-400 = Tetrapol/INPT exclu) qu'AUCUN decodeur
+  audio/numerique ne sait lire est note comme piste TETRA (radio_watch.
+  _handle_candidate), la fenetre TETRA la sondera. Les confirmees d'abord, une
+  exploration par fenetre.
+- Gain adaptatif par porteuse (prolonge l'anti-saturation d'airband_bridge) :
+  depart 32 (verrou propre a Saint-Etienne sans ecretage) ; BAISSE de 4 quand
+  la machine compagne signale un ecretage (dsd-neo "CLIP"), REMONTE de 2 si
+  rien n'accroche sans ecretage ; borne 12-40. Gain 49 saturait.
+- Mode manuel : accorder une porteuse TETRA (console) arrete le recepteur FM et
+  lance le meme decodage en direct par la machine compagne (annonce de
+  l'identite reseau + voix en clair) ; une fois par accord, re-sonde toutes les
+  30 s si on reste dessus. Les fleches vers une autre frequence reprennent la
+  chaine normale.
+- Fenetre dans la rotation : attention.DATA_WINDOWS["tetra"]=28 s, espacee a
+  3 min (DATA_MIN_INTERVAL), pilotee par le meme systeme d'attention que les
+  autres fenetres de donnees. radio_watch.DATA_SCANNERS["tetra"]=_tetra_window.
+  Sautee proprement si aucune machine compagne connectee ne sait faire "tetra"
+  (on ne chauffe pas le Pi pour rien).
+- Journal/TTS : identite reseau journalisee (metadonnees), voix en clair jouee
+  et ajoutee a la session du journal, via le chemin habituel.
+- Machine compagne : bridge/tetra_neo.py (decodeur + parseur), capacite "tetra"
+  annoncee des que ~/.nearfield-bridge/radio/bin/dsd-neo existe (construire via
+  bridge/construire_dsd_neo.sh, ajoute a bridge/installer.sh). Compatible du
+  renvoi de voix en clair (PCM 16 bits 48 kHz en base64) si dsd-neo en
+  synthetise.
+- Interrupteur : touch ~/autopilot/tetra_off desactive toute la fenetre TETRA.
+- Droit : ecouter la VOIX reste interdit meme en clair (art. 226-15) ; on
+  privilegie les metadonnees. L'utilisateur assume l'ecoute passive de bonne
+  foi (licence radioamateur en cours). Aucun dechiffrement, ici comme ailleurs.

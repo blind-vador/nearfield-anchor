@@ -43,7 +43,7 @@ fi
 
 echo "-- module compagnon : fichiers --"
 mkdir -p "$DEST/bin" "$BUILD"
-cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/puissance.py" "$HERE/juges_radio.py" "$HERE/lora_decode.py" "$HERE/decrire_images.py" \
+cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/puissance.py" "$HERE/juges_radio.py" "$HERE/tetra_neo.py" "$HERE/lora_decode.py" "$HERE/decrire_images.py" \
     "$HERE/voix_piper.py" "$HERE/voix_piper_worker.py" "$DEST/"
 
 echo "-- numpy, cryptography, cmake --"
@@ -127,6 +127,8 @@ fi
 
 echo "-- dsd-fme (juges du scanner radio) --"
 bash "$HERE/construire_dsd.sh"
+# dsd-neo : decodeur TETRA pour la capacite "tetra" (2026-10-26)
+bash "$HERE/construire_dsd_neo.sh"
 rm -rf "$BUILD"
 
 echo "-- service --"

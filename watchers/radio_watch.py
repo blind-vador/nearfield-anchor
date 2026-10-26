@@ -43,6 +43,7 @@ import ignores  # cibles mises de cote par la commande "ignorer" (2026-10-22)
 import maintien  # tenir une ecoute selon l'interet ; "zapper" (2026-10-22)
 import ctcss  # tonalite d'acces des relais, retrouvee dans le son capte (2026-10-23)
 import prise_unique  # un seul rtl_fm, tous les decodeurs en meme temps (2026-10-25)
+import tetra  # TETRA confie a la machine compagne (2026-10-26) ; le Pi ne decode pas
 import adsb_local_watch
 import aprs_watch
 import balises_watch
@@ -1954,7 +1955,7 @@ WINDOW_GRACE_SEC = 120
 # Seuls les programmes qui tiennent la cle sont arretes (jamais la voix) : le
 # reste de la chaine (sox, decodeurs, multimon-ng) se termine faute d'entree.
 DONGLE_PROGRAMS = ("rtl_sdr", "rtl_fm", "rtl_433", "rtl_airband", "dump1090", "dumpvdl2", "acarsdec", "dec406",
-                   "welle-cli")
+                   "welle-cli", "rtl_tcp")
 _window = {"nom": None, "fin": 0.0}
 
 
@@ -2020,6 +2021,209 @@ def _guarded(name, scan):
     return run
 
 
+# --- Fenetre TETRA (2026-10-26) --------------------------------------------------
+# Le TETRA (pi/4-DQPSK) demande de l'I/Q brut, que le Pi ne sait pas decoder
+# sans chauffer. Dans sa fenetre, le Pi SERT son dongle par rtl_tcp et la
+# machine compagne la plus libre decode en direct (lib/tetra.py ->
+# compagnon_serveur -> bridge/tetra_neo). Comme les fenetres acars/airband
+# prennent le dongle quelques secondes, celle-ci le prend le temps de sonder
+# une ou deux porteuses. Sans machine compagne connectee capable : fenetre
+# sautee (on ne chauffe pas le Pi pour rien). Ecoute passive, metadonnees en
+# clair + voix non chiffree uniquement -- jamais de dechiffrement.
+TETRA_RTL_TCP_PORT = 1234
+TETRA_SECONDES = 14          # par porteuse : large de quoi verrouiller + guetter la voix
+
+
+def _tetra_compagnon_present():
+    try:
+        import compagnon
+        return any("tetra" in (c.get("capacites") or []) and c.get("presente")
+                   for c in compagnon.companions())
+    except Exception as exc:
+        print(f"[radio_watch] TETRA, machines compagnes illisibles : {exc!r}")
+        return False
+
+
+def _jouer_wav(path):
+    """Joue un wav (voix TETRA en clair, 48 kHz) sur la sortie son du scanner."""
+    try:
+        subprocess.run(["aplay", "-q", "-D", AUDIO_DEVICE, path], timeout=60,
+                       stderr=subprocess.DEVNULL)
+    except Exception as exc:
+        print(f"[radio_watch] lecture voix TETRA : {exc!r}")
+
+
+def _annonce_tetra(freq_hz, res):
+    """Journalise l'identite reseau TETRA (metadonnees en clair) et joue la voix
+    en clair si la machine compagne en a decode. Meme encadrement sonore que les
+    autres receptions."""
+    lock = audio_lock.acquire()
+    log_session = radio_log.RadioLogSession(dire("tetra.libelle"))
+    sound_player.set_recording_session(log_session)
+    saved = False
+    try:
+        resume = res.get("resume") or dire("tetra.recu")
+        play_sound_effect(DMR_VOCAL_SOUND, label="radio_watch")
+        speak(resume)
+        play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
+        voix = res.get("voix_wav")
+        if voix and os.path.exists(voix):
+            log_session.add_audio_file(voix)
+            _jouer_wav(voix)
+        play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
+        path = log_session.finalize()
+        noise_signatures.record_capture("tetra", freq_hz, "tetra", "TETRA", None, path, None,
+                                        {"tetra": {"reseau": res.get("reseau"), "enc": res.get("enc"),
+                                                   "clair": res.get("clair"), "bsch": res.get("bsch"),
+                                                   "voix": bool(voix), "machine": res.get("machine")}})
+        saved = True
+        print(f"[radio_watch] TETRA {freq_hz / 1e6:.4f} MHz : {resume}"
+              + (" + voix en clair" if voix else ""))
+    except Exception as exc:
+        print(f"[radio_watch] annonce TETRA : {exc!r}")
+    finally:
+        sound_player.set_recording_session(None)
+        audio_lock.release(lock)
+        if saved and lock.silent:
+            journal_notice()
+
+
+_tetra_manuel_etat = {"freq": None, "quand": 0.0}
+
+
+def _tetra_gain_de(freq_hz):
+    for p in tetra.porteuses():
+        if abs(p["freq_hz"] - freq_hz) <= tetra.TOLERANCE_HZ:
+            return p.get("gain", tetra.GAIN_DEFAUT)
+    return tetra.GAIN_DEFAUT
+
+
+def _tetra_manuel(manual):
+    """Mode manuel sur une porteuse TETRA : un decodage en direct par la machine
+    compagne (annonce de l'identite reseau + voix en clair), une fois par accord
+    (re-sonde toutes les 30 s si on reste dessus). Rend True si la frequence est
+    TETRA (prise en charge ici au lieu de rtl_fm). L'appelant a deja arrete le
+    recepteur manuel : pas de rtl_fm en meme temps que rtl_tcp."""
+    freq = manual["freq_hz"]
+    if not (tetra.active() and tetra.est_tetra(freq)):
+        return False
+    import manual_tuner
+    if _tetra_manuel_etat["freq"] == freq and time.time() - _tetra_manuel_etat["quand"] < 30:
+        return True
+    _tetra_manuel_etat.update(freq=freq, quand=time.time())
+    if not _tetra_compagnon_present():
+        manual_tuner.event(dire("tetra.pas_de_machine"))
+        return True
+    manual_tuner.event(dire("tetra.ecoute", mhz=format(freq / 1e6, ".4f").replace(".", ",")))
+    try:
+        import compagnon
+        host = compagnon._local_ip()
+    except Exception:
+        host = None
+    try:
+        proc = subprocess.Popen(["rtl_tcp", "-a", "0.0.0.0", "-p", str(TETRA_RTL_TCP_PORT)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as exc:
+        print(f"[radio_watch] rtl_tcp (TETRA manuel) impossible : {exc!r}")
+        return True
+    try:
+        time.sleep(2.0)
+        if proc.poll() is not None:
+            manual_tuner.event(dire("tetra.echec"))
+            return True
+        res = tetra.decoder(freq, _tetra_gain_de(freq), TETRA_SECONDES, host=host, port=TETRA_RTL_TCP_PORT)
+        tmp = res.pop("_tmp", None)
+        try:
+            tetra.noter(freq, res)
+            if res.get("ok") and res.get("bsch"):
+                _annonce_tetra(freq, res)
+            elif res.get("ok"):
+                manual_tuner.event(dire("tetra.rien"))
+            else:
+                manual_tuner.event(dire("tetra.echec"))
+        finally:
+            if tmp:
+                import shutil
+                shutil.rmtree(tmp, ignore_errors=True)
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return True
+
+
+def _tetra_window(dwell_sec=TETRA_SECONDES * 2):
+    """Sonde une ou deux porteuses TETRA via la machine compagne (le Pi sert
+    rtl_tcp). Autodecouverte : porteuses confirmees d'abord, puis exploration.
+    Rend True si une synchro reseau a ete vue."""
+    if not tetra.active():
+        return False
+    if not _tetra_compagnon_present():
+        print("[radio_watch] fenetre TETRA sautee : aucune machine compagne connectee pour le TETRA")
+        return False
+    cands = tetra.candidats(2)
+    if not cands:
+        return False
+    try:
+        import compagnon
+        host = compagnon._local_ip()
+    except Exception:
+        host = None
+    try:
+        proc = subprocess.Popen(["rtl_tcp", "-a", "0.0.0.0", "-p", str(TETRA_RTL_TCP_PORT)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as exc:
+        print(f"[radio_watch] rtl_tcp (TETRA) impossible : {exc!r}")
+        return False
+    hit = False
+    try:
+        time.sleep(2.0)  # rtl_tcp pret a servir
+        if proc.poll() is not None:
+            print("[radio_watch] rtl_tcp (TETRA) s'est arrete tout de suite (dongle occupe ?)")
+            return False
+        reste = float(dwell_sec or TETRA_SECONDES * 2)
+        for freq, gain in cands:
+            sec = int(min(TETRA_SECONDES, max(6, reste)))
+            if sec < 6:
+                break
+            res = tetra.decoder(freq, gain, sec, host=host, port=TETRA_RTL_TCP_PORT)
+            reste -= sec + 2
+            tmp = res.pop("_tmp", None)
+            try:
+                if not res.get("ok"):
+                    if res.get("erreur"):
+                        print(f"[radio_watch] TETRA {freq / 1e6:.4f} MHz : {res['erreur']}")
+                    tetra.noter(freq, res)
+                    if "compagne" in (res.get("erreur") or ""):
+                        break  # plus de machine : inutile d'insister cette fenetre
+                    continue
+                tetra.noter(freq, res)
+                if res.get("bsch"):
+                    hit = True
+                    _annonce_tetra(freq, res)
+            finally:
+                if tmp:
+                    import shutil
+                    shutil.rmtree(tmp, ignore_errors=True)
+            if reste < 6:
+                break
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    return hit
+
+
 DATA_SCANNERS = {name: _guarded(name, scan) for name, scan in {
     "acars": acars_watch.scan_window,
     "vdl2": vdl2_watch.scan_window,
@@ -2032,6 +2236,7 @@ DATA_SCANNERS = {name: _guarded(name, scan) for name, scan in {
     "sondes": sondes_watch.scan_window,
     "lora": lora_watch.scan_window,
     "dab": dab_watch.scan_window,
+    "tetra": _tetra_window,
 }.items()}
 
 
@@ -2373,6 +2578,17 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
                 return True
             log_session.discard()
         print("[radio_watch] candidat ecarte (bruit, pas de signal reel)")
+        # Autodecouverte TETRA (2026-10-26) : un pic dans une bande TETRA que
+        # AUCUN decodeur audio/numerique n'a su lire est peut-etre une porteuse
+        # TETRA (pi/4-DQPSK, inaudible en FM). On la note comme piste a sonder
+        # par la fenetre TETRA (la machine compagne tranchera), sans chauffer le
+        # Pi ici. Meme logique de decouverte que le reste du scanner.
+        if mode == "nfm" and tetra.active() and tetra.dans_bande(freq):
+            try:
+                if tetra.decouvrir(freq):
+                    print(f"[radio_watch] {freq / 1e6:.4f} MHz : piste TETRA notee (fenetre TETRA)")
+            except Exception as exc:
+                print(f"[radio_watch] piste TETRA non notee : {exc!r}")
         _etiqueter_bruts("rejet")
         if reject_path:  # extrait garde pour le journal des rejets
             try:
@@ -2847,6 +3063,17 @@ def main():
             if current_lock_key != "manuel":
                 print("[radio_watch] mode manuel")
                 current_lock_key = "manuel"
+            # Porteuse TETRA accordee a la main (2026-10-26) : on arrete le
+            # recepteur FM (pas de rtl_fm en meme temps que rtl_tcp) et la
+            # machine compagne decode en direct -- meme fonctionnement que le
+            # balayage, mais a la demande. Les fleches vers une autre frequence
+            # reprennent la chaine normale.
+            if tetra.active() and tetra.est_tetra(manual["freq_hz"]):
+                manual_stream.stop()
+                _tetra_manuel(manual)
+                manual_pending = (None, 0.0)
+                time.sleep(0.1)
+                continue
             # Defilement rapide aux fleches : on attend que la frequence ne
             # bouge plus depuis MANUAL_SETTLE_SEC avant de relancer rtl_fm.
             wanted = (manual["freq_hz"], manual["mode"], manual.get("filter", False), manual.get("target"),

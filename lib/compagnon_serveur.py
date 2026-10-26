@@ -24,8 +24,10 @@ import uuid
 import json
 import os
 import socketserver
+import tempfile
 import threading
 import time
+import wave
 
 import compagnon
 import compagnon_resultats
@@ -42,6 +44,8 @@ READ_TIMEOUT_SEC = 120
 VOIX_MAC_SOCKET = "/tmp/voix_mac.sock"
 VOIX_MAC_DELAI_SEC = 15      # premier morceau
 VOIX_MAC_ENTRE_SEC = 10      # entre deux morceaux
+TETRA_SOCKET = "/tmp/tetra_pont.sock"   # radio_watch demande un decodage TETRA en direct
+TETRA_DELAI_SEC = 90         # le decodage dure "secondes" + marge reseau/demarrage
 
 _lock = threading.Lock()
 _channels = {}  # id -> Channel
@@ -49,6 +53,7 @@ _presence = {}  # id -> {depuis, vu}
 _notified = {}  # travail -> heure du dernier avis ou reveil
 _results_ready = threading.Event()
 _demandes_voix = {}  # id de "dire" -> queue des morceaux recus
+_demandes_tetra = {}  # id de "tetra" -> queue (voix + resultat recus)
 
 
 def _save_presence():
@@ -145,6 +150,10 @@ class _Handler(socketserver.StreamRequestHandler):
                     compagnon.note_power(cid, msg.get("puissance"))
                 elif kind in ("son", "son_fin"):
                     file = _demandes_voix.get(msg.get("reponse_a"))
+                    if file is not None:
+                        file.put(msg)
+                elif kind in ("tetra_voix", "tetra_resultat"):
+                    file = _demandes_tetra.get(msg.get("reponse_a"))
                     if file is not None:
                         file.put(msg)
                 elif kind == "pris":
@@ -379,8 +388,104 @@ def _serveur_voix_mac():
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
+class _TetraMac(socketserver.StreamRequestHandler):
+    """Decodage TETRA en direct demande par radio_watch (qui sert deja le
+    dongle par rtl_tcp). On choisit la machine compagne connectee la plus libre
+    capable de "tetra", on lui transmet la demande par la liaison, on recupere
+    l'eventuelle voix EN CLAIR (ecrite dans un wav temporaire) et les
+    metadonnees reseau, puis on rend une ligne JSON a radio_watch. Jamais rien
+    de dechiffre : on relaie seulement ce que la machine compagne a decode."""
+
+    def handle(self):
+        try:
+            req = json.loads(self.rfile.readline(65536) or b"{}")
+        except ValueError:
+            return
+        if not req.get("freq_hz"):
+            self._rendre({"ok": False, "erreur": "demande invalide"})
+            return
+        with _lock:
+            able = [(cid, ch) for cid, ch in _channels.items()
+                    if "tetra" in ((compagnon.trusted().get(cid) or {}).get("capacites") or [])]
+        if not able:
+            self._rendre({"ok": False, "erreur": "aucune machine compagne pour le tetra"})
+            return
+        ordre = [c["id"] for c in compagnon.rank("tetra")]      # la plus libre d'abord
+        able.sort(key=lambda t: ordre.index(t[0]) if t[0] in ordre else 99)
+        cid, channel = able[0]
+        rid = uuid.uuid4().hex
+        file = queue.Queue()
+        _demandes_tetra[rid] = file
+        tmp = tempfile.mkdtemp(prefix="tetra_pi_")
+        wav = os.path.join(tmp, "voix.wav")
+        wout = None
+        handed = False
+        secondes = int(req.get("secondes", 12))
+        try:
+            channel.send({"type": "tetra", "id": rid,
+                          "host": req.get("host") or compagnon._local_ip(),
+                          "port": int(req.get("port", 1234)), "freq_hz": int(req["freq_hz"]),
+                          "gain": req.get("gain", 32), "secondes": secondes, "ppm": req.get("ppm", 0)})
+            delai = secondes + 30
+            while True:
+                msg = file.get(timeout=delai)
+                if msg.get("type") == "tetra_voix":
+                    if wout is None:
+                        wout = wave.open(wav, "wb")
+                        wout.setnchannels(1)
+                        wout.setsampwidth(2)
+                        wout.setframerate(msg.get("taux", 48000))
+                    wout.writeframes(base64.b64decode(msg.get("pcm") or ""))
+                    delai = TETRA_DELAI_SEC
+                elif msg.get("type") == "tetra_resultat":
+                    if wout is not None:
+                        wout.close()
+                        wout = None
+                    res = {k: msg.get(k) for k in ("ok", "erreur", "reseau", "bsch", "sysinfo",
+                                                   "enc", "clair", "mac_resource", "clip", "voix", "resume")}
+                    res["voix_wav"] = wav if (msg.get("voix") and os.path.exists(wav)) else None
+                    res["machine"] = (compagnon.trusted().get(cid) or {}).get("nom")
+                    res["_tmp"] = tmp
+                    handed = True
+                    self._rendre(res)
+                    return
+        except queue.Empty:
+            self._rendre({"ok": False, "erreur": "pas de reponse de la machine compagne"})
+        except (OSError, ValueError) as exc:
+            self._rendre({"ok": False, "erreur": repr(exc)[:200]})
+        finally:
+            _demandes_tetra.pop(rid, None)
+            if wout is not None:
+                try:
+                    wout.close()
+                except Exception:
+                    pass
+            if not handed:
+                import shutil
+                shutil.rmtree(tmp, ignore_errors=True)
+
+    def _rendre(self, data):
+        try:
+            self.wfile.write((json.dumps(data) + "\n").encode())
+            self.wfile.flush()
+        except OSError:
+            pass
+
+
+def _serveur_tetra():
+    try:
+        os.remove(TETRA_SOCKET)
+    except OSError:
+        pass
+    socketserver.ThreadingUnixStreamServer.daemon_threads = True
+    server = socketserver.ThreadingUnixStreamServer(TETRA_SOCKET, _TetraMac)
+    os.chmod(TETRA_SOCKET, 0o600)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
 def run():
     _serveur_voix_mac()
+    _serveur_tetra()
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     server = socketserver.ThreadingTCPServer(("0.0.0.0", proto.PORT), _Handler)
     server.daemon_threads = True

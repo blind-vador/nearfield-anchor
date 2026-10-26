@@ -52,14 +52,18 @@ ACARS_BASE_DWELL = 30
 # sequence) : cible -> duree d'ecoute de base. Voir radio_watch.DATA_SCANNERS.
 DATA_WINDOWS = {"acars": ACARS_BASE_DWELL, "vdl2": 25, "aprs": 30, "capteurs": 30,
                 "pagers": 30, "adsb": 30, "balises": 55, "sondes": 45, "lora": 30, "dab": 45,
-                "dmr": 20}  # veille des frequences DMR captees (radio_watch._dmr_window, 2026-10-07)
+                "dmr": 20,  # veille des frequences DMR captees (radio_watch._dmr_window, 2026-10-07)
+                "tetra": 28}  # porteuses TETRA via la machine compagne (radio_watch._tetra_window, 2026-10-26)
 DATA_LABELS = Etiquettes("attention.donnees", {"acars": "ACARS", "vdl2": "VDL2", "aprs": "APRS", "capteurs": "capteurs sans fil",
                "pagers": "pagers 466", "adsb": "avions en direct", "balises": "balises de détresse",
                "sondes": "ballons-sondes", "lora": "LoRa et Meshtastic", "dab": "radio numérique DAB+",
-               "dmr": "veille DMR"},
+               "dmr": "veille DMR", "tetra": "TETRA"},
                          "nom d'une fenêtre d'écoute de données")
 # Fenetres espacees : pas plus d'une visite par intervalle (sauf si ca pique).
-DATA_MIN_INTERVAL = {"balises": 900, "adsb": 240, "atis": 1200}  # ATIS change ~toutes les 30 min
+# TETRA (2026-10-26) : prend le dongle en entier et mobilise la machine
+# compagne -- espace a 3 min, l'identite reseau change peu (la voix, elle, est
+# guettee a chaque passage).
+DATA_MIN_INTERVAL = {"balises": 900, "adsb": 240, "atis": 1200, "tetra": 180}
 
 
 # --- etat partage (scanner + console), ecritures sous verrou ---
