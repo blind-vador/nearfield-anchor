@@ -1,6 +1,7 @@
 import audioop
 import os
 import subprocess
+import threading
 import time
 
 import audio_lock
@@ -19,23 +20,40 @@ EFFECT_CHANNELS = 2
 AUDIO_DEVICE = "default"
 
 # Session d'enregistrement active (voir radio_log.py) -- si definie, tout
-# son joue via play_sound_effect() y est aussi copie. Global simple (pas
-# de contextvar) : audio_lock garantit deja qu'un seul appelant utilise le
-# peripherique audio a la fois dans tout le projet, donc pas de risque de
-# melange entre sessions concurrentes. N'importe quel objet exposant une
-# methode add_audio_file(path) convient -- pas de dependance directe sur
+# son joue via play_sound_effect() y est aussi copie. N'importe quel objet
+# exposant add_audio_file(path) convient -- pas de dependance directe sur
 # radio_log.py ici, pour ne pas coupler ce module generique a une
 # fonctionnalite radio-specifique.
-_active_recording_session = None
+#
+# Rattachee au TICKET audio_lock de l'appelant (2026-10-26). Avant, un global
+# unique partait du principe qu'audio_lock serialisait les sons ; depuis que
+# l'arbitre ATTENUE au lieu de serialiser (2026-10-17), plusieurs flux jouent
+# EN MEME TEMPS dans un meme processus -- typiquement la boucle de veille qui
+# capte (TETRA, DMR...) et un fil d'annonce ACARS/avion en arriere-plan. Le
+# global melangeait alors les prises : l'annonce asynchrone se greffait dans
+# l'enregistrement en cours, et le set(None) de l'un coupait l'enregistrement
+# de l'autre (trafic capte jamais entendu, signale par l'utilisateur le
+# 2026-10-26). Rattachee au ticket, chaque prise est isolee ; play_lead_then
+# propage deja le ticket a son fil (le jingle reste dans la bonne prise).
+# Repli thread-local si aucun ticket (meme comportement qu'avant pour un
+# appelant mono-fil sans verrou).
+_local = threading.local()
 
 
 def set_recording_session(session):
-    global _active_recording_session
-    _active_recording_session = session
+    ticket = audio_lock.ticket_courant()
+    if ticket is not None:
+        ticket.recording_session = session
+    _local.session = session
 
 
 def get_recording_session():
-    return _active_recording_session
+    ticket = audio_lock.ticket_courant()
+    if ticket is not None:
+        # Ticket present = flux identifie, il fait autorite : pas de repli
+        # thread-local (sinon un flux sans prise verrait celle d'un autre).
+        return getattr(ticket, "recording_session", None)
+    return getattr(_local, "session", None)
 
 
 # Jingle puis voix (2026-10-19) : la voix part juste apres la derniere note du
@@ -118,8 +136,9 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
         # Muet (journal ouvert, source qui a cede sa place) : rien sur les
         # haut-parleurs, mais l'enregistrement du journal garde son carillon
         # (2026-10-03 : des prises sans habillage dans le journal).
-        if _active_recording_session is not None:
-            _active_recording_session.add_audio_file(path)
+        session = get_recording_session()
+        if session is not None:
+            session.add_audio_file(path)
         return
     reverb_tmp = None
     if reverb:
@@ -154,8 +173,10 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
         if decoder.returncode != 0:
             err = decoder.stderr.read().decode(errors="replace").strip()[-300:]
             print(f"[{label}] effet sonore echoue ({path}): {err}")
-        elif _active_recording_session is not None:
-            _active_recording_session.add_audio_file(path)
+        else:
+            session = get_recording_session()
+            if session is not None:
+                session.add_audio_file(path)
     except Exception as exc:
         print(f"[{label}] effet sonore indisponible ({path}): {exc}")
     finally:

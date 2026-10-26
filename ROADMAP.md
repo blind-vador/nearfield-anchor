@@ -6915,3 +6915,42 @@ cache DeepFilterNet, les clips sont ceux du NAS.
 - Droit : ecouter la VOIX reste interdit meme en clair (art. 226-15) ; on
   privilegie les metadonnees. L'utilisateur assume l'ecoute passive de bonne
   foi (licence radioamateur en cours). Aucun dechiffrement, ici comme ailleurs.
+
+## 2026-10-26 : prise d'enregistrement liee au ticket audio (fin de contamination entre flux)
+
+Signale par l'utilisateur : une annonce ACARS/avion se greffait au milieu d'une
+annonce/capture TETRA, et le trafic capte n'etait pas entendu (remis en tampon et
+rejoue a la place) ; impression que DMR ouvrait/coupait sans rien enregistrer.
+
+Cause : depuis que l'arbitre audio ATTENUE au lieu de serialiser (2026-10-17),
+plusieurs flux jouent EN MEME TEMPS dans radio_watch (boucle de veille qui capte +
+fils d'annonce vdl2/acars/aprs/avion en arriere-plan). sound_player tenait la
+session d'enregistrement dans UN global unique : l'annonce asynchrone se greffait
+dans la prise en cours et le set(None) de l'un coupait l'enregistrement de l'autre.
+
+Correctif : session d'enregistrement rattachee au TICKET audio_lock de l'appelant
+(lib/sound_player.py), avec repli thread-local si aucun ticket. play_lead_then
+propage deja le ticket a son fil, donc le jingle reste dans la bonne prise. La voix
+TETRA en clair passe desormais par play_sound_effect (arbitre : attenuation +
+enregistrement propres) au lieu d'un aplay brut a plein volume. Verifie en direct
+(fenetre TETRA 429,6250 MHz propre malgre une annonce avion a +1 s) et par test
+d'isolation inter-fils.
+
+## 2026-10-26 : fin des micro-ouvertures FM sur les relais DMR au repos
+
+Signale par l'utilisateur : sur le DMR, carillon + annonce de bande + ouverture,
+puis ~1 s de silence et fermeture, rien d'audible. Observe en direct sur le relais
+DMR 467,2375 MHz emettant en IDLE (synchro DMR continue, aucune voix).
+
+Cause (regression de la prise unique du 2026-10-25) : FM et dsd-fme ecoutent le
+meme flux en meme temps. Sur un relais DMR keye mais au repos, dsd-fme voit la
+synchro mais ne decode aucune voix, donc ne gagne jamais l'arbitre ; la pre-ecoute
+FM (RNNoise) se declenchait sur le souffle du DMR demodule en FM et ouvrait la
+ceremonie, qui ne diffusait que du silence.
+
+Correctif (watchers/radio_watch.py, stream_until_quiet) : si un decodeur a une
+synchro NUMERIQUE validee (_dsdfme_validated, seuil projet), la FM ne s'ouvre pas,
+meme sans voix decodee (IDLE, donnees, appel prive/chiffre). DMR et FM d'un canal
+mixte n'etant jamais emis au meme instant, une vraie voix FM (aucune synchro a cet
+instant) s'ouvre toujours. Decision verifiee par test unitaire (DMR IDLE bloque,
+souffle/synchro isolee ouvre, voix numerique bloque).

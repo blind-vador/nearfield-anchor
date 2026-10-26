@@ -1659,8 +1659,22 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     if arbitre is not None:
         if arbitre.numerique_en_vue():
             arbitre.attendre_numerique(ATTENTE_NUMERIQUE_SEC)
-        if not arbitre.prendre("analogique"):
-            print(f"[radio_watch] {mhz:.4f} MHz : voix numerique ({arbitre.protocole}), la FM ne s'ouvre pas")
+        # Signal CONFIRME numerique (synchros validees sur un mode) : ce n'est
+        # pas de la voix FM, meme si aucune voix n'a ete decodee -- relais DMR
+        # au repos ("IDLE"), donnees, appel prive/chiffre. Sans ca, la
+        # pre-ecoute se declenchait parfois sur le souffle d'un relais DMR
+        # demodule en FM et ouvrait une "micro-ouverture" muette (carillon +
+        # annonce de bande + silence d'une seconde + fermeture, rien d'audible ;
+        # signale le 2026-10-26). DMR et FM d'un canal mixte ne sont jamais
+        # emis au meme instant : une vraie voix FM (aucune synchro numerique a
+        # cet instant) continue donc de s'ouvrir normalement.
+        numerique = (arbitre.numerique_gagne()
+                     or any(_dsdfme_validated(s) for s in arbitre.stats.values()))
+        if numerique or not arbitre.prendre("analogique"):
+            if arbitre.numerique_gagne():
+                print(f"[radio_watch] {mhz:.4f} MHz : voix numerique ({arbitre.protocole}), la FM ne s'ouvre pas")
+            else:
+                print(f"[radio_watch] {mhz:.4f} MHz : signal numerique sans voix (IDLE/donnees/chiffre), la FM ne s'ouvre pas")
             for proc in (rtl_fm, multimon):
                 if proc is not None:
                     try:
@@ -2044,15 +2058,6 @@ def _tetra_compagnon_present():
         return False
 
 
-def _jouer_wav(path):
-    """Joue un wav (voix TETRA en clair, 48 kHz) sur la sortie son du scanner."""
-    try:
-        subprocess.run(["aplay", "-q", "-D", AUDIO_DEVICE, path], timeout=60,
-                       stderr=subprocess.DEVNULL)
-    except Exception as exc:
-        print(f"[radio_watch] lecture voix TETRA : {exc!r}")
-
-
 def _annonce_tetra(freq_hz, res):
     """Journalise l'identite reseau TETRA (metadonnees en clair) et joue la voix
     en clair si la machine compagne en a decode. Meme encadrement sonore que les
@@ -2068,8 +2073,10 @@ def _annonce_tetra(freq_hz, res):
         play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
         voix = res.get("voix_wav")
         if voix and os.path.exists(voix):
-            log_session.add_audio_file(voix)
-            _jouer_wav(voix)
+            # Par l'arbitre (play_sound_effect) : la voix s'attenue sous une
+            # source plus prioritaire et est enregistree dans la prise du
+            # ticket courant -- plus d'aplay brut a plein volume.
+            play_sound_effect(voix, timeout_sec=60, label="radio_watch")
         play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
         path = log_session.finalize()
         noise_signatures.record_capture("tetra", freq_hz, "tetra", "TETRA", None, path, None,
