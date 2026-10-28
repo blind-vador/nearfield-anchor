@@ -9,3 +9,7 @@ config/credentials.py
 # Snapshots manuels avant edition (gardes sur disque, hors git)
 *.bak-*
 *.bak
+
+# Artefact de build RNNoise (compile par install.sh, jamais commite)
+lib/rnnoise_lib/*.so
+lib/rnnoise_lib/*.dylib

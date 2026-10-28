@@ -1,3 +1,4 @@
+import os
 import queue
 import select
 import socket
@@ -29,7 +30,19 @@ from sound_paths import RADIO_SCANER_DIR
 # l'ancien mecanisme dans radio_watch.py -- migration hybride assumee, pas un
 # remplacement complet. Voir ROADMAP.md (session RTLSDR-Airband, 2026-08-30).
 
-AIRBAND_BIN = "/home/vador/autopilot/pi_console/rtl_airband/src/build/src/rtl_airband"
+# Binaire RTLSDR-Airband (artefact de build pose par install.sh). Cherche dans
+# l'ordre : variable d'environnement, emplacement stable hors pi_console (apres
+# migration vers le depot source unique, axe 4), puis l'ancien emplacement a
+# plat. Un chemin absent est ignore -- le repli garde l'ancien comportement
+# tant que le build n'a pas ete deplace.
+AIRBAND_BIN = next(
+    (p for p in (
+        os.environ.get("AIRBAND_BIN"),
+        "/home/vador/autopilot/rtl_airband/src/build/src/rtl_airband",
+        "/home/vador/autopilot/pi_console/rtl_airband/src/build/src/rtl_airband",
+    ) if p and os.path.exists(p)),
+    "/home/vador/autopilot/pi_console/rtl_airband/src/build/src/rtl_airband",
+)
 AIRBAND_CONFIG_DIR = "/tmp"
 AIRBAND_SAMPLE_RATE_HZ = 16000  # WAVE_RATE avec NFM=ON : PCM mono flottant 32 bits
 AIRBAND_STARTUP_WAIT_SEC = 3.0  # laisse le tuner verrouiller et le squelch calibrer son plancher de bruit avant d'ecouter
