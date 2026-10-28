@@ -721,6 +721,54 @@ def sweep_band_peak_relative(low_hz, high_hz, step_hz, margin_db=None):
             os.remove(tmp_path)
 
 
+SWEEP_MAX_PEAKS = 6   # pics retenus par passe de balayage large : on explore toute la bande, pas seulement son pic le plus fort (doctrine)
+
+
+def sweep_band_peaks_relative(low_hz, high_hz, step_hz, margin_db=None, max_peaks=SWEEP_MAX_PEAKS):
+    """Comme sweep_band_peak_relative, mais rend la LISTE des pics qui depassent
+    plancher+marge (du plus fort au plus faible, dedupliques : un meme signal
+    s'etale sur quelques bins voisins). Une bande large n'est donc plus reduite
+    a son seul pic le plus fort -- on explore toute la bande, passe apres passe
+    (doctrine : on balaie tout, on ne vise rien). Liste vide si rien ne depasse."""
+    if margin_db is None:
+        margin_db = NOISE_MARGIN_DB
+    tmp_path = None
+    try:
+        fd, tmp_path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        band = f"{low_hz}:{high_hz}:{step_hz}"
+        result = subprocess.run(
+            ["rtl_power", "-f", band, "-i", "1", "-1", tmp_path],
+            capture_output=True, text=True, errors="replace", timeout=60,
+        )
+        global _rtl_power_failure_count
+        if result.returncode != 0:
+            _rtl_power_failure_count += 1
+            print(f"[radio_watch] ECHEC rtl_power (balayage) rc={result.returncode}: {result.stderr.strip()[-200:]}")
+            return []
+        all_db, bins = _read_csv_bins(tmp_path)
+        noise_floor = _percentile(all_db, 20)
+        if noise_floor is None or not bins:
+            _rtl_power_failure_count += 1
+            return []
+        _rtl_power_failure_count = 0
+        seuil = noise_floor + margin_db
+        ecart_min = max(2 * step_hz, 1)   # un meme signal occupe quelques bins voisins
+        peaks = []
+        for f, db in sorted(bins, key=lambda b: -b[1]):
+            if db <= seuil or len(peaks) >= max_peaks:
+                break
+            if any(abs(f - pf) < ecart_min for pf, _ in peaks):
+                continue
+            peaks.append((f, db))
+        return peaks
+    except Exception:
+        return []
+    finally:
+        if tmp_path and os.path.exists(tmp_path):
+            os.remove(tmp_path)
+
+
 def _rnnoise_speech_probability(pcm_bytes, rnnoise_state):
     """Fait tourner RNNoise sur le morceau (deja a 48kHz mono int16, voir
     _chunk_is_signal) frame par frame (10ms/480 echantillons chacune) et
@@ -2910,8 +2958,15 @@ def scan_fm_band(band):
 
 def scan_sweep_band(band):
     margin_db = band.get("margin_db", NOISE_MARGIN_DB) + _settings(band["name"])["marge_detection_db"]
-    freq, db = sweep_band_peak_relative(band["low_hz"], band["high_hz"], band["step_hz"], margin_db=margin_db)
-    if freq is not None:
+    # Tous les pics de la passe, pas seulement le plus fort : une bande large
+    # (milair 225-400, FM...) etait sinon reduite a son unique pic dominant, le
+    # reste jamais explore (doctrine : balayer toute la bande). On ouvre sur le
+    # premier pic retenu par _handle_candidate ; un pic de bruit ecarte ne fait
+    # plus abandonner toute la bande, on passe au suivant.
+    peaks = sweep_band_peaks_relative(band["low_hz"], band["high_hz"], band["step_hz"], margin_db=margin_db)
+    for freq, db in peaks:
+        if _lock_pending():   # la console demande la main : on ne finit pas la liste
+            break
         print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.4f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")
         # Mode diagnostic spectral (2026-08-31, demande explicite) : ne fait
         # rien (cout quasi nul) sauf si arme sur CETTE bande via

@@ -39,10 +39,15 @@ REGISTRE = os.path.expanduser("~/autopilot/tetra_registre.json")
 TETRA_SOCKET = "/tmp/tetra_pont.sock"   # prise tenue par compagnon_serveur (meteo_watch)
 ARRET = os.path.expanduser("~/autopilot/tetra_off")   # interrupteur, comme prise_unique_off
 
-# Bandes ou une porteuse peut etre du TETRA civil en France (zone d'ecoute de
-# bonne foi). 380-400 MHz = Tetrapol/INPT (secours, chiffre) : volontairement
-# EXCLU. Sert au mode manuel et a la decouverte au balayage.
-BANDES = ((410_000_000, 430_000_000), (450_000_000, 470_000_000))
+# Perimetre ou le scanner CHERCHE des porteuses TETRA -- PAS un mur. On ne
+# balaie pas tout le spectre a l'aveugle (rtl_power a besoin de plages, pour un
+# raster 25 kHz : coherence physique), mais on ne s'interdit aucun canal a
+# l'interieur. 380-400 MHz porte le Tetrapol/INPT (secours) qui est chiffre :
+# si on tombe dessus on NOTE "chiffre" et on ignore le contenu (hors
+# prerogatives), on ne se bride pas -- ailleurs ce meme 380-400 peut porter du
+# TETRA en clair (doctrine, mur retire le 2026-10-28). Sert au mode manuel et a
+# l'autodecouverte au balayage.
+BANDES = ((380_000_000, 430_000_000), (450_000_000, 470_000_000))
 
 RASTER_HZ = 25_000          # pas des porteuses TETRA
 TOLERANCE_HZ = 15_000       # une frequence a moins de ca d'une porteuse connue = la meme
