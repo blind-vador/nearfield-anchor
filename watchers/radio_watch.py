@@ -801,6 +801,40 @@ def _dsdfme_validated(stats):
             and stats["clean"] >= DSD_FME_MIN_CLEAN_RATIO * stats["total"])
 
 
+# Nombre minimal de trames de voix DMR (VC1..VC6 / VLC) pour OUVRIR le son :
+# en dessous, la synchro est confirmee mais il n'y a PAS de voix a jouer --
+# relais au repos ("IDLE"), terminateur de fin ("TLC"), signalisation
+# (CSBK/DATA/PI) ou voix chiffree ("VC*"). On ne garde alors que les donnees,
+# sans carillon ni annonce (2026-10-27 : de fausses ouvertures "carillon +
+# bande + silence + reception terminee" se declenchaient sur des relais DMR au
+# repos -- 32 000 trames IDLE pour une poignee de VC un jour type).
+DSD_FME_MIN_VOICE_BURSTS = 2
+
+
+def _dsdfme_voix(stats):
+    """Vrai si le decodage DMR porte de la vraie voix EN CLAIR (trames VC/VLC),
+    pas seulement des synchros d'un relais au repos ou de la signalisation.
+    Les autres protocoles gardent le comportement anterieur (ouverture des que
+    les synchros sont validees : ils n'ont pas le flot d'IDLE du DMR)."""
+    if "DMR" in str(stats.get("protocol") or ""):
+        return stats.get("voix", 0) >= DSD_FME_MIN_VOICE_BURSTS
+    return True
+
+
+
+def _reception_a_presenter(protocol, muted, had_audio, autre=False):
+    """Decision UNIQUE et commune a TOUS les modes de demodulation : on ne
+    declenche l'habillage (carillon de fermeture, annonce de fin de reception)
+    et on ne garde l'enregistrement QUE si du contenu EN CLAIR a reellement ete
+    capte (had_audio), ou si un autre cote de la conversation l'a ete (autre,
+    p.ex. la FM d'un canal mixte). Synchro validee sans voix (relais au repos,
+    signalisation, terminateur) ou flux chiffre : on a appris (registre, note
+    'chiffre') mais on ne ceremonie pas et on ne garde pas un enregistrement
+    vide -- source des 'ouvertures fantomes'. On ne vise aucun mode en
+    particulier (2026-10-28)."""
+    return (bool(protocol) and bool(had_audio) and not muted) or bool(autre)
+
+
 def _extra_digital_mode(freq_hz):
     for low, high, flag, name in DSD_FME_EXTRA_MODES:
         if low <= freq_hz <= high:
@@ -942,19 +976,27 @@ def _dmr_ecoute(freq, dwell_sec=20):
     saved = False
     try:
         protocol = try_digital_voice_decode(freq, "-fs", label, probe_sec=dwell_sec, target="dmr")
+        had_num = try_digital_voice_decode.last_had_audio   # clair capte cote numerique
+        muet_num = try_digital_voice_decode.last_muted
         canal = _canal_mixte(freq)
         if not protocol and not canal:
             log_session.discard()
             return False
-        if protocol and try_digital_voice_decode.last_muted:  # appel prive ou chiffre : rien n'est garde
+        if protocol and muet_num:  # appel chiffre : rien n'est garde (le poste a poste en clair, si)
             log_session.discard()
             return True
+        fm = False
         if canal:  # canal mixte : l'autre cote de la conversation, en FM
             fm = _suivi_mixte(canal, label, numerique_d_abord=False)
             if not protocol and not fm:
                 log_session.discard()
                 return False
             protocol = f"{protocol} et FM" if protocol and fm else (protocol or "FM")
+        if not _reception_a_presenter(protocol, muet_num, had_num, autre=fm):
+            # synchro validee sans clair capte et pas de FM : appris, rien a
+            # presenter ni a garder (fantome 2026-10-28)
+            log_session.discard()
+            return True
         play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
         morceaux.say(None, morceaux.whole(dire("radio.reception_terminee", protocol=protocol)), label="radio_watch")
         path = log_session.finalize()
@@ -1168,7 +1210,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         captured_chunks = []
         start = time.time()
         deadline = start + (probe_sec or DSD_FME_PROBE_SEC)
-        muted = False  # appel prive ou chiffre : ni joue ni enregistre (regle utilisateur)
+        muted = False  # appel chiffre : ni joue ni enregistre ; poste a poste en clair garde (regle utilisateur 2026-10-25)
         juge_suivant = False
         dmr_vu = {}
         if arbitre is None:
@@ -1221,43 +1263,57 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 pending = pending[-DSD_FME_PRE_MAX:]  # avant la confirmation : les dernieres secondes
             # Ciblage DMR (lib/dmr_filtres.py) : un groupe ignore ne declenche
             # ni carillon ni annonce, et ne retient pas le scanner.
-            if not validated and pending and _dsdfme_validated(stats) and not dmr_filtres.slot_gains(stats)[2]:
-                if not filtered_out and arbitre is not None:
-                    arbitre.prendre(mode_flag, stats["protocol"])  # en silence : la voix FM ne s'ouvre pas dessus
-                filtered_out = True
-            if not validated and pending and _dsdfme_validated(stats) and dmr_filtres.slot_gains(stats)[2]:
-                if arbitre is not None:
-                    if not arbitre.prendre(mode_flag, stats["protocol"]):
-                        continue  # un autre decodeur numerique a la parole : on attend en silence
-                    try_digital_voice_decode.last_dmr = dmr_vu
-                    if live:
-                        try:
-                            juge_live.debut(freq_hz, band_label, mode_flag, stats["protocol"])
-                            live_ouvert = True
-                        except Exception:
-                            pass
-                validated = True
-                size = len(pending[0])
-                if size == DSD_FME_STEREO_DATAGRAM:
-                    channels = 2
-                elif size == DSD_FME_MONO_DATAGRAM:
-                    channels = 1
-                protocol = stats["protocol"] or dire("radio.numerique")
-                print(f"[radio_watch] dsd-fme : decodage {protocol} confirme "
-                      f"({stats['clean']} synchros propres sur {stats['total']}), {channels} voie(s)")
-                # Carillon et annonce dans un fil a part (2026-10-19) : pendant
-                # qu'ils jouent, cette boucle continue de lire la socket et met
-                # TOUT en tampon (avant, la socket debordait au bout de ~6 s
-                # d'annonce : le debut de la transmission etait perdu).
-                annonce = threading.Thread(target=_annonce_dmr, daemon=True,
-                                           args=(protocol, band_label, audio_lock.ticket_courant()))
-                annonce.start()
-                validated_at = time.time()
-                if target == "dmr":  # veille DMR : "verrouiller" et "ignorer" visent cet appel
-                    noise_signatures.capture_started("dmr", freq_hz, "dmr", band_label, "dmr")
-                    if dmr_vu:
-                        noise_signatures.update_live(dmr=dmr_vu)
-                attente, pending, data = list(pending), [], None
+            # Ouverture : synchros validees ET (pour le DMR) de vraies trames de
+            # voix en clair (VC/VLC). Sur simple synchro sans voix -- relais au
+            # repos (IDLE), terminateur (TLC), signalisation ou voix chiffree --
+            # on prend en silence (la voix FM ne s'ouvre pas sur la porteuse
+            # numerique) sans carillon ni annonce ; les donnees (registre) sont
+            # notees par le fil stdout (2026-10-27).
+            if not validated and pending and _dsdfme_validated(stats):
+                cible = dmr_filtres.slot_gains(stats)[2]
+                voix = _dsdfme_voix(stats)
+                if not (cible and voix):
+                    if not filtered_out:
+                        raison = ("groupe hors cible" if (voix and not cible)
+                                  else "relais au repos / signalisation, pas de voix")
+                        print(f"[radio_watch] dsd-fme : {stats.get('protocol')} sans ouverture "
+                              f"({raison}), donnees seulement")
+                        if arbitre is not None:
+                            arbitre.prendre(mode_flag, stats["protocol"])  # en silence : la voix FM ne s'ouvre pas dessus
+                    filtered_out = True
+                else:
+                    if arbitre is not None:
+                        if not arbitre.prendre(mode_flag, stats["protocol"]):
+                            continue  # un autre decodeur numerique a la parole : on attend en silence
+                        try_digital_voice_decode.last_dmr = dmr_vu
+                        if live:
+                            try:
+                                juge_live.debut(freq_hz, band_label, mode_flag, stats["protocol"])
+                                live_ouvert = True
+                            except Exception:
+                                pass
+                    validated = True
+                    size = len(pending[0])
+                    if size == DSD_FME_STEREO_DATAGRAM:
+                        channels = 2
+                    elif size == DSD_FME_MONO_DATAGRAM:
+                        channels = 1
+                    protocol = stats["protocol"] or dire("radio.numerique")
+                    print(f"[radio_watch] dsd-fme : decodage {protocol} confirme "
+                          f"({stats['clean']} synchros propres sur {stats['total']}), {channels} voie(s)")
+                    # Carillon et annonce dans un fil a part (2026-10-19) : pendant
+                    # qu'ils jouent, cette boucle continue de lire la socket et met
+                    # TOUT en tampon (avant, la socket debordait au bout de ~6 s
+                    # d'annonce : le debut de la transmission etait perdu).
+                    annonce = threading.Thread(target=_annonce_dmr, daemon=True,
+                                               args=(protocol, band_label, audio_lock.ticket_courant()))
+                    annonce.start()
+                    validated_at = time.time()
+                    if target == "dmr":  # veille DMR : "verrouiller" et "ignorer" visent cet appel
+                        noise_signatures.capture_started("dmr", freq_hz, "dmr", band_label, "dmr")
+                        if dmr_vu:
+                            noise_signatures.update_live(dmr=dmr_vu)
+                    attente, pending, data = list(pending), [], None
             if validated and annonce is not None:
                 if data:
                     attente.append(data)
@@ -1311,6 +1367,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
             _dmr_learn(stats)
             if arbitre is None or arbitre.gagnant == mode_flag:
                 try_digital_voice_decode.last_muted = True
+                try_digital_voice_decode.last_had_audio = False
             return stats["protocol"] or "numérique"
         if not validated:
             if pending:
@@ -1321,6 +1378,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         _dmr_learn(stats)
         if arbitre is None or arbitre.gagnant == mode_flag:
             try_digital_voice_decode.last_muted = muted
+            try_digital_voice_decode.last_had_audio = bool(captured_chunks) and not muted
         log_session = sound_player.get_recording_session()
         if log_session is not None and captured_chunks and not muted:
             log_session.add_raw_pcm(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, "s16le",
@@ -1401,7 +1459,8 @@ def _etiqueter_bruts(etiquette=None):
             pass
 
 
-try_digital_voice_decode.last_muted = False  # derniere session : son coupe (appel prive ou chiffre) ?
+try_digital_voice_decode.last_muted = False  # derniere session : son coupe (appel chiffre) ?
+try_digital_voice_decode.last_had_audio = False  # derniere session : du contenu en clair a-t-il ete capte ?
 
 
 # Nombre minimal de caracteres alphanumeriques utiles pour qu'un message
@@ -1599,14 +1658,17 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
             pre_pcm = audio_filters.VoiceBandpassFilter(sample_rate).process_s16le(pre_pcm)
         is_noise, sim = noise_signatures.matches_known_noise(freq_hz, pre_pcm, sample_rate, "s16le")
         if is_noise:
-            print(f"[radio_watch] parasite connu ignore a {mhz:.4f} MHz (similarite {sim:.2f})")
-            try:
-                rtl_fm.terminate()
-                rtl_fm.wait(timeout=2)
-            except Exception:
-                rtl_fm.kill()
-            return False
-        print(f"[radio_watch] pre-ecoute : pas un parasite connu (meilleure similarite {sim})")
+            # On n'ABANDONNE PLUS la frequence sur un parasite connu (demande
+            # utilisateur 2026-10-27). Un parasite ne doit pas faire IGNORER un
+            # canal, seulement empecher d'OUVRIR sur SA rafale : c'est _prelisten
+            # qui ecreme (il refuse de confirmer une ouverture dont l'empreinte
+            # colle a un parasite connu du canal, et continue d'ecouter la vraie
+            # voix). Ici, on ne fait que signaler la proximite. La suppression de
+            # la FM sur du numerique muet (IDLE/donnees/chiffre) reste assuree
+            # plus bas par l'arbitre (synchro numerique validee).
+            print(f"[radio_watch] {mhz:.4f} MHz : parasite connu proche (similarite {sim:.2f}), on ecreme en pre-ecoute sans abandonner le canal")
+        else:
+            print(f"[radio_watch] pre-ecoute : pas un parasite connu (meilleure similarite {sim})")
 
     # Annonce et son d'ouverture AVANT la diffusion : la capture tourne deja
     # en arriere-plan (fil ci-dessus) pendant ce temps, donc rien n'est perdu
@@ -1923,6 +1985,26 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
                 while not multimon_queue.empty():
                     decoded.append(multimon_queue.get_nowait())
             if consecutive >= MIN_CONSECUTIVE_SIGNAL_WINDOWS:
+                # Ecremage (2026-10-27) : avant d'ouvrir, verifier que la rafale
+                # qui declenche n'est pas un parasite connu du canal. Si c'en est
+                # un, on NE confirme PAS -- on ecarte ce qui a ete analyse (pas
+                # d'ouverture NI de rejeu de la rafale) et on continue d'ecouter la
+                # vraie voix, sans jamais abandonner la frequence. Seuil de
+                # similarite conservateur (MATCH_SIMILARITY) : un faux ecremage
+                # jetterait de la vraie voix (litterature : seuil a regler par ROC,
+                # cote faux-rejet couteux ici).
+                if noise_signatures.has_signatures_near(freq_hz):
+                    recent = b"".join(filtered_all)[-int(sample_rate * 2 * noise_signatures.MAX_AUDIO_SEC):]
+                    is_parasite, psim = noise_signatures.matches_known_noise(
+                        freq_hz, recent, sample_rate, "s16le")
+                    if is_parasite:
+                        print(f"[radio_watch] pre-ecoute {freq_hz / 1e6:.4f} MHz : rafale parasite connue "
+                              f"ecremee (similarite {psim:.2f}), on continue d'ecouter")
+                        del prebuffer[:analysed]
+                        analysed = 0
+                        filtered_all = []
+                        consecutive = 0
+                        continue
                 print(f"[radio_watch] pre-ecoute : voix reconnue en {time.time() - start:.1f} s "
                       f"(prob {smoothed_prob:.2f})")
                 return True, decoded, b"".join(filtered_all)
@@ -2046,6 +2128,10 @@ def _guarded(name, scan):
 # clair + voix non chiffree uniquement -- jamais de dechiffrement.
 TETRA_RTL_TCP_PORT = 1234
 TETRA_SECONDES = 14          # par porteuse : large de quoi verrouiller + guetter la voix
+# Suivi d'appel (2026-10-27) : la machine compagne suit l'appel sur sa porteuse
+# de trafic (dsd-neo -T) et prolonge l'ecoute tant qu'il dure, jusqu'a ce plafond.
+TETRA_SUIVI_MAX_SEC = 90
+TETRA_EXPLORATION_SEC = 8    # une piste inconnue : assez pour une synchro de controle
 
 
 def _tetra_compagnon_present():
@@ -2058,34 +2144,90 @@ def _tetra_compagnon_present():
         return False
 
 
-def _annonce_tetra(freq_hz, res):
+_tetra_dernier_reseau = None
+
+
+def _tetra_nouvelles(freq_hz, res):
+    """Registre + journal interne d'une ecoute TETRA ; rend ses nouvelles."""
+    try:
+        news = tetra.enregistrer(freq_hz, res)
+        tetra.archiver(freq_hz, res, news)
+        return news
+    except Exception as exc:
+        print(f"[radio_watch] registre TETRA : {exc!r}")
+        return {}
+
+
+def _annonce_tetra(freq_hz, res, news=None):
     """Journalise l'identite reseau TETRA (metadonnees en clair) et joue la voix
-    en clair si la machine compagne en a decode. Meme encadrement sonore que les
-    autres receptions."""
+    en clair si la machine compagne en a decode.
+
+    Pas d'ouverture fantome (signale 2026-10-27) : sur une porteuse de controle,
+    le BSCH est present en PERMANENCE, donc _annonce_tetra etait appele a chaque
+    fenetre (toutes les 3 min) et jouait carillon + annonce + son d'ouverture +
+    ~1 s de silence + fermeture, sans aucun trafic -- une fausse reception. On ne
+    joue l'habillage sonore (ouverture / voix / fermeture) QUE s'il y a de la voix
+    en clair. Sinon on journalise les metadonnees sans bruit, et on n'annonce
+    vocalement l'identite reseau que si elle a CHANGE depuis la derniere fois.
+
+    2026-10-27 : le resume compte desormais les postes actifs, qui bougent a
+    chaque fenetre ; le changement se juge donc sur l'IDENTITE (reseau + zone),
+    pas sur la phrase. Nouvelles du registre (porteuse de trafic, postes jamais
+    vus) dites sobrement, comme les nouvelles du DMR."""
+    global _tetra_dernier_reseau
+    import veille_donnees as vd
+    from phrases import nombre
+    news = news or {}
+    resume = res.get("resume") or dire("tetra.recu")
+    voix = res.get("voix_wav")
+    a_voix = bool(voix and os.path.exists(voix))
+    r = res.get("reseau") or {}
+    identite = (r.get("mcc"), r.get("mnc"), r.get("la"))
+    reseau_change = identite != _tetra_dernier_reseau
     lock = audio_lock.acquire()
     log_session = radio_log.RadioLogSession(dire("tetra.libelle"))
     sound_player.set_recording_session(log_session)
     saved = False
     try:
-        resume = res.get("resume") or dire("tetra.recu")
-        play_sound_effect(DMR_VOCAL_SOUND, label="radio_watch")
-        speak(resume)
-        play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
-        voix = res.get("voix_wav")
-        if voix and os.path.exists(voix):
+        if a_voix:
+            play_sound_effect(DMR_VOCAL_SOUND, label="radio_watch")
+            speak(resume)
+            play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
             # Par l'arbitre (play_sound_effect) : la voix s'attenue sous une
             # source plus prioritaire et est enregistree dans la prise du
             # ticket courant -- plus d'aplay brut a plein volume.
             play_sound_effect(voix, timeout_sec=60, label="radio_watch")
-        play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
-        path = log_session.finalize()
-        noise_signatures.record_capture("tetra", freq_hz, "tetra", "TETRA", None, path, None,
-                                        {"tetra": {"reseau": res.get("reseau"), "enc": res.get("enc"),
+            play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
+            path = log_session.finalize()
+        else:
+            # Signalisation seule : aucune ceremonie sonore. On dit l'identite
+            # reseau une seule fois (ou quand elle change), sobrement, sans jingle.
+            if reseau_change:
+                speak(resume)
+            log_session.discard()
+            path = None
+        for f in news.get("nouvelles_porteuses") or []:
+            vd.announce(dire("tetra.nouvelle_porteuse", frequence=format(f / 1e6, ".4f").replace(".", ",")),
+                        DMR_NOUVEAU_SOUND, "message_tetra", "radio_watch")
+        for m in news.get("textes") or []:  # message texte en clair : dit comme un message APRS
+            vd.announce(dire("tetra.message_texte", src=m["src"], dst=m.get("dst") or "?", texte=m["texte"]),
+                        DMR_NOUVEAU_SOUND, f"message_tetra_{m['src']}", "radio_watch")
+        if news.get("nouveaux_postes"):
+            vd.announce(dire("tetra.nouveaux_postes", nombre=nombre(len(news["nouveaux_postes"]), "nouveau poste",
+                                                                   "nouveaux postes")),
+                        DMR_NOUVEAU_SOUND, "message_tetra", "radio_watch")
+        _tetra_dernier_reseau = identite
+        # Cible "tetra" : la notation du journal (console) pique ou apaise la
+        # fenetre TETRA, comme les autres cibles du scanner.
+        noise_signatures.record_capture("tetra", freq_hz, "tetra", "TETRA", "tetra", path, None,
+                                        {"numerique": True,
+                                         "tetra": {"reseau": res.get("reseau"), "enc": res.get("enc"),
                                                    "clair": res.get("clair"), "bsch": res.get("bsch"),
-                                                   "voix": bool(voix), "machine": res.get("machine")}})
-        saved = True
+                                                   "voix": a_voix, "machine": res.get("machine"),
+                                                   "nouvelles": news}})
+        saved = a_voix
         print(f"[radio_watch] TETRA {freq_hz / 1e6:.4f} MHz : {resume}"
-              + (" + voix en clair" if voix else ""))
+              + (" + voix en clair" if a_voix else " (signalisation, pas d'ouverture)"))
     except Exception as exc:
         print(f"[radio_watch] annonce TETRA : {exc!r}")
     finally:
@@ -2138,12 +2280,14 @@ def _tetra_manuel(manual):
         if proc.poll() is not None:
             manual_tuner.event(dire("tetra.echec"))
             return True
-        res = tetra.decoder(freq, _tetra_gain_de(freq), TETRA_SECONDES, host=host, port=TETRA_RTL_TCP_PORT)
+        ecoute = tetra.centre(freq)   # alias recentre : on ecoute le vrai centre
+        res = tetra.decoder(ecoute, _tetra_gain_de(freq), TETRA_SECONDES, host=host, port=TETRA_RTL_TCP_PORT,
+                            max_secondes=TETRA_SUIVI_MAX_SEC)
         tmp = res.pop("_tmp", None)
         try:
-            tetra.noter(freq, res)
+            tetra.noter(ecoute, res)
             if res.get("ok") and res.get("bsch"):
-                _annonce_tetra(freq, res)
+                _annonce_tetra(ecoute, res, _tetra_nouvelles(ecoute, res))
             elif res.get("ok"):
                 manual_tuner.event(dire("tetra.rien"))
             else:
@@ -2164,15 +2308,99 @@ def _tetra_manuel(manual):
     return True
 
 
+# Autodecouverte TETRA (2026-10-27) : meme principe que la recherche DMR, mais
+# le Pi ne decode pas le TETRA. Le balayage rtl_power ne fait que REPERER
+# l'energie sur le raster 25 kHz des bandes civiles TETRA ; chaque pic inconnu
+# devient une piste (tetra.decouvrir) que la fenetre TETRA va sonder via la
+# machine compagne, seule capable de confirmer une porteuse de controle. Ainsi
+# le scanner trouve ses porteuses lui-meme au lieu d'etre cable sur une seule.
+TETRA_SEARCH_MARGIN_DB = 10.0
+TETRA_SEARCH_MAX_PEAKS = 12
+
+
+def _tetra_search():
+    """Balaye les bandes TETRA (tetra.BANDES) et ajoute les pics inconnus comme
+    pistes a sonder. Rend la liste des frequences ajoutees. Utilise le dongle
+    en direct (rtl_power) : l'appelant doit l'avoir libre (pas de rtl_tcp)."""
+    known = [p["freq_hz"] for p in tetra.porteuses()]
+    ajoutees = []
+    for low, high in tetra.BANDES:
+        fd, path = tempfile.mkstemp(suffix=".csv")
+        os.close(fd)
+        try:
+            run = subprocess.run(["rtl_power", "-f", f"{low}:{high}:{tetra.RASTER_HZ}", "-i", "1", "-1", path],
+                                 capture_output=True, timeout=180)
+            all_db, bins = _read_csv_bins(path) if run.returncode == 0 else ([], [])
+        except Exception as exc:
+            print(f"[radio_watch] balayage TETRA {low / 1e6:.0f}-{high / 1e6:.0f} MHz impossible ({exc!r})")
+            all_db, bins = [], []
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+        floor = _percentile(all_db, 20) if all_db else None
+        if floor is None:
+            continue
+        peaks = []
+        for f, db in sorted(bins, key=lambda b: -b[1]):
+            if db < floor + TETRA_SEARCH_MARGIN_DB or len(peaks) >= TETRA_SEARCH_MAX_PEAKS:
+                break
+            f = int(round(f / tetra.RASTER_HZ) * tetra.RASTER_HZ)   # porteuses TETRA sur le raster 25 kHz
+            if any(abs(f - k) < tetra.TOLERANCE_HZ for k in known) or any(abs(f - p) < tetra.RASTER_HZ for p in peaks):
+                continue
+            peaks.append(f)
+        for f in peaks:
+            if tetra.decouvrir(f):
+                ajoutees.append(f)
+                known.append(f)
+        print(f"[radio_watch] balayage TETRA {low / 1e6:.0f}-{high / 1e6:.0f} MHz : "
+              f"{len(peaks)} pic(s), {sum(1 for f in peaks if f in ajoutees)} nouvelle(s) piste(s)")
+    return ajoutees
+
+
+def _tetra_autodecouverte_si_due(limit_c):
+    """Avant d'ouvrir rtl_tcp pour la machine compagne : si un balayage
+    d'autodecouverte est du et que le Pi n'est pas trop chaud, on balaie les
+    bandes TETRA avec le dongle libre, puis on elague les pistes muettes."""
+    if not tetra.decouverte_due():
+        return
+    if _too_hot(limit_c):
+        return   # on reessaiera a la prochaine fenetre, une fois refroidi
+    meteo_locale.set_scanner_state("balayage_tetra")
+    try:
+        ajoutees = _tetra_search()
+        if ajoutees:
+            print(f"[radio_watch] autodecouverte TETRA : {len(ajoutees)} porteuse(s) a sonder")
+        oubliees = tetra.elaguer()
+        if oubliees:
+            print(f"[radio_watch] autodecouverte TETRA : {oubliees} piste(s) muette(s) oubliee(s)")
+    except Exception as exc:
+        print(f"[radio_watch] autodecouverte TETRA : {exc!r}")
+    finally:
+        tetra.decouverte_faite()   # meme en cas d'echec : pas de boucle serree
+        meteo_locale.set_scanner_state("actif")
+
+
 def _tetra_window(dwell_sec=TETRA_SECONDES * 2):
     """Sonde une ou deux porteuses TETRA via la machine compagne (le Pi sert
     rtl_tcp). Autodecouverte : porteuses confirmees d'abord, puis exploration.
-    Rend True si une synchro reseau a ete vue."""
+
+    2026-10-27 : la porteuse de controle confirmee garde l'essentiel de la
+    fenetre et la machine compagne y SUIT les appels (prolongation jusqu'a
+    TETRA_SUIVI_MAX_SEC tant qu'un appel dure) ; une piste d'exploration n'a que
+    TETRA_EXPLORATION_SEC. Chaque ecoute nourrit le registre et le journal
+    interne. Rend True (piqure) seulement si l'ecoute a apporte du neuf ou du
+    trafic -- appel, voix en clair, porteuse de trafic, postes jamais vus --,
+    pas sur la simple synchro permanente du controle."""
     if not tetra.active():
         return False
     if not _tetra_compagnon_present():
         print("[radio_watch] fenetre TETRA sautee : aucune machine compagne connectee pour le TETRA")
         return False
+    # Autodecouverte d'abord (dongle libre, avant rtl_tcp) : le scanner cherche
+    # ses propres porteuses TETRA au lieu d'etre cable sur une seule.
+    _tetra_autodecouverte_si_due(_meteo_temp_limit()[0])
     cands = tetra.candidats(2)
     if not cands:
         return False
@@ -2194,12 +2422,17 @@ def _tetra_window(dwell_sec=TETRA_SECONDES * 2):
             print("[radio_watch] rtl_tcp (TETRA) s'est arrete tout de suite (dongle occupe ?)")
             return False
         reste = float(dwell_sec or TETRA_SECONDES * 2)
-        for freq, gain in cands:
-            sec = int(min(TETRA_SECONDES, max(6, reste)))
+        principale = tetra.porteuses() and any(p.get("confirmee") for p in tetra.porteuses())
+        for i, (freq, gain) in enumerate(cands):
+            if i == 0 and principale:   # le controle : l'essentiel de la fenetre, appels suivis
+                sec = int(max(6, reste - (len(cands) - 1) * (TETRA_EXPLORATION_SEC + 2)))
+                plafond = max(sec, TETRA_SUIVI_MAX_SEC)
+            else:                       # rotation / exploration : une courte sonde
+                sec = plafond = int(min(TETRA_EXPLORATION_SEC, reste))
             if sec < 6:
                 break
-            res = tetra.decoder(freq, gain, sec, host=host, port=TETRA_RTL_TCP_PORT)
-            reste -= sec + 2
+            res = tetra.decoder(freq, gain, sec, host=host, port=TETRA_RTL_TCP_PORT, max_secondes=plafond)
+            reste -= (res.get("duree") or sec) + 2
             tmp = res.pop("_tmp", None)
             try:
                 if not res.get("ok"):
@@ -2211,8 +2444,9 @@ def _tetra_window(dwell_sec=TETRA_SECONDES * 2):
                     continue
                 tetra.noter(freq, res)
                 if res.get("bsch"):
-                    hit = True
-                    _annonce_tetra(freq, res)
+                    news = _tetra_nouvelles(freq, res)
+                    hit = hit or tetra.piquant(news)
+                    _annonce_tetra(freq, res, news)
             finally:
                 if tmp:
                     import shutil
@@ -2511,7 +2745,10 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             protocol, entendu_fm = _ecoute_prise(prise, freq, band_label, target)
         else:
             protocol = _numerique_live(freq, band_label, target) if mode == "nfm" else None
-        if protocol and try_digital_voice_decode.last_muted:  # appel prive ou chiffre : rien n'est garde
+        if protocol and not _reception_a_presenter(protocol, try_digital_voice_decode.last_muted,
+                                                    try_digital_voice_decode.last_had_audio):
+            # chiffre, ou synchro validee sans clair capte : appris (registre),
+            # pas d'habillage ni d'enregistrement vide (fantome 2026-10-28)
             log_session.discard()
             return True
         if protocol:
@@ -2570,7 +2807,9 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
             # (avec la prise unique, ils ont deja ecoute en meme temps que la FM).
             log_session = radio_log.RadioLogSession(band_label)
             sound_player.set_recording_session(log_session)
-            if try_digital_voice_decode(freq, extra[0], band_label, target=target):
+            if try_digital_voice_decode(freq, extra[0], band_label, target=target) \
+                    and _reception_a_presenter(extra[1], try_digital_voice_decode.last_muted,
+                                               try_digital_voice_decode.last_had_audio):
                 play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
                 speak(dire("radio.reception_terminee_2", v1=extra[1]))
                 path = log_session.finalize()

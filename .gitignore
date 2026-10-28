@@ -5,3 +5,7 @@ __pycache__/
 # Identifiants reels -- jamais commites. Voir config/credentials.example.py
 # pour le modele.
 config/credentials.py
+
+# Snapshots manuels avant edition (gardes sur disque, hors git)
+*.bak-*
+*.bak

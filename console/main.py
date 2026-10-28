@@ -450,6 +450,9 @@ def run_command(line, key_source, last_response):
     if cmd.name == "dmr":
         import dmr_cmd
         return dmr_cmd.run(line)
+    if cmd.name == "tetra":
+        import tetra_cmd
+        return tetra_cmd.run(line)
     if cmd.name in ("bus", "tram", "métro", "transports"):
         import transports_cmd
         reponse = transports_cmd.run(cmd.name, line, key_source, voix.say, out)

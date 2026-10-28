@@ -316,14 +316,21 @@ PRELISTEN_WINDOW_SEC = 0.2
 PRELISTEN_VOICE_WINDOWS = 3
 
 
-def _prelisten(packet_queue):
-    """(paquets recus, voix reconnue ?) apres une ecoute silencieuse."""
+def _prelisten(packet_queue, freq_hz=None):
+    """(paquets recus, voix reconnue ?) apres une ecoute silencieuse.
+
+    Ecremage (2026-10-27) : si le canal a des parasites connus, une rafale qui
+    declenche mais dont l'empreinte colle a un parasite connu n'ouvre PAS -- on
+    l'ecarte (pas de rejeu) et on continue d'ecouter la vraie voix, sans jamais
+    abandonner la frequence."""
     import numpy as np
     packets, pending = [], b""
     check = SPEECH_DETECTOR_FACTORY() if SPEECH_DETECTOR_FACTORY else None
     window = int(AIRBAND_SAMPLE_RATE_HZ * 4 * PRELISTEN_WINDOW_SEC)
     voiced = consecutive = 0
     total = 0
+    pres_parasite = freq_hz is not None and noise_signatures.has_signatures_near(freq_hz)
+    bloc_voix = []  # audio f32le accumule depuis le dernier (re)depart, pour l'ecremage
     start = time.time()
     while time.time() - start < PRELISTEN_MAX_SEC:
         try:
@@ -337,6 +344,8 @@ def _prelisten(packet_queue):
         pending += data
         while len(pending) >= window:
             block, pending = pending[:window], pending[window:]
+            if pres_parasite:
+                bloc_voix.append(block)
             if check is None:  # pas de detecteur : au moins une seconde de son suffit
                 voiced += 1
                 consecutive = voiced if total >= AIRBAND_SAMPLE_RATE_HZ * 4 else 0
@@ -344,6 +353,19 @@ def _prelisten(packet_queue):
                 pcm = (np.clip(np.frombuffer(block, dtype="<f4"), -1, 1) * 32767).astype("<i2").tobytes()
                 consecutive = consecutive + 1 if check(pcm, AIRBAND_SAMPLE_RATE_HZ) else 0
             if consecutive >= PRELISTEN_VOICE_WINDOWS:
+                if pres_parasite:
+                    recent = audio_filters.VoiceBandpassFilter(AIRBAND_SAMPLE_RATE_HZ).process_f32le(
+                        b"".join(bloc_voix))
+                    is_parasite, psim = noise_signatures.matches_known_noise(
+                        freq_hz, recent, AIRBAND_SAMPLE_RATE_HZ, "f32le")
+                    if is_parasite:
+                        print(f"[airband_bridge] pre-ecoute {freq_hz/1e6:.5f} MHz : rafale parasite connue "
+                              f"ecremee (similarite {psim:.2f}), on continue d'ecouter")
+                        packets.clear()      # ne pas rejouer la rafale
+                        bloc_voix = []
+                        voiced = consecutive = 0
+                        total = 0
+                        continue
                 print(f"[airband_bridge] pre-ecoute : voix reconnue en {time.time() - start:.1f} s")
                 return packets, True
     return packets, False
@@ -382,23 +404,16 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         # le son que si ca vaut la peine -- voix reconnue (RNNoise) -- puis on
         # joue tout ce qui a ete mis en attente. Un bref parasite n'ouvre plus
         # rien : ni carillon, ni "crcrr", ni prise au journal.
-        prebuffer, worth = _prelisten(packet_queue)
+        prebuffer, worth = _prelisten(packet_queue, freq_hz)
         if not worth:
             print(f"[airband_bridge] pre-ecoute {freq_hz/1e6:.5f} MHz : pas de voix, son jamais ouvert")
             stop_event.set()
             log_session.discard()
             return False
-        # Parasites connus (commande console "parasite") : compares sur le meme son.
-        if noise_signatures.has_signatures_near(freq_hz):
-            pre_pcm = audio_filters.VoiceBandpassFilter(AIRBAND_SAMPLE_RATE_HZ).process_f32le(
-                b"".join(d for d in prebuffer if d))
-            is_noise, sim = noise_signatures.matches_known_noise(
-                freq_hz, pre_pcm, AIRBAND_SAMPLE_RATE_HZ, "f32le")
-            if is_noise:
-                print(f"[airband_bridge] parasite connu ignore a {freq_hz/1e6:.5f} MHz (similarite {sim:.2f})")
-                stop_event.set()
-                log_session.discard()
-                return False
+        # Parasites : plus d'ABANDON de frequence (demande utilisateur 2026-10-27).
+        # _prelisten ecreme deja les rafales de parasite connu du canal et continue
+        # d'ecouter la vraie voix -- un parasite ne doit jamais faire ignorer un
+        # canal (PMR446 en est plein, et il y a du trafic utile dessous).
 
         # "incoming" avant l'annonce (tampon pendant la synthese cloud, voir
         # speak_with_lead_sound) ; annonce simplifiee (2026-08-30, demande de

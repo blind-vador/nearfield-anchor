@@ -574,6 +574,10 @@ COMMANDS = [
             None, keywords=["dmr", "radio numerique pro", "groupes d appel", "groupe d appel", "talkgroup", "talkgroups",
                             "frequences dmr"],
             examples=["qu'est-ce qu'on a capté en numérique", "les relais numériques"]),
+    # Registre TETRA (lib/tetra.py, 2026-10-27), comme "dmr".
+    Command("tetra", "ce que le scanner sait des réseaux TETRA captés : postes actifs, messages en clair, appels, porteuses",
+            None, keywords=["tetra", "teta", "reseau tetra", "reseaux tetra", "radio des bus", "postes tetra"],
+            examples=["qu'est-ce qu'on a capté en tetra", "les réseaux tetra"]),
     # Transports en commun de la commune choisie (lib/transports.py, 2026-10-07).
     Command("bus", "comment roulent les bus de ta ville : retards en temps réel, lignes à la traîne, perturbations", None,
             keywords=["bus", "les bus", "autobus", "trolleybus", "comment roulent les bus", "comment vont les bus",

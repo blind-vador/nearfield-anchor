@@ -421,12 +421,14 @@ class _TetraMac(socketserver.StreamRequestHandler):
         wout = None
         handed = False
         secondes = int(req.get("secondes", 12))
+        max_secondes = max(secondes, int(req.get("max_secondes") or secondes))  # suivi d'appel (2026-10-27)
         try:
             channel.send({"type": "tetra", "id": rid,
                           "host": req.get("host") or compagnon._local_ip(),
                           "port": int(req.get("port", 1234)), "freq_hz": int(req["freq_hz"]),
-                          "gain": req.get("gain", 32), "secondes": secondes, "ppm": req.get("ppm", 0)})
-            delai = secondes + 30
+                          "gain": req.get("gain", 32), "secondes": secondes, "max_secondes": max_secondes,
+                          "ppm": req.get("ppm", 0)})
+            delai = max_secondes + 30
             while True:
                 msg = file.get(timeout=delai)
                 if msg.get("type") == "tetra_voix":
@@ -441,8 +443,8 @@ class _TetraMac(socketserver.StreamRequestHandler):
                     if wout is not None:
                         wout.close()
                         wout = None
-                    res = {k: msg.get(k) for k in ("ok", "erreur", "reseau", "bsch", "sysinfo",
-                                                   "enc", "clair", "mac_resource", "clip", "voix", "resume")}
+                    res = {k: msg.get(k) for k in ("ok", "erreur", "reseau", "bsch", "sysinfo", "enc", "clair",
+                                                   "mac_resource", "clip", "voix", "resume", "activite", "duree")}
                     res["voix_wav"] = wav if (msg.get("voix") and os.path.exists(wav)) else None
                     res["machine"] = (compagnon.trusted().get(cid) or {}).get("nom")
                     res["_tmp"] = tmp

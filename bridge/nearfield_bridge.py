@@ -310,7 +310,8 @@ def tetra_to_pi(link, msg):
         return
     try:
         res = tetra_neo.decoder(msg["host"], msg["port"], msg["freq_hz"], msg.get("gain", 32),
-                                msg.get("secondes", 12), ppm=msg.get("ppm", 0))
+                                msg.get("secondes", 12), ppm=msg.get("ppm", 0),
+                                max_seconds=msg.get("max_secondes"))
     except Exception as exc:
         link.send({"type": "tetra_resultat", "reponse_a": rid, "ok": False, "erreur": repr(exc)[:200]})
         return
@@ -340,7 +341,8 @@ def tetra_to_pi(link, msg):
                    "bsch": res.get("bsch", 0), "sysinfo": res.get("sysinfo", 0),
                    "enc": res.get("enc") or [], "clair": bool(res.get("clair")),
                    "mac_resource": res.get("mac_resource", 0), "clip": bool(res.get("clip")),
-                   "voix": voix_envoyee, "resume": tetra_neo.resume_fr(res)})
+                   "voix": voix_envoyee, "resume": tetra_neo.resume_fr(res),
+                   "activite": res.get("activite") or {}, "duree": res.get("duree")})
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)

@@ -9,6 +9,7 @@
 #   bash construire_dsd_neo.sh            (relancable)
 #   bash construire_dsd_neo.sh --refaire
 set -e
+ICI="$(cd "$(dirname "$0")" && pwd)"
 DEST="$HOME/.nearfield-bridge"
 ENV="$DEST/radio"
 BUILD="$(mktemp -d)"
@@ -39,6 +40,10 @@ cmake --install "$BUILD/mbelib-neo/build" >/dev/null
 
 echo "-- dsd-neo (allege : sans dongle local, sans son, sans interface) --"
 git clone --quiet https://github.com/arancormonk/dsd-neo.git "$BUILD/dsd-neo"
+# Version eprouvee + correctif nearfield (2026-10-27) : imprime le contenu des
+# messages courts TETRA ("[TETRA SDS PAYLOAD]"), lu par bridge/tetra_neo.py.
+git -C "$BUILD/dsd-neo" checkout --quiet eb1a3409
+git -C "$BUILD/dsd-neo" apply "$ICI/dsd-neo-nearfield-sds.patch"
 cmake -S "$BUILD/dsd-neo" -B "$BUILD/dsd-neo/build" $COMMUN \
     -DOPENSSL_ROOT_DIR="$ENV" \
     -DDSD_AUDIO_BACKEND=none \

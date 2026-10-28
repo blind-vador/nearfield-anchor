@@ -1,0 +1,73 @@
+diff --git a/src/protocol/tetra/tetra_mle.c b/src/protocol/tetra/tetra_mle.c
+index 0dfd0b6c..ff3e7991 100644
+--- a/src/protocol/tetra/tetra_mle.c
++++ b/src/protocol/tetra/tetra_mle.c
+@@ -1178,6 +1178,7 @@ sds_decode_data(tetra_bit_reader* r, tetra_sds_data* d) {
+     d->sdti = (uint8_t)tetra_bits_read(r, 2);
+     d->data_bits = d->sdti < 3 ? k_fixed_bits[d->sdti] : (int)tetra_bits_read(r, 11);
+     const int data_pos = r->pos;
++    d->data_pos = data_pos;
+     (void)tetra_bits_skip(r, d->data_bits);
+     if (tetra_bits_present(r)) { /* no type-2 elements: type-3 elements follow at once */
+         (void)tetra_bits_skip_type34(r);
+@@ -1297,10 +1298,48 @@ sds_notice(const mle_ctx* ctx, const tetra_sds_data* d, const sds_concat_status*
+     tetra_calls_notice(ctx->opts, ctx->state, 0, d->calling.ssi, dst, notice, d->text.len > 0 ? d->text.text : NULL);
+ }
+ 
++/* nearfield (2026-10-27) : the user data itself, in hex, with its protocol identifier and addressee, and its text when
++ * it is a text message -- so the scanner can read what is sent in clear (texts, locations, status). One line. */
++static void
++sds_report_payload(const mle_ctx* ctx, const tetra_sds_data* d, const sds_concat_status* concat) {
++    const uint8_t* bits = ctx->bits;
++    int pos = d->data_pos;
++    int n = d->data_bits;
++    int pid = d->pid_present ? (int)d->pid : -1;
++    if (concat->complete && concat->assembled) {
++        bits = concat->assembled;
++        pos = 0;
++        n = concat->assembled_bits;
++        pid = (int)concat->assembled_pid;
++    }
++    if (n < 0) {
++        n = 0;
++    }
++    if (n > 2047) {
++        n = 2047;
++    }
++    char hex[2 * 256 + 1];
++    int h = 0;
++    for (int i = 0; i < n; i += 8) {
++        unsigned byte = 0;
++        for (int b = 0; b < 8; b++) {
++            byte = (byte << 1) | ((i + b < n) ? (bits[pos + i + b] & 1u) : 0u);
++        }
++        static const char k_hex[] = "0123456789ABCDEF";
++        hex[h++] = k_hex[byte >> 4];
++        hex[h++] = k_hex[byte & 15u];
++    }
++    hex[h] = '\0';
++    DSD_FPRINTF(stderr, "[TETRA SDS PAYLOAD] CC=%d src_SSI=%u dst_SSI=%u sdti=%u pid=%d bits=%d hex=%s%s%s\n", ctx->cc,
++                (unsigned)d->calling.ssi, (unsigned)tetra_calls_addressed_ssi(ctx->sdu), d->sdti, pid, n, hex,
++                d->text.len > 0 ? " text=" : "", d->text.len > 0 ? d->text.text : "");
++}
++
+ static void
+ sds_report(const mle_ctx* ctx, const tetra_sds_data* d, const sds_concat_status* concat) {
+     DSD_FPRINTF(stderr, "[TETRA CMCE D-SDS-DATA] CC=%d src_SSI=%u CPTI=%u SDTI=%u data_bits=%d\n", ctx->cc,
+                 d->calling.ssi, d->calling.type, d->sdti, d->data_bits);
++    sds_report_payload(ctx, d, concat);
+     sds_notice(ctx, d, concat);
+ }
+ 
+diff --git a/src/protocol/tetra/tetra_mle_pdu.h b/src/protocol/tetra/tetra_mle_pdu.h
+index 040e6c3d..16217b41 100644
+--- a/src/protocol/tetra/tetra_mle_pdu.h
++++ b/src/protocol/tetra/tetra_mle_pdu.h
+@@ -267,6 +267,7 @@ typedef struct {
+     tetra_sds_tl tl;              /**< SDS-TL header; message_type TETRA_SDS_TL_NONE without one */
+     tetra_sds_concat_part concat; /**< when concat_present */
+     tetra_cmce_party calling;
++    int data_pos;        /**< bit of the TM-SDU where the user data starts (nearfield: payload report) */
+     int data_bits;       /**< user data length */
+     uint16_t short_data; /**< user defined data-1, short data type identifier 0 */
+     uint8_t sdti;        /**< short data type identifier (table 14.13) */

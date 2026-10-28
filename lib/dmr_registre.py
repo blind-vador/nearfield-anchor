@@ -15,9 +15,11 @@ Lu dans la sortie de dsd-fme (lib/decodeurs.py, dsd_line -> line()) :
                       libre compris (IDLE), et donne des nouvelles d'activite
                       (Activity Update, SLCO)
 
-Regle (utilisateur) : pas d'audio prive, seulement des signaux ouverts,
-aucun dechiffrement. Un appel prive ou chiffre n'est ni joue ni enregistre :
-seules ses donnees sont notees (stats["prive"], stats["chiffre"]).
+Regle (utilisateur, 2026-10-25, redite le 2026-10-27) : un appel "prive" en
+clair n'a rien de cache -- c'est un appel de poste a poste, adresse ainsi pour
+le trafic -- il est joue et enregistre comme un appel de groupe. Seul le
+CHIFFRE n'est ni joue ni enregistre (ses donnees sont notees), et rien n'est
+jamais dechiffre. stats["prive"] compte les appels poste a poste.
 
 Registre : carte SD (REGISTRY_PATH), une entree par frequence (pas de
 6,25 kHz) ; journal brut des sessions sur le NAS (veille_donnees.archive).

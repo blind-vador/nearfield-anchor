@@ -22,10 +22,13 @@ Liaison directe : la machine se connecte au Pi (lib/compagnon_serveur.py) ;
 le Pi lui pousse les travaux, la reveille si elle dort, et elle previent
 quand c'est fini.
 """
+import contextlib
+import fcntl
 import json
 import os
 import shutil
 import socket
+import tempfile
 import time
 import uuid
 
@@ -55,11 +58,57 @@ def _read(path):
 
 
 def _write(path, data):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=1)
-    os.replace(tmp, path)
+    # Fichier temporaire unique (2026-10-27) : avec un ".tmp" commun, deux fils
+    # qui ecrivaient la meme fiche en meme temps melangeaient leurs octets (JSON
+    # casse, "Extra data") et le second os.replace tombait en FileNotFoundError.
+    # La fiche de confiance illisible faisait refuser le Mac par le pont.
+    folder = os.path.dirname(path)
+    os.makedirs(folder, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=folder, prefix="." + os.path.basename(path) + ".", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=1)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        with contextlib.suppress(OSError):
+            os.remove(tmp)
+        raise
+
+
+@contextlib.contextmanager
+def _verrou_confiance():
+    """Verrou exclusif sur les fiches de confiance, entre fils et entre programmes
+    (flock : chaque ouverture a son propre verrou)."""
+    os.makedirs(TRUST_DIR, exist_ok=True)
+    with open(os.path.join(TRUST_DIR, ".verrou"), "w") as f:
+        fcntl.flock(f, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
+def _read_card(path, verrou_tenu=False):
+    """Fiche de confiance ; si elle est abimee, on garde le premier objet JSON
+    complet (une ecriture interrompue laisse des octets en trop a la fin) et on
+    la reecrit proprement, plutot que d'oublier la machine appairee."""
+    card = _read(path)
+    if card is not None:
+        return card
+    try:
+        with open(path, encoding="utf-8") as f:
+            card, _ = json.JSONDecoder().raw_decode(f.read())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(card, dict) or not card.get("cle"):
+        return None
+    with contextlib.nullcontext() if verrou_tenu else _verrou_confiance():
+        if _read(path) is None:
+            _write(path, card)
+            print(f"[compagnon] fiche {os.path.basename(path)} abimee, reparee", flush=True)
+    return card
 
 
 def key():
@@ -81,7 +130,7 @@ def trusted():
         return {}
     for name in names:
         if name.endswith(".json"):
-            card = _read(os.path.join(TRUST_DIR, name))
+            card = _read_card(os.path.join(TRUST_DIR, name))
             if card and card.get("cle"):
                 found[name[:-5]] = card
     return found
@@ -89,15 +138,16 @@ def trusted():
 
 def update_card(cid, **fields):
     path = os.path.join(TRUST_DIR, f"{cid}.json")
-    card = _read(path)
-    if card is None:
-        return None
-    for k, v in fields.items():
-        if k == "stats":
-            card.setdefault("stats", {}).update(v)
-        else:
-            card[k] = v
-    _write(path, card)
+    with _verrou_confiance():
+        card = _read_card(path, verrou_tenu=True)
+        if card is None:
+            return None
+        for k, v in fields.items():
+            if k == "stats":
+                card.setdefault("stats", {}).update(v)
+            else:
+                card[k] = v
+        _write(path, card)
     return card
 
 

@@ -73,7 +73,7 @@ def describe(e):
                   for tg, g in groups[:MAX_GROUPS]]
         parts.append(dire("dmr.groupes", nombre=nombre(len(groups), "groupe"), liste=" ; ".join(listed)))
     if e.get("prive"):
-        parts.append(dire("dmr.prives", nombre=nombre(e["prive"], "appel privé", "appels privés")))
+        parts.append(dire("dmr.prives", nombre=nombre(e["prive"], "appel de poste à poste", "appels de poste à poste")))
     if e.get("chiffre"):
         parts.append(dire("dmr.chiffres", nombre=nombre(e["chiffre"], "appel chiffré", "appels chiffrés")))
     hours = _usual_hours(e)

@@ -20,6 +20,11 @@ PROTOCOLES = {"DMR": "DMR", "P25p1": "P25", "P25p2": "P25", "YSF": "YSF", "DSTAR
               "X2-TDMA": "X2-TDMA"}
 SYNC_RE = re.compile(r"Sync: [+-]([\w-]+)")
 ENC_RE = re.compile(r"\b(ENC|Encrypt\w*|ALG ID|Key ID|KID)\b", re.I)
+# Trame de VOIX DMR en clair : superframe VC1..VC6 ou en-tete voix VLC, apres
+# le dernier "|" de la ligne Sync. On EXCLUT la voix chiffree ("VC1*", le "*")
+# et tout le reste (IDLE au repos, TLC terminateur, CSBK/DATA/PI signalisation)
+# : eux ne doivent pas declencher d'ouverture (2026-10-27, stats["voix"]).
+DMR_VOIX_RE = re.compile(r"\|\s*V(?:C[1-6]|LC)\b(?!\*)")
 SEUIL_MIN = 2                       # en dessous, pas meme une proposition (bruit pur)
 RATIO_MIN = 0.25
 VOIX_MIN_SEC = 1.0
@@ -56,6 +61,8 @@ def compter_synchro(stats, text):
                 _propre(stats, protocole)
         elif "ERR" not in text:
             _propre(stats, protocole)
+        if protocole == "DMR" and DMR_VOIX_RE.search(text):
+            stats["voix"] = stats.get("voix", 0) + 1   # vraie voix en clair, pas IDLE/TLC
         return
     attente = stats.get("preuve")
     if attente and text.strip():
