@@ -565,6 +565,17 @@ DSD_FME_PRE_MAX = 500  # datagrammes gardes avant la confirmation (~10 s en ster
 # reponse qui suit de pres n'est pas perdue.
 MIN_ECOUTE_SEC = 8.0
 
+# Fenetre de reponse (2026-10-28, demande utilisateur) : une fois le locuteur
+# silencieux, on NE FERME PAS aussitot -- on garde le canal ouvert ce temps-la
+# pour qu'une reponse qui revient (l'autre interlocuteur, apres le "a vous") ne
+# tombe pas sur un canal deja referme. Equivalent analogique de DSD_FME_IDLE_SEC
+# (la voix numerique attend deja 10 s depuis le 2026-10-03, pour la meme raison :
+# conversation coupee entre deux interlocuteurs). Sert de base a l'attente de fin
+# FM quand l'utilisateur n'a pas regle "attente_fin_s" a la main ; maintien.delai
+# la module ensuite selon l'interet du canal, MIN_ECOUTE_SEC reste le plancher et
+# maintien.plafond le plafond.
+ATTENTE_REPONSE_SEC = 7.0
+
 # Pic DC : artefact materiel propre aux dongles RTL-SDR (architecture a conversion
 # directe), qui apparait comme un pic artificiel au centre exact de chaque segment
 # balaye par rtl_power. On exclut les bins trop proches du centre de chaque
@@ -1824,7 +1835,12 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     aplay_stderr_thread.start()
 
     settings = _settings(target)
-    debounce = maintien.delai(settings["attente_fin_s"] or SILENCE_DEBOUNCE_SEC, target, freq_hz)
+    # Base = fenetre de reponse (on attend un retour avant de fermer), pas le
+    # simple debounce de 3 s : une fin coupee entre deux interlocuteurs est pire
+    # qu'un peu de souffle en fin de capture (meme choix que la voix numerique,
+    # DSD_FME_IDLE_SEC). "attente_fin_s" regle a la main par l'utilisateur prime ;
+    # sinon ATTENTE_REPONSE_SEC. maintien.delai module selon l'interet du canal.
+    debounce = maintien.delai(settings["attente_fin_s"] or ATTENTE_REPONSE_SEC, target, freq_hz)
     quiet_windows_needed = int(debounce * 1000 / ANALYSIS_WINDOW_MS)
     quiet_windows_seen = 0
     consecutive_signal_windows = 0
@@ -1852,14 +1868,17 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     raw_chunks, filtered_chunks = [], []
 
     probs_seen, trigger_prob, early_cut = [], None, False
+    raison_fin = "plafond"   # pourquoi on a ferme (diagnostic de calibrage, 2026-10-28)
     start = signal_at = time.time()
     try:
         while total_bytes < max_bytes and time.time() - start < hold_sec + 5:
             if maintien.zap_depuis(start):
                 print("[radio_watch] zapper : ecoute arretee a la demande")
+                raison_fin = "zap"
                 break
             if arbitre is not None and arbitre.numerique_gagne():
                 print(f"[radio_watch] voix numerique ({arbitre.protocole}) sur le canal : la FM s'efface")
+                raison_fin = "voix numerique"
                 break
             # Timeout (pas un .get() bloquant sans limite) : une attente
             # bloquante pure sur Condition.wait() ne se reveille QUE quand la
@@ -1877,6 +1896,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
                 except queue.Empty:
                     continue
             if chunk is None:
+                raison_fin = "flux termine"
                 break
             if multimon is not None and not replaying:
                 # Signal BRUT, non filtre -- multimon-ng decode des tons
@@ -1897,6 +1917,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
                 # (surveillance continue, voir _aplay_stderr_watcher) -- ne pas
                 # relire aplay.stderr ici, ce serait un deuxieme lecteur sur le
                 # meme flux et ca entrerait en conflit avec ce fil.
+                raison_fin = "erreur audio"
                 break
             captured_chunks.append(chunk)
             total_bytes += len(chunk)
@@ -1924,6 +1945,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
                 quiet_windows_seen += 1
                 if heard_signal and quiet_windows_seen >= quiet_windows_needed \
                         and time.time() - signal_at >= MIN_ECOUTE_SEC:
+                    raison_fin = "fenetre de reponse ecoulee"
                     break
             if not heard_signal and time.time() - start >= EARLY_CUT_SEC:
                 early_cut = True
@@ -1959,13 +1981,19 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     _last_stream_raw = (b"".join(raw_chunks), sample_rate)
     _last_stream_filtered = (b"".join(filtered_chunks), sample_rate)
     # Mesures du systeme, confrontees plus tard aux notes de l'utilisateur.
+    silence_final_s = round(quiet_windows_seen * ANALYSIS_WINDOW_MS / 1000, 1)
     _last_stream_metrics = {
         "prob_declenchement": round(trigger_prob, 3) if trigger_prob is not None else None,
         "prob_max": round(max(probs_seen), 3) if probs_seen else None,
         "prob_mediane": round(sorted(probs_seen)[len(probs_seen) // 2], 3) if probs_seen else None,
         "duree_s": round(total_bytes / (sample_rate * 2), 1),
         "coupure_precoce": early_cut,
+        "raison_fin": raison_fin,
+        "silence_final_s": silence_final_s,
     }
+    print(f"[radio_watch] fermeture {mhz:.4f} MHz : {raison_fin} "
+          f"(duree {_last_stream_metrics['duree_s']} s, silence final {silence_final_s} s, "
+          f"attente de reponse {round(debounce, 1)} s)")
     if mode == "nfm" and raw_chunks:  # son brut : la tonalite y est encore (le filtre vocal la retire)
         try:
             _last_stream_metrics["ctcss_hz"] = ctcss.detecter(b"".join(raw_chunks), sample_rate)
