@@ -14,7 +14,11 @@ import shutil
 
 from sound_paths import NAS_BASE
 
-LOCAL_BASE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "sons")
+# ~/autopilot/sons en dur (axe 4) : avant, deduit de __file__ en supposant
+# que le module vivait dans autopilot/pi_console ; depuis le depot, le calcul
+# relatif pointait vers nearfield_anchor/sons (vide). Les sons deployes sont
+# dans ~/autopilot/sons.
+LOCAL_BASE = "/home/vador/autopilot/sons"
 
 SONS = {
     # avions

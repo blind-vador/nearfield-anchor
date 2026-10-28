@@ -25,9 +25,9 @@ import time
 
 NAS_ROOT = "/media/nas/nd1"
 SIGNATURES_NAS = f"{NAS_ROOT}/server/radio_log/parasites_connus.json"
-SIGNATURES_LOCAL = "/home/vador/autopilot/pi_console/parasites_connus.json"
+SIGNATURES_LOCAL = "/home/vador/autopilot/parasites_connus.json"  # etat runtime, hors pi_console (axe 4)
 BACKGROUND_NAS = f"{NAS_ROOT}/server/radio_log/bruit_de_fond.json"
-BACKGROUND_LOCAL = "/home/vador/autopilot/pi_console/bruit_de_fond.json"
+BACKGROUND_LOCAL = "/home/vador/autopilot/bruit_de_fond.json"  # etat runtime, hors pi_console (axe 4)
 LAST_CAPTURE_PATH = "/tmp/radio_watch_derniere_capture.json"
 # Ecoute en cours (2026-10-17) : "verrouille" pendant qu'on entend quelque
 # chose doit viser CETTE frequence ; la derniere capture n'est ecrite qu'a la

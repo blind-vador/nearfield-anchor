@@ -20,7 +20,7 @@ from phrases import dire
 import veille_donnees as vd
 
 GR_PYTHON = "/home/vador/autopilot/bin/python3-gnuradio"
-DECODER = "/home/vador/autopilot/pi_console/lora_decode.py"
+DECODER = "/home/vador/nearfield_anchor/bridge/lora_decode.py"  # script du depot (axe 4)
 SOUND = "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3"
 SYNC = {"meshtastic": 0x2B, "lora_aprs": 0x12}
 SF_FIRST = {"meshtastic": 11, "lora_aprs": 12}  # LongFast europeen ; APRS LoRa

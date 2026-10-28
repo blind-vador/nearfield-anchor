@@ -14,7 +14,7 @@ import matcher  # noqa: E402
 from phrases import dire, nombre  # noqa: E402
 
 RAPPORT = "/home/vador/autopilot/securite_rapport.json"
-AUDIT = "/home/vador/autopilot/pi_console/audit_securite.py"
+AUDIT = "/home/vador/nearfield_anchor/tools/audit_securite.py"  # script du depot (axe 4)
 
 
 def _rapport():

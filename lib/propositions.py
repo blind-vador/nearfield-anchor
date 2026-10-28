@@ -32,7 +32,7 @@ import time
 
 NAS_ROOT = "/media/nas/nd1"
 STORE_NAS = f"{NAS_ROOT}/server/radio_log/propositions.json"
-STORE_LOCAL = "/home/vador/autopilot/pi_console/propositions.json"
+STORE_LOCAL = "/home/vador/autopilot/propositions.json"  # etat runtime, hors pi_console (axe 4)
 LOCK_PATH = "/tmp/propositions.lock"
 MAX_ENTRIES = 300
 

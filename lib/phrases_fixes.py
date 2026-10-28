@@ -58,7 +58,7 @@ _memo = {"signature": None, "tables": None}
 
 def _signature():
     """Change quand une phrase est reecrite (personnalite du jour a minuit)."""
-    folder = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "phrases")
+    folder = "/home/vador/autopilot/phrases"  # en dur (axe 4) : phrases deployees par install.sh, hors arbre du depot
     try:
         return tuple(sorted((n, os.path.getmtime(os.path.join(folder, n))) for n in os.listdir(folder)
                             if n.endswith(".ini")))
