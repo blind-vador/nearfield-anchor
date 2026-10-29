@@ -3,9 +3,9 @@ Description=Veille systeme : alimentation, chaleur, USB, horloge, internet, disq
 After=network.target sound.target
 
 [Service]
-ExecStart=/usr/bin/python3 -u /home/vador/autopilot/pi_console/veille_systeme.py
-WorkingDirectory=/home/vador/autopilot/pi_console
-User=vador
+ExecStart=/usr/bin/python3 -u @BASE@/pi_console/veille_systeme.py
+WorkingDirectory=@BASE@/pi_console
+User=@RUN_USER@
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Restart=always
 RestartSec=10

@@ -3,8 +3,8 @@ Description=Annonces vocales de l'imprimante 3D (chauffe, impression, erreurs)
 After=multi-user.target sound.target octoprint.service
 
 [Service]
-ExecStart=/usr/bin/python3 -u /home/vador/autopilot/pi_console/imprimante_watch.py
-User=vador
+ExecStart=/usr/bin/python3 -u @BASE@/pi_console/imprimante_watch.py
+User=@RUN_USER@
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Restart=always
 RestartSec=5

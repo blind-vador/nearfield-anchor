@@ -15,12 +15,11 @@ restart <nom>"). Le cadre est encore ferme : pour l'instant ce scanner est
 souvent le noeud qui ecrit, donc l'OTA dira surtout "en avance" tant que les
 commits ne sont pas pousses ; il tirera vraiment sur les scanners en retard.
 """
-import chemins
 import os
 import subprocess
 import sys
 
-REPO = chemins.DEPOT
+REPO = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RUNTIME_DIRS = ("lib", "watchers", "tools", "config", "bridge", "console", "nas")
 
 

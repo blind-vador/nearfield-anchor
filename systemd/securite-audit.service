@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 -u /home/vador/autopilot/pi_console/audit_securite.py
-User=vador
+ExecStart=/usr/bin/python3 -u @BASE@/pi_console/audit_securite.py
+User=@RUN_USER@
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Nice=10
 StandardOutput=journal

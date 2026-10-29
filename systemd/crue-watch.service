@@ -4,8 +4,8 @@ After=multi-user.target network-online.target
 Wants=network-online.target
 
 [Service]
-ExecStart=/usr/bin/python3 -u /home/vador/autopilot/pi_console/crue_watch.py
-User=vador
+ExecStart=/usr/bin/python3 -u @BASE@/pi_console/crue_watch.py
+User=@RUN_USER@
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Restart=always
 RestartSec=5

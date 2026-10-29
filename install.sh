@@ -23,16 +23,23 @@
 # Usage : sudo bash install.sh
 set -euo pipefail
 
-RUN_USER="${RUN_USER:-vador}"
-TARGET_DIR="${TARGET_DIR:-/home/vador/autopilot/pi_console}"
-RADIONO_TARGET_DIR="${RADIONO_TARGET_DIR:-/home/vador/autopilot}"
-NAS_TARGET_DIR="${NAS_TARGET_DIR:-/home/vador/autopilot/nas_manager}"
-CONSOLE_TARGET_DIR="${CONSOLE_TARGET_DIR:-/home/vador/autopilot/console}"
+# Utilisateur de service : par defaut celui qui lance sudo (SUDO_USER), sinon
+# l'utilisateur courant -- aucun nom en dur. Surchargeable par RUN_USER=...
+RUN_USER="${RUN_USER:-${SUDO_USER:-$(id -un)}}"
+RUN_HOME="$(getent passwd "$RUN_USER" | cut -d: -f6)"
+RUN_HOME="${RUN_HOME:-/home/$RUN_USER}"
+# Racine de l'etat runtime, hors depot (defaut ~/autopilot). Doit coincider
+# avec le defaut de config/chemins.py (BASE). Surchargeable par NFA_HOME=...
+RUNTIME_BASE="${NFA_HOME:-$RUN_HOME/autopilot}"
+TARGET_DIR="${TARGET_DIR:-$RUNTIME_BASE/pi_console}"
+RADIONO_TARGET_DIR="${RADIONO_TARGET_DIR:-$RUNTIME_BASE}"
+NAS_TARGET_DIR="${NAS_TARGET_DIR:-$RUNTIME_BASE/nas_manager}"
+CONSOLE_TARGET_DIR="${CONSOLE_TARGET_DIR:-$RUNTIME_BASE/console}"
 BUILD_DIR="${BUILD_DIR:-/tmp/nearfield_anchor-build}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # Axe 4 (2026-10-29) : le depot est la source unique, plus de copie a plat.
 # Les services tournent depuis $REPO_DIR via les drop-ins systemd (PYTHONPATH).
-AIRBAND_DIR="/home/vador/autopilot/rtl_airband"   # build RTLSDR-Airband (artefact, hors depot)
+AIRBAND_DIR="$RUNTIME_BASE/rtl_airband"   # build RTLSDR-Airband (artefact, hors depot)
 PP_DEPOT="$REPO_DIR/lib:$REPO_DIR/watchers:$REPO_DIR/tools:$REPO_DIR/config:$REPO_DIR/bridge"
 
 # OctoPi installe /root/bin/git, un garde-fou qui refuse git en root (pour
@@ -180,7 +187,7 @@ else
 fi
 
 # Voix locales Piper (lib/piper_out.py) : binaire officiel armv7 dans
-# /home/vador/piper, voix francaises du depot officiel rhasspy/piper-voices
+# $RUN_HOME/piper (voir PIPER_DIR), voix francaises du depot officiel rhasspy/piper-voices
 # (installees plus bas, etape 4, par lib/piper_voix.py qui verifie les MD5).
 PIPER_DIR=/home/$RUN_USER/piper
 if [ ! -x "$PIPER_DIR/piper" ]; then
@@ -224,13 +231,13 @@ mkdir -p "$RADIONO_TARGET_DIR"
 # Plus d'aplatissement dans pi_console (axe 4) : watchers/lib/tools/bridge
 # restent dans le depot, les services les atteignent par PYTHONPATH (drop-ins,
 # etape 6). On ne deploie hors du depot que ce qui n'y vit pas.
-install -D -o vador -g vador -m 755 "$REPO_DIR"/tools/python3-gnuradio /home/vador/autopilot/bin/python3-gnuradio
+install -D -o "$RUN_USER" -g "$RUN_USER" -m 755 "$REPO_DIR"/tools/python3-gnuradio "$RUNTIME_BASE"/bin/python3-gnuradio
 # Phrases de l'interface, version neutre par langue (lib/phrases.py).
-install -d -o vador -g vador /home/vador/autopilot/phrases
-install -o vador -g vador -m 644 "$REPO_DIR"/phrases/*.ini /home/vador/autopilot/phrases/
+install -d -o "$RUN_USER" -g "$RUN_USER" "$RUNTIME_BASE"/phrases
+install -o "$RUN_USER" -g "$RUN_USER" -m 644 "$REPO_DIR"/phrases/*.ini "$RUNTIME_BASE"/phrases/
 # Exemples de reference de la grille de notation (touches E / F2), referentiel fixe.
-install -d -o vador -g vador /home/vador/autopilot/exemples_notation
-install -o vador -g vador -m 644 "$REPO_DIR"/assets/exemples_notation/* /home/vador/autopilot/exemples_notation/
+install -d -o "$RUN_USER" -g "$RUN_USER" "$RUNTIME_BASE"/exemples_notation
+install -o "$RUN_USER" -g "$RUN_USER" -m 644 "$REPO_DIR"/assets/exemples_notation/* "$RUNTIME_BASE"/exemples_notation/
 # Secret (jamais commite) : dans le depot, gitignore (config/credentials.py).
 # Jamais ecraser un credentials.py deja rempli, sinon une reinstallation le
 # remplacerait par le modele vide.
@@ -348,11 +355,23 @@ systemctl stop getty@tty1.service 2>/dev/null || true
 systemctl mask getty@tty1.service
 
 echo "=== 6/6 : unites systemd ==="
-cp "$REPO_DIR"/systemd/*.service /etc/systemd/system/
+# Les unites et drop-ins sont versionnes avec des marqueurs (@REPO@, @BASE@,
+# @HOME@, @RUN_USER@) plutot que des chemins personnels en dur : on les rend
+# ici pour CETTE machine. Un depot clonable sur n'importe quelle machine Linux.
+render_unit() {
+    sed -e "s#@REPO@#$REPO_DIR#g" -e "s#@BASE@#$RUNTIME_BASE#g" \
+        -e "s#@HOME@#$RUN_HOME#g" -e "s#@RUN_USER@#$RUN_USER#g" "$1"
+}
+for unit in "$REPO_DIR"/systemd/*.service "$REPO_DIR"/systemd/*.timer; do
+    render_unit "$unit" > "/etc/systemd/system/$(basename "$unit")"
+done
 # Drop-ins (axe 4) : chaque service tourne depuis le depot (ExecStart + PYTHONPATH),
 # et non la copie a plat. Un <svc>.service.d/override.conf par service.
-cp -r "$REPO_DIR"/systemd/dropins/* /etc/systemd/system/
-cp "$REPO_DIR"/systemd/*.timer /etc/systemd/system/  # securite-audit (2026-10-23)
+for conf in "$REPO_DIR"/systemd/dropins/*/*.conf; do
+    sousdossier="$(basename "$(dirname "$conf")")"
+    mkdir -p "/etc/systemd/system/$sousdossier"
+    render_unit "$conf" > "/etc/systemd/system/$sousdossier/$(basename "$conf")"
+done
 systemctl daemon-reload
 for timer in "$REPO_DIR"/systemd/*.timer; do
     systemctl enable --now "$(basename "$timer")"
