@@ -10,7 +10,7 @@ import urllib.request
 
 API = "https://api.printables.com/graphql/"
 MEDIA = "https://media.printables.com/"
-UA = "nearfield-anchor/1.0 (deepspace9; +https://printables.com)"
+UA = "nearfield-anchor/1.0 (+https://printables.com)"
 TIMEOUT = 20
 
 SEARCH_Q = """

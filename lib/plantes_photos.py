@@ -48,7 +48,7 @@ MAX_PER_RUN = 6
 JOY_KEYS = ("plantes.joie_fruits_1", "plantes.joie_fruits_2", "plantes.joie_fruits_3")                  # Gemini : au plus 6 photos par passage
 MIME = {".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".webp": "image/webp",
         ".heic": "image/heic", ".heif": "image/heif"}
-README = """Photos des plantes (nearfield anchor, deepspace9)
+README = """Photos des plantes (nearfield anchor, ce Pi)
 
 Un dossier par plante, cree par le Pi. Deposer une photo dans le dossier
 de la plante : dans l'heure, le Pi la decrit, la compare a la description

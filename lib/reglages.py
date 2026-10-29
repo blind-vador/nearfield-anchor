@@ -84,7 +84,7 @@ KEYS = {
 }
 KEY_LABELS = Etiquettes("reglages.cle", {k: v[1] for k, v in KEYS.items()}, "usage d'une clé API, dit quand elle manque")
 
-README = """Réglages de nearfield anchor (deepspace9)
+README = """Réglages de nearfield anchor (ce Pi)
 
 Dossier cles : un fichier texte par clé API. Ouvrir le fichier, coller la
 clé seule, enregistrer. Pas de guillemets, pas de nom devant. Les veilles

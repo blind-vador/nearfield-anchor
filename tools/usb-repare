@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Gestes de reparation USB de usb_watch.py, les seuls qui demandent root
 # (2026-10-11). Installe dans /usr/local/sbin/usb-repare par install.sh ;
-# usb_watch.py (utilisateur vador) l'appelle via "sudo -n", regle sudoers
+# usb_watch.py (l utilisateur du service) l'appelle via "sudo -n", regle sudoers
 # limitee a ce script. Chaque geste refuse ce qui pourrait couper un
 # appareil qui marche -- en particulier les disques du NAS et les hubs qui
 # les portent :

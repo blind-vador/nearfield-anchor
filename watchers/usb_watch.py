@@ -1,6 +1,6 @@
 """Entretien et reparation automatique des peripheriques USB (2026-10-11).
 
-Trouve en session sur deepspace9 : des appareils bien branches restaient
+Trouve en session sur ce Pi : des appareils bien branches restaient
 invisibles ou figes sans que personne ne s'en apercoive --
   - la webcam s'est deconnectee une seconde (mise en veille USB
     automatique) : mjpg-streamer est mort ("Error grabbing frames") mais
@@ -27,7 +27,7 @@ Ce qui est surveille toutes les CHECK_INTERVAL_SEC :
 Les disques du NAS restent a nas_watch.py ; les hubs et disques ne sont
 jamais coupes (garde-fou aussi dans tools/usb-repare).
 
-Branchements de reference (deepspace9, face ports) :
+Branchements de reference (ce Pi, face ports) :
   bas-gauche USB3  = hub alimente NAS (nd1+nd2) ;
   haut-gauche USB3 = hub alimente (imprimante + camera derriere
     interrupteurs USB a bouton, carte son, dongle radio) ;
@@ -365,7 +365,7 @@ class Watch:
                 continue
             peer = _port_peer(port)
             if peer and peer.startswith("2-"):
-                # Jumeau USB2 d'un hub USB3 (hub periph sur deepspace9) :
+                # Jumeau USB2 d'un hub USB3 (hub periph sur ce Pi) :
                 # power-cycler reset TOUT le hub (radio/son/camera...).
                 # 1-1-port1 = montee du hub USB2 : NE JAMAIS couper.
                 # 1-1-port2/4 = fantomes sur ports vides du hub : ignorer+couper.

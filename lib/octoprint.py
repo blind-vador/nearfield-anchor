@@ -7,7 +7,7 @@ expose : etat, temperatures, deplacements, chauffe, travaux, fichiers.
 Ce qu'elle n'expose PAS -- la position reelle des axes -- se lit en
 envoyant M114 au firmware et en guettant sa reponse dans le flux du
 websocket d'OctoPrint (/sockjs/websocket, lignes "Recv: X:.. Y:.. Z:..").
-Mesure sur deepspace9 (Ender 3 Pro, Marlin 2.1.2.5) : reponse en 0,5 s.
+Mesure sur ce Pi (Ender 3 Pro, Marlin 2.1.2.5) : reponse en 0,5 s.
 """
 import chemins
 import asyncio
@@ -1186,7 +1186,7 @@ class Flux:
 
 def limites_firmware(flux=None, timeout=6):
     """Volume reel d'apres Marlin (M211) : {"x", "y", "z"} maxi, ou None.
-    Le profil OctoPrint de deepspace9 dit 200 x 200 alors que le firmware
+    Le profil OctoPrint de ce Pi dit 200 x 200 alors que le firmware
     accepte 235 x 235 : le firmware fait foi pour les coins du plateau."""
     if flux is not None:
         found, _, _ = flux.envoyer(["M211"], M211_RE, timeout, echec=False)

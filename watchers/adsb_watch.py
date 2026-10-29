@@ -16,7 +16,7 @@ import ogn_watch
 from phrases import Etiquettes, dire, nombre
 
 # API OpenSky Network. Compte authentifie cree en session (username
-# blind_vador) -- l'API exige desormais OAuth2 (client_credentials).
+# un compte dedie) -- l'API exige desormais OAuth2 (client_credentials).
 OPENSKY_URL = "https://opensky-network.org/api/states/all"
 OPENSKY_TOKEN_URL = "https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token"
 
