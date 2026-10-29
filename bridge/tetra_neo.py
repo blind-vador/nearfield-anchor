@@ -69,6 +69,10 @@ _SETUP = re.compile(r"\[TETRA CMCE D-SETUP\][^\n]*?call=(\d+)[^\n]*?enc=(\d+)\s+
 _CONNECT = re.compile(r"\[TETRA CMCE D-CONNECT\][^\n]*?call=(\d+)")
 _ALLOC = re.compile(r"\[TETRA CHANNEL-ALLOCATION\][^\n]*?carrier=(\d+)\s+freq=(\d+)")
 _SUIVI = re.compile(r"\[TETRA SM\] on traffic channel (\d+) Hz \(carrier (\d+), timeslots 0x[0-9A-Fa-f]+, call (\d+)\)")
+# Suivi sur le MEME porteur / autre time-slot (frequent quand le trafic partage
+# le porteur du controle, p.ex. 429,6125) : dsd-neo l'annonce sans frequence. A
+# compter comme un suivi au meme titre que "on traffic channel".
+_SUIVI_MEME = re.compile(r"\[TETRA SM\] follow call (\d+) on this carrier \(timeslots 0x[0-9A-Fa-f]+\)")
 _RETOUR = re.compile(r"\[TETRA SM\] back on the control channel")
 _CHIFFRE_REFUSE = re.compile(r"\[TETRA CALL\] call=(\d+) .*encrypted; locked out")
 _VOISINES = re.compile(r"D-NWRK-BROADCAST\][^\n]*?neighbours=(\d+)")
@@ -253,7 +257,11 @@ def parser(texte):
     for call in _CHIFFRE_REFUSE.findall(texte):
         appels.setdefault(call, {})["chiffre"] = True
     suivis = [{"freq_hz": int(f), "carrier": int(c), "call": call} for f, c, call in _SUIVI.findall(texte)]
-    trafic = sorted({int(f) for _, f in _ALLOC.findall(texte) if int(f) > 0} | {s["freq_hz"] for s in suivis})
+    # Suivis sur le meme porteur (le log ne donne pas de frequence) : on les
+    # rattache a la porteuse de controle courante -- celle qu'on ecoute deja.
+    for call in _SUIVI_MEME.findall(texte):
+        suivis.append({"freq_hz": reseau.get("freq_hz", 0), "carrier": reseau.get("carrier"), "call": call})
+    trafic = sorted({int(f) for _, f in _ALLOC.findall(texte) if int(f) > 0} | {s["freq_hz"] for s in suivis if s["freq_hz"]})
     activite = {
         "postes": postes,                            # SSI -> nombre de mentions
         "inscriptions": texte.count("[TETRA MM D-LU-ACCEPT]"),
@@ -283,18 +291,35 @@ def postes_actifs(activite, mentions_min=2):
 
 
 def voix_gardable(activite):
-    """La voix n'est gardee que si un appel a ete SUIVI et qu'aucun appel suivi
-    n'est connu comme chiffre (meme regle que le DMR : le poste a poste en clair
-    est garde)."""
-    suivis = activite.get("suivis") or []
-    if not suivis:
-        return False
+    """Doctrine : on garde TOUTE voix en clair. dsd-neo ne synthetise QUE du
+    clair -- il laisse tomber les trames chiffrees ("such speech frames are
+    dropped") et verrouille les appels chiffres ("locked out") -- donc un wav
+    non silencieux EST de la voix en clair. La garde repose sur le RMS (voir
+    run), pas sur la reconnaissance d'un suivi : le suivi n'est qu'un indice
+    pour le registre. Ce garde-fou ne refuse QUE s'il y a une preuve POSITIVE
+    de chiffrement sur un appel suivi (ceinture et bretelles ; en pratique rare,
+    puisque la voix chiffree n'arrive pas jusqu'au wav)."""
     appels = activite.get("appels") or {}
-    for s in suivis:
-        a = appels.get(s["call"]) or {}
-        if a.get("chiffre"):
+    for s in activite.get("suivis") or []:
+        if (appels.get(s["call"]) or {}).get("chiffre"):
             return False
     return True
+
+
+def _journaliser_brut(freq_hz, texte):
+    """Garde la sortie brute de dsd-neo (diagnostic : raison de non-suivi, derive
+    de format...). Dossier plafonne a 50 fichiers. Jamais bloquant."""
+    try:
+        import glob
+        d = os.path.join(HOME, "tetra_brut")
+        os.makedirs(d, exist_ok=True)
+        nom = "%d_%s.log" % (int(freq_hz), time.strftime("%Y%m%d_%H%M%S"))
+        with open(os.path.join(d, nom), "w", encoding="utf-8", errors="replace") as fh:
+            fh.write(texte)
+        for vieux in sorted(glob.glob(os.path.join(d, "*.log")))[:-50]:
+            os.remove(vieux)
+    except Exception:
+        pass
 
 
 def _rms_wav(path):
@@ -337,7 +362,7 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
         try:
             for ligne in proc.stdout:
                 sortie.append(ligne)
-                if "[TETRA SM] on traffic channel" in ligne:
+                if "[TETRA SM] on traffic channel" in ligne or "[TETRA SM] follow call" in ligne:
                     etat["suivi"] = True
                 elif _RETOUR.search(ligne):
                     etat["suivi"] = False
@@ -370,6 +395,7 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
             continue
     fil.join(timeout=2)
     texte = "".join(sortie)
+    _journaliser_brut(freq_hz, texte)
     res = parser(texte)
     rms = _rms_wav(voix)
     res["voix_wav"] = voix if rms >= VOIX_RMS_MIN and voix_gardable(res["activite"]) else None
