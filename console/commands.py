@@ -521,6 +521,12 @@ COMMANDS = [
     Command("capture", "enregistre tout ce qui sort du haut-parleur ; capture démarre, capture stop", None,
             keywords=["capture", "capturer", "enregistre le son", "enregistrer le son", "enregistrement du son"],
             examples=["capture démarre", "capture stop", "enregistre ce qui sort du haut-parleur"]),
+    # Tutoriel (ecouter) AVANT "sons" (regler) : sur "apprendre les sons" les deux
+    # matchent a 100, le premier gagne -> le tutoriel (2026-10-30).
+    Command("son", "tutoriel des sons : parcourir le catalogue et écouter chaque son pour les apprendre",
+            None, keywords=["son", "apprendre les sons", "apprendre le son", "tutoriel des sons",
+                            "tutoriel son", "tuto des sons", "tuto son", "tuto sons", "tutoriel", "tuto"],
+            examples=["apprends-moi les sons", "tutoriel des sons", "fais-moi écouter les sons un par un"]),
     Command("sons", "le son de chaque événement : l'écouter, et choisir son et phrase, son seul, ou rien",
             None, keywords=["sons", "les sons", "reglage des sons", "regler les sons", "sons des evenements",
                             "ecouter les sons", "sons de notification"],

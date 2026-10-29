@@ -387,6 +387,9 @@ def run_command(line, key_source, last_response):
     if cmd.name == "ignorer":
         import ignorer_cmd
         return ignorer_cmd.run(line, key_source, voix.say, out)
+    if cmd.name == "son":
+        import son_cmd
+        return son_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "sons":
         import sons_cmd
         return sons_cmd.run(line, key_source, voix.say, out)
