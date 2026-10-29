@@ -36,7 +36,7 @@ Toutes les commandes ci-dessous ont été testées et fonctionnent sur ce Pi.
 ### RTLSDR-Airband (squelch réel PMR446 + fréquences aéronautiques locales)
 
 ```bash
-cd /home/vador/autopilot/pi_console
+cd /home/<user>/autopilot/pi_console
 git clone https://github.com/szpajder/RTLSDR-Airband.git rtl_airband
 cd rtl_airband/src
 mkdir build && cd build
@@ -97,7 +97,7 @@ git clone --recursive --depth 1 https://github.com/pengzhendong/pyrnnoise.git
 cd pyrnnoise
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="-march=armv8-a -mfpu=neon-fp-armv8 -O3"
 make -C build -j4
-cp build/librnnoise.so /home/vador/autopilot/pi_console/rnnoise_lib/
+cp build/librnnoise.so /home/<user>/autopilot/pi_console/rnnoise_lib/
 ```
 
 ## Paquets ajoutés lors de la réinstallation du 2026-09-28 (Debian 12)

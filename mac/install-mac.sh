@@ -13,8 +13,8 @@ APP="$HOME_DIR/pcw-analyse"            # venv + script stable + logs
 VENV="$APP/venv"
 PANNS="$HOME_DIR/panns_data"
 AGENTS="$HOME_DIR/Library/LaunchAgents"
-NAS_USER="vador"                       # compte Samba du NAS (pas l'utilisateur du Mac)
-NAS_HOST="deepspace9.local"
+NAS_USER="${NFA_NAS_USER:-pi}"                       # compte Samba du NAS (pas l'utilisateur du Mac)
+NAS_HOST="${NFA_NAS_HOST:-raspberrypi.local}"
 
 echo "=== 1/5  venv Python + dépendances ==="
 mkdir -p "$APP"
@@ -50,21 +50,21 @@ plist() {  # $1=label  $2=ProgramArguments(xml)  $3=extra(xml)
 PL
 }
 # Montage NAS Samba (identifiants dans le trousseau), re-vérif toutes les 5 min.
-plist local.deepspace9.disques \
+plist local.nearfield.disques \
   "<string>/bin/sh</string><string>-c</string><string>for i in \$(seq 1 60); do /usr/bin/nc -z -G 2 $NAS_HOST 445 2>/dev/null &amp;&amp; break; sleep 5; done; for s in server stockage; do /sbin/mount | /usr/bin/grep -q \"on /Volumes/\$s \" || /usr/bin/osascript -e \"mount volume \\\"smb://$NAS_USER@$NAS_HOST/\$s\\\"\" 2>/dev/null; done</string>" \
   "<key>RunAtLoad</key><true/><key>StartInterval</key><integer>300</integer>"
 # Passe complète la nuit (02:30).
-plist local.deepspace9.analyse \
+plist local.nearfield.analyse \
   "<string>$VENV/bin/python</string><string>$APP/analyse.py</string><string>--hours</string><string>24</string>" \
   "<key>StartCalendarInterval</key><dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict><key>RunAtLoad</key><false/>"
 # File d'examen à la demande (touche "e" du journal), toutes les 15 min.
-plist local.deepspace9.examen \
+plist local.nearfield.examen \
   "<string>$VENV/bin/python</string><string>$APP/analyse.py</string><string>--queue</string>" \
   "<key>StartInterval</key><integer>900</integer><key>RunAtLoad</key><true/>"
 U=$(id -u)
 for a in disques analyse examen; do
-  launchctl bootout "gui/$U" "$AGENTS/local.deepspace9.$a.plist" 2>/dev/null || true
-  launchctl bootstrap "gui/$U" "$AGENTS/local.deepspace9.$a.plist"
+  launchctl bootout "gui/$U" "$AGENTS/local.nearfield.$a.plist" 2>/dev/null || true
+  launchctl bootstrap "gui/$U" "$AGENTS/local.nearfield.$a.plist"
 done
 
 echo "=== 5/5  terminé ==="

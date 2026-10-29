@@ -322,7 +322,10 @@ visudo -cf "$SUDOERS_FILE.tmp" && chmod 440 "$SUDOERS_FILE.tmp" && mv "$SUDOERS_
 # machines de la maison (Mac, Windows). Le mot de passe Samba n'est pas
 # gere ici : a creer une fois a la main (sudo smbpasswd -a $RUN_USER).
 cp /etc/samba/smb.conf /etc/samba/smb.conf.avant-install 2>/dev/null || true
-cp "$REPO_DIR/nas/smb.conf" /etc/samba/smb.conf
+# smb.conf est versionne avec des marqueurs (@RUN_USER@, @HOSTNAME@) : on rend
+# pour cette machine, pas de compte ni de nom d hote personnel dans le depot.
+sed -e "s#@RUN_USER@#$RUN_USER#g" -e "s#@HOSTNAME@#$(hostname -s)#g" \
+    "$REPO_DIR/nas/smb.conf" > /etc/samba/smb.conf
 testparm -s >/dev/null
 systemctl enable smbd
 systemctl restart smbd

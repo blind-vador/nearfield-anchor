@@ -1,5 +1,5 @@
 <?php
-// Point d entree unique de deepspace9 : liste les serveurs web du registre.
+// Point d entree unique de ce Pi : liste les serveurs web du registre.
 $reg = __DIR__ . "/registre.txt";
 $sites = [];
 if (is_readable($reg)) {
@@ -14,9 +14,9 @@ header("Content-Type: text/html; charset=utf-8");
 ?><!doctype html>
 <html lang="fr"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>deepspace9 — serveurs web</title></head>
+<title>ce Pi — serveurs web</title></head>
 <body>
-<h1>Serveurs web de deepspace9</h1>
+<h1>Serveurs web de ce Pi</h1>
 <?php if (!$sites): ?>
 <p>Aucun site enregistré. Remplis <code>registre.txt</code> (une ligne <code>nom::chemin</code> par site).</p>
 <?php else: ?>

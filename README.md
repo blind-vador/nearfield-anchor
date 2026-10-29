@@ -7,7 +7,7 @@ temps, de la faim, de la fatigue) en gardant un fil sonore et informatif
 avec la réalité.
 
 Ce dépôt est la sauvegarde/référentiel "clef en main" du projet
-déployé sur le Pi de référence (`deepspace9`) — permet de reconstituer
+déployé sur le Pi de référence (`ce Pi`) — permet de reconstituer
 l'installation complète en cas de panne de carte SD.
 
 ## Contenu
@@ -116,9 +116,9 @@ vocalement (espeak) l'état au démarrage et sur tout changement.
 
 **Partages réseau** (`nas/smb.conf`, déployé par `install.sh`) : `server`
 (petit disque nd1 entier : système, serveur, dépôt git) et `stockage` (gros
-disque nd2 entier), réservés à l'utilisateur `vador`, avec les réglages de
+disque nd2 entier), réservés à l'utilisateur `<user>`, avec les réglages de
 compatibilité macOS (`vfs_fruit`). Le mot de passe Samba se crée une fois à
-la main : `sudo smbpasswd -a vador`. `nas/smb.conf.current` est l'ancienne
+la main : `sudo smbpasswd -a <user>`. `nas/smb.conf.current` est l'ancienne
 configuration (partages `nd1`/`nd2`), gardée pour référence.
 
 `nas/legacy/` (`nas.py`, `smbv1.conf`, `smbv2.conf`) est **conservé pour
@@ -211,7 +211,7 @@ projets n'est empaqueté Debian pour ce Pi).
   par clé (`sncf.txt`, `opensky_id.txt`, `opensky_secret.txt`,
   `gemini.txt`, `octoprint.txt`, `airlabs.txt`) : coller la clé seule, enregistrer, rien
   à redémarrer. Copie de secours sur la carte SD
-  (`/home/vador/autopilot/reglages_cache`) si le disque décroche.
+  (`/home/<user>/autopilot/reglages_cache`) si le disque décroche.
   L'ancien `credentials.py` (jamais commité) reste lu en dernier recours.
 - **Chemins des banques sonores** : tout centralisé dans
   `config/sound_paths.py` (`NAS_BASE` + un chemin par catégorie) — adapte

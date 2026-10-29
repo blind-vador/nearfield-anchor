@@ -27,9 +27,9 @@ cp analyse.py ~/pcw-analyse/analyse.py
 - DeepFilterNet3 : auto-téléchargé dans `~/Library/Caches/DeepFilterNet/`.
 
 ### Tâches planifiées (launchd/, à copier dans ~/Library/LaunchAgents/)
-- `local.deepspace9.disques` : monte le NAS Samba au boot + re-vérif 5 min.
-- `local.deepspace9.analyse` : passe complète la nuit (02:30).
-- `local.deepspace9.examen` : draine la file d'examen (touche « e » du journal) toutes les 15 min.
+- `local.ce Pi.disques` : monte le NAS Samba au boot + re-vérif 5 min.
+- `local.ce Pi.analyse` : passe complète la nuit (02:30).
+- `local.ce Pi.examen` : draine la file d'examen (touche « e » du journal) toutes les 15 min.
 
 Base NAS côté Mac : `/Volumes/server/server/radio_log` (résolue dynamiquement
 par `resolve_base()`). Usage : `analyse.py [--hours N] [--max N] [--dry] [--queue]`.

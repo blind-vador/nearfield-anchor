@@ -213,7 +213,7 @@
 [nd1]
    comment = storage dir1
    path = /media/nas/nd1/server
-   valid users = vador
+   valid users = pi
 read only = no
    guest ok = no
    browseable = yes
@@ -223,7 +223,7 @@ read only = no
 [nd2]
    comment = storage dir2
    path = /media/nas/nd2/storage
-   valid users = vador
+   valid users = pi
    guest ok = no
 read only = no
    browseable = yes

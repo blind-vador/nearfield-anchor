@@ -1,7 +1,7 @@
-# Point d'entrée web de deepspace9
+# Point d'entrée web de ce Pi
 
 Sauvegarde/référence des fichiers du point d'entrée unique (2026-10-10).
-`deepspace9.local` (80/443, http+https) mène à une page de liens, OctoPrint
+`ce Pi.local` (80/443, http+https) mène à une page de liens, OctoPrint
 passe sous `/octoprint`.
 
 ## Pièces

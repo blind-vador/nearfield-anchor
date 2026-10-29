@@ -165,7 +165,7 @@ if [ "$(uname)" = "Darwin" ]; then
   <key>CFBundleDevelopmentRegion</key><string>fr</string>
   <key>LSUIElement</key><true/>
   <key>LSMinimumSystemVersion</key><string>13.0</string>
-  <key>NSLocalNetworkUsageDescription</key><string>Se connecter au Raspberry Pi deepspace9 pour faire les calculs lourds qu'il lui confie (images de satellites météo, décodage LoRa).</string>
+  <key>NSLocalNetworkUsageDescription</key><string>Se connecter au Raspberry Pi pour faire les calculs lourds qu'il lui confie (images de satellites météo, décodage LoRa).</string>
 </dict>
 </plist>
 INFO

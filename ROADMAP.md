@@ -1,12 +1,11 @@
-<!-- Renommé 2026-10-12 : dépôt `pi-console-watchers` → `nearfield_anchor` (bare NAS + clone). Les chemins de déploiement `/home/vador/autopilot/` restent. -->
+<!-- Renommé 2026-10-12 : dépôt `pi-console-watchers` → `nearfield_anchor` (bare NAS + clone). Les chemins de déploiement `/home/<user>/autopilot/` restent. -->
 
-# Roadmap : console vocale accessible du Pi (deepspace9)
+# Roadmap : console vocale accessible du Pi
 
 Ce document sert de passation pour une future session/agent qui reprendrait ce travail.
-L'utilisateur (vador) est aveugle et pilote cette machine à distance en SSH ; il n'a pas
-d'accès physique fiable (pas d'écran) et ne peut pas garantir pouvoir rouvrir la session
-qui a produit ce travail (bug d'accessibilité côté client Claude Desktop l'empêchant de
-retrouver ses anciennes sessions).
+Le projet vise une utilisation sans écran ni accès physique : la machine se pilote
+à distance en SSH et vocalise ses retours (priorité accessibilité). Les sessions
+précédentes ne sont pas toujours récupérables côté client.
 
 ## Objectif du projet
 
@@ -34,7 +33,7 @@ facilement la liste de commandes disponibles dans le temps.
 
 ## Ce qui est fait
 
-Code déployé dans `/home/vador/autopilot/pi_console/` sur deepspace9 :
+Code déployé dans `/home/<user>/autopilot/pi_console/` sur le Pi :
 
 - `main.py` — boucle principale (REPL), lit une ligne au clavier, dispatch, parle la
   réponse via espeak. **Limite connue : utilise `input()` standard, donc aucun écho de
@@ -59,7 +58,7 @@ l'impression" → `printer_status` correctement identifié).
 ### Déploiement système effectué
 
 - Service `/etc/systemd/system/pi-console.service` créé, actif et activé au boot.
-  Il tourne sur `tty1` (`TTYPath=/dev/tty1`), lancé en tant qu'utilisateur `vador`,
+  Il tourne sur `tty1` (`TTYPath=/dev/tty1`), lancé en tant qu'utilisateur `<user>`,
   `Restart=always`.
 - `getty@tty1` a été **arrêté, désactivé et masqué** pour laisser la place à ce service
   (plus de login classique sur la console physique — SSH reste le moyen normal
@@ -153,7 +152,7 @@ citoyenne (446, aviation, radioamateur...).
 ### Ce qui est fait
 
 - Service systemd `radio-watch.service`, démarré et actif (**pas activé au boot** —
-  décision à prendre avec l'utilisateur), fichier `/home/vador/autopilot/pi_console/radio_watch.py`.
+  décision à prendre avec l'utilisateur), fichier `/home/<user>/autopilot/pi_console/radio_watch.py`.
 - Bandes surveillées (étendues suite à une recherche documentaire sur les fréquences
   écoutables en France, voir sources dans le code) : PMR446 (16 canaux), CB 27 MHz
   (balayage 26.960-27.410 MHz), VHF marine (balayage 156-162.025 MHz, plus seulement
@@ -247,7 +246,7 @@ le contexte d'un service systemd system-level sans session de connexion réelle
 (`/run/user/1000` n'existe pas par défaut dans ce contexte) — `dsd-fme` reste
 accroché sur cet échec au lieu d'abandonner proprement, malgré le `timeout` externe.
 
-Correctif partiel appliqué : `loginctl enable-linger vador` (fait persister une
+Correctif partiel appliqué : `loginctl enable-linger <user>` (fait persister une
 session utilisateur systemd, donc `/run/user/1000` existe désormais en permanence) +
 `Environment=XDG_RUNTIME_DIR=/run/user/1000` dans le service. Mais PulseAudio lui-même
 échoue encore à détecter un profil audio fonctionnel pour la carte bcm2835 Headphones
@@ -1412,8 +1411,8 @@ et confirmes actifs.
 
 ## Suite 2026-08-29 : compte OpenSky cree (client secret en attente) + filtre 50km + son de survol
 
-Utilisateur a cree un compte OpenSky : username `blind_vador`,
-Client ID `blind_vador-api-client`, acces "Standard" (4000 credits/jour).
+Utilisateur a cree un compte OpenSky : username `blind_<user>`,
+Client ID `blind_<user>-api-client`, acces "Standard" (4000 credits/jour).
 **Le Client Secret OAuth2 n'a pas encore ete communique** -- necessaire en
 plus du Client ID pour authentifier les requetes (flow client_credentials).
 Modele d'appareil ADS-B toujours pas branche, en attente de ce secret.
@@ -1457,7 +1456,7 @@ timeout. Service redemarre et confirme actif.
 
 ## Suite 2026-08-30 : OpenSky "Reset Credential" -- 503 serveur, pas un bug d'accessibilite
 
-Compte OpenSky cree (`blind_vador`, Client ID `blind_vador-api-client`,
+Compte OpenSky cree (`blind_<user>`, Client ID `blind_<user>-api-client`,
 acces Standard 4000 credits/jour). L'utilisateur n'arrivait pas a obtenir
 le Client Secret via "Reset Credential" -- NVDA n'annoncait rien apres le
 clic. Longue session de diagnostic via l'extension Claude in Chrome
@@ -1650,10 +1649,10 @@ comme demandé :
   vigilance météo départementale.
 
 **Fichiers** :
-- `/home/vador/autopilot/pi_console/crue_watch.py` (nouveau, déployé,
+- `/home/<user>/autopilot/pi_console/crue_watch.py` (nouveau, déployé,
   syntaxe validée sur le Pi).
 - `/etc/systemd/system/crue-watch.service` (nouveau, même patron que les
-  trois autres services -- `User=vador`, `Restart=always`, **pas activé au
+  trois autres services -- `User=<user>`, `Restart=always`, **pas activé au
   boot, démarrage manuel uniquement**, cohérent avec le reste du projet).
 
 **Testé en session** (deux annonces réelles jouées sur le Pi) :
@@ -1740,7 +1739,7 @@ vérifiée avec le correctif espeak) :
    Lyon Part-Dieu, prévu à 07h15, a du retard. Nouveau départ estimé à
    07h27, soit environ 12 minutes de retard." -- conforme.
 
-**Fichiers** : `/home/vador/autopilot/pi_console/sncf_watch.py` (nouveau,
+**Fichiers** : `/home/<user>/autopilot/pi_console/sncf_watch.py` (nouveau,
 déployé, syntaxe validée), `/etc/systemd/system/sncf-watch.service`
 (nouveau, même patron que les autres -- pas activé au boot, démarrage
 manuel).
@@ -2949,14 +2948,14 @@ cette bande specifiquement.
 
 Source RTLSDR-Airband patchee (les deux bugs d'ordre de tuning trouves en
 session precedente) + binaire compile : deplaces de `/tmp` (perdu au
-redemarrage) vers `/home/vador/autopilot/pi_console/rtl_airband/src/`
+redemarrage) vers `/home/<user>/autopilot/pi_console/rtl_airband/src/`
 (source + `build/src/rtl_airband`). Survit desormais a un redemarrage du Pi.
 Toujours lie a la librtlsdr systeme standard (paquet apt, pas besoin de la
 version isolee testee en diagnostic).
 
 ### Nouveau module : airband_bridge.py
 
-`/home/vador/autopilot/pi_console/airband_bridge.py`. `AIRBAND_WINDOWS`
+`/home/<user>/autopilot/pi_console/airband_bridge.py`. `AIRBAND_WINDOWS`
 (liste des fenetres migrees), `scan_window(window, dwell_sec)` : lance
 RTLSDR-Airband avec un fichier de config genere a la volee, ecoute en UDP
 tous les canaux de la fenetre en parallele, des qu'un paquet arrive sur un
@@ -3270,7 +3269,7 @@ points de montage precis) choisies plutot qu'un service tournant en root.
 Fichier `/etc/sudoers.d/nas_watch`, valide avec `visudo -cf` AVANT
 installation (jamais applique sans validation syntaxique -- un sudoers
 casse bloquerait tout sudo sur la machine). Meme convention que les regles
-deja en place (`vador ALL=NOPASSWD: /usr/sbin/service`, `/sbin/shutdown`).
+deja en place (`<user> ALL=NOPASSWD: /usr/sbin/service`, `/sbin/shutdown`).
 
 ### Tests avant deploiement
 
@@ -3282,7 +3281,7 @@ deja en place (`vador ALL=NOPASSWD: /usr/sbin/service`, `/sbin/shutdown`).
    le premier cycle (execution manuelle), lecture reelle confirmee apres
    coup.
 3. Deploiement comme service systemd (`nas-watch.service`, meme modele que
-   `radio-watch.service` : `User=vador`, `Restart=always`, active au
+   `radio-watch.service` : `User=<user>`, `Restart=always`, active au
    demarrage). Test final SOUS le vrai service (pas le script manuel) :
    demontage volontaire de nd2, journal systemd confirme la sequence
    complete (detection a 09:25:31, `sudo umount -l` puis
@@ -4551,7 +4550,7 @@ teste directement (le nouveau chemin resout bien vers un dossier reel de
 
 ### Depot + remote
 
-`git init` sur le Pi (`/home/vador/pi-console-watchers/`), remote bare
+`git init` sur le Pi (`/home/<user>/pi-console-watchers/`), remote bare
 cree sur le NAS (`/media/nas/nd1/git/pi-console-watchers.git` --
 stockage physiquement separe de la carte SD), commit initial (36
 fichiers, 10178 lignes), pousse avec succes -- verifie identique cote Pi
@@ -4570,8 +4569,8 @@ laisse de cote.
 ## 2026-09-28 : reinstallation complete apres perte de la carte SD + console reconstruite
 
 L'ancienne carte SD a grille (perte totale). Nouvelle carte, image OctoPi
-(Debian 12 bookworm, armhf, Python 3.11), memes nom d'hote (`deepspace9`)
-et utilisateur (`vador`). Les deux disques NAS etaient intacts (`e2fsck -n`
+(Debian 12 bookworm, armhf, Python 3.11), memes nom d'hote (`le Pi`)
+et utilisateur (`<user>`). Les deux disques NAS etaient intacts (`e2fsck -n`
 propre sur les deux) : ce depot, sauvegarde sur `nd1`, a permis de tout
 reconstruire. Seule vraie perte : la console vocale (voir plus bas).
 
@@ -4675,7 +4674,7 @@ volontairement au singulier.)
 
 - Remplir `credentials.py` (SNCF, OpenSky, cle API OctoPrint) sur le Pi.
 - Terminer l'assistant de premiere configuration d'OctoPrint.
-- `/etc/sudoers.d/010-vador-nopasswd` (sudo total sans mot de passe) a ete
+- `/etc/sudoers.d/010-<user>-nopasswd` (sudo total sans mot de passe) a ete
   ajoute pour la reinstallation : peut etre supprime, la regle limitee
   suffit aux services.
 
@@ -4683,14 +4682,14 @@ volontairement au singulier.)
 
 Samba reinstalle (absent de la nouvelle image). Nouvelle configuration
 `nas/smb.conf`, deployee par `install.sh` : partages `server` (nd1 entier)
-et `stockage` (nd2 entier), `valid users = vador`, `force user = vador`,
+et `stockage` (nd2 entier), `valid users = <user>`, `force user = <user>`,
 masques 0664/0775 (l'ancienne config avait 766 pour les dossiers, sans
 droit de traversee), `vfs_fruit` pour le Finder, annonce mDNS. Mot de
-passe Samba cree a la main par l'utilisateur (`smbpasswd -a vador`).
+passe Samba cree a la main par l'utilisateur (`smbpasswd -a <user>`).
 
 Cote Mac : partages montes sous `/Volumes/server` et `/Volumes/stockage`,
 mot de passe dans le trousseau, affichage des serveurs connectes sur le
-bureau (Finder), et agent `~/Library/LaunchAgents/local.deepspace9.disques.plist`
+bureau (Finder), et agent `~/Library/LaunchAgents/local.le Pi.disques.plist`
 qui attend que le port 445 du Pi reponde puis remonte les deux partages a
 l'ouverture de session (teste : demontage puis remontage automatique sans
 invite de mot de passe).
@@ -4725,7 +4724,7 @@ cascade `gemini-2.5-flash` -> `gemini-flash-latest` ->
 Pistes ecartees, verifiees le 2026-09-29 : **GitHub Models est ferme
 depuis le 30 juillet 2026** (l'API ne repond plus que "OK") ; l'acces
 anonyme de Pollinations n'a plus de modele avec vision. `gh` est
-neanmoins installe et connecte (compte blind-vador), utile pour git.
+neanmoins installe et connecte (compte blind-<user>), utile pour git.
 
 Photo refusee si luminosite moyenne < 10 (rien n'est envoye). Mesure : a
 17 (bureau eteint), Gemini decrivait encore correctement le caisson.
@@ -5078,7 +5077,7 @@ et les aeroports, avec une arborescence alphabetique au clavier.
   en cache -> espeak tout de suite + preparation Microsoft en fond ; le reste
   -> au fil de l'eau, garde en cache si <= 200 caracteres. Rien dans 1,5 s ou
   erreur -> espeak prend le relais et le service est ignore 60 s.
-- Cache sur la carte SD (/home/vador/autopilot/voix_cache/<voix>/), 100 Mo
+- Cache sur la carte SD (/home/<user>/autopilot/voix_cache/<voix>/), 100 Mo
   max, menage au demarrage (moins recemment utilises d'abord). 235 sons
   d'echo prepares au demarrage et a chaque changement de voix (3 fils, ~1
   min 30).
@@ -5847,7 +5846,7 @@ charges utiles LoRaWAN et radios des secours (chiffrees).
   l'eau par lib/messages_numeriques.py (journal messages), avec indicatif et
   ville via radioid.net (lib/radioamateurs.py, cache 30 j, jamais le nom).
   Deja capte : DMR TG 208101, SRC 2081639 = F4LFY (Nice), via relais local.
-- MODE S ETENDU : pyModeS 2.22 installe (pip --user, vador) ; la fenetre
+- MODE S ETENDU : pyModeS 2.22 installe (pip --user, <user>) ; la fenetre
   ADS-B locale lit les trames brutes de dump1090 (127.0.0.1:30002) ;
   lib/modes_meteo.py dit la meteo (BDS 4,4 : vent, temperature, humidite)
   et les dangers (BDS 4,5) transmis par les avions, publie les vents en
@@ -6476,7 +6475,7 @@ DMR n'est pas une logique a part, c'est une facette du balayage. Verifie :
   klaxon (horn1.mp3) au hasard -- decoratif, pour faire vivre la gare.
 
 ## 2026-10-11 : veille USB, reparation automatique des peripheriques
-- Constat sur deepspace9 : la webcam s'est deconnectee une seconde a
+- Constat sur le Pi : la webcam s'est deconnectee une seconde a
   23 h 47 (mise en veille USB automatique) ; mjpg-streamer est mort
   ("Error grabbing frames") mais webcamd restait "active" : camera
   revenue jamais reprise, vision.py et photos des plantes muettes 14 h.
