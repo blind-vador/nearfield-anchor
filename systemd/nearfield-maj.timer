@@ -1,0 +1,11 @@
+[Unit]
+Description=Verifie periodiquement les mises a jour du scanner (OTA)
+
+[Timer]
+OnBootSec=10min
+OnUnitActiveSec=6h
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target

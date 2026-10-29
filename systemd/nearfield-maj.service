@@ -1,0 +1,10 @@
+[Unit]
+Description=Mise a jour du scanner depuis le depot git (OTA)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=vador
+Environment=PYTHONPATH="/home/vador/nearfield_anchor/lib:/home/vador/nearfield_anchor/watchers:/home/vador/nearfield_anchor/tools:/home/vador/nearfield_anchor/config:/home/vador/nearfield_anchor/bridge"
+ExecStart=/usr/bin/python3 -u /home/vador/nearfield_anchor/tools/nearfield_maj.py
