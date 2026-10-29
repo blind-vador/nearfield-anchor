@@ -9,6 +9,7 @@ evenement inconnu ou un son introuvable : le repli donne, sinon None.
 
 Ajouter un son : le poser sur le NAS sous server/<dossier>/, puis une ligne
 ici ; la copie locale se fait toute seule au premier usage."""
+import chemins
 import os
 import shutil
 
@@ -18,7 +19,7 @@ from sound_paths import NAS_BASE
 # que le module vivait dans autopilot/pi_console ; depuis le depot, le calcul
 # relatif pointait vers nearfield_anchor/sons (vide). Les sons deployes sont
 # dans ~/autopilot/sons.
-LOCAL_BASE = "/home/vador/autopilot/sons"
+LOCAL_BASE = chemins.base("sons")
 
 SONS = {
     # avions

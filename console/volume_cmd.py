@@ -16,7 +16,6 @@ changement est garde et s'entend tout de suite, meme au milieu d'un son.
 import re
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import keys  # noqa: E402

@@ -3,6 +3,7 @@ apprises a chaque ecoute que RNNoise ecarte comme bruit (le "neutre" de la
 frequence hors emission), utilisees par le nettoyage doux
 (audio_filters.GentleCleaner). Sur la carte SD du Pi.
 """
+import chemins
 import json
 import os
 import time
@@ -11,7 +12,7 @@ import numpy as np
 
 import audio_filters
 
-STORE_PATH = "/home/vador/autopilot/profils_bruit.json"
+STORE_PATH = chemins.base("profils_bruit.json")
 PER_BAND = 12
 NEAR_HZ = 200_000
 

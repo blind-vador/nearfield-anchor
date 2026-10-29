@@ -3,6 +3,7 @@
 #on commence par importer le module os qui va nous permettre de
 #faire d'une pierre deux coups, passer des comandes bash au pi et aussi
 #lister les fichiers présents aux points de montage.
+import chemins
 import os
 #import du module permettant de démarer des sous-process python
 import subprocess
@@ -96,7 +97,7 @@ if(confirmed>0):
 		#alors on fait une copie du fichier smb.conf tenant compte de cette configuration
 		#on le prend dans son point de stocage (ou je conserve les deux version du fichier)
 		#et on le renomme a la volé avec le nom que samba atant smb;conf
-		os.system("cp /home/vador/autopilot/nas_manager/smbv1.conf /etc/samba/smb.conf")
+		os.system(f"cp {chemins.base('nas_manager/smbv1.conf')} /etc/samba/smb.conf")
 		
 		#on préparent un simple message m'indiquant lors du démarage du NAS comment samba est configuré.
 		#bien entendu vous pouvez adapter le texte comme vous voulez, dans mon cas comme j'ai deux possiblité, et une mauvaise mémoire des chiffres je voulais le faire avec des lettres
@@ -110,7 +111,7 @@ if(confirmed>0):
 	#les disques se sont inversé.
 	#on fait donc le même traitement que précédamant, en tenant compte de cette possibilité.
 	if(os.path.isfile("/media/nas/nd1/nd2.txt")):
-		os.system("cp /home/vador/autopilot/nas_manager/smbv2.conf /etc/samba/smb.conf")
+		os.system(f"cp {chemins.base('nas_manager/smbv2.conf')} /etc/samba/smb.conf")
 		conftype=" Samba en configuration bravo. "
 		pointor="/media/nas/nd2/server/soundrtsv2"
 	

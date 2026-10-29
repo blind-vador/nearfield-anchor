@@ -11,7 +11,6 @@ Actions : ouvrir, imprimer, supprimer.
 import os
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import pieces  # noqa: E402

@@ -15,6 +15,7 @@ signes avant-coureurs : chute brutale de temperature, pression qui
 plonge, rafales, debut de pluie, avec la direction de la station -- l'ordre
 dans lequel les stations reagissent dit d'ou arrive la perturbation.
 """
+import chemins
 import json
 import math
 import os
@@ -29,7 +30,7 @@ from phrases import Etiquettes, dire, nombre
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 SONDEHUB_URL = "https://api.v2.sondehub.org/sondes"
 TIMEOUT = 20
-HISTORY_PATH = "/home/vador/autopilot/meteo_historique.json"
+HISTORY_PATH = chemins.base("meteo_historique.json")
 HISTORY_KEEP_SEC = 24 * 3600
 CONTEXT_PATH = "/tmp/contexte_meteo.json"
 APRS_WX_PATH = "/tmp/meteo_stations_aprs.json"

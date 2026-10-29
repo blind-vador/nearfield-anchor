@@ -17,7 +17,6 @@ Fleches, Entree, Echap : comme toutes les arborescences de la console.
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import arbre  # noqa: E402
 import dmr_cmd  # noqa: E402

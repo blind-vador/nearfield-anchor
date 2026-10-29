@@ -16,7 +16,6 @@ from datetime import datetime
 
 import requests
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import arbre  # noqa: E402
 import matcher  # noqa: E402

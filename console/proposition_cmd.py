@@ -12,7 +12,6 @@ droit de creuser fort (debruitage agressif) ; l'utilisateur tranche a l'oreille.
 import os
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import propositions  # noqa: E402

@@ -11,13 +11,14 @@
   de la LIVREE d'apres une vraie photo de l'appareil (une fois par
   compagnie). Plafond d'appels Gemini par jour (GEMINI_PER_DAY).
 """
+import chemins
 import json
 import os
 import time
 
 import requests
 
-CACHE_PATH = "/home/vador/autopilot/avions_cache.json"
+CACHE_PATH = chemins.base("avions_cache.json")
 STATE_PATH = "/tmp/avions_etat.json"
 STATE_MAX_AGE_SEC = 600
 ADSBDB = "https://api.adsbdb.com/v0"

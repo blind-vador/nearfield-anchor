@@ -38,6 +38,7 @@ Les gestes root passent par /usr/local/sbin/usb-repare (sudo -n, regle
 sudoers generee par install.sh). Etat publie dans STATE_FILE pour la
 commande "usb" de la console (console/usb_cmd.py).
 """
+import chemins
 import glob
 import json
 
@@ -57,8 +58,8 @@ CHECK_INTERVAL_SEC = 15
 SYS = "/sys/bus/usb/devices"
 HELPER = ["sudo", "-n", "/usr/local/sbin/usb-repare"]
 STATE_FILE = "/tmp/usb_watch_etat.json"
-SEEN_FILE = "/home/vador/autopilot/usb_watch_attendus.json"  # survit au redemarrage
-PORTS_IGNORE_FILE = "/home/vador/autopilot/usb_watch_ports_ignores.json"  # ports fantomes
+SEEN_FILE = chemins.base("usb_watch_attendus.json")  # survit au redemarrage
+PORTS_IGNORE_FILE = chemins.base("usb_watch_ports_ignores.json")  # ports fantomes
 OCTOPRINT_URL = "http://127.0.0.1:5000"
 SNAPSHOT_URL = "http://127.0.0.1:8080/?action=snapshot"  # meme source que console/vision.py
 

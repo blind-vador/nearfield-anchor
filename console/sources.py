@@ -17,7 +17,6 @@ import time
 
 import requests
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import reglages  # noqa: E402
 
 LIST_DIR = os.path.join(reglages.SETTINGS_DIR, "listes")

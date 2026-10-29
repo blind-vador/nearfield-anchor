@@ -4,11 +4,12 @@ comme debranches et ne les rappelle plus ; "usb" les dit a l'arret,
 volontairement. La marque part toute seule quand l'appareil revient, ou
 par "usb camera on".
 """
+import chemins
 import json
 import os
 import time
 
-FICHIER = "/home/vador/autopilot/usb_eteints.json"
+FICHIER = chemins.base("usb_eteints.json")
 
 # mots tapes -> role de la veille USB (usb_watch.NOMS)
 ROLES = {"camera": "camera", "webcam": "camera", "imprimante": "imprimante", "printer": "imprimante",

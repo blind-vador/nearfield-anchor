@@ -2,13 +2,14 @@
 (DMR), base publique radioid.net (gratuite, sans cle). Cache sur la carte SD
 (30 jours). On ne garde que l'indicatif, la ville et le pays : jamais le nom
 de la personne (2026-10-03)."""
+import chemins
 import json
 import os
 import time
 
 import requests
 
-CACHE_PATH = "/home/vador/autopilot/radioamateurs_cache.json"
+CACHE_PATH = chemins.base("radioamateurs_cache.json")
 API = "https://radioid.net/api/dmr/user/"
 TTL = 30 * 86400
 MISS_TTL = 3 * 86400

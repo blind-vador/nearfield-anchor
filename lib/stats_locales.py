@@ -11,6 +11,7 @@ puis ses releves bruts sont effaces.
 
 Les voitures ont leur propre etat local (lib/voitures.py).
 """
+import chemins
 import datetime
 import glob
 import json
@@ -19,7 +20,7 @@ import re
 import time
 
 DATA_DIR = "/media/nas/nd1/server/radio_log/donnees"
-STATS_PATH = "/home/vador/autopilot/stats_locales/capteurs.json"
+STATS_PATH = chemins.base("stats_locales/capteurs.json")
 RAW_KEEP_HOURS = 48
 CHECK_EVERY_SEC = 6 * 3600
 

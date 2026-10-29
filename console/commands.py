@@ -4,6 +4,7 @@ Pour ajouter une commande : ecrire un handler qui retourne la phrase a
 dire, puis l'ajouter a COMMANDS avec des mots-cles (correspondance
 certaine) et des phrases d'exemple (repli flou, voir matcher.py).
 """
+import chemins
 import csv
 import datetime
 import os
@@ -15,7 +16,6 @@ from dataclasses import dataclass, field
 
 import requests
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import reglages  # noqa: E402
 from phrases import Etiquettes, _code, dire, dire_ou, nombre  # noqa: E402
 
@@ -104,7 +104,7 @@ def radio_scan():
     return dire("commandes.signal_fm_plus_fort", v1=_fr_number(best_freq / 1e6))
 
 
-RADIONO_SCRIPT = "/home/vador/autopilot/radiono.py"
+RADIONO_SCRIPT = chemins.base("radiono.py")
 _radiono_thread = None
 
 

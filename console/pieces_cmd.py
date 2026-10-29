@@ -23,7 +23,6 @@ Fiche :
 import sys
 import threading
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import keys  # noqa: E402

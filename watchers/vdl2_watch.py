@@ -13,6 +13,7 @@ prise vocale du journal "messages" (lib/prise_vocale.py). Un vrai contenu
 dit a chaque fois, sauf une retransmission identique (REPEAT_SAME_SEC) ;
 le simple entretien de la liaison, une fois par avion et par passage.
 """
+import chemins
 import json
 import os
 import shutil
@@ -26,7 +27,7 @@ import avions_info
 import veille_donnees as vd
 
 VDL2_FREQUENCIES = ["136725000", "136775000", "136875000", "136975000"]
-LOCAL_BINARY = "/home/vador/autopilot/bin/dumpvdl2"
+LOCAL_BINARY = chemins.base("bin/dumpvdl2")
 GAIN_DB = "40"
 SOUND = acars_watch.ACARS_SOUND
 REPEAT_SAME_SEC = 300        # meme contenu du meme avion : retransmission, pas redit

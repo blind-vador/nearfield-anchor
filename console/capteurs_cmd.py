@@ -22,7 +22,6 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import capteurs_catalogue as cat  # noqa: E402
 import capteurs_miens as cm  # noqa: E402

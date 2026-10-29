@@ -13,14 +13,15 @@ Selection par mots-cles sur la ligne tapee apres "simulation" :
 - "simulation" seul           -> liste les categories.
 Les scenarios tournent dans un thread : la console reste utilisable.
 """
+import chemins
 import sys
 import threading
 from datetime import datetime, timedelta
 
 import matcher
 
-PI_CONSOLE_DIR = "/home/vador/autopilot/pi_console"
-NAS_MANAGER_DIR = "/home/vador/autopilot/nas_manager"
+PI_CONSOLE_DIR = chemins.base("pi_console")
+NAS_MANAGER_DIR = chemins.base("nas_manager")
 for _path in (PI_CONSOLE_DIR, NAS_MANAGER_DIR):
     if _path not in sys.path:
         sys.path.insert(0, _path)

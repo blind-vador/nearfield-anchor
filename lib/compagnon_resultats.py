@@ -2,6 +2,7 @@
 compagnon_serveur des qu'elle dit "fini" : l'image Meteor est decrite par
 Gemini (analyse d'image), archivee sur le disque de stockage et annoncee.
 """
+import chemins
 import os
 import shutil
 import time
@@ -45,7 +46,7 @@ def _lora(job, result, folder):
     lora_messages.handle(job, frames, card.get("nom") or dire("compagnon.la_machine"))
 
 
-RETOURS_RADIO = "/home/vador/autopilot/brut_dsd/retours"
+RETOURS_RADIO = chemins.base("brut_dsd/retours")
 
 
 def _radio_juges(job, result, folder):

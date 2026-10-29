@@ -9,12 +9,12 @@ son du texte entier est fait d'abord, puis joue sans coupure :
 
 Voix Microsoft (en direct, sans blanc) et espeak : lecture habituelle.
 """
+import chemins
 import os
 import sys
 import tempfile
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import audio_lock  # noqa: E402
 import compagnon  # noqa: E402
@@ -24,7 +24,7 @@ import sound_player  # noqa: E402
 import voix_sources  # noqa: E402
 from phrases import dire  # noqa: E402
 
-DOSSIER = "/home/vador/autopilot/lecture_tmp"
+DOSSIER = chemins.base("lecture_tmp")
 COMPAGNE_BASE_SEC = 60        # delai laisse a la machine compagne...
 COMPAGNE_PAR_CAR_SEC = 0.02   # ...plus un peu par caractere (le travail passe par le NAS)
 

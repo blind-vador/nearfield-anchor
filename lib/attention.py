@@ -19,6 +19,7 @@ anciennete + score, avec un PLANCHER D'EXPLORATION (toute bande balayee revue
 au moins toutes les SWEEP_FLOOR_SEC) et un surplus de temps par cycle borne
 (MAX_EXTRA_SEC_PER_CYCLE) pour ne pas affamer le reste.
 """
+import chemins
 import fcntl
 import json
 import os
@@ -28,7 +29,7 @@ from phrases import Etiquettes, dire
 
 NAS_ROOT = "/media/nas/nd1"
 STATE_NAS = f"{NAS_ROOT}/server/radio_log/attention.json"   # survit aux redemarrages
-STATE_LOCAL = "/home/vador/autopilot/attention.json"  # etat runtime, hors pi_console (axe 4)
+STATE_LOCAL = chemins.base("attention.json")  # etat runtime, hors pi_console (axe 4)
 LOCK_PATH = "/tmp/attention.lock"
 AIR_CONTEXT_PATH = "/tmp/contexte_aerien.json"
 AIR_CONTEXT_MAX_AGE_SEC = 300

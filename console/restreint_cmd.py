@@ -12,7 +12,6 @@ restent gardees pour la prochaine fois.
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import matcher  # noqa: E402

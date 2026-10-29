@@ -8,6 +8,7 @@ salve toutes les ~50 s : fenetre de DWELL au moins aussi longue, espacee
 par l'attention (DATA_MIN_INTERVAL). Toute detection est annoncee (les
 salves d'essai aussi, en le disant) et archivee.
 """
+import chemins
 import os
 import re
 import shutil
@@ -19,7 +20,7 @@ import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
 from phrases import dire
 
-LOCAL_BINARY = "/home/vador/autopilot/bin/dec406_scan"
+LOCAL_BINARY = chemins.base("bin/dec406_scan")
 import sons
 SOUND = sons.chemin("balise_detresse", os.path.join(RADIO_SCANER_DIR, "scaner_error.mp3"))  # son propre (2026-10-23, sons.py)
 STATE_PATH = "/tmp/balises_watch_state.json"

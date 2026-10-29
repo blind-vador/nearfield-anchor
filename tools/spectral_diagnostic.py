@@ -70,7 +70,6 @@ import tempfile
 # maybe_diagnose() tourne DANS le process radio_watch.py, jamais de
 # sortie forcee la, ce serait tuer le watcher lui-meme.
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 from radio_log import _readable_timestamp
 from sound_paths import DIAGNOSTIC_DIR

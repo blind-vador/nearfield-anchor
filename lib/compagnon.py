@@ -22,6 +22,7 @@ Liaison directe : la machine se connecte au Pi (lib/compagnon_serveur.py) ;
 le Pi lui pousse les travaux, la reveille si elle dort, et elle previent
 quand c'est fini.
 """
+import chemins
 import contextlib
 import fcntl
 import json
@@ -36,7 +37,7 @@ import pont_protocole as proto
 from phrases import dire, dire_ou, nombre
 
 BRIDGE_DIR = "/media/nas/nd1/server/nearfield-anchor-bridge"
-LOCAL_DIR = "/home/vador/autopilot/compagnon"
+LOCAL_DIR = chemins.base("compagnon")
 KEY_PATH = os.path.join(LOCAL_DIR, "cle.pem")
 TRUST_DIR = os.path.join(LOCAL_DIR, "confiance")
 PRESENCE = "/tmp/compagnons_connectes.json"  # tenu par compagnon_serveur

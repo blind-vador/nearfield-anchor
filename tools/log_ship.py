@@ -24,7 +24,6 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 from sound_paths import NAS_BASE
 
 NAS_MOUNT_POINT = "/media/nas/nd1"

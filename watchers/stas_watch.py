@@ -1,3 +1,4 @@
+import chemins
 import json
 import os
 import time
@@ -70,7 +71,7 @@ def _save_state(known_titles):
 # phrases du fichier de langue). Silence de 22 h a 7 h : ce qui est apparu
 # la nuit est dit le matin si c'est toujours d'actualite. Au premier passage
 # sur un reseau, ses perturbations deja en cours sont notees sans etre dites.
-SEEN_FILE = "/home/vador/autopilot/transports_vus.json"
+SEEN_FILE = chemins.base("transports_vus.json")
 NETWORKS_POLL_SEC = 600
 QUIET_HOURS = (22, 7)
 

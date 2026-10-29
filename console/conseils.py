@@ -12,7 +12,6 @@ toujours dits : ce sont des reponses, pas des consignes.
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import reglages  # noqa: E402
 from phrases import dire  # noqa: E402
 

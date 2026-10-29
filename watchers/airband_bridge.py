@@ -1,3 +1,4 @@
+import chemins
 import os
 import queue
 import select
@@ -38,10 +39,10 @@ from sound_paths import RADIO_SCANER_DIR
 AIRBAND_BIN = next(
     (p for p in (
         os.environ.get("AIRBAND_BIN"),
-        "/home/vador/autopilot/rtl_airband/src/build/src/rtl_airband",
-        "/home/vador/autopilot/pi_console/rtl_airband/src/build/src/rtl_airband",
+        chemins.base("rtl_airband/src/build/src/rtl_airband"),
+        chemins.base("pi_console/rtl_airband/src/build/src/rtl_airband"),
     ) if p and os.path.exists(p)),
-    "/home/vador/autopilot/pi_console/rtl_airband/src/build/src/rtl_airband",
+    chemins.base("pi_console/rtl_airband/src/build/src/rtl_airband"),
 )
 AIRBAND_CONFIG_DIR = "/tmp"
 AIRBAND_SAMPLE_RATE_HZ = 16000  # WAVE_RATE avec NFM=ON : PCM mono flottant 32 bits

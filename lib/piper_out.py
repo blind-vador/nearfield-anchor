@@ -22,6 +22,7 @@ dans les tirages des modes aleatoires (voix_sources.tirage) : locales =
 Piper et MBROLA, distantes = Mac et Google. Elles ne chauffent pas le Pi :
 pas de limite de temperature pour elles.
 """
+import chemins
 import json
 import os
 import random
@@ -30,7 +31,7 @@ import sys
 import threading
 import time
 
-PIPER_DIR = "/home/vador/piper"
+PIPER_DIR = chemins.home("piper")
 BINARY = os.path.join(PIPER_DIR, "piper")
 VOICE_DIR = os.path.join(PIPER_DIR, "voix")
 # Voix : toutes celles installees dans VOICE_DIR (catalogue officiel, voir

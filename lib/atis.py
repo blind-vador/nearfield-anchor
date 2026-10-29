@@ -9,6 +9,7 @@ une boucle d'environ CAPTURE_SEC secondes, encodee en ogg/opus (leger pour
 Gemini). Gemini n'est appele que lorsqu'un aeroport est "du" (REFRESH_SEC) :
 l'ATIS ne change qu'a chaque nouvelle lettre d'information (environ 30 min).
 """
+import chemins
 import json
 import os
 import subprocess
@@ -16,7 +17,7 @@ import time
 
 import gemini
 
-STORE_PATH = "/home/vador/autopilot/atis.json"
+STORE_PATH = chemins.base("atis.json")
 CAPTURE_SEC = 40          # une boucle ATIS complete tient en general sous 40 s
 REFRESH_SEC = 1500        # pas plus d'un appel Gemini par aeroport toutes les 25 min
 MAX_BACKOFF_SEC = 6 * 3600  # aeroport muet : retente au plus toutes les 6 h

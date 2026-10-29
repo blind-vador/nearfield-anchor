@@ -39,7 +39,6 @@ import re
 import sys
 import threading
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import conseils  # noqa: E402
 import matcher  # noqa: E402
 import octoprint as op  # noqa: E402

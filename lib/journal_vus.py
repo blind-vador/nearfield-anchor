@@ -3,11 +3,12 @@
 SD : {"depuis": instant du premier usage, "ecoutes": {nom de fichier:
 instant}} ; ce qui existait avant le premier usage n'est pas "nouveau" ; une
 ecoute est oubliee apres KEEP_SEC (les journaux ne gardent que 48 heures)."""
+import chemins
 import json
 import os
 import time
 
-PATH = "/home/vador/autopilot/journal_ecoutes.json"
+PATH = chemins.base("journal_ecoutes.json")
 KEEP_SEC = 7 * 86400
 
 

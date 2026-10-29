@@ -16,6 +16,7 @@ Deux caches :
 Une phrase validee n'est jamais effacee par le menage du cache ni par
 l'effacement d'une voix entiere ; la recalculer retire la validation.
 """
+import chemins
 import hashlib
 import json
 import os
@@ -24,10 +25,10 @@ import time
 
 from sound_paths import TTS_CACHE_DIR
 
-CONSOLE_DIR = "/home/vador/autopilot/voix_cache"
+CONSOLE_DIR = chemins.base("voix_cache")
 INDEX = "index.tsv"
 TEXT_FILE = "texte.txt"
-VALIDEES_PATH = "/home/vador/autopilot/voix_validees.json"
+VALIDEES_PATH = chemins.base("voix_validees.json")
 NEUTRE = "+0%"
 ANNONCE_RE = re.compile(r"^(?P<voix>.+?)(?:@(?P<debit>[+-]\d+%)(?P<hauteur>[+-]\d+Hz)?)?\.(?:wav|mp3)$")
 DEBITS_ESSAYES = [f"{p:+d}%" for p in range(-50, 105, 5)]

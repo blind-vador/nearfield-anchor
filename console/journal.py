@@ -45,7 +45,6 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import journaux  # noqa: E402
 from phrases import Etiquettes, dire, nombre  # noqa: E402

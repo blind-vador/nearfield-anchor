@@ -27,7 +27,6 @@ jour ici.
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import datetime  # noqa: E402
 import json  # noqa: E402

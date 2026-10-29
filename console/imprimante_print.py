@@ -8,7 +8,6 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import imprimante_materiel as mat  # noqa: E402

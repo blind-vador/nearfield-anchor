@@ -23,12 +23,12 @@ continuent de lire "reponses" ; le bilan affine sa qualite avec les degres.
                            (referentiel fixe, tools/build_exemples_notation.py)
   Entree                   enregistre       Echap : annule
 """
+import chemins
 import json
 import os
 import sys
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import noise_signatures as ns  # noqa: E402
 import conseils  # noqa: E402
@@ -66,7 +66,7 @@ TABS = [
     ("avis", "Avis", [("merite", "Intérêt", "interet"), ("certitude", "Doute", "doute")]),
 ]
 CONTENT_CODES = [c for c, _, _ in TABS[0][2]]
-EXAMPLES_DIR = "/home/vador/autopilot/exemples_notation"
+EXAMPLES_DIR = chemins.base("exemples_notation")
 F2 = ("\x1b[[B", "\x1bOQ", "\x1b[12~")
 TAB, SHIFT_TAB = "\t", "\x1b[Z"
 

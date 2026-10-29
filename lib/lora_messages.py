@@ -9,6 +9,7 @@ Interpretation (legere, toujours sur le Pi) : Meshtastic par
 lib/meshtastic_lite.py (canal public par defaut seulement), APRS LoRa par
 aprslib et la meme annonce que l'APRS classique (watchers/aprs_watch.py).
 """
+import chemins
 import json
 import os
 import shutil
@@ -19,8 +20,8 @@ import compagnon
 from phrases import dire
 import veille_donnees as vd
 
-GR_PYTHON = "/home/vador/autopilot/bin/python3-gnuradio"
-DECODER = "/home/vador/nearfield_anchor/bridge/lora_decode.py"  # script du depot (axe 4)
+GR_PYTHON = chemins.base("bin/python3-gnuradio")
+DECODER = chemins.depot("bridge/lora_decode.py")  # script du depot (axe 4)
 SOUND = "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3"
 SYNC = {"meshtastic": 0x2B, "lora_aprs": 0x12}
 SF_FIRST = {"meshtastic": 11, "lora_aprs": 12}  # LongFast europeen ; APRS LoRa

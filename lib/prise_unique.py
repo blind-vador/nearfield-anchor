@@ -16,6 +16,7 @@ dsd-fme -i -" donne autant de synchros propres que l'entree rtl de dsd-fme
 (276/280 contre 276/278) ; "-s 12500 -r 48000" ne donne rien.
 
 Interrupteur : le fichier ARRET (touch) remet l'ancien enchainement."""
+import chemins
 import audioop
 import os
 import queue
@@ -27,7 +28,7 @@ import numpy as np
 
 TAUX = 48000
 MORCEAU = 4800 * 2          # 0,1 s de son 16 bits
-ARRET = "/home/vador/autopilot/prise_unique_off"
+ARRET = chemins.base("prise_unique_off")
 RTL_FM = ["rtl_fm", "-M", "fm", "-s", str(TAUX), "-l", "0", "-E", "dc"]
 
 

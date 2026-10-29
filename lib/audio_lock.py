@@ -24,6 +24,7 @@ inchangee pour les appelants : lock = acquire(); ... release(lock).
 Le volume dynamique est applique par ceux qui jouent le son (scale() sur
 chaque morceau de PCM) ; dropped() dit si la source a abandonne.
 """
+import chemins
 import audioop
 import fcntl
 import json
@@ -38,7 +39,7 @@ from phrases import Etiquettes
 REGISTRY = "/tmp/audio_arbitre.json"
 REGISTRY_LOCK = "/tmp/audio_arbitre.lock"
 SETTINGS = "/media/nas/nd1/server/nearfield-anchor-settings/priorites.json"
-SETTINGS_CACHE = "/home/vador/autopilot/reglages_cache/priorites.json"
+SETTINGS_CACHE = chemins.base("reglages_cache/priorites.json")
 
 # Delai maximum d'attente : au-dela on joue quand meme (2026-08-31 : un
 # detenteur bloque avait fige toute la voix pendant des heures ; 300 s

@@ -3,7 +3,6 @@ import subprocess
 import sys
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import audio_lock
 from speak import speak_cloud
 

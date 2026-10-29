@@ -22,6 +22,7 @@ Enregistrement en WAV pendant la capture (rien de perdu si le Pi s'arrete),
 MP3 320 kb/s en fond a l'arret : le fichier a partager, dans storage/capture
 du disque nd2 (partage reseau "stockage"). Garde-fou : MAX_SEC.
 """
+import chemins
 import json
 import os
 import signal
@@ -30,7 +31,7 @@ import time
 from datetime import datetime
 
 DOSSIER = "/media/nas/nd2/storage/capture"
-ETAT = "/home/vador/autopilot/capture_en_cours.json"
+ETAT = chemins.base("capture_en_cours.json")
 SOURCE = "boucle_ecoute"          # asound.conf : la boucle, lisible a plusieurs
 REDIRECTION = "/run/user/1000/capture_alsa.conf"
 RELAIS_PID = "/run/user/1000/capture_relais.pid"

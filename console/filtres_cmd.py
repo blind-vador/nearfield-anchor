@@ -17,7 +17,6 @@ pre-ecoute, rien a relancer.
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import noise_signatures as ns  # noqa: E402

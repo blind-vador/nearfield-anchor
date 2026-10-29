@@ -15,6 +15,7 @@ probable, gardee sur la carte SD du Pi.
   differentes) fait revisiter la station a chaque tour a ce moment-la.
   Utile pour les pirates : "elle emet le dimanche vers 20 heures".
 """
+import chemins
 import datetime
 import fcntl
 import json
@@ -27,7 +28,7 @@ import numpy as np
 
 from phrases import Etiquettes, dire
 
-STORE_PATH = "/home/vador/autopilot/stations_probables.json"
+STORE_PATH = chemins.base("stations_probables.json")
 LOCK_PATH = "/tmp/stations_probables.lock"
 TOLERANCE_HZ = {"wfm": 100_000, "am": 6_000}       # "meme station" a moins de... ; 12,5 kHz sinon
 HALF_LIFE_DAYS = 14

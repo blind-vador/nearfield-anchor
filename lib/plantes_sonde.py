@@ -14,12 +14,13 @@ verifier() tourne dans veille_systeme.py, toutes les 30 s. Les mesures des
 sondes arrivent avec les fenetres de balayage 433 (environ toutes les 10 min) :
 stable = deux mesures de suite a moins de STABLE_POINTS, apres au moins
 ATTENTE_MIN_SEC, au plus ATTENTE_MAX_SEC."""
+import chemins
 import json
 import os
 import subprocess
 import time
 
-ETAT = "/home/vador/autopilot/plantes_sonde.json"
+ETAT = chemins.base("plantes_sonde.json")
 DEMANDES = "/tmp/plantes_arrosage_demandes.json"
 SAUT_POINTS = 10
 STABLE_POINTS = 3

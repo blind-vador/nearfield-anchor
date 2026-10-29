@@ -12,7 +12,6 @@ import re
 import sys
 from phrases import dire, nombre
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 DATA_DIR = "/media/nas/nd1/server/radio_log/donnees"
 PASSAGE_GAP_SEC = 10

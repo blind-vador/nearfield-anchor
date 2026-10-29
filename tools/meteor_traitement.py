@@ -11,6 +11,7 @@ ralenti (nice 19), hors du scanner :
 
 Usage : meteor_traitement.py fichier.u8 "Meteor M2 3"
 """
+import chemins
 import os
 import subprocess
 import sys
@@ -18,7 +19,6 @@ import time
 
 import numpy as np
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 RATE = 1_024_000
 CENTER = 137_500_000
@@ -27,7 +27,7 @@ DECIM = 6
 OUT_RATE = RATE // DECIM
 TAPS = 101
 CHUNK = 1 << 20
-BIN = "/usr/local/bin" if os.path.exists("/usr/local/bin/meteor_demod") else "/home/vador/autopilot/bin"
+BIN = "/usr/local/bin" if os.path.exists("/usr/local/bin/meteor_demod") else chemins.base("bin")
 TRIES = [(72000, []), (72000, ["-d"]), (80000, ["-i"]), (80000, ["-i", "-d"])]
 MIN_LINES = 80
 # Le Pi ne doit pas chauffer pour une image (2026-10-01 : 82 C pendant un

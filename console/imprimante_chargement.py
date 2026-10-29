@@ -26,7 +26,6 @@ import imprimante_nettoyage as net
 from imprimante_calibrage import ENTER, op, dire
 from imprimante_nettoyage import FLECHE_BAS, FLECHE_HAUT
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import imprimante_materiel as mat  # noqa: E402
 
 TETE_MAX = 240                 # tete Ender 3 d'origine (PTFE)

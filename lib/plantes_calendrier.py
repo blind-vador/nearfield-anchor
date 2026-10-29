@@ -14,6 +14,7 @@ premiers fruits), au plus tot / au plus tard.
   LATE_DAYS sans que le stade ait ete note, un rappel unique. Jamais de
   22 h a 7 h (QUIET_HOURS) : ce qui tombe la nuit est dit le matin.
 """
+import chemins
 import datetime
 import os
 import time
@@ -24,7 +25,7 @@ import plantes
 import reglages
 from phrases import dire, etiquette
 
-STATE_PATH = "/home/vador/autopilot/plantes_calendrier.json"  # carte SD : survit au redemarrage
+STATE_PATH = chemins.base("plantes_calendrier.json")  # carte SD : survit au redemarrage
 SOUND = "/media/nas/nd1/server/radio_scaner/incoming.mp3"
 import sons
 PHOTO_SOUND = sons.chemin("plante_photo", SOUND)  # son propre (2026-10-23, sons.py)

@@ -21,6 +21,7 @@ annoncer a tort (les juges se trompent souvent) :
 Le tri vivant, lui, se fait a la volee pendant l'ecoute (juge_live.py,
 commande "juge" / "juge ok" / "juge suivant")."""
 
+import chemins
 import glob
 import json
 import os
@@ -32,9 +33,9 @@ import juges_radio
 import puissance
 import radio_log
 
-BRUT_DIR = "/home/vador/autopilot/brut_dsd"
+BRUT_DIR = chemins.base("brut_dsd")
 A_REVOIR_DIR = os.path.join(BRUT_DIR, "a_revoir")
-SCORES_PATH = "/home/vador/autopilot/juges_scores.json"
+SCORES_PATH = chemins.base("juges_scores.json")
 TAILLE_MAX = 1500 * 1024 * 1024     # au-dela, les plus vieux sons partent
 A_REVOIR_GARDES = 120               # flux bruts non decodes gardes pour re-examen
 STABLE_SEC = 5
@@ -54,8 +55,8 @@ DEFAUT_ORDRE = list(JUGES)
 # dans RETOURS_DIR (deposes par compagnon_resultats) et sont appliques ici, seul
 # ecrivain des fiches et des scores.
 RETOURS_DIR = os.path.join(BRUT_DIR, "retours")
-DUREES_PI_PATH = "/home/vador/autopilot/juges_durees_pi.json"
-ETALON_PI_PATH = "/home/vador/autopilot/compagnon/puissance_etalon.json"
+DUREES_PI_PATH = chemins.base("juges_durees_pi.json")
+ETALON_PI_PATH = chemins.base("compagnon/puissance_etalon.json")
 PREFERENCE_COMPAGNE = 3.0
 DELEGUE_MAX_SEC = 900               # sans verdict au bout de 15 min, le Pi reprend la main
 DELEGUES_MAX = 8                    # sons confies et pas encore revenus

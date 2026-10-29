@@ -29,6 +29,7 @@ choisir(source) rend {"moteur": "edge"|"piper"|"espeak", "voix", "debit",
 ce choix (le debit et la hauteur entrent dans le nom s'ils ne sont pas
 neutres).
 """
+import chemins
 import json
 import os
 import random
@@ -42,7 +43,7 @@ ALEATOIRE_PIPER = "aleatoire_piper"   # une voix locale (Piper, MBROLA) differen
 ALEATOIRE_TOUT = "aleatoire_tout"     # toutes les voix (2026-10-22)
 ALEATOIRE_DISTANT = "aleatoire_distant"  # voix calculees ailleurs : Microsoft, Mac, Google
 MODES_MELANGES = (ALEATOIRE_TOUT, ALEATOIRE_DISTANT)
-JOURNAL_MS = "/home/vador/autopilot/journal_voix_microsoft.jsonl"
+JOURNAL_MS = chemins.base("journal_voix_microsoft.jsonl")
 JOURNAL_MS_NAS = "/media/nas/nd1/server/logs/journal_voix_microsoft.jsonl"
 REPARATION = "/tmp/microsoft_reparation.json"
 REPARATION_ECART_SEC = 1800

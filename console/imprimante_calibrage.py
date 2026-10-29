@@ -31,6 +31,7 @@ s'arreter sans echouer : ESPACE = M112, comme avant.
 Touches : Entree, S passer l'etape, R repeter, C capteurs, T temperatures,
 F1 aide de l'etape, Echap quitter, ESPACE arret.
 """
+import chemins
 import collections
 import json
 import os
@@ -41,7 +42,6 @@ import threading
 import time
 import uuid
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import audio_lock  # noqa: E402
 import conseils  # noqa: E402
 import imprimante_decouverte as decouverte  # noqa: E402
@@ -51,8 +51,8 @@ from phrases import Etiquettes, dire  # noqa: E402
 
 PAGE_UP, PAGE_DOWN = "\x1b[5~", "\x1b[6~"
 ENTER = ("\r", "\n")
-JOURNAL = "/home/vador/autopilot/calibrage_journal.log"   # phrases dites, touches, mesures
-MOLETTES = "/home/vador/autopilot/reglages_cache/imprimante_molettes.json"
+JOURNAL = chemins.base("calibrage_journal.log")   # phrases dites, touches, mesures
+MOLETTES = chemins.base("reglages_cache/imprimante_molettes.json")
 HISTORIQUE = 12
 CARTE_ANNONCE_SEC = 30          # progression de la carte (3 min) : pas toutes les 10 s
 

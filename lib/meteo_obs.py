@@ -20,6 +20,7 @@ voisins a ce moment-la. Usage :
      orage ou d'une forte pluie observes dans les 2 heures.
 Des comptes simples, explicables -- comme les notes radio.
 """
+import chemins
 import json
 import os
 import time
@@ -30,7 +31,7 @@ import reglages
 from phrases import Champs, Etiquettes, dire
 
 OBS_PATH = "/media/nas/nd1/server/meteo_observations.json"
-OBS_LOCAL = "/home/vador/autopilot/meteo_observations.json"
+OBS_LOCAL = chemins.base("meteo_observations.json")
 SIGNS_LOG = "/media/nas/nd1/server/meteo_signes.jsonl"
 RECENT_PATH = "/tmp/observation_meteo.json"
 RECENT_MAX_AGE_SEC = 45 * 60

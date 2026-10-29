@@ -11,15 +11,15 @@ description de secours ecrite a la main prend le relais.
 Chaque element est confirme au toucher (trouve / pas trouve) : les
 confirmations sont gardees avec la description.
 """
+import chemins
 import json
 import os
 import sys
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import gemini  # noqa: E402
 
-CACHE = "/home/vador/autopilot/reglages_cache/imprimante_decouverte.json"
+CACHE = chemins.base("reglages_cache/imprimante_decouverte.json")
 CHAMPS = ("nom", "ou", "au_toucher", "role", "prudence")
 
 # Ce que le Pi sait de CETTE machine (mesures du 15-16/10, M43 et M119) :

@@ -9,7 +9,6 @@ autres juges l'examinent apres."""
 import re
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import juge_live  # noqa: E402
 

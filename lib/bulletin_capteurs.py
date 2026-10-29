@@ -12,6 +12,7 @@ Chaque bulletin est une prise vocale du journal "meteo" (fichier
 meteo_capteurs_..., voir lib/journaux.py), avec sa fiche (les chiffres).
 Thread de meteo_watch (watch()).
 """
+import chemins
 import json
 import os
 import statistics
@@ -22,7 +23,7 @@ import veille_donnees as vd
 from phrases import dire, nombre
 from sound_paths import METEO_SCANER_DIR
 
-RELEVES_PATH = "/home/vador/autopilot/capteurs_heure.json"
+RELEVES_PATH = chemins.base("capteurs_heure.json")
 import sons
 SOUND = sons.chemin("jingle_meteo", os.path.join(METEO_SCANER_DIR, "simple_message.mp3"))  # son propre (2026-10-23, sons.py)
 GARDE_SEC = 3 * 3600

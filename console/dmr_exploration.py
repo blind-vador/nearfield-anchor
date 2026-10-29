@@ -22,7 +22,6 @@ Reglages : lib/dmr_filtres.py ; registre : lib/dmr_registre.py.
 import sys
 import threading
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import dmr_cmd  # noqa: E402

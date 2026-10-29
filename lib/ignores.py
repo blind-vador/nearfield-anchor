@@ -8,11 +8,12 @@ dependre du NAS) ; entrees perimees retirees a la lecture. "toujours" pour
 une frequence ou un groupe DMR passe aussi par les reglages DMR existants
 (lib/dmr_filtres.py, etat "ignore"), visibles dans l'exploration dmr.
 """
+import chemins
 import json
 import os
 import time
 
-CHEMIN = "/home/vador/autopilot/ignores.json"
+CHEMIN = chemins.base("ignores.json")
 RELIRE_SEC = 2.0
 TOLERANCE_HZ = 12_500        # meme canal (pas de 25 kHz, decalages du recentrage)
 DUREES = [(300, "5 minutes"), (900, "15 minutes"), (1800, "30 minutes"), (3600, "une heure"),

@@ -34,6 +34,7 @@ DMR sur ce relais (des postes qui s'allument : la journee de l'equipe
 commence). Un resume de la journee est range au journal messages a 23 h 50
 (daily_tick, appele par radio_watch), et dit par "dmr aujourd'hui".
 """
+import chemins
 import datetime
 import json
 import math
@@ -41,13 +42,13 @@ import os
 import re
 import time
 
-REGISTRY_PATH = "/home/vador/autopilot/dmr_frequences.json"
+REGISTRY_PATH = chemins.base("dmr_frequences.json")
 STEP_HZ = 6250
 HALF_LIFE_DAYS = 7
 ARS_DIR = "/media/nas/nd1/server/radio_log/donnees"   # meme dossier que veille_donnees.archive
 ARS_FRESH_SEC = 1800
 ARS_STANDARD_SERVER = "16448250"   # identifiant du serveur ARS Motorola par defaut (IP 13.250.250.250)
-SUMMARY_STATE = "/home/vador/autopilot/dmr_resume.json"
+SUMMARY_STATE = chemins.base("dmr_resume.json")
 SUMMARY_AT = (23, 50)
 import sons
 SUMMARY_SOUND = sons.chemin("dmr_vocal", "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3")  # son propre (2026-10-23, sons.py)

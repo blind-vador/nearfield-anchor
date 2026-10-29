@@ -30,7 +30,6 @@ photos deposees (lib/plantes_photos.py).
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import keys  # noqa: E402

@@ -23,6 +23,7 @@ Voix Microsoft (reglages console.json, commande "voix") :
   relais, et le service est considere en panne CLOUD_RETRY_SEC (on ne fait
   plus attendre personne pendant ce temps).
 """
+import chemins
 import asyncio
 import audioop
 import hashlib
@@ -35,7 +36,6 @@ import tempfile
 import threading
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import espeak_out  # noqa: E402  (espeak -> aplay, jamais de verrou JACK)
 import piper_out  # noqa: E402  (voix neuronales locales, 2026-10-18)
 import phrases_fixes  # noqa: E402  (phrases fixes, cache phrase par phrase)
@@ -60,7 +60,7 @@ EDGE_VOICES = ["fr-FR-DeniseNeural", "fr-FR-EloiseNeural", "fr-FR-HenriNeural", 
                "fr-BE-GerardNeural", "fr-CA-ThierryNeural", "fr-CA-AntoineNeural", "fr-CA-JeanNeural",
                "fr-CA-SylvieNeural", "fr-CH-ArianeNeural", "fr-CH-FabriceNeural"]  # comme speak.EDGE_TTS_VOICES
 PIPER = "piper:"  # voix neuronales locales (lib/piper_out.py) : "piper:siwis"...
-CACHE_DIR = "/home/vador/autopilot/voix_cache"
+CACHE_DIR = chemins.base("voix_cache")
 CACHE_MAX_BYTES = 1024 * 1024 * 1024  # toutes les phrases fixes en voix Piper (2026-10-18)
 ECHO_MAX_CHARS = 30      # au-dela : pas un nom de touche, on ne fait pas attendre l'echo
 CACHE_TEXT_MAX = 200     # phrases plus longues : jouees en direct, jamais gardees

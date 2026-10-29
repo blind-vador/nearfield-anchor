@@ -13,13 +13,14 @@ Ecrit des la premiere trame d'un nouveau capteur, sinon une fois par passe
 (capteurs_watch.scan_window -> save). Amorce : seed(), depuis les releves
 bruts du NAS et les statistiques locales (lib/stats_locales.py).
 """
+import chemins
 import datetime
 import glob
 import json
 import os
 import time
 
-PATH = "/home/vador/autopilot/capteurs_connus.json"
+PATH = chemins.base("capteurs_connus.json")
 ARCHIVE_GLOB = "/media/nas/nd1/server/radio_log/donnees/capteurs_2*.jsonl"
 _state = {"data": None, "dirty": False}
 

@@ -6,7 +6,6 @@ import datetime
 import sys
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import dmr_registre  # noqa: E402
 import matcher  # noqa: E402

@@ -25,6 +25,7 @@ automatiques, tout reste sur le Pi et le NAS.
 Les capteurs de pneus emettent surtout en roulant : une voiture garee est
 en general invisible.
 """
+import chemins
 import fcntl
 import json
 import os
@@ -33,7 +34,7 @@ from datetime import datetime
 from phrases import Etiquettes, dire, nombre
 
 NAS_PATH = "/media/nas/nd1/server/radio_log/voitures.json"
-LOCAL_PATH = "/home/vador/autopilot/voitures.json"
+LOCAL_PATH = chemins.base("voitures.json")
 LOCK_PATH = "/tmp/voitures.lock"
 PASSAGE_GAP_SEC = 10
 HABITUAL_DAYS = 3

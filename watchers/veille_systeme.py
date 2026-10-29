@@ -13,6 +13,7 @@ seul ne suffit pas a agir.
                          (plus aucune trame de capteur depuis 2 heures)
 
 Le NAS perdu / retrouve reste a nas_watch (il le dit deja, avec ce son)."""
+import chemins
 import os
 import re
 import shutil
@@ -298,11 +299,11 @@ class _Ignores:
         self.vues = en_vigueur
 
 
-DERNIERE_TRAME = "/home/vador/autopilot/capteurs_derniere_trame"   # touche par capteurs_watch.scan_window
+DERNIERE_TRAME = chemins.base("capteurs_derniere_trame")   # touche par capteurs_watch.scan_window
 ANTENNE_MUETTE_SEC = 2 * 3600    # d'habitude une trame toutes les 10 minutes environ
 ANTENNE_RAPPEL_SEC = 3 * 3600
 ANTENNE_FENETRES_MIN = 6         # au moins 6 ecoutes des capteurs de suite, toutes sans trame
-FENETRES_VIDES = "/home/vador/autopilot/capteurs_fenetres_vides"
+FENETRES_VIDES = chemins.base("capteurs_fenetres_vides")
 
 
 def _antenne():

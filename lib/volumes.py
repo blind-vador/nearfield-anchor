@@ -12,12 +12,13 @@ milieu d'un son.
 Fichier local (carte SD, pas le NAS : relu tres souvent, et le son ne doit
 pas dependre des disques) ; relu au plus toutes les RELIRE_SEC.
 """
+import chemins
 import json
 import os
 import subprocess
 import time
 
-CHEMIN = "/home/vador/autopilot/volumes.json"
+CHEMIN = chemins.base("volumes.json")
 RELIRE_SEC = 1.0
 MAX_PCT = 150
 VEILLE = "veille"          # curseur general d'une veille

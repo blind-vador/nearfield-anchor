@@ -17,7 +17,6 @@ relancer.
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import audio_lock  # noqa: E402
 import conseils  # noqa: E402

@@ -18,6 +18,7 @@ Les cles sont relues a chaque usage (pas besoin de relancer une veille
 apres avoir colle une cle) ; les lieux sont lus au demarrage des veilles,
 la console relance celles concernees apres un changement.
 """
+import chemins
 import json
 import os
 import sys
@@ -26,8 +27,8 @@ from phrases import Etiquettes
 
 SETTINGS_DIR = "/media/nas/nd1/server/nearfield-anchor-settings"
 KEYS_DIR = os.path.join(SETTINGS_DIR, "cles")
-CACHE_DIR = "/home/vador/autopilot/reglages_cache"
-CREDENTIALS_DIR = "/home/vador/autopilot/pi_console"
+CACHE_DIR = chemins.base("reglages_cache")
+CREDENTIALS_DIR = chemins.base("pi_console")
 
 DEFAULTS = {
     "lieu": {"commune": "Saint-Étienne", "code_insee": "42218",

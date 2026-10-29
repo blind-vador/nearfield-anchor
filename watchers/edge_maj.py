@@ -22,6 +22,7 @@ Le retour de Microsoft (premiere synthese reussie apres un refus) est note
 par voix_sources.noter_microsoft. Journal : voix_sources.JOURNAL_MS, copie
 sur le NAS.
 """
+import chemins
 import importlib.metadata
 import json
 import os
@@ -37,7 +38,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import voix_sources  # noqa: E402
 
-ETAT = "/home/vador/autopilot/voix_microsoft_etat.json"
+ETAT = chemins.base("voix_microsoft_etat.json")
 VOIX_TEST = "fr-FR-DeniseNeural"
 PYPI = "https://pypi.org/pypi/edge-tts/json"
 SERVICES = r"watch|pi-console|voix-preparation"

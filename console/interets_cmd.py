@@ -11,7 +11,6 @@ relit les reglages de lui-meme (30 s au plus), rien a relancer.
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import interets  # noqa: E402

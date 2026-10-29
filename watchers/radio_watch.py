@@ -1,3 +1,4 @@
+import chemins
 import collections
 import math
 import re
@@ -960,7 +961,7 @@ def _dmr_window(dwell_sec=20, freq_hz=None):
 # meme canal, puis de nouveau en DMR, tant que quelqu'un parle ; le tout dans la
 # meme entree du journal. Un canal devient mixte des qu'une voix FM est captee
 # a moins de MIXTE_ECART_HZ d'une frequence DMR du registre.
-MIXTES_PATH = "/home/vador/autopilot/canaux_mixtes.json"
+MIXTES_PATH = chemins.base("canaux_mixtes.json")
 MIXTE_ECART_HZ = 7000
 MIXTE_TOURS = 12
 MIXTE_SONDE_SEC = 4
@@ -1474,7 +1475,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
 # Son brut du dongle tel que dsd-fme le recoit (2026-10-24, option -6, 48 kHz),
 # avec sa fiche .json : rejoue ensuite devant tous les decodeurs, sans le dongle,
 # par juges_watch.py (qui le retire une fois tous les juges passes).
-BRUT_DIR = "/home/vador/autopilot/brut_dsd"
+BRUT_DIR = chemins.base("brut_dsd")
 BRUT_MIN_OCTETS = 48000           # moins d'une demi-seconde : rien a juger
 _bruts_candidat = None            # sons bruts du candidat en cours (_handle_candidate), sinon None
 

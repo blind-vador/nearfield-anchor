@@ -23,7 +23,6 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import audiographe  # noqa: E402
 import audio_lock  # noqa: E402

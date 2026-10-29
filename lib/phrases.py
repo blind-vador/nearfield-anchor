@@ -22,13 +22,14 @@ selon la personnalite choisie par l'utilisateur, dans
 phrase du jour si elle respecte la phrase neutre (memes variables, mots
 proteges presents, longueur raisonnable), sinon la neutre.
 """
+import chemins
 import configparser
 import os
 import re
 import string
 
-BASE_DIR = "/home/vador/autopilot/phrases"           # fichiers de langue (copies du depot)
-PERSONA_DIR = "/home/vador/autopilot/phrases"        # phrases du jour, sur la carte SD
+BASE_DIR = chemins.base("phrases")           # fichiers de langue (copies du depot)
+PERSONA_DIR = chemins.base("phrases")        # phrases du jour, sur la carte SD
 DEFAULT_LANG = "fr"
 MAX_GROWTH = 1.6      # la place de colorer la phrase d'un personnage, pas de la rallonger (2026-10-04)
 MAX_EXTRA_CHARS = 45

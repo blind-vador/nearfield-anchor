@@ -9,6 +9,7 @@ envoyant M114 au firmware et en guettant sa reponse dans le flux du
 websocket d'OctoPrint (/sockjs/websocket, lignes "Recv: X:.. Y:.. Z:..").
 Mesure sur deepspace9 (Ender 3 Pro, Marlin 2.1.2.5) : reponse en 0,5 s.
 """
+import chemins
 import asyncio
 import collections
 import json
@@ -416,7 +417,7 @@ def force_commande(*gcodes, baud=115200, port=None, reconnect=True):
 
 def _serial_tail(max_bytes=12000):
     """Derniers octets du serial.log OctoPrint."""
-    path = "/home/vador/.octoprint/logs/serial.log"
+    path = chemins.home(".octoprint/logs/serial.log")
     try:
         import os
         size = os.path.getsize(path)

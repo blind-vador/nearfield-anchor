@@ -12,13 +12,14 @@ autres juges pourront l'examiner apres (juges_watch).
 La confiance (trust) par bande est tenue dans le meme fichier que juges_watch
 (juges_scores.json), lu par l'ordre des juges."""
 
+import chemins
 import json
 import os
 import time
 
 DEMANDE_PATH = "/tmp/radio_watch_juge.json"          # demande de la console (suivant / ok)
 ETAT_PATH = "/tmp/radio_watch_juge_etat.json"        # ce que radio_watch decode en ce moment
-SCORES_PATH = "/home/vador/autopilot/juges_scores.json"
+SCORES_PATH = chemins.base("juges_scores.json")
 ETAT_FRAIS_SEC = 12                                  # au-dela, plus rien n'est "en cours"
 
 _lu = {"t_demande": 0.0, "lu": 0.0}

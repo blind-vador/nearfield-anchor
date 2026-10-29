@@ -7,7 +7,6 @@ balayes. C'est la carte de ce qui est audible d'ici.
 import sys
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import relais  # noqa: E402
 from phrases import dire, nombre  # noqa: E402

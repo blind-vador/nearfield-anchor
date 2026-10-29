@@ -23,7 +23,6 @@ import threading
 import urllib.error
 import urllib.request
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 import reglages  # noqa: E402
 import sons_imprimante as sons  # noqa: E402  (bruitages camera, 2026-10-18)
 from phrases import dire  # noqa: E402

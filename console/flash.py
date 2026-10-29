@@ -8,7 +8,6 @@
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import arbre  # noqa: E402
 import flash_info  # noqa: E402

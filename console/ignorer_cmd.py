@@ -13,7 +13,6 @@ qui est ignore pour une duree revient ("toujours" reste).
 import sys
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import ignores  # noqa: E402

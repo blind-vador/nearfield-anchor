@@ -7,6 +7,7 @@ Une phrase est "fixe" si elle apparait telle quelle, sans variable, dans une
 phrase du projet (phrases/fr.ini, personnalite comprise) : un modele a
 variables apporte aussi ses phrases sans variable.
 """
+import chemins
 import os
 import re
 
@@ -58,7 +59,7 @@ _memo = {"signature": None, "tables": None}
 
 def _signature():
     """Change quand une phrase est reecrite (personnalite du jour a minuit)."""
-    folder = "/home/vador/autopilot/phrases"  # en dur (axe 4) : phrases deployees par install.sh, hors arbre du depot
+    folder = chemins.base("phrases")  # en dur (axe 4) : phrases deployees par install.sh, hors arbre du depot
     try:
         return tuple(sorted((n, os.path.getmtime(os.path.join(folder, n))) for n in os.listdir(folder)
                             if n.endswith(".ini")))

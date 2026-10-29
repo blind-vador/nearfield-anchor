@@ -18,6 +18,7 @@ apprennent sans doute ce qui est audible") :
     (sa tonalite CTCSS retrouvee dans le son, lib/ctcss.py) ; la commande
     console "relais" le dit.
 """
+import chemins
 import json
 import os
 import re
@@ -25,9 +26,9 @@ import threading
 import time
 
 STORE_PATH = "/media/nas/nd1/server/radio_log/relais.json"
-LOCAL_PATH = "/home/vador/autopilot/relais.json"
-LOINTAINS_PATH = "/home/vador/autopilot/relais_lointains.json"
-AUDIBILITE_PATH = "/home/vador/autopilot/relais_audibilite.json"
+LOCAL_PATH = chemins.base("relais.json")
+LOINTAINS_PATH = chemins.base("relais_lointains.json")
+AUDIBILITE_PATH = chemins.base("relais_audibilite.json")
 RANGE_KM = 60
 FORGET_SEC = 30 * 86400
 ECRIRE_ECOUTES_SEC = 600      # compteurs d'ecoute gardes en memoire, ecrits au plus toutes les 10 min

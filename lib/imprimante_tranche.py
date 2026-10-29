@@ -4,6 +4,7 @@ Utilise les definitions Ultimaker fdmprinter/fdmextruder fournies dans
 pi_console/cura_defs/, et les params issus du questionnaire (couche,
 remplissage, supports, adherence, temperatures materiau).
 """
+import chemins
 import os
 import re
 import shutil
@@ -14,8 +15,8 @@ CURA = "/usr/bin/CuraEngine"
 # Relatif au package deploie
 _DEF_CANDIDATES = [
     os.path.join(os.path.dirname(__file__), "cura_defs"),
-    "/home/vador/autopilot/pi_console/cura_defs",
-    "/home/vador/nearfield_anchor/lib/cura_defs",
+    chemins.base("pi_console/cura_defs"),
+    chemins.depot("lib/cura_defs"),
 ]
 
 # Volume Ender 3 (mm) — aligne sur le profil OctoPrint typique
@@ -158,7 +159,7 @@ def trancher(item, params, timeout_sec=600):
     # Miroir SD si le STL etait sur le NAS
     try:
         if "/nearfield-anchor-pieces/" in out:
-            mirror_root = "/home/vador/autopilot/pieces_cache/prets"
+            mirror_root = chemins.base("pieces_cache/prets")
             name = os.path.basename(os.path.dirname(out))
             dest_dir = os.path.join(mirror_root, name)
             os.makedirs(dest_dir, exist_ok=True)

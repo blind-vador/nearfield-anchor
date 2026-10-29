@@ -9,6 +9,7 @@ Lu par le scanner (watchers/radio_watch.py, watchers/airband_bridge.py) a
 chaque ecoute : un changement s'applique a la capture suivante, sans
 redemarrage. Sur la carte SD du Pi.
 """
+import chemins
 import fcntl
 import json
 import os
@@ -16,7 +17,7 @@ import time
 
 from phrases import Etiquettes
 
-STORE_PATH = "/home/vador/autopilot/reglages_audio.json"
+STORE_PATH = chemins.base("reglages_audio.json")
 LOCK_PATH = "/tmp/reglages_audio.lock"
 
 # Valeurs d'usine. attente_fin_s None : la valeur du scanner (3 s, ou celle

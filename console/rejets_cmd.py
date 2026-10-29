@@ -14,7 +14,6 @@ et a la double verification par le Mac mini (bridge).
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import rejets  # noqa: E402

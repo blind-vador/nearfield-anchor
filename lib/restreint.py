@@ -9,11 +9,12 @@ RTLSDR-Airband, veilles de donnees, plus "stations" (stations reperees) et
 "relais" (relais appris par l'APRS). Le mode manuel et le verrouillage ne
 sont pas concernes.
 """
+import chemins
 import json
 import os
 import time
 
-REGLAGES = "/home/vador/autopilot/restreint.json"
+REGLAGES = chemins.base("restreint.json")
 CIBLES_PATH = "/tmp/radio_watch_cibles.json"
 CACHE_SEC = 5
 _cache = {"t": 0.0, "data": None}

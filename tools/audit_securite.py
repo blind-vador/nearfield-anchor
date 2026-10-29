@@ -15,6 +15,7 @@
 La commande console "securite" lit le dernier bilan ; "mise a jour" applique
 les mises a jour systeme ; "securite pip" met a jour les paquets pip signales.
 """
+import chemins
 import json
 import os
 import subprocess
@@ -24,7 +25,7 @@ import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-RAPPORT = "/home/vador/autopilot/securite_rapport.json"
+RAPPORT = chemins.base("securite_rapport.json")
 EXPOSES = ("openssl", "libssl", "nginx", "haproxy", "php", "openssh", "samba", "sudo", "curl", "libcurl",
            "linux-image", "raspi-firmware", "mariadb", "python3-lxml", "python3-pil", "python3-cryptography",
            "python3-urllib3", "python3-requests")

@@ -17,7 +17,6 @@ relit la liste a chaque station, rien a relancer.
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import dab_liste  # noqa: E402

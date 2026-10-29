@@ -6,7 +6,6 @@ commande "dmr" pour le DMR.
 import sys
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import tetra  # noqa: E402
 from phrases import dire, nombre  # noqa: E402

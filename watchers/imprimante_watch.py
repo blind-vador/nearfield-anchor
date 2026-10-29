@@ -14,6 +14,7 @@ La reconnexion apres rebranchement reste a usb_watch.py.
 Sondage REST toutes les POLL_SEC : OctoPrint ne pousse ses evenements que
 par websocket, et 5 s suffisent pour une voix.
 """
+import chemins
 import os
 import re
 import time
@@ -25,7 +26,7 @@ from speak import speak_cloud
 import sons_imprimante as sons
 
 POLL_SEC = 5
-SERIAL_LOG = "/home/vador/.octoprint/logs/serial.log"
+SERIAL_LOG = chemins.home(".octoprint/logs/serial.log")
 # Messages Marlin (runout / M600) : host actions desactivees sur ce firmware,
 # donc OctoPrint reste en "Printing" alors que la machine attend le fil.
 FILAMENT_MARKERS = (

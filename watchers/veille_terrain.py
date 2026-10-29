@@ -26,6 +26,7 @@ Reglages : SOURCES_PATH (cree avec les valeurs par defaut, a modifier a la
 main) ; profil et mots du moment : PROFIL_PATH. Rien n'est publie ni
 envoye : lecture seule.
 """
+import chemins
 import html
 import json
 import os
@@ -41,8 +42,8 @@ import veille_donnees as vd  # noqa: E402
 from phrases import dire  # noqa: E402
 from sound_paths import RADIO_SCANER_DIR  # noqa: E402
 
-SOURCES_PATH = "/home/vador/autopilot/terrain_sources.json"
-SEEN_PATH = "/home/vador/autopilot/terrain_vus.json"
+SOURCES_PATH = chemins.base("terrain_sources.json")
+SEEN_PATH = chemins.base("terrain_vus.json")
 POLL_SEC = 120
 TIMEOUT = 20
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux armv7l) veille-terrain"}
@@ -59,7 +60,7 @@ import sons
 SOUND = sons.chemin("terrain_alerte", f"{RADIO_SCANER_DIR}/incoming.mp3")  # sons propres (2026-10-23, sons.py)
 SOUND_URGENT = sons.chemin("terrain_urgence", f"{RADIO_SCANER_DIR}/scaner_error.mp3")
 
-PROFIL_PATH = "/home/vador/autopilot/terrain_profil.json"
+PROFIL_PATH = chemins.base("terrain_profil.json")
 PROFIL_TTL_SEC = 7 * 86400
 MOBILISATION_EVERY_SEC = 12 * 3600  # demande utilisateur 2026-10-18 : un mouvement social s'organise sur des jours
 MOBILISATION_TTL_SEC = 48 * 3600

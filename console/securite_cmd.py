@@ -3,18 +3,18 @@
 paquets Python installes par pip qui ont une faille corrigee, puis refait le
 controle. Les mises a jour systeme passent par la commande "mise a jour".
 """
+import chemins
 import json
 import subprocess
 import sys
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import matcher  # noqa: E402
 from phrases import dire, nombre  # noqa: E402
 
-RAPPORT = "/home/vador/autopilot/securite_rapport.json"
-AUDIT = "/home/vador/nearfield_anchor/tools/audit_securite.py"  # script du depot (axe 4)
+RAPPORT = chemins.base("securite_rapport.json")
+AUDIT = chemins.depot("tools/audit_securite.py")  # script du depot (axe 4)
 
 
 def _rapport():

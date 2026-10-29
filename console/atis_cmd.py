@@ -3,7 +3,6 @@
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import atis  # noqa: E402
 import matcher  # noqa: E402

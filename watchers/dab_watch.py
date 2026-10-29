@@ -11,6 +11,7 @@ main : la fenetre les DECOUVRE, quelques canaux de la bande III par visite
 (PROBES_PER_VISIT), jusqu'a les avoir tous essayes (redecouverte tous les
 RESCAN_SEC) ; ensuite elle ecoute les ensembles trouves a tour de role.
 """
+import chemins
 import hashlib
 import json
 import os
@@ -24,7 +25,7 @@ import veille_donnees as vd
 from phrases import dire
 
 CHANNELS = [f"{n}{l}" for n in range(5, 14) for l in "ABCD"] + ["13E", "13F"]
-STATE_PATH = "/home/vador/autopilot/dab_ensembles.json"
+STATE_PATH = chemins.base("dab_ensembles.json")
 PORT = 7979
 URL = f"http://127.0.0.1:{PORT}"
 PROBE_SEC = 9              # le temps qu'un ensemble se fasse reconnaitre

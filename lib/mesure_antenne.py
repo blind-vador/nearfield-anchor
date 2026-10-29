@@ -33,6 +33,7 @@ La cle appartient au scanner (radio-watch) : la console depose une demande
 measure, done) et la console attend le resultat (wait). Scanner arrete : la
 console mesure elle-meme.
 """
+import chemins
 import json
 import math
 import os
@@ -45,7 +46,7 @@ import audiographe
 
 REQUEST_PATH = "/tmp/radio_watch_antenne.json"
 DONE_PATH = "/tmp/radio_watch_antenne_fait.json"
-HISTORIQUE = "/home/vador/autopilot/mesures_antenne.json"
+HISTORIQUE = chemins.base("mesures_antenne.json")
 REQUEST_MAX_AGE_SEC = 600
 HISTORIQUE_MAX = 30
 FM_BAND = "fm_diffusion"

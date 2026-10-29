@@ -14,7 +14,6 @@ comment roulent les transports en commun de la commune choisie.
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import conseils  # noqa: E402
 import matcher  # noqa: E402

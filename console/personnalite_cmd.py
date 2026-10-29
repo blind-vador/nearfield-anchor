@@ -9,7 +9,6 @@ elle se fait cette nuit a minuit.
 """
 import sys
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import matcher  # noqa: E402
 import personnalite  # noqa: E402

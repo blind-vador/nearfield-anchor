@@ -23,12 +23,13 @@ en service sont preparees : voix des annonces, et voix de la console (ou
 sa voix de secours tant que Microsoft ne repond pas). kick() (phrases du
 jour reecrites par Gemini a minuit, changement de voix) relance tout de suite.
 """
+import chemins
 import os
 import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, "/home/vador/autopilot/console")
+sys.path.insert(0, chemins.base("console"))
 
 import piper_out  # noqa: E402
 

@@ -21,6 +21,7 @@ une alerte nee apres le "compris" reste a dire). Silence 22 h - 7 h
 (plantes_calendrier.QUIET_HOURS) : ce qui dure encore le matin est redit.
 Appele par la boucle de plantes_calendrier (meteo_watch), toutes les 30 min.
 """
+import chemins
 import datetime
 import json
 import os
@@ -32,8 +33,8 @@ import reglages
 from phrases import dire
 from plantes import join_names
 
-STATE_PATH = "/home/vador/autopilot/plantes_alertes.json"
-ACK_PATH = "/home/vador/autopilot/plantes_acquit.json"
+STATE_PATH = chemins.base("plantes_alertes.json")
+ACK_PATH = chemins.base("plantes_acquit.json")
 SOUND = "/media/nas/nd1/server/plantes/plante_alert1.mp3"  # Epidemic Sound (2026-10-18)
 REPEAT_SEC = 30 * 60 - 60       # la boucle tourne toutes les 30 min : une minute de marge
 GEL_FROM_HOUR = 17

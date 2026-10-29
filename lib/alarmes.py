@@ -25,6 +25,7 @@ l'utilisateur tape "compris" a la console (acquitter()).
 Les alarmes d'un meme service passent l'une apres l'autre ; entre services,
 le verrou audio (source "alertes", la plus prioritaire) les met en file.
 """
+import chemins
 import datetime
 import hashlib
 import json
@@ -40,7 +41,7 @@ import sons
 from phrases import dire
 
 ACTIVES_DIR = "/tmp/alarmes_actives"      # une fiche par alarme qui sonne (pid : purge des morts)
-ACK_PATH = "/home/vador/autopilot/alarmes_acquit.json"
+ACK_PATH = chemins.base("alarmes_acquit.json")
 CACHE_DIR = "/tmp/alarmes_voix"           # messages synthetises, le temps de l'alarme
 ENCORE_SEC = 60                           # rappel : on regarde toutes les minutes si le probleme dure
 RAFRAICHIR_SEC = 60                       # alarme sans fin : son entree au verrou audio reste vivante

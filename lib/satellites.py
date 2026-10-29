@@ -9,6 +9,7 @@ Un passage n'est retenu qu'au-dessus de MIN_ELEVATION de sa famille
 (un passage bas ne donne rien avec une antenne verticale, et la cle est
 precieuse pour le reste).
 """
+import chemins
 import datetime
 import json
 import os
@@ -23,7 +24,7 @@ from phrases import Etiquettes, dire, nombre
 FAMILIES = Etiquettes("satellite.famille", {"meteo": "satellite météo", "iss": "station spatiale",
                                                "fm": "satellite radioamateur"}, "famille d'un satellite")
 
-TLE_DIR = "/home/vador/autopilot/tle"
+TLE_DIR = chemins.base("tle")
 TLE_GROUPS = ["weather", "stations", "amateur"]
 TLE_URL = "https://celestrak.org/NORAD/elements/gp.php?GROUP={group}&FORMAT=tle"
 SATNOGS_URL = "https://db.satnogs.org/api/transmitters/?format=json&alive=true"

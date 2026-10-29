@@ -14,7 +14,6 @@ import sys
 import threading
 import time
 
-sys.path.insert(0, "/home/vador/autopilot/pi_console")
 
 import capture_son  # noqa: E402
 import matcher  # noqa: E402

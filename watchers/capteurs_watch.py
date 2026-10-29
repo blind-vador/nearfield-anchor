@@ -19,6 +19,7 @@ Une frequence par passage, en alternance. Annonces :
 Les derniers releves sont publies (READINGS_PATH) pour la console et le
 flash ; tout est archive.
 """
+import chemins
 import json
 import os
 import subprocess
@@ -38,7 +39,7 @@ import sons
 VOITURE_SOUND = sons.chemin("voiture", SOUND)  # son propre (2026-10-23, sons.py)
 NOUVEAU_SOUND = sons.chemin("nouveau_capteur", SOUND)
 # Carte SD, pas /tmp (vide a chaque demarrage) : valeurs deja dites, anti-repetitions.
-STATE_PATH = "/home/vador/autopilot/capteurs_watch_state.json"
+STATE_PATH = chemins.base("capteurs_watch_state.json")
 READINGS_PATH = "/tmp/capteurs_releves.json"
 ALARM_EVERY_SEC = 120
 BUTTON_EVERY_SEC = 60
@@ -437,7 +438,7 @@ def pairing_session():
     return True
 
 
-FENETRES_VIDES = "/home/vador/autopilot/capteurs_fenetres_vides"
+FENETRES_VIDES = chemins.base("capteurs_fenetres_vides")
 
 
 def _compter_fenetre_vide(vide):
@@ -504,7 +505,7 @@ def scan_window(dwell_sec=30):
     if count:
         print(f"[capteurs_watch] {count} trame(s) capteurs sur {freq}")
         try:  # antenne vivante (veille_systeme : antenne muette)
-            with open("/home/vador/autopilot/capteurs_derniere_trame", "w") as f:
+            with open(chemins.base("capteurs_derniere_trame"), "w") as f:
                 f.write(str(time.time()))
         except OSError:
             pass

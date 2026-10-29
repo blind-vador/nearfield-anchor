@@ -11,6 +11,7 @@ temperature mesuree, montee ou descente), eclatement du ballon, limite du
 gel mesuree (passage par zero degre pendant la montee). Le profil mesure
 est publie pour le bulletin meteo (PROFILE_PATH) ; tout est archive.
 """
+import chemins
 import json
 import os
 import shutil
@@ -24,7 +25,7 @@ import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
 from phrases import dire
 
-DECODER_DIR = "/home/vador/autopilot/bin"
+DECODER_DIR = chemins.base("bin")
 DECODERS = {"RS41": "rs41mod", "M10": "m10m20mod", "M20": "m10m20mod", "DFM": "dfm09mod"}
 import sons
 SOUND = sons.chemin("capteur_meteo", os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3"))  # son propre (2026-10-23, sons.py)

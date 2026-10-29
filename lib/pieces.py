@@ -8,6 +8,7 @@ La passe images locale (VLM Mac) viendra via le pont compagnon ; en attendant
 images_desc reste vide et la fiche le dit clairement. Valider appelle Gemini
 (meme cle que vision.py) pour une fiche fine mise en cache.
 """
+import chemins
 import base64
 import json
 import re
@@ -21,7 +22,7 @@ import reglages
 
 STORE = "/media/nas/nd1/server/nearfield-anchor-pieces"
 PRETS = os.path.join(STORE, "prets")
-CACHE_SD = "/home/vador/autopilot/pieces_cache"
+CACHE_SD = chemins.base("pieces_cache")
 SESSION = "/tmp/pieces_session.json"
 
 GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"

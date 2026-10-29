@@ -10,10 +10,11 @@ Fichier sur la carte SD (lu a chaque capture, donc petit) :
 Une note donne des parts de 0 a 1 qui somment a 1 (pourcentages normalises ;
 ancienne note a choix unique : 100 % du contenu choisi).
 """
+import chemins
 import json
 import os
 
-PATH = "/home/vador/autopilot/contenus_stations.json"
+PATH = chemins.base("contenus_stations.json")
 STEP_HZ = 12_500
 CODES = ["voix", "musique", "tonalites", "donnees", "rien"]
 MIN_NOTES = 2

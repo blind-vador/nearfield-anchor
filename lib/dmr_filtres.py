@@ -16,11 +16,12 @@ laisse entendre l'autre.
 
 Fichier REGLAGES (carte SD), relu au plus toutes les CACHE_SEC.
 """
+import chemins
 import json
 import os
 import time
 
-REGLAGES = "/home/vador/autopilot/dmr_filtres.json"
+REGLAGES = chemins.base("dmr_filtres.json")
 SEARCH_FLAG = "/tmp/dmr_recherche.json"
 CACHE_SEC = 2
 DUREES = [60, 120, 300]
