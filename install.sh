@@ -30,6 +30,10 @@ NAS_TARGET_DIR="${NAS_TARGET_DIR:-/home/vador/autopilot/nas_manager}"
 CONSOLE_TARGET_DIR="${CONSOLE_TARGET_DIR:-/home/vador/autopilot/console}"
 BUILD_DIR="${BUILD_DIR:-/tmp/nearfield_anchor-build}"
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Axe 4 (2026-10-29) : le depot est la source unique, plus de copie a plat.
+# Les services tournent depuis $REPO_DIR via les drop-ins systemd (PYTHONPATH).
+AIRBAND_DIR="/home/vador/autopilot/rtl_airband"   # build RTLSDR-Airband (artefact, hors depot)
+PP_DEPOT="$REPO_DIR/lib:$REPO_DIR/watchers:$REPO_DIR/tools:$REPO_DIR/config:$REPO_DIR/bridge"
 
 # OctoPi installe /root/bin/git, un garde-fou qui refuse git en root (pour
 # proteger l'installation d'OctoPrint). Les depots clones ici n'ont rien a
@@ -56,20 +60,20 @@ apt-get install -y \
 echo "=== 2/6 : compilation des bibliotheques externes (idempotent) ==="
 mkdir -p "$BUILD_DIR"
 
-if [ ! -f "$TARGET_DIR/rtl_airband/src/build/src/rtl_airband" ]; then
+if [ ! -f "$AIRBAND_DIR/src/build/src/rtl_airband" ]; then
     echo "-- RTLSDR-Airband --"
-    mkdir -p "$TARGET_DIR"
-    if [ ! -d "$TARGET_DIR/rtl_airband/.git" ]; then
-        rm -rf "$TARGET_DIR/rtl_airband"
-        git clone https://github.com/szpajder/RTLSDR-Airband.git "$TARGET_DIR/rtl_airband"
+    mkdir -p "$(dirname "$AIRBAND_DIR")"
+    if [ ! -d "$AIRBAND_DIR/.git" ]; then
+        rm -rf "$AIRBAND_DIR"
+        git clone https://github.com/szpajder/RTLSDR-Airband.git "$AIRBAND_DIR"
     fi
     # Depuis 2024 le CMakeLists principal est a la racine du depot (plus
     # dans src/). On construit quand meme dans src/build pour garder le
     # chemin attendu par airband_bridge.py (AIRBAND_BIN). cmake doit tourner
     # DEPUIS le depot : scripts/find_version appelle "git describe" dans le
     # repertoire courant et echoue ailleurs ("not a git repository").
-    rm -rf "$TARGET_DIR/rtl_airband/src/build"
-    (cd "$TARGET_DIR/rtl_airband" && cmake -S . -B src/build -DNFM=ON && make -C src/build -j4)
+    rm -rf "$AIRBAND_DIR/src/build"
+    (cd "$AIRBAND_DIR" && cmake -S . -B src/build -DNFM=ON && make -C src/build -j4)
 else
     echo "-- RTLSDR-Airband deja compile, saute --"
 fi
@@ -154,7 +158,7 @@ if [ ! -x /usr/local/bin/dumpvdl2 ]; then
     (cd "$BUILD_DIR/dumpvdl2/build" && cmake .. && make -j4 && make install)
 fi
 
-if [ ! -f "$TARGET_DIR/rnnoise_lib/librnnoise.so" ]; then
+if [ ! -f "$REPO_DIR/lib/rnnoise_lib/librnnoise.so" ]; then
     echo "-- RNNoise (librnnoise.so pour radio_watch.py) --"
     # Pas de roue pip pour l'ARM 32 bits : compilation du module natif de
     # pyrnnoise (voir ROADMAP, "suite 16"). Sans les flags NEON, le code
@@ -169,8 +173,8 @@ if [ ! -f "$TARGET_DIR/rnnoise_lib/librnnoise.so" ]; then
     (cd "$BUILD_DIR/pyrnnoise" \
         && cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_FLAGS="$RNNOISE_CFLAGS" \
         && make -C build -j4)
-    mkdir -p "$TARGET_DIR/rnnoise_lib"
-    cp "$BUILD_DIR/pyrnnoise/build/librnnoise.so" "$TARGET_DIR/rnnoise_lib/"
+    mkdir -p "$REPO_DIR/lib/rnnoise_lib"
+    cp "$BUILD_DIR/pyrnnoise/build/librnnoise.so" "$REPO_DIR/lib/rnnoise_lib/"
 else
     echo "-- RNNoise deja compile, saute --"
 fi
@@ -214,15 +218,12 @@ done
 echo "=== 3/6 : dependances Python (pip) ==="
 pip3 install -r "$REPO_DIR/requirements.txt"
 
-echo "=== 4/6 : deploiement des fichiers (aplati dans $TARGET_DIR) ==="
+echo "=== 4/6 : deploiement (depot source unique : artefacts, secret, runtime) ==="
 
-mkdir -p "$TARGET_DIR" "$TARGET_DIR/rnnoise_lib" "$RADIONO_TARGET_DIR" "$NAS_TARGET_DIR" "$CONSOLE_TARGET_DIR"
-cp "$REPO_DIR"/watchers/*.py "$TARGET_DIR/"
-cp "$REPO_DIR"/lib/*.py "$TARGET_DIR/"
-cp "$REPO_DIR"/lib/rnnoise_lib/*.py "$TARGET_DIR/rnnoise_lib/"
-cp -r "$REPO_DIR"/lib/cura_defs "$TARGET_DIR/"  # definitions Cura du tranchage (lib/imprimante_tranche.py)
-cp "$REPO_DIR"/tools/*.py "$TARGET_DIR/"
-cp "$REPO_DIR"/bridge/pont_protocole.py "$REPO_DIR"/bridge/puissance.py "$REPO_DIR"/bridge/juges_radio.py "$REPO_DIR"/bridge/lora_decode.py "$TARGET_DIR/"  # pont machine compagne (lib/compagnon.py), puissance reelle des machines, juges du scanner, decodage LoRa de secours
+mkdir -p "$RADIONO_TARGET_DIR"
+# Plus d'aplatissement dans pi_console (axe 4) : watchers/lib/tools/bridge
+# restent dans le depot, les services les atteignent par PYTHONPATH (drop-ins,
+# etape 6). On ne deploie hors du depot que ce qui n'y vit pas.
 install -D -o vador -g vador -m 755 "$REPO_DIR"/tools/python3-gnuradio /home/vador/autopilot/bin/python3-gnuradio
 # Phrases de l'interface, version neutre par langue (lib/phrases.py).
 install -d -o vador -g vador /home/vador/autopilot/phrases
@@ -230,27 +231,25 @@ install -o vador -g vador -m 644 "$REPO_DIR"/phrases/*.ini /home/vador/autopilot
 # Exemples de reference de la grille de notation (touches E / F2), referentiel fixe.
 install -d -o vador -g vador /home/vador/autopilot/exemples_notation
 install -o vador -g vador -m 644 "$REPO_DIR"/assets/exemples_notation/* /home/vador/autopilot/exemples_notation/
-cp "$REPO_DIR"/config/sound_paths.py "$TARGET_DIR/"
-# Jamais ecraser un credentials.py deja rempli sur le Pi : une reinstallation
-# le remplacerait sinon par le modele vide.
-if [ ! -f "$TARGET_DIR/credentials.py" ]; then
+# Secret (jamais commite) : dans le depot, gitignore (config/credentials.py).
+# Jamais ecraser un credentials.py deja rempli, sinon une reinstallation le
+# remplacerait par le modele vide.
+if [ ! -f "$REPO_DIR/config/credentials.py" ]; then
     echo "!! credentials.py absent -- copie du modele vide (credentials.example.py)."
     echo "!! sncf_watch.py/adsb_watch.py et la commande imprimante de la console"
-    echo "!! ne fonctionneront PAS tant que $TARGET_DIR/credentials.py n'est pas rempli."
-    cp "$REPO_DIR/config/credentials.example.py" "$TARGET_DIR/credentials.py"
+    echo "!! ne fonctionneront PAS tant que $REPO_DIR/config/credentials.py n'est pas rempli."
+    cp "$REPO_DIR/config/credentials.example.py" "$REPO_DIR/config/credentials.py"
 fi
-# Dossier de reglages sur le NAS (lieu, gare, aeroports, un fichier texte
-# par cle API -- voir lib/reglages.py). Ne touche a rien d'existant ; une
-# cle deja dans credentials.py est recopiee dans son fichier vide.
-sudo -u "$RUN_USER" python3 -c "import sys; sys.path.insert(0, '$TARGET_DIR'); import reglages; reglages.ensure()" \
+# Dossier de reglages sur le NAS (lib/reglages.py). Depuis le depot (PYTHONPATH),
+# ne touche a rien d'existant.
+sudo -u "$RUN_USER" env PYTHONPATH="$PP_DEPOT" python3 -c "import reglages; reglages.ensure()" \
     || echo "!! dossier de reglages non cree (NAS absent ?) -- relancer la commande reglages de la console"
+# radiono (outil HF) et magicsound (greffon audio) tournent hors depot.
 cp "$REPO_DIR"/radiono/radiono.py "$RADIONO_TARGET_DIR/"
 cp "$REPO_DIR"/config/sound_paths.py "$RADIONO_TARGET_DIR/"
 PYTHON_SITE="$(python3 -c 'import sysconfig; print(sysconfig.get_path("purelib"))')"
 mkdir -p "$PYTHON_SITE"
 cp "$REPO_DIR"/radiono/magicsound.py "$PYTHON_SITE/magicsound.py"
-cp "$REPO_DIR"/nas/nas_watch.py "$NAS_TARGET_DIR/"
-cp "$REPO_DIR"/console/*.py "$CONSOLE_TARGET_DIR/"
 # Reparations USB (usb_watch.py) : seul geste root, appele via sudo -n.
 install -m 755 "$REPO_DIR"/tools/usb-repare /usr/local/sbin/usb-repare
 chown -R "$RUN_USER:$RUN_USER" "$RADIONO_TARGET_DIR"
@@ -273,7 +272,7 @@ fi
 # Voix Piper francaises (verifiees, voir lib/piper_voix.py) ; une voix deja la est sautee.
 for v in fr_FR-siwis-medium fr_FR-siwis-low fr_FR-upmc-medium fr_FR-tom-medium fr_FR-mls-medium fr_FR-mls_1840-low fr_FR-gilles-low; do
     [ -f "$PIPER_DIR/voix/$v.onnx" ] && continue
-    sudo -u "$RUN_USER" python3 -c "import sys; sys.path.insert(0, '$TARGET_DIR'); import piper_voix; ok, why = piper_voix.install('$v'); print('$v', 'installee' if ok else why)" \
+    sudo -u "$RUN_USER" env PYTHONPATH="$PP_DEPOT" python3 -c "import piper_voix; ok, why = piper_voix.install('$v'); print('$v', 'installee' if ok else why)" \
         || echo "!! voix $v non installee (reseau ?)"
 done
 
@@ -350,6 +349,9 @@ systemctl mask getty@tty1.service
 
 echo "=== 6/6 : unites systemd ==="
 cp "$REPO_DIR"/systemd/*.service /etc/systemd/system/
+# Drop-ins (axe 4) : chaque service tourne depuis le depot (ExecStart + PYTHONPATH),
+# et non la copie a plat. Un <svc>.service.d/override.conf par service.
+cp -r "$REPO_DIR"/systemd/dropins/* /etc/systemd/system/
 cp "$REPO_DIR"/systemd/*.timer /etc/systemd/system/  # securite-audit (2026-10-23)
 systemctl daemon-reload
 for timer in "$REPO_DIR"/systemd/*.timer; do
@@ -366,7 +368,7 @@ cat <<EOF
 === Installation terminee ===
 
 Points a verifier manuellement :
-- $TARGET_DIR/credentials.py (JAMAIS commite, voir .gitignore) contient
+- $REPO_DIR/config/credentials.py (JAMAIS commite, voir .gitignore) contient
   SNCF_TOKEN, OPENSKY_CLIENT_ID/SECRET et OCTOPRINT_API_KEY -- s'il vient
   d'etre cree a partir du modele vide, edite-le avec tes identifiants puis :
   systemctl restart sncf-watch adsb-watch pi-console
