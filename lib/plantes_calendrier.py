@@ -29,6 +29,7 @@ STATE_PATH = chemins.base("plantes_calendrier.json")  # carte SD : survit au red
 SOUND = "/media/nas/nd1/server/radio_scaner/incoming.mp3"
 import sons
 PHOTO_SOUND = sons.chemin("plante_photo", SOUND)  # son propre (2026-10-23, sons.py)
+CALENDRIER_SOUND = sons.chemin("plante_a_recolter", SOUND)  # son propre (2026-10-30) ; etait le shim radio incoming.mp3
 POLL_SEC = 1800
 QUIET_HOURS = (22, 7)
 LATE_DAYS = 3
@@ -228,7 +229,7 @@ def run_once(announce=None):
     messages = due_messages(plants, state, outdoor_mean_temp() if any(not p.get("dedans") for p in plants) else None)
     if announce is None:
         import veille_donnees as vd
-        announce = lambda text: vd.announce(text, SOUND, "plante_calendrier", "plantes")  # noqa: E731
+        announce = lambda text: vd.announce(text, CALENDRIER_SOUND, "plante_calendrier", "plantes")  # noqa: E731
     for key, text in messages:
         announce(text)
         state["dites"][key] = today

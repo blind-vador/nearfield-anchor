@@ -282,6 +282,11 @@ DECODING_MORSE_SOUND = os.path.join(SOUND_EFFECTS_DIR, "decoding_morse.mp3")
 import sons
 DMR_VOCAL_SOUND = sons.chemin("dmr_vocal", DECODING_NUMERIC_SOUND)  # son propre (2026-10-23, sons.py)
 DMR_NOUVEAU_SOUND = sons.chemin("dmr_nouveau", DECODING_NUMERIC_SOUND)
+# TETRA : sons propres (2026-10-30) ; repli sur le son DMR si absent.
+TETRA_OUVERTURE_SOUND = sons.chemin("tetra_ouverture", DMR_VOCAL_SOUND)
+TETRA_APPEL_PRIVE_SOUND = sons.chemin("tetra_appel_prive", TETRA_OUVERTURE_SOUND)
+TETRA_MESSAGE_SOUND = sons.chemin("tetra_message", DMR_NOUVEAU_SOUND)
+TETRA_PORTEUSE_SOUND = sons.chemin("tetra_nouvelle_porteuse", DMR_NOUVEAU_SOUND)
 
 # --- Bandes surveillees ---
 # type "fm_channels" : liste de frequences fixes en FM etroite (PMR446, marine...)
@@ -2267,7 +2272,8 @@ def _annonce_tetra(freq_hz, res, news=None):
     saved = False
     try:
         if a_voix:
-            play_sound_effect(DMR_VOCAL_SOUND, label="radio_watch")
+            prive_tetra = any(a.get("prive") for a in (res.get("activite") or {}).get("appels", {}).values())
+            play_sound_effect(TETRA_APPEL_PRIVE_SOUND if prive_tetra else TETRA_OUVERTURE_SOUND, label="radio_watch")
             speak(resume)
             play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
             # Par l'arbitre (play_sound_effect) : la voix s'attenue sous une
@@ -2285,14 +2291,14 @@ def _annonce_tetra(freq_hz, res, news=None):
             path = None
         for f in news.get("nouvelles_porteuses") or []:
             vd.announce(dire("tetra.nouvelle_porteuse", frequence=format(f / 1e6, ".4f").replace(".", ",")),
-                        DMR_NOUVEAU_SOUND, "message_tetra", "radio_watch")
+                        TETRA_PORTEUSE_SOUND, "message_tetra", "radio_watch")
         for m in news.get("textes") or []:  # message texte en clair : dit comme un message APRS
             vd.announce(dire("tetra.message_texte", src=m["src"], dst=m.get("dst") or "?", texte=m["texte"]),
-                        DMR_NOUVEAU_SOUND, f"message_tetra_{m['src']}", "radio_watch")
+                        TETRA_MESSAGE_SOUND, f"message_tetra_{m['src']}", "radio_watch")
         if news.get("nouveaux_postes"):
             vd.announce(dire("tetra.nouveaux_postes", nombre=nombre(len(news["nouveaux_postes"]), "nouveau poste",
                                                                    "nouveaux postes")),
-                        DMR_NOUVEAU_SOUND, "message_tetra", "radio_watch")
+                        TETRA_PORTEUSE_SOUND, "message_tetra", "radio_watch")
         _tetra_dernier_reseau = identite
         # Cible "tetra" : la notation du journal (console) pique ou apaise la
         # fenetre TETRA, comme les autres cibles du scanner.
