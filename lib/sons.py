@@ -61,6 +61,7 @@ SONS = {
     "meteo_averse": "meteo_scaner/averse.mp3",
     "meteo_neige": "meteo_scaner/neige.mp3",
     "meteo_gel": "meteo_scaner/gel.mp3",
+    "meteo_foudre": "meteo_scaner/foudre.mp3",
     "jingle_flashinfo": "jingles/flashinfo.mp3",
     "jingle_meteo": "jingles/meteo.mp3",
     "jingle_transport": "jingles/transport.mp3",

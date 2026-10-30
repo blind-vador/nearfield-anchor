@@ -38,6 +38,12 @@ SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
 import sons
 VOITURE_SOUND = sons.chemin("voiture", SOUND)  # son propre (2026-10-23, sons.py)
 NOUVEAU_SOUND = sons.chemin("nouveau_capteur", SOUND)
+FOUDRE_SOUND = sons.chemin("meteo_foudre", NOUVEAU_SOUND)  # son propre si present (sons.py)
+FOUDRE_PATH = "/tmp/foudre_locale.json"   # lu par meteo_locale.threat() (impacts locaux)
+FOUDRE_EVERY_SEC = 45                      # anti-repetition des annonces
+FOUDRE_PROCHE_KM = 5                       # "tout pres" : impact dangereux
+FOUDRE_RAPPROCHE_KM = 3                    # re-annonce avant le delai si l'orage se rapproche
+LIGHTNING_MODELS = ("6045", "wh57", "wh31l", "fineoffset-wh57", "lightning")
 # Carte SD, pas /tmp (vide a chaque demarrage) : valeurs deja dites, anti-repetitions.
 STATE_PATH = chemins.base("capteurs_watch_state.json")
 READINGS_PATH = "/tmp/capteurs_releves.json"
@@ -57,7 +63,7 @@ NOT_WEATHER = [
 ]
 KIND_NAMES = Etiquettes("capteur.type", {"meteo": "thermomètre ou station météo", "alarme": "détecteur", "bouton": "bouton",
               "cuisson": "thermomètre de cuisson ou de barbecue", "piscine": "thermomètre de piscine",
-              "frigo": "thermomètre de réfrigérateur ou congélateur", "sol": "sonde de sol"},
+              "frigo": "thermomètre de réfrigérateur ou congélateur", "sol": "sonde de sol", "foudre": "capteur de foudre"},
                         "type de capteur sans fil")
 
 ALARM_WORDS = ("smoke", "fumee", "alarm", "water", "leak", "flood", "tamper", "intrusion", "gas", "co_")
@@ -100,6 +106,8 @@ def _kind(event):
     for kind, words in NOT_WEATHER:
         if any(w in model for w in words):
             return kind
+    if _is_lightning(event):
+        return "foudre"
     blob = json.dumps(event).lower()
     if "tpms" in blob or "pressure_kpa" in blob or "pressure_psi" in blob:
         return "pneu"
@@ -184,6 +192,89 @@ def _my_sensor(key):
     return _mine["items"].get(key)
 
 
+def _storm_dist_km(event):
+    """Distance de l'orage en km (noms de champ selon le modele rtl_433)."""
+    for k in ("storm_dist", "storm_distance", "storm_dist_km", "strike_distance"):
+        v = event.get(k)
+        if v is not None:
+            try:
+                return float(v)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _strike_count(event):
+    for k in ("strike_count", "strikes", "strike"):
+        v = event.get(k)
+        if v is not None:
+            try:
+                return int(v)
+            except (TypeError, ValueError):
+                pass
+    return None
+
+
+def _is_lightning(event):
+    model = str(event.get("model", "")).lower()
+    if any(w in model for w in LIGHTNING_MODELS):
+        return True
+    return _strike_count(event) is not None or _storm_dist_km(event) is not None
+
+
+def _publish_foudre(count, dist, nom):
+    """Signal local lu par meteo_locale.threat() (impacts reels pres du Pi)."""
+    try:
+        tmp = FOUDRE_PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump({"strike_count": count, "storm_dist_km": dist,
+                       "source": nom, "t": time.time()}, f, ensure_ascii=False)
+        os.replace(tmp, FOUDRE_PATH)
+    except OSError:
+        pass
+
+
+def _foudre(key, event, freq, nom, mine=False):
+    """Capteur de foudre : on publie pour la veille meteo et on annonce les
+    NOUVEAUX impacts, le ton selon la distance. Le compteur du capteur peut se
+    remettre a zero (nouvel orage) ; on parle aussi si l'orage se rapproche."""
+    count = _strike_count(event)
+    dist = _storm_dist_km(event)
+    connus.seen(key, nom, "foudre", freq[:3], mine=mine)
+    _publish(key, event, "foudre")
+    _publish_foudre(count, dist, nom)
+    if mine and event.get("battery_ok") == 0 and _memory.due(f"pile|{key}", BATTERY_EVERY_SEC):
+        vd.announce(dire("capteur.pile_faible_mien", nom=nom), SOUND, f"capteur_pile_{key}", "capteurs_watch")
+
+    etat = _memory.data.setdefault("_foudre", {})
+    prev = etat.get(key, {})
+    prev_count = prev.get("count")
+    if count is None:
+        nouveaux = None
+    elif prev_count is None or count < prev_count:   # premier releve, ou compteur reinitialise
+        nouveaux = count
+    else:
+        nouveaux = count - prev_count
+    rapproche = (dist is not None and prev.get("km") is not None
+                 and dist <= prev["km"] - FOUDRE_RAPPROCHE_KM)
+    etat[key] = {"count": count, "km": dist, "t": time.time()}
+
+    if not nouveaux or nouveaux <= 0:
+        return False
+    if not (_memory.due(f"foudre|{key}", FOUDRE_EVERY_SEC) or rapproche):
+        return False
+    if dist is None:
+        texte = dire("capteur.foudre_detectee", nom=nom)
+    elif dist <= FOUDRE_PROCHE_KM:
+        texte = dire("capteur.foudre_proche", nom=nom, km=round(dist))
+    else:
+        texte = dire("capteur.foudre_distance", nom=nom, km=round(dist))
+    vd.announce(texte, FOUDRE_SOUND, f"foudre_{key}", "capteurs_watch",
+                fiche={"protocole": "rtl_433", "frequence_hz": _hz(freq), "source": nom,
+                       "impacts": count, "distance_km": dist})
+    return True   # la foudre pique l'attention du scanner
+
+
 def _process(event, freq, tpms, at):
     if _double_decode(event, at):
         vd.archive("capteurs", dict(event, bande=freq, doublon=True))
@@ -191,6 +282,8 @@ def _process(event, freq, tpms, at):
     vd.archive("capteurs", dict(event, bande=freq))
     key = _key(event)
     own = _my_sensor(key)
+    if _is_lightning(event):   # foudre : voisin (auto) ou perso (capteurs_miens)
+        return _foudre(key, event, freq, own["nom"] if own else _name(event), mine=bool(own))
     if own:
         connus.seen(key, own["nom"], own.get("genre") or "mien", freq[:3], mine=True)
         _publish(key, event, "mien")

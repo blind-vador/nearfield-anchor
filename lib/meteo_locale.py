@@ -380,6 +380,24 @@ def apercu_flash(lieu, fc=None):
     return out
 
 
+FOUDRE_LOCALE_PATH = "/tmp/foudre_locale.json"   # ecrit par capteurs_watch._foudre
+FOUDRE_LOCALE_MAX_AGE_SEC = 900                  # 15 min : impacts encore d'actualite
+FOUDRE_LOCALE_PROCHE_KM = 5                       # danger imminent
+FOUDRE_LOCALE_MOYENNE_KM = 15                     # perturbation en approche
+
+
+def local_strikes(max_age_sec=FOUDRE_LOCALE_MAX_AGE_SEC):
+    """Derniers impacts vus par un capteur de foudre pres du Pi (Acurite 6045,
+    FineOffset WH57/WH31L -- voisin ou perso). Mesure PHYSIQUE locale, donc
+    pres de la ville choisie : deterministe, aucune source distante. None si
+    rien de recent."""
+    d = _read_json(FOUDRE_LOCALE_PATH)
+    if not d or time.time() - d.get("t", 0) > max_age_sec:
+        return None
+    return {"km": d.get("storm_dist_km"), "count": d.get("strike_count"),
+            "source": d.get("source")}
+
+
 def threat(lieu, fc=None, signs=None):
     """(niveau 0-3, raisons parlees)."""
     reasons, level = [], 0
@@ -429,6 +447,21 @@ def threat(lieu, fc=None, signs=None):
         elif observed.get("precip") == "forte":
             level = max(level, 1)
             reasons.append(dire("meteo.forte_pluie_apres_ton"))
+    foudre = local_strikes()
+    if foudre:
+        km = foudre.get("km")
+        if km is None:
+            level = max(level, 2)
+            reasons.append(dire("meteo.foudre_capteur_detectee"))
+        elif km <= FOUDRE_LOCALE_PROCHE_KM:
+            level = 3
+            reasons.append(dire("meteo.foudre_capteur_tout_pres", km=round(km)))
+        elif km <= FOUDRE_LOCALE_MOYENNE_KM:
+            level = max(level, 2)
+            reasons.append(dire("meteo.foudre_capteur_proche", km=round(km)))
+        else:
+            level = max(level, 1)
+            reasons.append(dire("meteo.foudre_capteur_loin", km=round(km)))
     try:
         import donnees_ouvertes
         storms = donnees_ouvertes.airport_storms()
