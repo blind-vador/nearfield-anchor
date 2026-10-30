@@ -36,6 +36,10 @@ LAST_CAPTURE_PATH = "/tmp/radio_watch_derniere_capture.json"
 LIVE_CAPTURE_PATH = "/tmp/radio_watch_capture_en_cours.json"
 LIVE_CAPTURE_MAX_SEC = 1800  # garde-fou si le scanner meurt sans nettoyer
 CONTROL_PATH = "/tmp/radio_watch_controle.json"
+# Parasite demande PENDANT une ecoute : appris a sa fin (record_capture),
+# pas sur la precedente deja finie (fantome TETRA 2026-10-30).
+PARASITE_PENDING_PATH = "/tmp/radio_watch_parasite_pending.json"
+PARASITE_PENDING_MAX_SEC = 600
 PLAGES_PATH = "/tmp/radio_watch_plages.json"
 
 SIGNATURE_BANDS = 24
@@ -305,6 +309,7 @@ def record_capture(source, freq_hz, mode, label, target, log_path, fp, metrics=N
                                          "metrics": metrics})
         except OSError as exc:
             print(f"[noise_signatures] empreinte non rangee pres de l'enregistrement : {exc}")
+    _consommer_parasite_en_attente(freq_hz, target, log_path, fp)
 
 
 # --- Empreintes rangees a cote des enregistrements du journal ---
@@ -406,6 +411,54 @@ def request_lock(capture):
 
 def request_unlock():
     _atomic_write_json(CONTROL_PATH, {"lock": False, "time": time.time()})
+
+
+def request_parasite_live(capture):
+    """La console a dit "parasite" PENDANT une ecoute : quand cette capture se
+    terminera (record_capture), l'apprendre comme bruit et effacer son
+    enregistrement -- au lieu de toucher la precedente, deja finie."""
+    _atomic_write_json(PARASITE_PENDING_PATH, {
+        "freq_hz": capture.get("freq_hz"), "target": capture.get("target"),
+        "label": capture.get("label"), "time": time.time(),
+    })
+
+
+def _parasite_en_attente():
+    p = _read_json(PARASITE_PENDING_PATH, None)
+    if not p or time.time() - p.get("time", 0) > PARASITE_PENDING_MAX_SEC:
+        return None
+    return p
+
+
+def _consommer_parasite_en_attente(freq_hz, target, log_path, fp):
+    """Si "parasite" a ete demande pendant cette ecoute, l'appliquer a sa fin :
+    effacer l'enregistrement, apprendre l'empreinte, marquer la capture bruit."""
+    p = _parasite_en_attente()
+    if not p:
+        return False
+    meme = p.get("target") == target and (
+        p.get("freq_hz") is None
+        or abs((p.get("freq_hz") or 0) - (freq_hz or 0)) <= FREQ_TOLERANCE_HZ)
+    if not meme:
+        return False
+    try:
+        os.remove(PARASITE_PENDING_PATH)
+    except OSError:
+        pass
+    if log_path and os.path.isfile(log_path):
+        try:
+            os.remove(log_path)
+        except OSError:
+            pass
+    if log_path:
+        forget_capture(log_path)
+    if fp:
+        try:
+            add_signature({"freq_hz": freq_hz, "label": p.get("label") or "", "fingerprint": fp})
+        except (OSError, KeyError, TypeError):
+            pass
+    mark_last_capture_noise()
+    return True
 
 
 def lock_request():

@@ -271,6 +271,21 @@ def parasite():
     empreinte sonore apprise pour l'ignorer si elle revient (le scanner la
     compare en pre-ecoute silencieuse, voir lib/noise_signatures.py)."""
     import noise_signatures as ns
+    # Comme "accroche"/"zapper" (2026-10-17) : d'abord l'ecoute EN COURS. La
+    # derniere capture n'est ecrite qu'en fin d'ecoute ; sinon "parasite"
+    # frappait la precedente deja finie (ex. une reception TETRA) au lieu du
+    # canal gresillant qui tient l'antenne maintenant (2026-10-30).
+    live = ns.live_capture()
+    if live:
+        import maintien
+        maintien.demander_zap()            # on lache le canal, comme "zapper"
+        ns.request_parasite_live(live)     # appris comme bruit a la fin de l'ecoute
+        try:  # un parasite ne doit pas attirer l'attention du scanner
+            import attention
+            attention.stimulate(live.get("target"), attention.PARASITE_POINTS)
+        except Exception:
+            pass
+        return dire("commandes.parasite_ecoute_en_cours", label=live["label"])
     capture = ns.last_capture()
     if not capture:
         return dire("commandes.aucune_reception_radio_recente")
