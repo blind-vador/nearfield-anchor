@@ -61,6 +61,8 @@ WMO = Etiquettes("meteo.temps", {0: "ciel dégagé", 1: "ciel peu nuageux", 2: "
        95: "orages", 96: "orages avec grêle", 99: "orages avec forte grêle"},
                  "temps qu'il fait, d'après le code météo")
 STORM_CODES = {95, 96, 99}
+SNOW_CODES = {71, 73, 75, 77, 85, 86}   # neige / averses de neige (codes WMO)
+GEL_SEUIL_C = 1.0                        # <= : risque de gel (heads-up du flash)
 COLOR_NAMES = Etiquettes("vigilance.couleur", {2: "jaune", 3: "orange", 4: "rouge"}, "couleur de vigilance météo")
 DIRECTIONS = ["nord", "nord-est", "est", "sud-est", "sud", "sud-ouest", "ouest", "nord-ouest"]
 LEVEL_NAMES = Etiquettes("vigilance.niveau", {0: "calme", 1: "à surveiller", 2: "perturbation en approche",
@@ -354,6 +356,28 @@ def storm_outlook(fc, hours=6):
     storms = [k for v, k in series("weather_code") if v in STORM_CODES]
     return {"cape": cape, "rafales": gusts, "pluie_des": rain[0] - i if rain else None,
             "orage_des": storms[0] - i if storms else None}
+
+
+def apercu_flash(lieu, fc=None):
+    """Preventions courtes pour le flash horaire (pas des alarmes),
+    tirees du modele au point du lieu choisi dans les reglages : gel de
+    la nuit a venir (minimale horaire sur ~15 h <= seuil) et neige
+    attendue (codes neige dans les prochaines heures). Deterministe :
+    tout vient de forecast(lieu). Rend {"gel": mini_c|None, "neige": bool}."""
+    fc = fc or forecast(lieu)
+    out = {"gel": None, "neige": False}
+    if not fc:
+        return out
+    hourly = fc.get("hourly") or {}
+    i = _hourly_index(fc)
+    temps = hourly.get("temperature_2m") or []
+    nuit = [t for t in temps[i:i + 15] if t is not None]
+    if nuit and min(nuit) <= GEL_SEUIL_C:
+        out["gel"] = min(nuit)
+    codes = hourly.get("weather_code") or []
+    if any(c in SNOW_CODES for c in codes[i:i + 12] if c is not None):
+        out["neige"] = True
+    return out
 
 
 def threat(lieu, fc=None, signs=None):

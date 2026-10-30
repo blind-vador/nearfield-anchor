@@ -28,6 +28,8 @@ import sons
 SOUND = sons.chemin("jingle_meteo", os.path.join(METEO_SCANER_DIR, "simple_message.mp3"))  # son propre (2026-10-23, sons.py)
 GARDE_SEC = 3 * 3600
 ALERTE_NIVEAU = 2
+PREVENTIONS_STATE = chemins.base("flash_preventions.json")
+GEL_HEURE_MIN = 18   # on ne previent du gel de la nuit qu'a partir du soir
 CHAMPS = {"temperature_C": "temperature", "humidity": "humidite", "wind_avg_km_h": "vent_kmh",
           "rain_mm": "pluie_mm", "pressure_hPa": "pression_hpa"}
 
@@ -72,6 +74,49 @@ def _ecrire(data):
     os.replace(tmp, RELEVES_PATH)
 
 
+def _lire_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _ecrire_json(path, data):
+    tmp = path + f".{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, path)
+
+
+def _preventions_a_dire(now=None):
+    """Preventions courtes integrees au flash (gel de la nuit, neige
+    attendue) -- shim + annonce, pas d'alarme. Dites au plus une fois par
+    jour chacune (etat sur la carte) ; le gel seulement a partir du soir.
+    Deterministe : apercu au point du lieu choisi dans les reglages."""
+    import meteo_locale
+    import reglages
+    now = now or time.time()
+    heure = datetime.fromtimestamp(now).hour
+    jour = datetime.fromtimestamp(now).strftime("%Y-%m-%d")
+    try:
+        apercu = meteo_locale.apercu_flash(reglages.get("lieu"))
+    except Exception as exc:
+        print(f"[bulletin_capteurs] apercu flash : {exc!r}")
+        return []
+    etat = _lire_json(PREVENTIONS_STATE)
+    clauses = []
+    if apercu.get("gel") is not None and heure >= GEL_HEURE_MIN and etat.get("gel") != jour:
+        clauses.append(dire("bulletin_capteurs.gel", mini=vd.fr_number(apercu["gel"], 0)))
+        etat["gel"] = jour
+    if apercu.get("neige") and etat.get("neige") != jour:
+        clauses.append(dire("bulletin_capteurs.neige"))
+        etat["neige"] = jour
+    if clauses:
+        _ecrire_json(PREVENTIONS_STATE, etat)
+    return clauses
+
+
 def resume(now=None):
     """Chiffres de la derniere heure : par capteur dehors (dernier, mini, maxi,
     evolution sur l'heure), mediane dehors, interieurs a part. None sans releve."""
@@ -102,12 +147,16 @@ def resume(now=None):
     temps = [c["temperature"]["maintenant"] for c in dehors if "temperature" in c]
     hums = [c["humidite"]["maintenant"] for c in dehors if "humidite" in c]
     evol = [c["temperature"]["evolution_1h"] for c in dehors if "evolution_1h" in c.get("temperature", {})]
+    vents = [c["vent_kmh"]["maintenant"] for c in dehors if "vent_kmh" in c]
+    pluies = [c["pluie_mm"]["maintenant"] for c in dehors if "pluie_mm" in c]
     return {"heure": datetime.fromtimestamp(now).strftime("%H:%M"), "capteurs_dehors": dehors,
             "capteurs_dedans": dedans,
             "dehors": {"temperature_mediane": round(statistics.median(temps), 1) if temps else None,
                        "ecart_entre_capteurs": round(max(temps) - min(temps), 1) if len(temps) > 1 else None,
                        "humidite_mediane": round(statistics.median(hums)) if hums else None,
-                       "evolution_1h": round(statistics.median(evol), 1) if evol else None}}
+                       "evolution_1h": round(statistics.median(evol), 1) if evol else None,
+                       "vent_mediane": round(statistics.median(vents)) if vents else None,
+                       "pluie_recente": round(max(pluies), 1) if pluies else None}}
 
 
 def _texte_simple(r):
@@ -124,6 +173,10 @@ def _texte_simple(r):
         text += " " + dire(key, ecart=vd.fr_number(abs(e), 1))
     if d["humidite_mediane"] is not None:
         text += " " + dire("bulletin_capteurs.humidite", humidite=d["humidite_mediane"])
+    if d.get("vent_mediane"):
+        text += " " + dire("bulletin_capteurs.vent", vent=d["vent_mediane"])
+    if d.get("pluie_recente"):
+        text += " " + dire("bulletin_capteurs.pluie", pluie=vd.fr_number(d["pluie_recente"], 1))
     return text
 
 
@@ -155,6 +208,9 @@ def faire(dire_le=True):
         alerte = meteo_locale.published_level() >= ALERTE_NIVEAU
     except Exception:
         alerte = False
+    if dire_le and not alerte:
+        for clause in _preventions_a_dire():
+            text = text.rstrip() + " " + clause
     vd.archive("meteo_capteurs", dict(r, bulletin=text, auteur=auteur, dit=dire_le and not alerte))
     if dire_le and not alerte:
         vd.announce(text, SOUND, "meteo_capteurs", "meteo_capteurs", fiche={"source": "capteurs meteo", **r})
