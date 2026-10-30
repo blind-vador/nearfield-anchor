@@ -6953,3 +6953,44 @@ meme sans voix decodee (IDLE, donnees, appel prive/chiffre). DMR et FM d'un cana
 mixte n'etant jamais emis au meme instant, une vraie voix FM (aucune synchro a cet
 instant) s'ouvre toujours. Decision verifiee par test unitaire (DMR IDLE bloque,
 souffle/synchro isolee ouvre, voix numerique bloque).
+
+## 2026-10-30 : détection de foudre — capteurs faits, antenne en attente de matériel
+
+Trois routes légitimes avaient été retenues pour la foudre (déterministe par
+rapport à la ville choisie, aucune source distante type Blitzortung scrapée).
+
+**FAIT — capteurs de foudre voisins et perso (rtl_433).** La veille capteurs
+reconnaît un type « foudre » : Acurite-6045M (433,92 MHz) et FineOffset
+WH57 / Ambient WH31L (868,3 MHz), déjà dans les bandes balayées. On suit le
+compteur d'impacts, on annonce les nouveaux impacts (ton selon la distance,
+re-dit si l'orage se rapproche), et on publie `/tmp/foudre_locale.json` que
+`meteo_locale.threat()` lit pour élever le niveau avec de la vraie donnée
+(<= 5 km : niveau 3 ; <= 15 km : 2 ; au-delà : 1). Vaut pour un capteur
+voisin (auto) ou pour le capteur de l'utilisateur (câblage `capteurs_miens`).
+Déterministe : le capteur est physiquement près du Pi, donc près de la ville
+de référence. (commit « capteurs de foudre… »)
+
+**SUGGESTION — détection locale par antenne (sferics). MATÉRIEL ACTUEL
+INSUFFISANT.** Un impact de foudre émet une impulsion large bande, mais
+l'énergie franche est en VLF/LF (kHz) ; la discone en place (~25 MHz–1,3 GHz)
+n'est pas taillée pour ça. En VHF, un impact proche donne des craquements
+large bande détectables au RTL-SDR (présence « oui/non », sans distance ni
+azimut), mais c'est expérimental et à calibrer pendant un vrai orage.
+=> Pré-requis matériel : **une boucle magnétique** (loop) accordée bas en
+fréquence. Elle est de toute façon souhaitable pour la **réception satellite**
+(déjà évoquée dans le volet radio : trafic satellite amateur) — donc à prévoir
+comme une seule acquisition matérielle servant deux usages. Tant que la boucle
+n'est pas là, on ne code pas le détecteur sferics : il resterait du bruit.
+
+**EN ATTENTE UTILISATEUR :**
+- Route A (API à clé) : adaptateur prêt à écrire, mais il faut un fournisseur
+  réellement obtenable (Météorage est B2B ; les API foudre grand public sont
+  rares). Clé stockée en local (réglages), jamais dans git.
+- Route B (station Blitzortung complète de l'utilisateur) : si c'est un capteur
+  RF, c'est déjà la route « capteurs » ci-dessus ; si c'est une vraie station,
+  on lira sa donnée locale au branchement.
+
+Réserve notée : si un jour le Pi n'est pas installé dans la ville choisie dans
+les réglages, les impacts d'un capteur local restent relatifs à l'emplacement
+physique du Pi, pas à la ville de référence. Cas de bord (le Pi est au domicile
+= ville de référence) ; à garder en tête si la config diverge.
