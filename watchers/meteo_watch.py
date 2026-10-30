@@ -10,6 +10,7 @@ from speak import speak, speak_with_lead_sound
 import audio_lock
 from sound_paths import METEO_SCANER_DIR
 import reglages
+import sons
 from phrases import Etiquettes, dire
 
 # Miroir public (sans cle) des donnees officielles de vigilance
@@ -42,6 +43,12 @@ COLOR_NAMES = Etiquettes("vigilance.couleur", {1: "vert", 2: "jaune", 3: "orange
 # qui restent reserves aux niveaux d'alarme reels (orange/rouge). Fourni
 # par l'utilisateur sur le NAS.
 SIMPLE_MESSAGE_SOUND = "/media/nas/nd1/server/meteo_scaner/simple_message.mp3"
+
+# Sons dedies aux heads-up d'arrivee (pluie/neige qui demarre). Repli sur
+# simple_message tant que les fichiers dedies ne sont pas fournis (carte/NAS)
+# -- ils se cablent tout seuls des que averse.mp3 / neige.mp3 y apparaissent.
+AVERSE_SOUND = sons.chemin("meteo_averse", SIMPLE_MESSAGE_SOUND)
+NEIGE_SOUND = sons.chemin("meteo_neige", SIMPLE_MESSAGE_SOUND)
 
 
 def _speak_lightly(text, repetitive=False):
@@ -160,22 +167,29 @@ NOWCAST_LOOKAHEAD_STEPS = 8  # 8 x 15 min = 2 heures d'anticipation
 NOWCAST_THRESHOLDS = {
     "precipitation": (2.0, 5.0, 10.0),           # mm / 15 min
     "wind_gusts_10m": (50.0, 70.0, 100.0),       # km/h
-    "cape": (500.0, 1500.0, 3000.0),             # J/kg -- instabilite/potentiel orageux
-    "lightning_potential": (10.0, 50.0, 200.0),  # J/kg -- activite orageuse
+    "lightning_potential": (10.0, 50.0, 200.0),  # J/kg -- activite orageuse reelle
 }
+# CAPE retiree des declencheurs (2026-10-30) : c'est un POTENTIEL
+# d'instabilite, pas un orage -- 500+ J/kg par tout apres-midi un peu chaud
+# sans un seul eclair, ce qui annoncait "un orage approche" a tort (et en
+# double avec lightning_potential). La CAPE reste utilisee comme CONTEXTE
+# dans meteo_locale.storm_outlook ; ici l'orage reel = lightning_potential.
+
+# Seuils "ca demarre" des heads-up d'arrivee, sous le niveau d'alarme.
+RAIN_ONSET_MM = 0.3   # mm / 15 min : la pluie demarre
+SNOW_ONSET_CM = 0.1   # cm / 15 min : la neige demarre
 
 # Message court et naturel par type de perturbation ("on speak simplement si
 # de la pluie approche par exemple") -- pas de jargon, pas de boilerplate.
 NOWCAST_APPROACH_MESSAGE = Etiquettes("meteo_watch.approche", {
     "precipitation": "De la pluie approche",
+    "neige": "De la neige approche",
     "wind_gusts_10m": "Des rafales de vent approchent",
-    "cape": "Un orage approche",
     "lightning_potential": "Un orage approche",
 }, "début d'annonce : ce qui approche, suivi de quand")
 NOWCAST_METRIC_PHENOMENON = {
     "precipitation": "pluie",
     "wind_gusts_10m": "vent",
-    "cape": "orages",
     "lightning_potential": "orages",
 }
 
@@ -226,7 +240,7 @@ PROXIMITY_SOUNDS = {
 # ("le vent vient du nord-ouest" ~ "la perturbation arrive du nord-ouest").
 # Pas de nom de lieu actuel de la perturbation -- non disponible avec cette
 # source de donnees (point unique, pas de radar/suivi de cellule).
-NOWCAST_CONTEXT_FIELDS = ["wind_speed_10m", "wind_direction_10m"]
+NOWCAST_CONTEXT_FIELDS = ["wind_speed_10m", "wind_direction_10m", "snowfall"]
 
 CARDINAL_DIRECTIONS = [
     "nord", "nord-nord-est", "nord-est", "est-nord-est",
@@ -321,6 +335,38 @@ def _nowcast_announce(level, metric, minutes_ahead, data=None):
     _speak_lightly(message)
 
 
+def _onset_minutes(series, threshold):
+    """Serie "a zero" maintenant mais qui franchit `threshold` plus loin
+    dans la fenetre -> delai (minutes, multiple de 15) du premier pas
+    au-dessus ; sinon None. On ne previent que si ca COMMENCE, pas si
+    c'est deja en cours."""
+    if not series or (series[0] or 0) >= threshold:
+        return None
+    for i, value in enumerate(series):
+        if (value or 0) >= threshold:
+            return i * 15
+    return None
+
+
+def _annoncer_arrivee(lead_sound, approche_txt, minutes_ahead, data):
+    """Heads-up court "X approche, dans N minutes[, vient du ...]" avec un
+    son de tete dedie -- pas d'alarme, pas de conseil. La direction est le
+    proxy par le vent, comme ailleurs. Deterministe : tout vient du point
+    REF_LAT/REF_LON (lieu choisi dans les reglages)."""
+    timing = dire("meteo_watch.instant") if minutes_ahead <= 5 else dire("meteo_watch.dans_minutes", minutes=minutes_ahead)
+    message = dire("meteo_watch.approche_quand", approche=approche_txt, quand=timing)
+    index = minutes_ahead // 15
+    directions = (data or {}).get("wind_direction_10m") or []
+    cardinal = _cardinal_direction(directions[index]) if index < len(directions) else None
+    if cardinal:
+        message += " " + dire("meteo_watch.vient_de", origine=DIRECTION_DE[cardinal])
+    lock = audio_lock.acquire()
+    try:
+        speak_with_lead_sound(lead_sound, message, label="meteo_watch")
+    finally:
+        audio_lock.release(lock)
+
+
 def _alert_sound_path(level, phenomenon):
     prefix = ALERT_LEVEL_PREFIX.get(level)
     suffix = PHENOMENON_SOUND_SUFFIX.get(phenomenon)
@@ -382,6 +428,8 @@ def _nowcast_watcher():
     episode_active = False
     stage_15_done = False
     stage_10_done = False
+    rain_pending = False   # heads-up averse deja dit pour cet episode
+    snow_pending = False   # heads-up neige deja dit pour cet episode
 
     while True:
         data = fetch_nowcast()
@@ -414,6 +462,24 @@ def _nowcast_watcher():
             episode_active = False
             stage_15_done = False
             stage_10_done = False
+
+        # Heads-up d'arrivee (sous le seuil d'alarme) : pluie/neige qui
+        # DEMARRE. Dit une fois par episode ; le flag retombe quand ca
+        # s'arrete. L'averse est tue si une alarme pluie la couvre deja.
+        rain_in = _onset_minutes((data or {}).get("precipitation"), RAIN_ONSET_MM)
+        if rain_in is not None and not rain_pending:
+            if not (level >= 2 and NOWCAST_METRIC_PHENOMENON.get(metric) == "pluie"):
+                _annoncer_arrivee(AVERSE_SOUND, NOWCAST_APPROACH_MESSAGE.get("precipitation"), rain_in, data)
+            rain_pending = True
+        elif rain_in is None:
+            rain_pending = False
+
+        snow_in = _onset_minutes((data or {}).get("snowfall"), SNOW_ONSET_CM)
+        if snow_in is not None and not snow_pending:
+            _annoncer_arrivee(NEIGE_SOUND, NOWCAST_APPROACH_MESSAGE.get("neige"), snow_in, data)
+            snow_pending = True
+        elif snow_in is None:
+            snow_pending = False
 
         last_level = level
         time.sleep(NOWCAST_POLL_INTERVAL_SEC)
