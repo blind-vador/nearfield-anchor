@@ -1315,7 +1315,14 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         max_sec = maintien.plafond(min(DSD_FME_MAX_SEC, dmr_filtres.max_duration()), target or "dmr", freq_hz)
         captured_chunks = []
         start = time.time()
-        deadline = start + (probe_sec or DSD_FME_PROBE_SEC)
+        if probe_sec:
+            deadline = start + probe_sec          # sonde explicite (veille DMR, mixte) : telle quelle
+        else:
+            try:  # balayage : la sonde par defaut suit le tempo (survol en dechaine, patient en lent)
+                import tempo
+                deadline = start + tempo.sonde(DSD_FME_PROBE_SEC)
+            except Exception:
+                deadline = start + DSD_FME_PROBE_SEC
         muted = False  # appel chiffre : ni joue ni enregistre ; poste a poste en clair garde (regle utilisateur 2026-10-25)
         juge_suivant = False
         dmr_vu = {}

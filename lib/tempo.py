@@ -23,10 +23,15 @@ from phrases import Etiquettes
 
 DEFAUT = "entre_deux"
 PARAMS = {
-    "lent":       {"bonus": 1.5, "scale": 1.4, "cap": 1.5, "plancher": 1.0},
-    "entre_deux": {"bonus": 1.0, "scale": 1.0, "cap": 1.0, "plancher": 1.0},
-    "dechaine":   {"bonus": 0.0, "scale": 1.0, "cap": 1.0, "plancher": 2.0},
+    "lent":       {"bonus": 1.5, "scale": 1.4, "cap": 1.5, "plancher": 1.0, "probe": 1.6},
+    "entre_deux": {"bonus": 1.0, "scale": 1.0, "cap": 1.0, "plancher": 1.0, "probe": 1.0},
+    "dechaine":   {"bonus": 0.0, "scale": 1.0, "cap": 1.0, "plancher": 2.0, "probe": 0.34},
 }
+# Plancher de la sonde numerique par defaut (balayage) : le "ne s'arrete qu'en
+# cas de signal" du dechaine descend jusqu'ici, pas plus bas. Litterature :
+# multitrame TETRA ~1,02 s, synchro DMR/P25 sous ~1 s -> 2 s laisse une marge
+# confortable pour accrocher une vraie porteuse sans attendre 6 s sur du vide.
+PROBE_PLANCHER_SEC = 2.0
 ORDRE = ["lent", "entre_deux", "dechaine"]
 NOMS = Etiquettes("tempo.nom", {"lent": "lent", "entre_deux": "entre-deux", "dechaine": "déchaîné"},
                   "nom d'une vitesse de parcours du scanner")
@@ -53,6 +58,14 @@ def courant(fresh=False):
 def params(nom=None):
     nom = nom or courant()
     return PARAMS.get(nom, PARAMS[DEFAUT])
+
+
+def sonde(base_sec):
+    """Duree de sonde numerique par defaut selon le tempo : max(plancher
+    litterature, base x facteur). entre_deux rend la base inchangee ; dechaine
+    survole (plancher) ; lent patiente. (Le prolongement appris par spot --
+    "guet" -- viendra se composer ici : max(plancher, guet).)"""
+    return max(PROBE_PLANCHER_SEC, base_sec * params()["probe"])
 
 
 def regler(nom):
