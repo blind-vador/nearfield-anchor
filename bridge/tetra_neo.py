@@ -372,11 +372,18 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
                 # Voix active = floor accorde (D-TX-GRANTED), relache au
                 # D-TX-CEASED : marqueurs fiables SANS -T. On garde aussi les
                 # lignes [TETRA SM] quand elles apparaissent.
+                # Un appel CLAIR en cours de montage (D-SETUP enc=0) rafraichit
+                # la grace : on tient jusqu'au floor meme quand la sonde de base
+                # est courte (porteuse d'exploration) -- sinon on quittait avant
+                # la voix ("repere mais pas suivi", 2026-10-31).
                 if ("D-TX-GRANTED" in ligne or "[TETRA SM] on traffic channel" in ligne
                         or "[TETRA SM] follow call" in ligne):
                     etat["suivi"] = True
+                    etat["retour"] = time.time()
                 elif "D-TX-CEASED" in ligne or _RETOUR.search(ligne):
                     etat["suivi"] = False
+                    etat["retour"] = time.time()
+                elif "D-SETUP" in ligne and "enc=0" in ligne:
                     etat["retour"] = time.time()
         except Exception:
             pass

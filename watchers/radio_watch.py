@@ -2583,8 +2583,12 @@ def _tetra_window(dwell_sec=TETRA_SECONDES * 2):
             if i == 0 and principale:   # le controle : l'essentiel de la fenetre, appels suivis
                 sec = int(max(6, reste - (len(cands) - 1) * (TETRA_EXPLORATION_SEC + 2)))
                 plafond = max(sec, TETRA_SUIVI_MAX_SEC)
-            else:                       # rotation / exploration : une courte sonde
-                sec = plafond = int(min(TETRA_EXPLORATION_SEC, reste))
+            else:                       # exploration : sonde courte si calme, mais on SUIT
+                # un appel qui s'y presente -- meme marge de suivi que le controle,
+                # sinon un appel clair detecte en exploration restait "repere, pas
+                # suivi" (2026-10-31, doctrine : capter la voix a tout prix).
+                sec = int(min(TETRA_EXPLORATION_SEC, reste))
+                plafond = max(sec, TETRA_SUIVI_MAX_SEC)
             if sec < 6:
                 break
             res = tetra.decoder(freq, gain, sec, host=host, port=TETRA_RTL_TCP_PORT, max_secondes=plafond)
