@@ -374,8 +374,9 @@ def run_command(line, key_source, last_response):
         return archives.run(key_source, voix.say, out, journaux.from_words(matcher.normalize(line)))
     if cmd.name == "journal":
         return journal.run(key_source, voix.say, out, journaux.from_words(matcher.normalize(line)))
-    if cmd.name == "manuel":
-        return manuel.run(key_source, voix.say, out, read_line)
+    if cmd.name == "mode":
+        import mode as mode_cmd
+        return mode_cmd.run(line, key_source, voix.say, out, read_line)
     if cmd.name == "terrain":
         return commands.terrain_cmd(line)
     if cmd.name == "usb":
@@ -414,9 +415,6 @@ def run_command(line, key_source, last_response):
     if cmd.name == "juge":
         import juges_cmd
         return juges_cmd.run(line, key_source, voix.say, out)
-    if cmd.name == "restreint":
-        import restreint_cmd
-        return restreint_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "priorités":
         return priorites.run(key_source, voix.say, out)
     if cmd.name == "conseils":
