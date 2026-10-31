@@ -1320,7 +1320,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         else:
             try:  # balayage : la sonde par defaut suit le tempo (survol en dechaine, patient en lent)
                 import tempo
-                deadline = start + tempo.sonde(DSD_FME_PROBE_SEC)
+                deadline = start + tempo.sonde(DSD_FME_PROBE_SEC, freq_hz)
             except Exception:
                 deadline = start + DSD_FME_PROBE_SEC
         muted = False  # appel chiffre : ni joue ni enregistre ; poste a poste en clair garde (regle utilisateur 2026-10-25)
@@ -1424,6 +1424,11 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                                                args=(protocol, band_label, audio_lock.ticket_courant(), reprise))
                     annonce.start()
                     validated_at = time.time()
+                    try:  # guet appris : combien ce spot a mis a confirmer (lib/guet.py)
+                        import guet
+                        guet.noter(freq_hz, validated_at - start)
+                    except Exception:
+                        pass
                     if target == "dmr":  # veille DMR : "verrouiller" et "ignorer" visent cet appel
                         noise_signatures.capture_started("dmr", freq_hz, "dmr", band_label, "dmr")
                         if dmr_vu:

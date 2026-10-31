@@ -60,12 +60,23 @@ def params(nom=None):
     return PARAMS.get(nom, PARAMS[DEFAUT])
 
 
-def sonde(base_sec):
-    """Duree de sonde numerique par defaut selon le tempo : max(plancher
-    litterature, base x facteur). entre_deux rend la base inchangee ; dechaine
-    survole (plancher) ; lent patiente. (Le prolongement appris par spot --
-    "guet" -- viendra se composer ici : max(plancher, guet).)"""
-    return max(PROBE_PLANCHER_SEC, base_sec * params()["probe"])
+def sonde(base_sec, freq_hz=None):
+    """Duree de sonde numerique par defaut selon le tempo ET le spot :
+    max(plancher_tempo, guet_appris[freq]). plancher_tempo = max(plancher
+    litterature, base x facteur) -- entre_deux rend la base inchangee, dechaine
+    survole (plancher), lent patiente. Le guet appris (lib/guet.py), borne a la
+    sonde pleine, rallonge la sonde sur un spot connu comme lent a confirmer :
+    il ne depasse la base qu'en dechaine (ou le plancher est plus bas), donc il
+    protege le survol sans allonger entre_deux / lent."""
+    plancher = max(PROBE_PLANCHER_SEC, base_sec * params()["probe"])
+    g = 0.0
+    if freq_hz:
+        try:
+            import guet
+            g = min(guet.confirmation(freq_hz), base_sec)
+        except Exception:
+            g = 0.0
+    return max(plancher, g)
 
 
 def regler(nom):
