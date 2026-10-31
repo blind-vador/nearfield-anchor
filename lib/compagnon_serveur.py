@@ -46,6 +46,8 @@ VOIX_MAC_DELAI_SEC = 15      # premier morceau
 VOIX_MAC_ENTRE_SEC = 10      # entre deux morceaux
 TETRA_SOCKET = "/tmp/tetra_pont.sock"   # radio_watch demande un decodage TETRA en direct
 TETRA_DELAI_SEC = 90         # le decodage dure "secondes" + marge reseau/demarrage
+NUMERIQUE_SOCKET = "/tmp/numerique_pont.sock"   # radio_watch delegue un decodage DMR/P25... (offload)
+NUMERIQUE_DELAI_SEC = 90
 
 _lock = threading.Lock()
 _channels = {}  # id -> Channel
@@ -54,6 +56,7 @@ _notified = {}  # travail -> heure du dernier avis ou reveil
 _results_ready = threading.Event()
 _demandes_voix = {}  # id de "dire" -> queue des morceaux recus
 _demandes_tetra = {}  # id de "tetra" -> queue (voix + resultat recus)
+_demandes_numerique = {}  # id de "numerique" -> queue (voix + resultat recus)
 
 
 def _save_presence():
@@ -154,6 +157,10 @@ class _Handler(socketserver.StreamRequestHandler):
                         file.put(msg)
                 elif kind in ("tetra_voix", "tetra_resultat"):
                     file = _demandes_tetra.get(msg.get("reponse_a"))
+                    if file is not None:
+                        file.put(msg)
+                elif kind in ("numerique_voix", "numerique_resultat"):
+                    file = _demandes_numerique.get(msg.get("reponse_a"))
                     if file is not None:
                         file.put(msg)
                 elif kind == "pris":
@@ -485,9 +492,107 @@ def _serveur_tetra():
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
+class _NumeriqueMac(socketserver.StreamRequestHandler):
+    """Decodage numerique en direct (DMR/P25...) demande par radio_watch quand le
+    Pi chauffe et DELEGUE (lib/offload.py). Le Pi sert deja son dongle par
+    rtl_tcp ; on choisit la compagne connectee la plus libre capable de
+    "numerique", on lui transmet la demande, on recupere l'eventuelle voix EN
+    CLAIR (wav temporaire) et les metadonnees, et on rend une ligne JSON a
+    radio_watch. Jamais rien de dechiffre. Calque de _TetraMac."""
+
+    def handle(self):
+        try:
+            req = json.loads(self.rfile.readline(65536) or b"{}")
+        except ValueError:
+            return
+        if not req.get("freq_hz"):
+            self._rendre({"ok": False, "erreur": "demande invalide"})
+            return
+        with _lock:
+            able = [(cid, ch) for cid, ch in _channels.items()
+                    if "numerique" in ((compagnon.trusted().get(cid) or {}).get("capacites") or [])]
+        if not able:
+            self._rendre({"ok": False, "erreur": "aucune machine compagne pour le numerique"})
+            return
+        ordre = [c["id"] for c in compagnon.rank("numerique")]      # la plus libre d'abord
+        able.sort(key=lambda t: ordre.index(t[0]) if t[0] in ordre else 99)
+        cid, channel = able[0]
+        rid = uuid.uuid4().hex
+        file = queue.Queue()
+        _demandes_numerique[rid] = file
+        tmp = tempfile.mkdtemp(prefix="numerique_pi_")
+        wav = os.path.join(tmp, "voix.wav")
+        wout = None
+        handed = False
+        secondes = int(req.get("secondes", 8))
+        max_secondes = max(secondes, int(req.get("max_secondes") or secondes))
+        try:
+            channel.send({"type": "numerique", "id": rid,
+                          "host": req.get("host") or compagnon._local_ip(),
+                          "port": int(req.get("port", 1234)), "freq_hz": int(req["freq_hz"]),
+                          "gain": req.get("gain", 32), "secondes": secondes, "max_secondes": max_secondes,
+                          "ppm": req.get("ppm", 0), "mode": req.get("mode", "-fa")})
+            delai = max_secondes + 30
+            while True:
+                msg = file.get(timeout=delai)
+                if msg.get("type") == "numerique_voix":
+                    if wout is None:
+                        wout = wave.open(wav, "wb")
+                        wout.setnchannels(1)
+                        wout.setsampwidth(2)
+                        wout.setframerate(msg.get("taux", 48000))
+                    wout.writeframes(base64.b64decode(msg.get("pcm") or ""))
+                    delai = NUMERIQUE_DELAI_SEC
+                elif msg.get("type") == "numerique_resultat":
+                    if wout is not None:
+                        wout.close()
+                        wout = None
+                    res = {k: msg.get(k) for k in ("ok", "erreur", "protocole", "meta", "chiffre", "clair",
+                                                   "voix", "voix_rms", "resume", "duree")}
+                    res["voix_wav"] = wav if (msg.get("voix") and os.path.exists(wav)) else None
+                    res["machine"] = (compagnon.trusted().get(cid) or {}).get("nom")
+                    res["_tmp"] = tmp
+                    handed = True
+                    self._rendre(res)
+                    return
+        except queue.Empty:
+            self._rendre({"ok": False, "erreur": "pas de reponse de la machine compagne"})
+        except (OSError, ValueError) as exc:
+            self._rendre({"ok": False, "erreur": repr(exc)[:200]})
+        finally:
+            _demandes_numerique.pop(rid, None)
+            if wout is not None:
+                try:
+                    wout.close()
+                except Exception:
+                    pass
+            if not handed:
+                import shutil
+                shutil.rmtree(tmp, ignore_errors=True)
+
+    def _rendre(self, data):
+        try:
+            self.wfile.write((json.dumps(data) + "\n").encode())
+            self.wfile.flush()
+        except OSError:
+            pass
+
+
+def _serveur_numerique():
+    try:
+        os.remove(NUMERIQUE_SOCKET)
+    except OSError:
+        pass
+    socketserver.ThreadingUnixStreamServer.daemon_threads = True
+    server = socketserver.ThreadingUnixStreamServer(NUMERIQUE_SOCKET, _NumeriqueMac)
+    os.chmod(NUMERIQUE_SOCKET, 0o600)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+
+
 def run():
     _serveur_voix_mac()
     _serveur_tetra()
+    _serveur_numerique()
     socketserver.ThreadingTCPServer.allow_reuse_address = True
     server = socketserver.ThreadingTCPServer(("0.0.0.0", proto.PORT), _Handler)
     server.daemon_threads = True
