@@ -2887,6 +2887,47 @@ NUMERIQUE_SUIVI_MAX_SEC = 90      # plafond tant que de la voix numerique arrive
 NUMERIQUE_GAIN = 32               # gain du dongle servi (verrou local Saint-Etienne, cf tetra.GAIN_DEFAUT)
 
 
+def _juger_raffiner_fm(wav_path, target, freq_hz, mode):
+    """Juge ET raffine l'audio FM brut rendu par la compagne, avec la MEME chaine
+    que la demod locale : filtre vocal (chaine_audio) + detecteur de voix RNNoise
+    (_chunk_is_signal, fenetres de ANALYSIS_WINDOW_MS). Rend (vaut_le_coup,
+    pcm_nettoye, taux). Pas de voix reconnue -> vaut_le_coup False : on n'ouvre
+    pas sur du bruit / des donnees (fausses captations signalees 2026-10-31,
+    doctrine : le Mac rend le brut, le Pi raffine)."""
+    import wave as _wave
+    try:
+        with _wave.open(wav_path) as w:
+            if w.getsampwidth() != 2 or w.getnchannels() != 1:
+                return False, b"", 48000
+            taux = w.getframerate()
+            brut = w.readframes(w.getnframes())
+    except Exception as exc:
+        print(f"[radio_watch] audio FM distant illisible : {exc!r}")
+        return False, b"", 48000
+    chain = chaine_audio.nouvelle(target, freq_hz, taux, mode)
+    rn = _rnnoise_create()
+    resample_state = smoothed_prob = None
+    pas = max(2, int(taux * 2 * ANALYSIS_WINDOW_MS / 1000))   # octets par fenetre d'analyse
+    nettoye = []
+    consecutifs = 0
+    vu = False
+    try:
+        for i in range(0, len(brut), pas):
+            chunk = brut[i:i + pas]
+            if len(chunk) < 2:
+                continue
+            filtre, propre = chain.process_s16le(chunk)
+            nettoye.append(propre)
+            is_signal, _, resample_state, smoothed_prob = _chunk_is_signal(
+                filtre, taux, rn, resample_state, smoothed_prob)
+            consecutifs = consecutifs + 1 if is_signal else 0
+            if consecutifs >= MIN_CONSECUTIVE_SIGNAL_WINDOWS:
+                vu = True
+    finally:
+        _rnnoise_destroy(rn)
+    return vu, b"".join(nettoye), taux
+
+
 def _presenter_distant(freq, mode, band_label, target, level_db, log_session, res):
     """Presente une fenetre demodulee a distance : voix NUMERIQUE en clair, ou
     audio FM, ou rien (appris). Meme habillage que la demod locale / _annonce_tetra.
@@ -2921,11 +2962,30 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
         print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : {res.get('resume')} (appris, pas de clair)")
         return False
     if audio:
-        # FM analogique : le Mac rend le brut, habille comme une voix FM locale.
-        # (Le raffinage RNNoise/CTCSS local ne s'applique pas au brut distant --
-        # piste d'amelioration notee : faire raffiner le Pi.)
+        # FM analogique : le Mac rend le brut, le Pi RAFFINE + JUGE la voix (meme
+        # chaine que le local). Pas de voix reconnue -> ecarte : pas de ceremonie
+        # ni de capture (fausses captations de bruit signalees 2026-10-31).
+        vaut, propre, taux = _juger_raffiner_fm(audio, target, freq, mode)
+        if not vaut:
+            log_session.discard()
+            print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : audio FM sans voix reconnue (ecarte)")
+            return False
+        import wave as _wave
+        propre_wav = os.path.join(os.path.dirname(audio), "fm_propre.wav")
+        try:
+            with _wave.open(propre_wav, "wb") as w:
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(taux)
+                w.writeframes(propre)
+        except Exception as exc:
+            print(f"[radio_watch] ecriture audio FM raffine : {exc!r}")
+            propre_wav = audio   # repli : le brut
+        # Ceremonie complete, comme une captation FM locale (carillon INCOMING +
+        # annonce de l'origine, puis shim d'ouverture, audio, son de fin).
+        speak_with_lead_sound(INCOMING_SOUND, band_label, label="radio_watch", repetitive=True)
         play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
-        play_sound_effect(audio, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch")
+        play_sound_effect(propre_wav, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch")
         play_sound_effect(_son_fin(freq), label="radio_watch")
         path = log_session.finalize()
         noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,

@@ -37,7 +37,10 @@ VOIX_RMS_MIN = 120               # au-dela : la voix de synthese n'est pas du si
 AUDIO_RMS_MIN = 120              # idem pour l'audio FM brut (-6). Garde-fou grossier seulement :
                                  # le Pi raffine (RNNoise/CTCSS/chaine_audio). dsd-neo squelche
                                  # deja l'audio en -8 (squelch auto), donc un canal ferme = silencieux.
-IDLE_FIN_SEC = 2.0               # apres la derniere trame voix : laisser finir la phrase
+IDLE_FIN_SEC = 10.0              # tolerance de silence AVANT de fermer, apres la derniere ACTIVITE
+                                 # (trame voix numerique OU audio FM actif). Calee sur le local
+                                 # DSD_FME_IDLE_SEC=10 : une conversation DMR/FM ne doit pas etre
+                                 # coupee entre deux interlocuteurs (coupure seche signalee 2026-10-31).
 
 # Sortie de dsd-neo (-fa / -fs) calee sur la vraie sortie DMR du reseau local
 # (test live 2026-10-31 via le rtl_tcp du Pi, relais 467,2408 MHz) :
@@ -122,6 +125,27 @@ def _rms_wav(path):
         return 0
 
 
+def _audio_actif(path):
+    """RMS de la toute fin du wav -6 (audio FM brut, 48k mono 16 bits) : le canal
+    est-il encore actif ? L'audio analogique n'a pas de "trame voix" dans stdout,
+    donc on surveille son niveau pour prolonger la fenetre comme une voix
+    numerique. Lecture tolerante (on saute l'entete, on lit la queue), jamais
+    bloquante."""
+    try:
+        sz = os.path.getsize(path)
+        if sz < 44 + 4000:
+            return False
+        import audioop
+        with open(path, "rb") as f:
+            f.seek(max(44, sz - 48000))   # ~0,5 s a 48 kHz mono 16 bits
+            data = f.read()
+        if len(data) % 2:
+            data = data[:-1]
+        return bool(data) and audioop.rms(data, 2) >= AUDIO_RMS_MIN
+    except Exception:
+        return False
+
+
 def _journaliser_brut(freq_hz, texte):
     """Garde la sortie brute dsd-neo (diagnostic / calage du parseur). Dossier
     plafonne a 50 fichiers. Jamais bloquant."""
@@ -188,11 +212,20 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
     fil = threading.Thread(target=lire, daemon=True)
     fil.start()
     debut = time.time()
+    dernier_check_audio = 0.0
     while proc.poll() is None:
-        ecoule = time.time() - debut
+        now = time.time()
+        ecoule = now - debut
         if ecoule >= max_seconds:
             break
-        en_voix = etat["derniere_voix"] and time.time() - etat["derniere_voix"] < IDLE_FIN_SEC
+        # Activite analogique (plein demod) : l'audio FM actif prolonge la fenetre
+        # comme une voix numerique (meme tolerance IDLE_FIN_SEC) -- sinon une
+        # conversation FM aurait ete coupee a `seconds`. Verifie ~1x/s (I/O).
+        if plein and now - dernier_check_audio >= 1.0:
+            dernier_check_audio = now
+            if _audio_actif(audio):
+                etat["derniere_voix"] = now
+        en_voix = etat["derniere_voix"] and now - etat["derniere_voix"] < IDLE_FIN_SEC
         if ecoule >= seconds and not en_voix:
             break
         time.sleep(0.25)
