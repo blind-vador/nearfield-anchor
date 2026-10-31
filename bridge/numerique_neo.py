@@ -34,6 +34,9 @@ BW_KHZ = 48                      # baseband DSP 48 kHz : 10 echantillons/symbole
                                  # (DMR, P25p1, NXDN...). A 24 kHz dsd-neo avertit "atypical
                                  # SPS, decoders assume ~48k" et la synchro part en erreur FEC.
 VOIX_RMS_MIN = 120               # au-dela : la voix de synthese n'est pas du silence
+AUDIO_RMS_MIN = 120              # idem pour l'audio FM brut (-6). Garde-fou grossier seulement :
+                                 # le Pi raffine (RNNoise/CTCSS/chaine_audio). dsd-neo squelche
+                                 # deja l'audio en -8 (squelch auto), donc un canal ferme = silencieux.
 IDLE_FIN_SEC = 2.0               # apres la derniere trame voix : laisser finir la phrase
 
 # Sortie de dsd-neo (-fa / -fs) calee sur la vraie sortie DMR du reseau local
@@ -135,13 +138,23 @@ def _journaliser_brut(freq_hz, texte):
         pass
 
 
-def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-fa"):
+def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-fa", plein=True):
     """Connecte dsd-neo au rtl_tcp du Pi (host:port), decode `seconds` s sur
     freq_hz -- prolonge jusqu'a max_seconds tant que de la voix arrive -- et
     rend les metadonnees + un chemin de voix en clair (ou None). `mode` = le
     flag dsd-neo (-fa auto par defaut ; le Pi passe p.ex. -fs pour un relais
-    DMR connu, ce qui evite le flottement vers NXDN/dPMR). Ne leve pas :
-    {"ok": False, "erreur": ...} en cas d'echec."""
+    DMR connu, ce qui evite le flottement vers NXDN/dPMR).
+
+    `plein` (defaut) = DEMODULATION COMPLETE de la fenetre sur UN seul process
+    (doctrine 2026-10-31 : le Mac fait TOUTE la demod quand il est sollicite,
+    numerique ET FM analogique, sans fragmenter en fenetres dediees). On ajoute
+    `-8` (Source Audio Monitor, squelch auto, enregistre aussi la NFM) et
+    `-6 audio.wav` (audio brut 48k) : le `-w` sort la voix NUMERIQUE en clair,
+    le `-6` sort l'audio ANALOGIQUE du canal, EN MEME TEMPS. On distingue au
+    retour : synchro numerique vue -> on rend `voix_wav` (et on tait l'audio
+    brut, qui ne serait que du numerique demodule en bruit) ; sinon -> on rend
+    `audio_wav` (FM), que le Pi raffinera (RNNoise/CTCSS/chaine_audio).
+    Ne leve pas : {"ok": False, "erreur": ...} en cas d'echec."""
     if not disponible():
         return {"ok": False, "erreur": "dsd-neo absent"}
     if mode not in MODES_OK:
@@ -150,8 +163,11 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
     max_seconds = max(seconds, float(max_seconds or seconds))
     tmp = tempfile.mkdtemp(prefix="numerique_")
     voix = os.path.join(tmp, "voix.wav")
+    audio = os.path.join(tmp, "audio.wav")
     source = "rtltcp:%s:%d:%d:%s:%d:%d" % (host, int(port), int(freq_hz), str(gain), int(ppm), BW_KHZ)
     cmd = [DSD_NEO, mode, "-i", source, "-w", voix]
+    if plein:
+        cmd += ["-8", "-6", audio]
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, start_new_session=True)
@@ -196,10 +212,29 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
     _journaliser_brut(freq_hz, texte)
     res = parser(texte)
     rms = _rms_wav(voix)
+    # Synchro numerique CONFIRMEE (pas un faux verrou -fa sur du bruit analogique :
+    # sur de la FM, -fa signale par intermittence un "sync" NXDN/P25 fantome, sans
+    # Color Code / NAC ni voix). On exige une vraie preuve : CC, NAC, trame voix
+    # vue, ou voix de synthese reellement produite. Sinon la fenetre est ANALOGIQUE.
+    meta = res.get("meta") or {}
+    res["numerique_confirme"] = bool(
+        res["sync"] and (meta.get("color_code") is not None or meta.get("nac") is not None
+                         or res.get("voix_vue") or rms >= VOIX_RMS_MIN))
     # dsd-neo ne synthetise que du clair : un wav non silencieux = voix en clair.
     # Garde-fou : on refuse seulement sur preuve POSITIVE de chiffrement.
-    res["voix_wav"] = voix if rms >= VOIX_RMS_MIN and not res["chiffre"] else None
+    res["voix_wav"] = voix if (res["numerique_confirme"] and rms >= VOIX_RMS_MIN
+                               and not res["chiffre"]) else None
     res["voix_rms"] = rms
+    # Audio ANALOGIQUE (-6) : seulement si la fenetre N'EST PAS du numerique
+    # confirme (sinon le brut n'est que du numerique demodule en bruit). Gate
+    # grossier : le Pi raffine vraiment (RNNoise/CTCSS). Jamais sur du chiffre.
+    res["audio_wav"] = None
+    res["audio_rms"] = 0
+    if plein and not res["numerique_confirme"] and not res["chiffre"]:
+        rms_a = _rms_wav(audio)
+        res["audio_rms"] = rms_a
+        if rms_a >= AUDIO_RMS_MIN:
+            res["audio_wav"] = audio
     res["duree"] = round(time.time() - debut, 1)
     res["ok"] = True
     res["_tmp"] = tmp
@@ -209,7 +244,9 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
 def resume_fr(res):
     """Phrase courte (journal/TTS) a partir d'un resultat decoder()."""
     p = res.get("protocole") or "numerique"
-    if not res.get("sync"):
+    if not res.get("numerique_confirme"):
+        if res.get("audio_wav"):
+            return "voix analogique (FM) en clair"
         return "%s : porteuse presente, pas de synchro" % p
     bout = p
     meta = res.get("meta") or {}

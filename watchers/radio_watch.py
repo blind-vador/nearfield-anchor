@@ -2873,6 +2873,150 @@ def _ecoute_prise(prise, freq, band_label, target):
     return protocol, bool(analogique) and not gagnant
 
 
+# --- Demodulation DELEGUEE a une machine compagne (offload 2c-final, 2026-10-31) ---
+# Doctrine (utilisateur) : quand le Pi chauffe, il NE demodule plus lui-meme
+# certaines fenetres -- il sert son dongle par rtl_tcp et une compagne fait
+# TOUTE la demod de la fenetre (numerique ET FM analogique sur UN seul process
+# dsd-neo, bridge/numerique_neo en plein demod), ce qui preserve la
+# multi-detection d'UNE fenetre au lieu de la fragmenter. lib/demod tranche
+# local/distant via lib/offload (gradient thermique) ; le distant n'entre en
+# action QUE si le Pi en a besoin. Gracieux : pas de compagne libre / echec ->
+# on rend la main a la demod locale.
+NUMERIQUE_SONDE_SEC = 14          # sonde de base d'une fenetre deleguee (= son poids pour offload)
+NUMERIQUE_SUIVI_MAX_SEC = 90      # plafond tant que de la voix numerique arrive (suivi d'appel)
+NUMERIQUE_GAIN = 32               # gain du dongle servi (verrou local Saint-Etienne, cf tetra.GAIN_DEFAUT)
+
+
+def _presenter_distant(freq, mode, band_label, target, level_db, log_session, res):
+    """Presente une fenetre demodulee a distance : voix NUMERIQUE en clair, ou
+    audio FM, ou rien (appris). Meme habillage que la demod locale / _annonce_tetra.
+    Rend True si une vraie reception a ete presentee."""
+    proto = res.get("protocole")
+    machine = res.get("machine")
+    meta = res.get("meta") or {}
+    voix = res.get("voix_wav") if os.path.exists(res.get("voix_wav") or "") else None
+    audio = res.get("audio_wav") if os.path.exists(res.get("audio_wav") or "") else None
+    if res.get("numerique_confirme"):
+        # Doctrine _reception_a_presenter : pas d'ouverture fantome ni
+        # d'enregistrement vide. Clair capte -> ceremonie ; chiffre / repos /
+        # signalisation seule -> appris (registre), mais pas de ceremonie.
+        if voix and _reception_a_presenter(proto, res.get("chiffre"), True):
+            parts = morceaux.whole(dire("radio.reception", protocol=proto) + ("," if band_label else "."))
+            if band_label:
+                parts += morceaux.whole(band_label + ".")
+            morceaux.say(DMR_VOCAL_SOUND, parts, label="radio_watch")
+            play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
+            play_sound_effect(voix, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch")
+            play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
+            path = log_session.finalize()
+            noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
+                                            {"niveau_db": level_db, "numerique": True, "offload": machine,
+                                             "protocole": proto, "dmr": meta})
+            print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : {res.get('resume')} + voix (via {machine})")
+            return True
+        log_session.discard()
+        noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, None, None,
+                                        {"niveau_db": level_db, "numerique": True, "offload": machine,
+                                         "protocole": proto, "chiffre": bool(res.get("chiffre")), "dmr": meta})
+        print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : {res.get('resume')} (appris, pas de clair)")
+        return False
+    if audio:
+        # FM analogique : le Mac rend le brut, habille comme une voix FM locale.
+        # (Le raffinage RNNoise/CTCSS local ne s'applique pas au brut distant --
+        # piste d'amelioration notee : faire raffiner le Pi.)
+        play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
+        play_sound_effect(audio, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch")
+        play_sound_effect(_son_fin(freq), label="radio_watch")
+        path = log_session.finalize()
+        noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
+                                        {"niveau_db": level_db, "offload": machine, "analogique": True})
+        print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : voix FM en clair (via {machine})")
+        return True
+    log_session.discard()
+    print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : rien d'exploitable")
+    return False
+
+
+def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
+    """Intermediaire local/distant. Si le Pi doit deleguer (offload thermique)
+    ET qu'une compagne "numerique" est libre : sert rtl_tcp, fait demoduler la
+    fenetre a distance (demod.distant, plein demod), la presente, rend True/False
+    (reception presentee ?). Rend None s'il NE faut PAS deleguer ou en cas
+    d'echec -> l'appelant garde sa demod locale. Ne leve pas."""
+    try:
+        import demod
+    except Exception as exc:
+        print(f"[radio_watch] offload indisponible ({exc!r}), demod locale")
+        return None
+    try:
+        plan = demod.plan(float(NUMERIQUE_SONDE_SEC))
+    except Exception as exc:
+        print(f"[radio_watch] offload : plan impossible ({exc!r}), demod locale")
+        return None
+    if not plan.get("deleguer"):
+        return None
+    try:
+        import compagnon
+        host = compagnon._local_ip()
+    except Exception:
+        host = None
+    mode_dsd = "-fa"          # auto (le decodeur ajoute -8/-6 : full demod). Relais DMR connu -> -fs.
+    try:
+        import dmr_registre
+        e = dmr_registre.load().get(dmr_registre.key(freq))
+        if e and e.get("freq_hz") and abs(e["freq_hz"] - freq) <= dmr_registre.STEP_HZ:
+            mode_dsd = "-fs"
+    except Exception:
+        pass
+    cie = plan.get("compagne") or {}
+    nom = cie.get("nom") or cie.get("id") or "compagne"
+    print(f"[radio_watch] {freq / 1e6:.4f} MHz : Pi a {plan.get('temp_c')} C -> demod deleguee a {nom} ({mode_dsd})")
+    try:
+        proc = subprocess.Popen(["rtl_tcp", "-a", "0.0.0.0", "-p", str(TETRA_RTL_TCP_PORT)],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception as exc:
+        print(f"[radio_watch] rtl_tcp (offload) impossible : {exc!r}, demod locale")
+        return None
+    res = None
+    try:
+        time.sleep(2.0)   # rtl_tcp pret a servir
+        if proc.poll() is not None:
+            print("[radio_watch] rtl_tcp (offload) arrete tout de suite (dongle occupe ?), demod locale")
+            return None
+        res = demod.distant(freq, NUMERIQUE_GAIN, NUMERIQUE_SONDE_SEC, host=host,
+                            port=TETRA_RTL_TCP_PORT, max_secondes=NUMERIQUE_SUIVI_MAX_SEC, mode=mode_dsd)
+    finally:
+        try:
+            proc.terminate()
+            proc.wait(timeout=3)
+        except Exception:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+    tmp = res.pop("_tmp", None) if res else None
+    try:
+        if not res or not res.get("ok"):
+            if res and res.get("erreur"):
+                print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : {res['erreur']}, demod locale")
+            return None   # echec distant -> repli local (le dongle est de nouveau libre)
+        try:
+            return _presenter_distant(freq, mode, band_label, target, level_db, log_session, res)
+        except Exception as exc:
+            # Jamais laisser une erreur de presentation faire tomber le scanner :
+            # la fenetre est consommee (on a deja ecoute), on n'y retombe pas en local.
+            print(f"[radio_watch] presentation deleguee : {exc!r}")
+            try:
+                log_session.discard()
+            except Exception:
+                pass
+            return False
+    finally:
+        if tmp:
+            import shutil
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     if ignores.frequence_ignoree(freq):
         print(f"[radio_watch] {freq / 1e6:.4f} MHz ignoree (commande ignorer), on passe")
@@ -2897,6 +3041,14 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     global _bruts_candidat
     _bruts_candidat = []
     try:
+        # Intermediaire offload (2c-final) : si le Pi chauffe et qu'une compagne
+        # est libre, TOUTE la demod de la fenetre part a distance (numerique + FM
+        # sur un seul flux) ; sinon None -> demod locale habituelle ci-dessous.
+        if mode == "nfm":
+            presente = _demod_deleguee(freq, mode, band_label, target, level_db, log_session)
+            if presente is not None:
+                saved = bool(presente)
+                return True
         # Prise unique (2026-10-25) : FM et decodeurs numeriques sur le meme flux,
         # en meme temps ; sinon (interrupteur, echec) l'ancien enchainement.
         prise = _ouvrir_prise(freq) if mode == "nfm" and prise_unique.active() else None

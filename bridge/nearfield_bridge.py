@@ -329,12 +329,19 @@ def tetra_to_pi(link, msg):
             try:
                 with wave.open(voix) as w:
                     taux = w.getframerate()
-                    if w.getnchannels() == 1 and w.getsampwidth() == 2:
+                    ch = w.getnchannels()
+                    # dsd-neo ecrit -w en STEREO (2 voies, 8 kHz) : on ramene en
+                    # mono, sinon la voix TETRA en clair n'arrivait JAMAIS au Pi
+                    # (doctrine : capter la voix TETRA a tout prix ; bug 2026-10-31).
+                    if w.getsampwidth() == 2 and ch in (1, 2):
                         n = 0
                         while True:
                             data = w.readframes(TETRA_CHUNK // 2)
                             if not data:
                                 break
+                            if ch == 2:
+                                import audioop
+                                data = audioop.tomono(data, 2, 0.5, 0.5)
                             if not link.send({"type": "tetra_voix", "reponse_a": rid, "n": n,
                                               "taux": taux, "pcm": base64.b64encode(data).decode()}):
                                 break
@@ -374,32 +381,52 @@ def numerique_to_pi(link, msg):
         link.send({"type": "numerique_resultat", "reponse_a": rid, "ok": False, "erreur": repr(exc)[:200]})
         return
     tmp = res.pop("_tmp", None)
+
+    def _streamer(chemin, kind):
+        """Envoie un wav 16 bits en morceaux base64 (type `kind`), ramene en
+        MONO. dsd-neo ecrit la voix de synthese (-w) en STEREO (2 voies, 8 kHz) :
+        sans ce repli mono, la voix numerique en clair n'arrivait jamais au Pi
+        (bug 2026-10-31). L'audio FM brut (-6) est deja mono. Rend le taux, ou
+        None si rien envoye."""
+        if not (chemin and os.path.exists(chemin)):
+            return None
+        try:
+            with wave.open(chemin) as w:
+                taux = w.getframerate()
+                ch = w.getnchannels()
+                if w.getsampwidth() != 2 or ch not in (1, 2):
+                    return None
+                n = 0
+                while True:
+                    data = w.readframes(TETRA_CHUNK // 2)
+                    if not data:
+                        break
+                    if ch == 2:
+                        import audioop
+                        data = audioop.tomono(data, 2, 0.5, 0.5)
+                    if not link.send({"type": kind, "reponse_a": rid, "n": n,
+                                      "taux": taux, "pcm": base64.b64encode(data).decode()}):
+                        break
+                    n += 1
+                return taux if n > 0 else None
+        except Exception as exc:
+            log("%s illisible : %r" % (kind, exc))
+            return None
+
     voix_envoyee = False
+    audio_envoye = False
     try:
-        voix = res.get("voix_wav")
-        if voix and os.path.exists(voix):
-            try:
-                with wave.open(voix) as w:
-                    taux = w.getframerate()
-                    if w.getnchannels() == 1 and w.getsampwidth() == 2:
-                        n = 0
-                        while True:
-                            data = w.readframes(TETRA_CHUNK // 2)
-                            if not data:
-                                break
-                            if not link.send({"type": "numerique_voix", "reponse_a": rid, "n": n,
-                                              "taux": taux, "pcm": base64.b64encode(data).decode()}):
-                                break
-                            n += 1
-                        voix_envoyee = n > 0
-            except Exception as exc:
-                log("numerique voix illisible : %r" % exc)
+        # Voix NUMERIQUE en clair (-w) et/ou audio ANALOGIQUE (-6) : les deux
+        # flux possibles d'une demod complete. Jamais rien de dechiffre.
+        voix_envoyee = _streamer(res.get("voix_wav"), "numerique_voix") is not None
+        audio_envoye = _streamer(res.get("audio_wav"), "numerique_audio") is not None
         link.send({"type": "numerique_resultat", "reponse_a": rid, "ok": bool(res.get("ok")),
                    "erreur": res.get("erreur"), "protocole": res.get("protocole"),
                    "meta": res.get("meta") or {}, "chiffre": bool(res.get("chiffre")),
-                   "clair": bool(res.get("clair")), "voix": voix_envoyee,
-                   "voix_rms": res.get("voix_rms"), "resume": numerique_neo.resume_fr(res),
-                   "duree": res.get("duree")})
+                   "clair": bool(res.get("clair")), "voix": voix_envoyee, "audio": audio_envoye,
+                   "numerique_confirme": bool(res.get("numerique_confirme")),
+                   "voix_rms": res.get("voix_rms"), "audio_rms": res.get("audio_rms"),
+                   "resume": numerique_neo.resume_fr(res), "duree": res.get("duree")})
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)

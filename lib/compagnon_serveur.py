@@ -159,7 +159,7 @@ class _Handler(socketserver.StreamRequestHandler):
                     file = _demandes_tetra.get(msg.get("reponse_a"))
                     if file is not None:
                         file.put(msg)
-                elif kind in ("numerique_voix", "numerique_resultat"):
+                elif kind in ("numerique_voix", "numerique_audio", "numerique_resultat"):
                     file = _demandes_numerique.get(msg.get("reponse_a"))
                     if file is not None:
                         file.put(msg)
@@ -521,11 +521,25 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
         file = queue.Queue()
         _demandes_numerique[rid] = file
         tmp = tempfile.mkdtemp(prefix="numerique_pi_")
-        wav = os.path.join(tmp, "voix.wav")
-        wout = None
+        # Deux flux possibles d'une demod complete : voix NUMERIQUE en clair (-w)
+        # ET audio ANALOGIQUE FM (-6). On ecrit chacun dans son wav.
+        chemins = {"numerique_voix": os.path.join(tmp, "voix.wav"),
+                   "numerique_audio": os.path.join(tmp, "audio.wav")}
+        wouts = {}
         handed = False
         secondes = int(req.get("secondes", 8))
         max_secondes = max(secondes, int(req.get("max_secondes") or secondes))
+
+        def _ecrire(msg):
+            w = wouts.get(msg["type"])
+            if w is None:
+                w = wave.open(chemins[msg["type"]], "wb")
+                w.setnchannels(1)
+                w.setsampwidth(2)
+                w.setframerate(msg.get("taux", 48000))
+                wouts[msg["type"]] = w
+            w.writeframes(base64.b64decode(msg.get("pcm") or ""))
+
         try:
             channel.send({"type": "numerique", "id": rid,
                           "host": req.get("host") or compagnon._local_ip(),
@@ -535,21 +549,23 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
             delai = max_secondes + 30
             while True:
                 msg = file.get(timeout=delai)
-                if msg.get("type") == "numerique_voix":
-                    if wout is None:
-                        wout = wave.open(wav, "wb")
-                        wout.setnchannels(1)
-                        wout.setsampwidth(2)
-                        wout.setframerate(msg.get("taux", 48000))
-                    wout.writeframes(base64.b64decode(msg.get("pcm") or ""))
+                if msg.get("type") in ("numerique_voix", "numerique_audio"):
+                    _ecrire(msg)
                     delai = NUMERIQUE_DELAI_SEC
                 elif msg.get("type") == "numerique_resultat":
-                    if wout is not None:
-                        wout.close()
-                        wout = None
+                    for w in wouts.values():
+                        try:
+                            w.close()
+                        except Exception:
+                            pass
+                    wouts.clear()
                     res = {k: msg.get(k) for k in ("ok", "erreur", "protocole", "meta", "chiffre", "clair",
-                                                   "voix", "voix_rms", "resume", "duree")}
-                    res["voix_wav"] = wav if (msg.get("voix") and os.path.exists(wav)) else None
+                                                   "voix", "audio", "numerique_confirme",
+                                                   "voix_rms", "audio_rms", "resume", "duree")}
+                    res["voix_wav"] = chemins["numerique_voix"] if (
+                        msg.get("voix") and os.path.exists(chemins["numerique_voix"])) else None
+                    res["audio_wav"] = chemins["numerique_audio"] if (
+                        msg.get("audio") and os.path.exists(chemins["numerique_audio"])) else None
                     res["machine"] = (compagnon.trusted().get(cid) or {}).get("nom")
                     res["_tmp"] = tmp
                     handed = True
@@ -561,9 +577,9 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
             self._rendre({"ok": False, "erreur": repr(exc)[:200]})
         finally:
             _demandes_numerique.pop(rid, None)
-            if wout is not None:
+            for w in wouts.values():
                 try:
-                    wout.close()
+                    w.close()
                 except Exception:
                     pass
             if not handed:
