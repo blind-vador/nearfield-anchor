@@ -3012,6 +3012,43 @@ def _centered(freq, mode):
         return freq
 
 
+def _recaler(freq, mode):
+    """Recentrage du pic sur une porteuse connue. Toujours : stations
+    probables (lib/stations). En mode pics (Close-Call) seulement, si les
+    stations n'ont rien recale, on croise aussi le pic avec les porteuses
+    DMR puis TETRA apprises -- le savoir n'oriente pas la cible, il affine
+    la prise une fois le pic deja detecte par le balayage (doctrine)."""
+    base = _centered(freq, mode)
+    if base != freq:
+        return base   # une station probable a deja recale : plus specifique
+    try:
+        import tempo
+        if tempo.courant() != "pics":
+            return base
+    except Exception:
+        return base
+    try:
+        import dmr_registre
+        e = dmr_registre.load().get(dmr_registre.key(freq))
+        if e and e.get("freq_hz") and abs(e["freq_hz"] - freq) <= dmr_registre.STEP_HZ:
+            print(f"[radio_watch] pic recale sur relais DMR connu {e['freq_hz'] / 1e6:.4f} MHz")
+            return int(e["freq_hz"])
+    except Exception as exc:
+        print(f"[radio_watch] recentrage DMR impossible : {exc!r}")
+    try:
+        import tetra
+        if tetra.est_tetra(freq):
+            c = tetra.centre(freq)
+            if c and int(c) != int(freq):
+                print(f"[radio_watch] pic recale sur porteuse TETRA connue {c / 1e6:.4f} MHz")
+                return int(c)
+    except Exception as exc:
+        print(f"[radio_watch] recentrage TETRA impossible : {exc!r}")
+    return base
+
+
+
+
 def _station_name(freq, mode):
     """Nom donne a la station probable proche (F3 du mode manuel), ou None."""
     try:
@@ -3043,7 +3080,7 @@ def scan_fm_band(band):
     for freq, db in candidates:
         print(f"[radio_watch] candidat sur {band['name']} a {freq/1e6:.5f} MHz (niveau brut {db:.1f} dB, depasse le plancher local de {margin_db} dB min.)")
         if band["name"].startswith("stations_"):
-            freq = _centered(freq, band["mode"])
+            freq = _recaler(freq, band["mode"])
         label = _station_name(freq, band["mode"]) or f"canal {band['name_spoken']}"
         if _handle_candidate(freq, band["mode"], label, band["name"], level_db=db):
             _station_capture(freq, band["mode"])
@@ -3072,7 +3109,7 @@ def scan_sweep_band(band):
         spectral_diagnostic.maybe_diagnose(band, freq, db)
         # Pres d'une station probable : on se cale sur son vrai centre
         # (plus d'ecoute en bord de canal, demande utilisateur 2026-10-02).
-        freq = _centered(freq, band["mode"])
+        freq = _recaler(freq, band["mode"])
         label = _station_name(freq, band["mode"]) or f"bande {band['name_spoken']}"
         if _handle_candidate(freq, band["mode"], label, band["name"], level_db=db):
             _station_capture(freq, band["mode"])

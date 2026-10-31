@@ -36,6 +36,8 @@ def _entrees():
          "mots": {"normal", "normale", "reference"}},
         {"nom": "dechaine", "libelle": dire("mode.entree_dechaine"),
          "mots": {"dechaine", "rapide", "survol"}},
+        {"nom": "pics", "libelle": dire("mode.entree_pics"),
+         "mots": {"pics", "pic", "crete", "cretes"}},
     ]
     # Marque la vitesse en cours (les entrees tempo seulement).
     actuel = tempo.courant()

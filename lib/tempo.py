@@ -9,7 +9,13 @@ clef "tempo" -> {"mode": ...}.
   - dechaine   : survol rapide, pas de flanerie sur le vide (dwell = base, sans
                  bonus), plancher d'exploration RELACHE x2 (decision 2026-10-31 :
                  relache, jamais suspendu). Survol profond du balayage + offload
-                 Mac : palier 2b. pics (Close-Call) : palier 3.
+                 Mac : palier 2b ;
+  - pics       : survol rapide biaise vers le balayage (Close-Call) --
+                 meme vivacite que dechaine mais plancher d'exploration
+                 REDUIT de moitie, donc les bandes sont revues deux fois
+                 plus souvent pour attraper les emissions breves ; chaque
+                 pic detecte est recale sur une porteuse connue (stations,
+                 DMR, TETRA) quand il y en a une proche. palier 3.
 
 Parametres lus par plan_cycle :
   bonus    : multiplie le bonus de dwell venu de la piqure (0 = pas de flanerie) ;
@@ -26,14 +32,15 @@ PARAMS = {
     "lent":       {"bonus": 1.5, "scale": 1.4, "cap": 1.5, "plancher": 1.0, "probe": 1.6},
     "entre_deux": {"bonus": 1.0, "scale": 1.0, "cap": 1.0, "plancher": 1.0, "probe": 1.0},
     "dechaine":   {"bonus": 0.0, "scale": 1.0, "cap": 1.0, "plancher": 2.0, "probe": 0.34},
+    "pics":       {"bonus": 0.0, "scale": 1.0, "cap": 1.0, "plancher": 0.5, "probe": 0.34},
 }
 # Plancher de la sonde numerique par defaut (balayage) : le "ne s'arrete qu'en
 # cas de signal" du dechaine descend jusqu'ici, pas plus bas. Litterature :
 # multitrame TETRA ~1,02 s, synchro DMR/P25 sous ~1 s -> 2 s laisse une marge
 # confortable pour accrocher une vraie porteuse sans attendre 6 s sur du vide.
 PROBE_PLANCHER_SEC = 2.0
-ORDRE = ["lent", "entre_deux", "dechaine"]
-NOMS = Etiquettes("tempo.nom", {"lent": "lent", "entre_deux": "entre-deux", "dechaine": "déchaîné"},
+ORDRE = ["lent", "entre_deux", "dechaine", "pics"]
+NOMS = Etiquettes("tempo.nom", {"lent": "lent", "entre_deux": "entre-deux", "dechaine": "déchaîné", "pics": "pics"},
                   "nom d'une vitesse de parcours du scanner")
 
 CACHE_SEC = 5
