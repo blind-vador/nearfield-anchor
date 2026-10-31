@@ -13,9 +13,10 @@ renvoie au Pi :
 Suivi des appels (2026-10-27) : la porteuse de controle ne porte que de la
 signalisation ; la voix part sur une PORTEUSE DE TRAFIC que le controle
 attribue a chaque appel. Sans -T, dsd-neo restait sur le controle et n'entendait
-jamais la voix. Avec -T il suit l'attribution ("[TETRA SM] on traffic channel"),
-revient au controle a la fin de l'appel, et refuse de lui-meme un appel chiffre
-("locked out"). Les appels de POSTE A POSTE en clair sont suivis et gardes
+jamais la voix. dsd-neo (-fT, sa propre machine a etats TETRA -- PAS -T, qui est le trunking
+NXDN/P25/EDACS/DMR et CASSAIT le decodage voix TETRA, retire 2026-10-31) suit
+l'attribution, decode la voix du timeslot de trafic, et refuse de lui-meme un
+appel chiffre ("locked out"). L'activite voix se lit sur D-TX-GRANTED / D-TX-CEASED. Les appels de POSTE A POSTE en clair sont suivis et gardes
 comme les appels de groupe (regle utilisateur, la meme que le DMR : "prive"
 veut dire adresse a un poste, pas cache) ; seul le chiffre est ecarte. Tant
 qu'un appel est suivi, la session se prolonge (jusqu'a max_seconds) pour ne
@@ -75,6 +76,7 @@ _SUIVI = re.compile(r"\[TETRA SM\] on traffic channel (\d+) Hz \(carrier (\d+), 
 _SUIVI_MEME = re.compile(r"\[TETRA SM\] follow call (\d+) on this carrier \(timeslots 0x[0-9A-Fa-f]+\)")
 _RETOUR = re.compile(r"\[TETRA SM\] back on the control channel")
 _CHIFFRE_REFUSE = re.compile(r"\[TETRA CALL\] call=(\d+) .*encrypted; locked out")
+_TX_GRANTED = re.compile(r"\[TETRA CMCE D-TX-GRANTED\][^\n]*?call=(\d+)")  # floor accorde = voix
 _VOISINES = re.compile(r"D-NWRK-BROADCAST\][^\n]*?neighbours=(\d+)")
 # Contenu des messages courts : ligne ajoutee par notre correctif de dsd-neo
 # (bridge/dsd-neo-nearfield-sds.patch, 2026-10-27). Sans lui, seule la taille est connue.
@@ -261,6 +263,11 @@ def parser(texte):
     # rattache a la porteuse de controle courante -- celle qu'on ecoute deja.
     for call in _SUIVI_MEME.findall(texte):
         suivis.append({"freq_hz": reseau.get("freq_hz", 0), "carrier": reseau.get("carrier"), "call": call})
+    # Sans -T : pas de ligne [TETRA SM], mais un D-TX-GRANTED prouve une voix
+    # accordee sur l'appel -> compte comme suivi (registre/stats).
+    for call in _TX_GRANTED.findall(texte):
+        if not any(s["call"] == call for s in suivis):
+            suivis.append({"freq_hz": reseau.get("freq_hz", 0), "carrier": reseau.get("carrier"), "call": call})
     trafic = sorted({int(f) for _, f in _ALLOC.findall(texte) if int(f) > 0} | {s["freq_hz"] for s in suivis if s["freq_hz"]})
     activite = {
         "postes": postes,                            # SSI -> nombre de mentions
@@ -349,7 +356,7 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
     tmp = tempfile.mkdtemp(prefix="tetra_")
     voix = os.path.join(tmp, "voix.wav")
     source = "rtltcp:%s:%d:%d:%s:%d:%d" % (host, int(port), int(freq_hz), str(gain), int(ppm), BW_KHZ)
-    cmd = [DSD_NEO, "-fT", "-T", "-i", source, "-w", voix]
+    cmd = [DSD_NEO, "-fT", "-i", source, "-w", voix]  # PAS -T : il casse le decodage voix TETRA (2026-10-31)
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, start_new_session=True)
@@ -362,9 +369,13 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
         try:
             for ligne in proc.stdout:
                 sortie.append(ligne)
-                if "[TETRA SM] on traffic channel" in ligne or "[TETRA SM] follow call" in ligne:
+                # Voix active = floor accorde (D-TX-GRANTED), relache au
+                # D-TX-CEASED : marqueurs fiables SANS -T. On garde aussi les
+                # lignes [TETRA SM] quand elles apparaissent.
+                if ("D-TX-GRANTED" in ligne or "[TETRA SM] on traffic channel" in ligne
+                        or "[TETRA SM] follow call" in ligne):
                     etat["suivi"] = True
-                elif _RETOUR.search(ligne):
+                elif "D-TX-CEASED" in ligne or _RETOUR.search(ligne):
                     etat["suivi"] = False
                     etat["retour"] = time.time()
         except Exception:
