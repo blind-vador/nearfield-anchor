@@ -48,6 +48,7 @@ EXTRA_VISIT_SCORE = 1.5         # a partir de la, une deuxieme visite dans le cy
 MAX_EXTRA_SEC_PER_CYCLE = 150   # surplus total par cycle (au-dela, les bonus sont reduits)
 SWEEP_FLOOR_SEC = 1800          # toute bande balayee revue au moins toutes les 30 min
 SECOND_SWEEP_SCORE = 1.0        # une bande balayee qui pique fort a droit a un 2e balayage
+MID_FLOOR = 0.3  # au-dessus : activite "moyenne", intercalee (pas releguee en fin de cycle)
 ACARS_BASE_DWELL = 30
 # Fenetres de donnees (une ecoute par cycle chacune, meme dongle, en
 # sequence) : cible -> duree d'ecoute de base. Voir radio_watch.DATA_SCANNERS.
@@ -194,6 +195,23 @@ def _disabled(target):
         return False
 
 
+def _tisser(forts, moyens):
+    """Intercale 'moyens' parmi 'forts' a proportion : une activite moyenne
+    ne doit pas attendre la fin du cycle derriere toutes les fortes (zone
+    morte). Garde chaque liste dans son ordre d'entree (deja triee)."""
+    if not moyens:
+        return list(forts)
+    if not forts:
+        return list(moyens)
+    out, i, j, nf, nm = [], 0, 0, len(forts), len(moyens)
+    while i < nf or j < nm:
+        if j >= nm or (i < nf and (i + 1) / nf <= (j + 1) / nm):
+            out.append(forts[i]); i += 1
+        else:
+            out.append(moyens[j]); j += 1
+    return out
+
+
 def plan_cycle(windows, sweeps):
     """Liste d'etapes (genre, objet, cible, duree d'ecoute, piqure avions)."""
     state, ctx, now = _load(), air_context(), time.time()
@@ -224,11 +242,20 @@ def plan_cycle(windows, sweeps):
         for step, bonus in zip(steps, extra):
             step[3] = step[3] - bonus + bonus * ratio
 
-    # Les plus piquees d'abord (retour rapide apres un evenement), puis
-    # une deuxieme visite pour celles qui piquent fort.
-    steps.sort(key=lambda s: -pressure(s[2], state, ctx)[0])
+    # Ordre par chaleur, TISSE (2026-10-31) : les plus piquees d'abord pour
+    # revenir vite apres un evenement, mais les activites MOYENNES sont
+    # intercalees parmi elles -- un strict tri decroissant laissait les
+    # mi-chaudes couler en fin de cycle (zone morte, perte de trafic). Les
+    # mortes restent en bas ; chaque fenetre data garde quand meme sa visite
+    # du cycle (ajoutee plus haut, selon DATA_MIN_INTERVAL).
+    pres = {id(s): pressure(s[2], state, ctx)[0] for s in steps}
+    chaud = sorted([s for s in steps if pres[id(s)] >= EXTRA_VISIT_SCORE], key=lambda s: -pres[id(s)])
+    moyen = sorted([s for s in steps if MID_FLOOR <= pres[id(s)] < EXTRA_VISIT_SCORE], key=lambda s: -pres[id(s)])
+    froid = sorted([s for s in steps if pres[id(s)] < MID_FLOOR], key=lambda s: -pres[id(s)])
+    steps = _tisser(chaud, moyen) + froid
+    # Deuxieme visite pour les fenetres qui piquent fort (apres le tissage).
     for s in list(steps):
-        if s[0] == "airband" and pressure(s[2], state, ctx)[0] >= EXTRA_VISIT_SCORE:
+        if s[0] == "airband" and pres.get(id(s), 0.0) >= EXTRA_VISIT_SCORE:
             steps.append(["airband", s[1], s[2], s[1].get("dwell_sec", 15), s[4]])
 
     # Bandes balayees. 1) Plancher d'exploration STRICT : une bande pas revue
