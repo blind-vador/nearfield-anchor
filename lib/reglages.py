@@ -44,6 +44,8 @@ DEFAULTS = {
     # conseils : "toujours" ou "premiere_fois" (console/conseils.py).
     # centres d'interet du scanner (lib/interets.py) : {categorie: niveau}
     "interets": {},
+    # vitesse de parcours du scanner (lib/tempo.py, dialogue "mode") : lent / entre_deux / dechaine
+    "tempo": {"mode": "entre_deux"},
     # radio numerique DAB+ (watchers/dab_watch.py) : stations interdites en plus
     # des grandes radios et des commerciales, ex. ["Radio Truc"]
     "dab": {"interdites": []},

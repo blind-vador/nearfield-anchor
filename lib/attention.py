@@ -215,13 +215,23 @@ def _tisser(forts, moyens):
 def plan_cycle(windows, sweeps):
     """Liste d'etapes (genre, objet, cible, duree d'ecoute, piqure avions)."""
     state, ctx, now = _load(), air_context(), time.time()
+    try:  # tempo (lib/tempo.py) : regle COMMENT on parcourt, pas QUOI viser
+        import tempo
+        tp = tempo.params()
+    except Exception:
+        tp = {"bonus": 1.0, "scale": 1.0, "cap": 1.0, "plancher": 1.0}
+
+    def _dwell(base, total):
+        # entre_deux : base*(1+gain*total) = comportement d'avant ; lent allonge ;
+        # dechaine (bonus 0) = base, pas de flanerie (data gardent leur base mecanique).
+        return min(MAX_DWELL_SEC * tp["cap"], base * (1 + DWELL_GAIN * total * tp["bonus"]) * tp["scale"])
     windows = [w for w in windows if not _disabled(w["name"])]
     sweeps = [b for b in sweeps if not _disabled(b["name"])]
     steps, extra = [], []
     for w in windows:
         total, _, air = pressure(w["name"], state, ctx)
         base = w.get("dwell_sec", 15)
-        dwell = min(MAX_DWELL_SEC, base * (1 + DWELL_GAIN * total))
+        dwell = _dwell(base, total)
         steps.append(["airband", w, w["name"], dwell, air])
         extra.append(dwell - base)
     for name, base in DATA_WINDOWS.items():
@@ -231,14 +241,15 @@ def plan_cycle(windows, sweeps):
         since = now - state.get(name, {}).get("last_visit", 0)
         if since < DATA_MIN_INTERVAL.get(name, 0) and total < EXTRA_VISIT_SCORE:
             continue
-        dwell = min(MAX_DWELL_SEC, base * (1 + DWELL_GAIN * total))
+        dwell = _dwell(base, total)
         steps.append(["data", name, name, dwell, air])
         extra.append(dwell - base)
 
     # Surplus borne : si les bonus depassent le budget, on les reduit tous a proportion.
+    budget = MAX_EXTRA_SEC_PER_CYCLE * tp["cap"]
     surplus = sum(extra)
-    if surplus > MAX_EXTRA_SEC_PER_CYCLE:
-        ratio = MAX_EXTRA_SEC_PER_CYCLE / surplus
+    if surplus > budget:
+        ratio = budget / surplus
         for step, bonus in zip(steps, extra):
             step[3] = step[3] - bonus + bonus * ratio
 
@@ -264,11 +275,12 @@ def plan_cycle(windows, sweeps):
     # assez) a droit a son propre balayage dans le cycle.
     if sweeps:
         last = lambda b: state.get(b["name"], {}).get("last_visit", 0)
-        stale = [b for b in sweeps if now - last(b) >= SWEEP_FLOOR_SEC]
+        plancher = SWEEP_FLOOR_SEC * tp["plancher"]
+        stale = [b for b in sweeps if now - last(b) >= plancher]
         if stale:
             first = min(stale, key=last)
         else:
-            first = max(sweeps, key=lambda b: (now - last(b)) / SWEEP_FLOOR_SEC + pressure(b["name"], state, ctx)[0])
+            first = max(sweeps, key=lambda b: (now - last(b)) / plancher + pressure(b["name"], state, ctx)[0])
         chosen = [first]
         hottest = max(sweeps, key=lambda b: pressure(b["name"], state, ctx)[0])
         if hottest is not first and pressure(hottest["name"], state, ctx)[0] >= SECOND_SWEEP_SCORE:

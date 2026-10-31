@@ -20,17 +20,29 @@ import conseils
 import manuel
 import matcher
 import restreint_cmd
-from phrases import dire
+from phrases import dire, dire_ou
 
 UP, DOWN = "\x1b[A", "\x1b[B"
 
 
 def _entrees():
-    return [
+    import tempo
+    entrees = [
         {"nom": "manuel", "libelle": dire("mode.entree_manuel"), "mots": {"manuel", "manuelle"}},
         {"nom": "restreint", "libelle": dire("mode.entree_restreint"),
          "mots": {"restreint", "restreindre", "restriction"}},
+        {"nom": "lent", "libelle": dire("mode.entree_lent"), "mots": {"lent", "lentement"}},
+        {"nom": "entre_deux", "libelle": dire("mode.entree_entre_deux"),
+         "mots": {"normal", "normale", "reference"}},
+        {"nom": "dechaine", "libelle": dire("mode.entree_dechaine"),
+         "mots": {"dechaine", "rapide", "survol"}},
     ]
+    # Marque la vitesse en cours (les entrees tempo seulement).
+    actuel = tempo.courant()
+    for e in entrees:
+        if e["nom"] == actuel:
+            e["libelle"] += " " + dire_ou("mode.en_cours", "(mode actuel)")
+    return entrees
 
 
 def _lancer(nom, line, key_source, say, out, read_line):
@@ -38,6 +50,11 @@ def _lancer(nom, line, key_source, say, out, read_line):
         return manuel.run(key_source, say, out, read_line)
     if nom == "restreint":
         return restreint_cmd.run(line, key_source, say, out)
+    import tempo
+    if nom in tempo.PARAMS:
+        if not tempo.regler(nom):
+            return dire_ou("mode.vitesse_echec", "Impossible d'enregistrer la vitesse, le NAS est inaccessible.")
+        return dire_ou("mode.vitesse_reglee", "Vitesse réglée sur") + " " + tempo.NOMS[nom] + "."
     return dire("mode.inconnu")
 
 
