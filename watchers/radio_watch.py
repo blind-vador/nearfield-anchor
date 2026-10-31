@@ -1163,11 +1163,52 @@ def _dmr_search():
         manual_tuner.event(dire("dmr_exploration.recherche_rien"))
 
 
-def _annonce_dmr(protocol, band_label, ticket):
+# Fantomes P25/DMR (2026-10-31) : une synchro validee qui n'emet qu'un filet
+# d'IDLE / terminateur passait pour "clair capte". On exige maintenant une
+# vraie voix : au moins une super-trame (DMR 360 ms, plancher physique de la
+# litterature) ET au-dessus du silence numerique pur.
+DSD_FME_VOIX_MIN_SEC = 0.36
+DSD_FME_VOIX_RMS_MIN = 60
+
+
+def _mesure_voix(chunks, channels):
+    """(duree_s, rms S16) de la voix captee ; (0, 0) si rien."""
+    if not chunks:
+        return 0.0, 0
+    data = b"".join(chunks)
+    sec = len(data) / (DSD_FME_VOICE_SAMPLE_RATE * 2 * max(1, channels))
+    try:
+        rms = audioop.rms(data, 2)
+    except Exception:
+        rms = 0
+    return sec, rms
+
+
+# Double ceremonie (2026-10-31) : chaque nouvelle prise de parole d'une meme
+# conversation re-declenchait try_digital_voice_decode, donc _annonce_dmr. On
+# ne rejoue pas la ceremonie si une a deja eu lieu sur cette frequence il y a
+# moins de REANNONCE_FENETRE_SEC.
+REANNONCE_FENETRE_SEC = 30.0
+REANNONCE_ECART_HZ = 6250
+_derniere_annonce = {"freq": None, "t": 0.0}
+
+
+def _reprise_recente(freq_hz):
+    d = _derniere_annonce
+    return (d["freq"] is not None
+            and abs(freq_hz - d["freq"]) <= REANNONCE_ECART_HZ
+            and time.time() - d["t"] < REANNONCE_FENETRE_SEC)
+
+
+def _annonce_dmr(protocol, band_label, ticket, reprise=False):
     """Carillon, "Reception DMR, <bande>", son d'ouverture : joue pendant que
     try_digital_voice_decode garde le son en tampon. ticket : celui du fil
-    appelant (priorites, journal ouvert, calibrage)."""
+    appelant (priorites, journal ouvert, calibrage). reprise : nouvelle prise
+    de parole de la MEME conversation -- pas de ceremonie (le fil tourne quand
+    meme, vide, pour ne rien changer au tampon ni a l'ouverture d'aplay)."""
     audio_lock._local.ticket = ticket
+    if reprise:
+        return
     try:
         # Morceaux en cache (lib/annonce_morceaux.py) : "Reception DMR", nom de bande.
         parts = morceaux.whole(dire("radio.reception", protocol=protocol) + ("," if band_label else "."))
@@ -1370,8 +1411,10 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                     # qu'ils jouent, cette boucle continue de lire la socket et met
                     # TOUT en tampon (avant, la socket debordait au bout de ~6 s
                     # d'annonce : le debut de la transmission etait perdu).
+                    reprise = _reprise_recente(freq_hz)
+                    _derniere_annonce.update(freq=freq_hz, t=time.time())
                     annonce = threading.Thread(target=_annonce_dmr, daemon=True,
-                                               args=(protocol, band_label, audio_lock.ticket_courant()))
+                                               args=(protocol, band_label, audio_lock.ticket_courant(), reprise))
                     annonce.start()
                     validated_at = time.time()
                     if target == "dmr":  # veille DMR : "verrouiller" et "ignorer" visent cet appel
@@ -1441,11 +1484,16 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
             return None
 
         _dmr_learn(stats)
+        voix_sec, voix_rms = _mesure_voix(captured_chunks, channels)
+        assez = voix_sec >= DSD_FME_VOIX_MIN_SEC and voix_rms >= DSD_FME_VOIX_RMS_MIN
+        if captured_chunks and not muted:
+            print(f"[radio_watch] dsd-fme voix : {voix_sec:.2f} s, rms {voix_rms} -> "
+                  f"{'gardee' if assez else 'ecartee (fantome)'}")
         if arbitre is None or arbitre.gagnant == mode_flag:
             try_digital_voice_decode.last_muted = muted
-            try_digital_voice_decode.last_had_audio = bool(captured_chunks) and not muted
+            try_digital_voice_decode.last_had_audio = bool(captured_chunks) and not muted and assez
         log_session = sound_player.get_recording_session()
-        if log_session is not None and captured_chunks and not muted:
+        if log_session is not None and captured_chunks and not muted and assez:
             log_session.add_raw_pcm(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, "s16le",
                                     channels=channels)
         print(f"[radio_watch] dsd-fme a decode de l'audio numerique sur {freq_hz/1e6:.4f} MHz")
