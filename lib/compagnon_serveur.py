@@ -560,8 +560,8 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
                             pass
                     wouts.clear()
                     res = {k: msg.get(k) for k in ("ok", "erreur", "protocole", "meta", "chiffre", "clair",
-                                                   "voix", "audio", "numerique_confirme",
-                                                   "voix_rms", "audio_rms", "resume", "duree")}
+                                                   "voix", "audio", "numerique_confirme", "digital_actif",
+                                                   "sync_hits", "voix_rms", "audio_rms", "resume", "duree")}
                     res["voix_wav"] = chemins["numerique_voix"] if (
                         msg.get("voix") and os.path.exists(chemins["numerique_voix"])) else None
                     res["audio_wav"] = chemins["numerique_audio"] if (

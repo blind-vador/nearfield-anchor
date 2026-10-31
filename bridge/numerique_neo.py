@@ -101,6 +101,12 @@ def parser(texte):
     if srcs:
         meta["sources"] = srcs[:30]
     chiffre = bool(_ENC.search(texte))
+    # Nombre de lignes de synchro NUMERIQUE : signal AGNOSTIQUE de "porteuse
+    # numerique presente", quel que soit le mode (DMR/P25/NXDN/dPMR/...). Mesure
+    # (live 2026-10-31) : vraie FM analogique ~11 lignes sur 12 s (faux verrous
+    # epars), une porteuse numerique 54-376. Le mode n'est pas devine : dsd-neo
+    # DECOUVRE ce qui est module ; on ne fait que compter l'activite de synchro.
+    sync_hits = sum(1 for l in texte.splitlines() if _SYNC.search(l))
     return {
         "protocole": proto,
         "meta": meta,
@@ -108,6 +114,7 @@ def parser(texte):
         "clair": not chiffre,
         "voix_vue": bool(_VOICE.search(texte)),
         "sync": bool(_SYNC.search(texte)),
+        "sync_hits": sync_hits,
     }
 
 
@@ -269,6 +276,14 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
         if rms_a >= AUDIO_RMS_MIN:
             res["audio_wav"] = audio
     res["duree"] = round(time.time() - debut, 1)
+    # Porteuse NUMERIQUE active (agnostique) : decodage propre confirme, OU
+    # synchro numerique soutenue (>= 15 lignes ET >= 1,3/s) meme sans decode
+    # propre -- p.ex. l'auto-detection a flotte sans verrouiller. Sert a NE
+    # JAMAIS jouer la FM d'une porteuse numerique (ce serait du bruit). Seuils
+    # cales live : vraie FM ~0,9/s, numerique >= 4,5/s.
+    hits = res.get("sync_hits", 0)
+    taux_sync = hits / max(res["duree"], 1.0)
+    res["digital_actif"] = bool(res["numerique_confirme"] or (hits >= 15 and taux_sync >= 1.3))
     res["ok"] = True
     res["_tmp"] = tmp
     return res

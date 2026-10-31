@@ -2928,7 +2928,7 @@ def _juger_raffiner_fm(wav_path, target, freq_hz, mode):
     return vu, b"".join(nettoye), taux
 
 
-def _presenter_distant(freq, mode, band_label, target, level_db, log_session, res, numerique_attendu=False):
+def _presenter_distant(freq, mode, band_label, target, level_db, log_session, res):
     """Presente une fenetre demodulee a distance : voix NUMERIQUE en clair, ou
     audio FM, ou rien (appris). Meme habillage que la demod locale / _annonce_tetra.
     Rend True si une vraie reception a ete presentee."""
@@ -2961,12 +2961,13 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
                                          "protocole": proto, "chiffre": bool(res.get("chiffre")), "dmr": meta})
         print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : {res.get('resume')} (appris, pas de clair)")
         return False
-    if numerique_attendu:
-        # Porteuse NUMERIQUE connue mais non confirmee cette fenetre (FEC, fenetre
-        # faible, pas de Color Code) : on APPREND, on ne joue JAMAIS la FM -- ce
-        # serait le bruit du numerique demodule (bruit blanc signale 2026-10-31).
+    if res.get("digital_actif"):
+        # Porteuse NUMERIQUE active (detectee au SIGNAL : synchro soutenue) mais
+        # non decodee proprement cette fenetre (auto-detection qui flotte, FEC,
+        # pas de Color Code...) : on APPREND, on ne joue JAMAIS la FM -- ce serait
+        # le bruit du numerique demodule (bruit blanc signale 2026-10-31).
         log_session.discard()
-        print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : porteuse numerique, rien de clair (pas de FM)")
+        print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : porteuse numerique active (sync {res.get('sync_hits')}), pas de decode clair, pas de FM")
         return False
     if audio:
         # FM analogique : le Mac rend le brut, le Pi RAFFINE + JUGE la voix (meme
@@ -3027,16 +3028,14 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
         host = compagnon._local_ip()
     except Exception:
         host = None
-    # -fa FLOTTE vers dPMR/NXDN sur un relais DMR (verifie live 2026-10-31 :
-    # -fa -> "dPMR" non confirme -> la branche FM jouait le BRUIT du numerique
-    # demodule). Donc relais DMR connu (registre, par PROXIMITE +/- STEP_HZ --
-    # le centre mesure derive du nominal, la cle exacte ratait) -> -fs, et on
-    # tune le CENTRE MESURE (sinon FEC ERR, pas de Color Code, pas de
-    # confirmation). numerique_attendu : sur une telle porteuse on n'ouvre
-    # JAMAIS en FM (le DMR local ecarte, il ne joue pas du bruit).
+    # AGNOSTIQUE (doctrine) : -fa DECOUVRE la modulation au signal, on ne la
+    # devine PAS depuis le registre. Le registre ne sert qu'a TROUVER le centre
+    # exact du signal (observation : "la porteuse est a X Hz", pas "c'est du
+    # DMR"), ce qui aide l'auto-detection a verrouiller. Le garde anti-bruit est
+    # lui aussi au signal (res["digital_actif"], densite de synchro), pas au
+    # registre.
     mode_dsd = "-fa"
     freq_decode = int(freq)
-    numerique_attendu = False
     try:
         import dmr_registre
         best = None
@@ -3046,9 +3045,7 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
                 if best is None or abs(fh - freq) < abs(best - freq):
                     best = int(fh)
         if best is not None:
-            mode_dsd = "-fs"
-            freq_decode = best
-            numerique_attendu = True
+            freq_decode = best   # centre observe (pas de forcage de mode)
     except Exception:
         pass
     cie = plan.get("compagne") or {}
@@ -3084,8 +3081,7 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
                 print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : {res['erreur']}, demod locale")
             return None   # echec distant -> repli local (le dongle est de nouveau libre)
         try:
-            return _presenter_distant(freq, mode, band_label, target, level_db, log_session, res,
-                                      numerique_attendu)
+            return _presenter_distant(freq, mode, band_label, target, level_db, log_session, res)
         except Exception as exc:
             # Jamais laisser une erreur de presentation faire tomber le scanner :
             # la fenetre est consommee (on a deja ecoute), on n'y retombe pas en local.

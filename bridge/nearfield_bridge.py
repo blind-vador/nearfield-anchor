@@ -425,6 +425,7 @@ def numerique_to_pi(link, msg):
                    "meta": res.get("meta") or {}, "chiffre": bool(res.get("chiffre")),
                    "clair": bool(res.get("clair")), "voix": voix_envoyee, "audio": audio_envoye,
                    "numerique_confirme": bool(res.get("numerique_confirme")),
+                   "digital_actif": bool(res.get("digital_actif")), "sync_hits": res.get("sync_hits"),
                    "voix_rms": res.get("voix_rms"), "audio_rms": res.get("audio_rms"),
                    "resume": numerique_neo.resume_fr(res), "duree": res.get("duree")})
     finally:
