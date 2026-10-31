@@ -2287,6 +2287,7 @@ def _tetra_compagnon_present():
 
 
 _tetra_dernier_reseau = None
+_tetra_dernier_clairs = {}  # identite reseau -> nb d'appels clairs deja annonces (anti-repetition)
 
 
 def _tetra_nouvelles(freq_hz, res):
@@ -2316,7 +2317,7 @@ def _annonce_tetra(freq_hz, res, news=None):
     chaque fenetre ; le changement se juge donc sur l'IDENTITE (reseau + zone),
     pas sur la phrase. Nouvelles du registre (porteuse de trafic, postes jamais
     vus) dites sobrement, comme les nouvelles du DMR."""
-    global _tetra_dernier_reseau
+    global _tetra_dernier_reseau, _tetra_dernier_clairs
     import veille_donnees as vd
     from phrases import nombre
     news = news or {}
@@ -2343,9 +2344,21 @@ def _annonce_tetra(freq_hz, res, news=None):
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
             path = log_session.finalize()
         else:
-            # Signalisation seule : aucune ceremonie sonore. On dit l'identite
-            # reseau une seule fois (ou quand elle change), sobrement, sans jingle.
-            if reseau_change:
+            # Signalisation seule : aucune ceremonie sonore, et SURTOUT on ne
+            # fait pas croire a une reception. dsd-neo voit des appels en clair
+            # dans la signalisation mais n'en sort pas la voix de trafic ici
+            # (diag 2026-10-31) : on le dit honnetement, et seulement quand le
+            # nombre d'appels clairs AUGMENTE (sinon une bascule de zone
+            # relancait l'annonce a vide). Sans appel clair nouveau, on se
+            # contente de l'identite reseau quand elle change.
+            appels = (res.get('activite') or {}).get('appels') or {}
+            clairs = sum(1 for a in appels.values() if not a.get('chiffre'))
+            vus = _tetra_dernier_clairs.get(identite, 0)
+            if clairs > vus:
+                speak(dire('tetra.clair_sans_voix', reseau=f"{r.get('mcc')}-{r.get('mnc')}",
+                           nombre=nombre(clairs, 'appel en clair', 'appels en clair')))
+                _tetra_dernier_clairs[identite] = clairs
+            elif reseau_change:
                 speak(resume)
             log_session.discard()
             path = None
