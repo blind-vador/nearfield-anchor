@@ -236,7 +236,7 @@ GOOD_TAKE = {"contenu": "non_precise", "lisibilite": 5, "souffle": "aucun",
 
 def _good_degrees(cut=False):
     d = empty_degrees()
-    d["lisibilite"], d["merite"] = 5, 1
+    d["lisibilite"], d["merite"] = 5, 2
     if cut:
         d["fin"] = -2
     return d
