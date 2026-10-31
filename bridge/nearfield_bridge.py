@@ -179,6 +179,12 @@ def capabilities():
             caps.append("tetra")
     except Exception:
         pass
+    try:  # DMR/P25... en direct quand le Pi chauffe et delegue (2026-10-31, offload)
+        import numerique_neo
+        if numerique_neo.disponible():
+            caps.append("numerique")
+    except Exception:
+        pass
     return caps
 
 
@@ -343,6 +349,57 @@ def tetra_to_pi(link, msg):
                    "mac_resource": res.get("mac_resource", 0), "clip": bool(res.get("clip")),
                    "voix": voix_envoyee, "resume": tetra_neo.resume_fr(res),
                    "activite": res.get("activite") or {}, "duree": res.get("duree")})
+    finally:
+        if tmp:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+def numerique_to_pi(link, msg):
+    """Decodage numerique en direct (DMR/P25... -fa, numerique_neo) demande
+    par le Pi quand il delegue pour se refroidir. Renvoie les metadonnees en
+    clair par "numerique_resultat" et, si une voix EN CLAIR a ete synthetisee,
+    la renvoie d'abord en morceaux "numerique_voix" (PCM 16 bits mono, base64).
+    Jamais rien de dechiffre. Calque de tetra_to_pi."""
+    import base64
+    import wave
+    import numerique_neo
+    rid = msg.get("id")
+    if not rid:
+        return
+    try:
+        res = numerique_neo.decoder(msg["host"], msg["port"], msg["freq_hz"], msg.get("gain", 32),
+                                    msg.get("secondes", 8), ppm=msg.get("ppm", 0),
+                                    max_seconds=msg.get("max_secondes"), mode=msg.get("mode", "-fa"))
+    except Exception as exc:
+        link.send({"type": "numerique_resultat", "reponse_a": rid, "ok": False, "erreur": repr(exc)[:200]})
+        return
+    tmp = res.pop("_tmp", None)
+    voix_envoyee = False
+    try:
+        voix = res.get("voix_wav")
+        if voix and os.path.exists(voix):
+            try:
+                with wave.open(voix) as w:
+                    taux = w.getframerate()
+                    if w.getnchannels() == 1 and w.getsampwidth() == 2:
+                        n = 0
+                        while True:
+                            data = w.readframes(TETRA_CHUNK // 2)
+                            if not data:
+                                break
+                            if not link.send({"type": "numerique_voix", "reponse_a": rid, "n": n,
+                                              "taux": taux, "pcm": base64.b64encode(data).decode()}):
+                                break
+                            n += 1
+                        voix_envoyee = n > 0
+            except Exception as exc:
+                log("numerique voix illisible : %r" % exc)
+        link.send({"type": "numerique_resultat", "reponse_a": rid, "ok": bool(res.get("ok")),
+                   "erreur": res.get("erreur"), "protocole": res.get("protocole"),
+                   "meta": res.get("meta") or {}, "chiffre": bool(res.get("chiffre")),
+                   "clair": bool(res.get("clair")), "voix": voix_envoyee,
+                   "voix_rms": res.get("voix_rms"), "resume": numerique_neo.resume_fr(res),
+                   "duree": res.get("duree")})
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -697,6 +754,8 @@ class Link(threading.Thread):
                     threading.Thread(target=say_to_pi, args=(self, msg), daemon=True).start()
                 elif msg.get("type") == "tetra":
                     threading.Thread(target=tetra_to_pi, args=(self, msg), daemon=True).start()
+                elif msg.get("type") == "numerique":
+                    threading.Thread(target=numerique_to_pi, args=(self, msg), daemon=True).start()
         except (OSError, ValueError) as exc:
             log("%s : liaison coupee (%r)" % (self.pi, exc))
         finally:
