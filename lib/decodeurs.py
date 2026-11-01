@@ -180,6 +180,13 @@ def extra_mode(freq_hz):
 _OCTET = re.compile(r"\[0x[0-9A-Fa-f]{2}\]")
 
 
+# Appels selectifs a tonalites : un vrai appel fait 4 a 7 tonalites. Une
+# tonalite isolee ("EEA: 8"), ou deux decodeurs colles sur la meme ligne
+# ("EEA: 8CCIR: 8"), c'est un son continu pris pour des tonalites (SSTV, porteuse).
+_SELECTIF = re.compile(r"(ZVEI[123]|DZVEI|PZVEI|EEA|EIA|CCIR):\s*")
+SELECTIF_MIN_TONS = 4
+
+
 def meaningful(msg, min_chars=MIN_DECODED_MESSAGE_CHARS):
     """Faux positifs de multimon-ng : fragments morse non resolus ("<___.>")
     retires, puis assez de caracteres alphanumeriques reels. Octets non
@@ -188,6 +195,11 @@ def meaningful(msg, min_chars=MIN_DECODED_MESSAGE_CHARS):
     lues une a une, scanner bloque) -- ils ne comptent pas comme des
     caracteres, et un message qui en contient plus d'un pour quatre vrais
     caracteres est du bruit."""
+    selectifs = _SELECTIF.findall(msg)
+    if selectifs:
+        tons = re.match(r"[0-9A-F]*", _SELECTIF.split(msg, maxsplit=1)[-1]).group(0)
+        if len(selectifs) > 1 or len(tons) < SELECTIF_MIN_TONS:
+            return False
     octets = len(_OCTET.findall(msg))
     cleaned = _OCTET.sub("", re.sub(r"<[^>]*>", "", msg))
     reels = sum(1 for c in cleaned if c.isalnum())

@@ -55,11 +55,12 @@ ACARS_BASE_DWELL = 30
 DATA_WINDOWS = {"acars": ACARS_BASE_DWELL, "vdl2": 25, "aprs": 30, "capteurs": 30,
                 "pagers": 30, "adsb": 30, "balises": 55, "sondes": 45, "lora": 30, "dab": 45,
                 "dmr": 20,  # veille des frequences DMR captees (radio_watch._dmr_window, 2026-10-07)
-                "tetra": 28}  # porteuses TETRA via la machine compagne (radio_watch._tetra_window, 2026-10-26)
+                "tetra": 28,  # porteuses TETRA via la machine compagne (radio_watch._tetra_window, 2026-10-26)
+                "rds": 45}  # RDS des radios FM via redsea (watchers/rds_watch.py, 2026-11-01)
 DATA_LABELS = Etiquettes("attention.donnees", {"acars": "ACARS", "vdl2": "VDL2", "aprs": "APRS", "capteurs": "capteurs sans fil",
                "pagers": "pagers 466", "adsb": "avions en direct", "balises": "balises de détresse",
                "sondes": "ballons-sondes", "lora": "LoRa et Meshtastic", "dab": "radio numérique DAB+",
-               "dmr": "veille DMR", "tetra": "TETRA"},
+               "dmr": "veille DMR", "tetra": "TETRA", "rds": "RDS des radios FM"},
                          "nom d'une fenêtre d'écoute de données")
 # Fenetres espacees : pas plus d'une visite par intervalle (sauf si ca pique).
 # TETRA (2026-10-26) : prend le dongle en entier et mobilise la machine

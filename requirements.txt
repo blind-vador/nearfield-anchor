@@ -6,3 +6,4 @@ aprslib
 pyModeS
 certifi>=2026.10.19  # 2026-10-23 : autorites emSign compromises retirees
 aiohttp>=3.14.4  # 2026-10-23 : DoS memoire/CPU (dependance d'edge-tts)
+sstv  # 2026-11-01 : decodeur SSTV (lib/sstv_veille.py), 18 modes, roue armv7 sur piwheels

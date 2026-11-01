@@ -59,7 +59,7 @@ apt-get install -y \
     build-essential cmake git python3-pip pkg-config wget \
     libconfig++-dev libmp3lame-dev libshout3-dev libfftw3-dev libpulse-dev \
     libsndfile1-dev libitpp-dev libncurses-dev libcodec2-dev portaudio19-dev \
-    zlib1g-dev libxml2-dev \
+    zlib1g-dev libxml2-dev libliquid-dev meson ninja-build nlohmann-json3-dev \
     libopenblas0 samba \
     python3-evdev python3-fuzzywuzzy python3-levenshtein python3-pil \
     python3-cryptography python3-serial
@@ -109,6 +109,17 @@ if [ ! -x /usr/local/bin/acarsdec ]; then
     (cd "$BUILD_DIR/acarsdec/build" && cmake -Drtl=1 .. && make -j4 && make install)
 else
     echo "-- acarsdec deja installe, saute --"
+fi
+
+# redsea (RDS des radios FM : nom, RadioText, annonces trafic ; watchers/rds_watch.py)
+if [ ! -x /usr/local/bin/redsea ]; then
+    echo "-- redsea --"
+    rm -rf "$BUILD_DIR/redsea"
+    git clone https://github.com/windytan/redsea.git "$BUILD_DIR/redsea"
+    (cd "$BUILD_DIR/redsea" && meson setup -Dbuildtype=release build && meson compile -C build \
+        && install -m 755 build/redsea /usr/local/bin/redsea)
+else
+    echo "-- redsea deja installe, saute --"
 fi
 
 # dump1090-mutability (ADS-B direct, watchers/adsb_local_watch.py) installe

@@ -55,6 +55,7 @@ import dab_watch
 import pagers_watch
 import sondes_watch
 import vdl2_watch
+import rds_watch  # RDS des radios FM (2026-11-01)
 import spectral_diagnostic
 import noise_signatures
 import attention
@@ -1737,6 +1738,111 @@ def _multimon_reader(proc, out_queue):
         pass
 
 
+# Decodeurs de donnees nourris du meme son que multimon-ng (2026-11-01) : ASN
+# (lib/asn_dsc.py, appels selectifs marine, detresse comprise) et guetteur SSTV
+# (lib/sstv_veille.py, images). Ils ecrivent leurs trouvailles sur leur sortie,
+# relue par _multimon_reader dans la meme file que multimon-ng.
+LIB_DIR = os.path.dirname(os.path.abspath(decodeurs.__file__))
+SSTV_IMAGE_MAX_SEC = 300      # le canal reste ouvert le temps d'une image (PD 290 : ~4 min 50)
+
+
+class _Decodeurs:
+    """Plusieurs processus decodeurs vus comme un seul (stdin.write, terminate,
+    wait, kill) : les appelants de multimon-ng n'ont rien a changer. A l'arret,
+    l'entree est fermee d'abord pour que chacun finisse (une image SSTV en
+    cours est decodee telle quelle)."""
+
+    def __init__(self, procs):
+        self.procs = procs
+        self.stdin = self
+
+    def write(self, data):
+        for p in self.procs:
+            try:
+                p.stdin.write(data)
+            except Exception:
+                pass
+
+    def terminate(self):
+        for p in self.procs:
+            try:
+                p.stdin.close()
+            except Exception:
+                pass
+        fin = time.time() + 20
+        for p in self.procs:
+            try:
+                p.wait(timeout=max(0.5, fin - time.time()))
+            except Exception:
+                p.terminate()
+
+    def wait(self, timeout=None):
+        for p in self.procs:
+            try:
+                p.wait(timeout=timeout)
+            except Exception:
+                pass
+
+    def kill(self):
+        for p in self.procs:
+            try:
+                p.kill()
+            except Exception:
+                pass
+
+
+def _ouvrir_decodeurs(sample_rate, out_queue):
+    """multimon-ng + ASN + SSTV sur le meme son, ou None."""
+    import veille_donnees as vd
+    commandes = [["multimon-ng"] + MULTIMON_ARGS,
+                 [sys.executable, "-u", os.path.join(LIB_DIR, "asn_dsc.py"), str(sample_rate)],
+                 [sys.executable, "-u", os.path.join(LIB_DIR, "sstv_veille.py"), str(sample_rate),
+                  os.path.join(vd.ARCHIVE_DIR, "sstv_images")]]
+    procs = []
+    for cmd in commandes:
+        try:
+            proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except Exception as exc:
+            print(f"[radio_watch] decodeur {cmd[-1] if cmd[0] != 'multimon-ng' else 'multimon-ng'} absent : {exc!r}")
+            continue
+        threading.Thread(target=_multimon_reader, args=(proc, out_queue), daemon=True).start()
+        procs.append(proc)
+    return _Decodeurs(procs) if procs else None
+
+
+def _annoncer_image_sstv(ligne, band_label):
+    """'SSTV: image <chemin> <mode> <etat>' : decrite (Gemini) dans la file
+    d'annonces, comme les images DAB, sans bloquer l'ecoute."""
+    import veille_donnees as vd
+    try:
+        _, _, chemin, mode, etat = ligne.split(" ", 4)
+    except ValueError:
+        return
+    partielle = etat != "complete"
+    vd.archive("sstv", {"image": chemin, "mode": mode, "complete": not partielle, "bande": band_label})
+
+    def texte():
+        description = None
+        try:
+            import gemini
+            import io
+            from PIL import Image
+            tampon = io.BytesIO()
+            Image.open(chemin).convert("RGB").save(tampon, "JPEG", quality=90)
+            description, probleme = gemini.ask(dire("radio.consigne_image_sstv"), temperature=0.3,
+                                               jpeg=tampon.getvalue())
+            if probleme:
+                print(f"[radio_watch] image SSTV : {probleme}")
+        except Exception as exc:
+            print(f"[radio_watch] image SSTV non decrite : {exc!r}")
+        return dire("radio.image_sstv", mode=mode.replace("_", " ").lower(),
+                    partielle=dire("radio.image_sstv_partielle") if partielle else "",
+                    description=" ".join((description or dire("radio.image_sstv_sans_description")).split()))
+
+    vd.announce(texte, DECODING_MORSE_SOUND, "message_sstv", "radio_watch",
+                fiche={"protocole": "SSTV", "source": band_label, "image": chemin})
+
+
 RTL_FM_LOCK_ATTEMPTS = 3
 RTL_FM_LOCK_PROBE_SEC = 0.5
 
@@ -1926,18 +2032,11 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     multimon_queue = None
     multimon_thread = None
     if mode != "wfm":  # AM et BLU aussi (2026-11-01) : SELCAL, CW, tonalites en AM...
-        try:
-            multimon = subprocess.Popen(
-                ["multimon-ng"] + MULTIMON_ARGS,
-                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            )
-            multimon_queue = queue.Queue()
-            multimon_thread = threading.Thread(
-                target=_multimon_reader, args=(multimon, multimon_queue), daemon=True,
-            )
-            multimon_thread.start()
-        except Exception:
-            multimon = None
+        # multimon-ng, ASN et guetteur SSTV sur le meme son (_Decodeurs).
+        multimon_queue = queue.Queue()
+        multimon = _ouvrir_decodeurs(sample_rate, multimon_queue)
+        if multimon is None:
+            multimon_queue = None
 
     # Pre-ecoute silencieuse (2026-10-03, demande utilisateur) : on n'ouvre le
     # son que si ca vaut la peine -- voix reconnue ou message decode --, puis
@@ -2032,6 +2131,10 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     max_bytes = int(sample_rate * 2 * hold_sec)
     heard_signal = True  # deja confirme par la pre-ecoute (_prelisten)
     decoded_messages = list(decoded_early)
+    # Image SSTV en cours : le canal reste ouvert sans voix jusqu'a l'image.
+    sstv_jusqua = 0.0
+    if any(m.startswith("SSTV: debut") for m in decoded_early):
+        sstv_jusqua = time.time() + SSTV_IMAGE_MAX_SEC
 
     rnnoise_state = _rnnoise_create()
     resample_state = None
@@ -2128,7 +2231,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
                 consecutive_signal_windows = 0
                 quiet_windows_seen += 1
                 if heard_signal and quiet_windows_seen >= quiet_windows_needed \
-                        and time.time() - signal_at >= MIN_ECOUTE_SEC:
+                        and time.time() - signal_at >= MIN_ECOUTE_SEC and time.time() >= sstv_jusqua:
                     raison_fin = "fenetre de reponse ecoulee"
                     break
             if not heard_signal and time.time() - start >= EARLY_CUT_SEC:
@@ -2138,7 +2241,16 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
 
             if multimon_queue is not None:
                 while not multimon_queue.empty():
-                    decoded_messages.append(multimon_queue.get_nowait())
+                    m = multimon_queue.get_nowait()
+                    decoded_messages.append(m)
+                    if m.startswith("SSTV: debut"):
+                        print(f"[radio_watch] {mhz:.4f} MHz : image SSTV en cours, canal garde ouvert")
+                        sstv_jusqua = time.time() + SSTV_IMAGE_MAX_SEC
+                    elif m.startswith("SSTV: image"):
+                        sstv_jusqua = 0.0
+                if sstv_jusqua and hold_sec < time.time() - start + 10:
+                    hold_sec = time.time() - start + SSTV_IMAGE_MAX_SEC   # le garde-fou attend l'image
+                    max_bytes = int(sample_rate * 2 * hold_sec)
     finally:
         procs = [rtl_fm, aplay]
         if multimon is not None:
@@ -2192,6 +2304,12 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     if hold_sec >= maintien.SECURITE_SEC and total_bytes >= max_bytes:
         # Coupee par le garde-fou, pas perdue (2026-10-23) : on le dit.
         speak(dire("radio.coupe_garde_fou", minutes=round(hold_sec / 60)))
+    for m in decoded_messages:
+        if m.startswith("SSTV: image"):
+            print(f"[radio_watch] {m}")
+            _annoncer_image_sstv(m, band_label)
+    images_sstv = any(m.startswith("SSTV: image") for m in decoded_messages)
+    decoded_messages = [m for m in decoded_messages if not m.startswith("SSTV:")]
     meaningful_messages = [m for m in decoded_messages if _is_meaningful_decoded_message(m)]
     ignored_count = len(decoded_messages) - len(meaningful_messages)
     if ignored_count:
@@ -2206,7 +2324,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         print(f"[radio_watch] decode numerique: {msg}")
         speak_with_lead_sound(DECODING_MORSE_SOUND, dire("radio.message_numerique_decode", msg=msg), label="radio_watch")
 
-    return heard_signal or bool(meaningful_messages)
+    return heard_signal or bool(meaningful_messages) or images_sstv
 
 
 MESSAGES_DITS_MAX = 3
@@ -2780,6 +2898,7 @@ DATA_SCANNERS = {name: _guarded(name, scan) for name, scan in {
     "lora": lora_watch.scan_window,
     "dab": dab_watch.scan_window,
     "tetra": _tetra_window,
+    "rds": rds_watch.scan_window,
 }.items()}
 
 

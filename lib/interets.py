@@ -40,7 +40,7 @@ CATEGORIES = {
                         "vhf_137", "vhf_146", "vhf_haute", "uhf_400", "uhf_700", "uhf_900"], "normal"),
     # Bandes hautes (2026-11-01) : 868 MHz et bande L, captables selon l'antenne.
     "bandes_hautes": (["srd_868", "bande_l_"], "normal"),
-    "fm": (["fm_diffusion"], "faible"),   # bandes de verification : du trafic tout le temps
+    "fm": (["fm_diffusion", "rds"], "faible"),   # bandes de verification : du trafic tout le temps
     "dab": (["dab"], "normal"),
     "satellites": (["satellites"], "normal"),  # passages radioamateurs (ISS...) ; "désactivé" les saute
 }
