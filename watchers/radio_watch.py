@@ -1740,8 +1740,9 @@ def _multimon_reader(proc, out_queue):
 
 
 # Decodeurs de donnees nourris du meme son que multimon-ng (2026-11-01) : ASN
-# (lib/asn_dsc.py, appels selectifs marine, detresse comprise) et guetteur SSTV
-# (lib/sstv_veille.py, images). Ils ecrivent leurs trouvailles sur leur sortie,
+# (lib/asn_dsc.py, appels selectifs marine, detresse comprise), guetteur SSTV
+# (lib/sstv_veille.py, images) et signalisation des radios pro analogiques
+# (lib/ffsk_pro.py : MDC1200, FleetSync II, MPT1327). Ils ecrivent leurs trouvailles sur leur sortie,
 # relue par _multimon_reader dans la meme file que multimon-ng.
 LIB_DIR = os.path.dirname(os.path.abspath(decodeurs.__file__))
 SSTV_IMAGE_MAX_SEC = 300      # le canal reste ouvert le temps d'une image (PD 290 : ~4 min 50)
@@ -1797,6 +1798,7 @@ def _ouvrir_decodeurs(sample_rate, out_queue):
     import veille_donnees as vd
     commandes = [["multimon-ng"] + MULTIMON_ARGS,
                  [sys.executable, "-u", os.path.join(LIB_DIR, "asn_dsc.py"), str(sample_rate)],
+                 [sys.executable, "-u", os.path.join(LIB_DIR, "ffsk_pro.py"), str(sample_rate)],
                  [sys.executable, "-u", os.path.join(LIB_DIR, "sstv_veille.py"), str(sample_rate),
                   os.path.join(vd.ARCHIVE_DIR, "sstv_images")]]
     procs = []

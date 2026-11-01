@@ -452,27 +452,31 @@ def _prelisten(packet_queue, freq_hz=None):
 
 
 def _signalisation_asn(brut_f32, nom, freq_hz):
-    """Salves ASN / ATIS dans l'audio relaye (2026-11-01) : sur les voies
-    navigables, chaque emission vocale finit par l'identification ATIS du
-    bateau. Decodee apres coup (lib/asn_dsc.py, quelques ms), annoncee a part."""
+    """Salves de signalisation dans l'audio relaye (2026-11-01), decodees apres
+    coup (quelques ms) et annoncees a part : ASN / ATIS (lib/asn_dsc.py ; sur
+    les voies navigables, chaque emission vocale finit par l'identification du
+    bateau) et identifiants des radios pro analogiques (lib/ffsk_pro.py :
+    MDC1200, FleetSync II, MPT1327)."""
     if not brut_f32:
         return
     try:
         import numpy as np
         import asn_dsc
+        import ffsk_pro
         import veille_donnees as vd
         pcm = (np.clip(np.frombuffer(brut_f32[:len(brut_f32) // 4 * 4], dtype="<f4"), -1, 1) * 32767).astype("<i2")
         vus = []
-        for chars in asn_dsc.chercher(asn_dsc.demoduler(pcm.tobytes(), AIRBAND_SAMPLE_RATE_HZ)):
-            texte = asn_dsc.interpreter(chars)
+        trouves = [asn_dsc.interpreter(c) for c in asn_dsc.chercher(asn_dsc.demoduler(pcm.tobytes(), AIRBAND_SAMPLE_RATE_HZ))]
+        trouves += [f"{proto}, {t}" for proto, t in ffsk_pro.decoder(pcm.tobytes(), AIRBAND_SAMPLE_RATE_HZ)]
+        for texte in trouves:
             if texte and texte not in vus:
                 vus.append(texte)
                 print(f"[airband_bridge] {nom} : {texte}")
-                vd.archive("asn", {"freq_hz": freq_hz, "canal": nom, "texte": texte})
+                vd.archive("signalisation", {"freq_hz": freq_hz, "canal": nom, "texte": texte})
                 vd.announce(dire("radio.signalisation_asn", canal=nom, texte=texte), INCOMING_SOUND,
                             "message_asn", "airband_bridge", fiche={"protocole": "ASN/ATIS", "frequence_hz": freq_hz})
     except Exception as exc:   # jamais bloquant pour le relais
-        print(f"[airband_bridge] ASN/ATIS : {exc!r}")
+        print(f"[airband_bridge] signalisation : {exc!r}")
 
 
 def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window_name=None):
