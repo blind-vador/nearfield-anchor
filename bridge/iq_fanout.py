@@ -95,7 +95,10 @@ class FanOut:
         # Commandes 5 octets. Celles du commandant reglent l'amont ; les autres
         # sont lues puis ignorees (reglages identiques).
         while not self._stop.is_set():
-            cmd = _recvn(conn, 5)
+            try:
+                cmd = _recvn(conn, 5)
+            except OSError:      # socket fermee par stop()/_drop : fin normale
+                break
             if len(cmd) != 5:
                 break
             if commandant and self.up is not None:
