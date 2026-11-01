@@ -3242,6 +3242,8 @@ def _juger_raffiner_fm(wav_path, target, freq_hz, mode):
     vu = suite_vue and voix_sec >= MIN_VOIX_OUVERTURE_SEC and voix_fenetres >= VOIX_PART_MIN * max(1, fenetres)
     rythme_ok, rythme = preuve_voix.est_voix(b"".join(nettoye), taux) if vu else (None, None)
     vu = vu and bool(rythme_ok)
+    _juger_raffiner_fm.dernier = {"voix_sec": round(voix_sec, 1), "part": round(voix_fenetres / max(1, fenetres), 3),
+                                  "rythme": None if rythme is None else round(rythme, 2)}
     print(f"[radio_watch] juge FM delegue : {voix_sec:.1f} s de voix sur {fenetres * ANALYSIS_WINDOW_MS / 1000:.0f} s, "
           f"rythme syllabique {rythme if rythme is None else round(rythme, 2)} ({'gardee' if vu else 'ecartee'})")
     return vu, b"".join(nettoye), taux
@@ -3260,6 +3262,90 @@ def _voix_numerique_prouvee(pcm_s16, taux, channels=1, origine=""):
     print(f"[radio_watch] voix numerique{origine} : {duree:.1f} s, rythme syllabique "
           f"{'-' if mesure is None else round(mesure, 2)} -> {'prouvee' if ok else 'ecartee'}")
     return ok
+
+
+BANC_DOMINANCE = 1.5   # sans preuve de modulation : la meilleure sortie doit dominer la suivante d'autant
+
+
+def _choisir_banc(res, target, freq):
+    """Banc de demodulation (2026-11-01) : parmi les sons AM / FM / BLU rendus
+    par la compagne, celui a presenter, ou None. Deux preuves : la modulation
+    mesuree sur l'IQ pendant l'emission (banc_preuve), puis la voix, jugee ICI
+    (RNNoise + rythme, une seule reference de jugement pour Pi et compagne). Le
+    rythme seul ne departage pas les demodulations (une AM lue en BLU garde ses
+    syllabes) : sans preuve de modulation, une sortie n'est retenue que si elle
+    domine nettement les autres. Rend (modulation, pcm propre, taux, detail)."""
+    banc = res.get("banc") or {}
+    preuve = (res.get("banc_preuve") or {}).get("modulations") or []
+    raison = (res.get("banc_preuve") or {}).get("raison")
+    candidats = [m for m in preuve if m in banc] or list(banc)
+    jugees = {}
+    for m in candidats:
+        vu, propre, taux = _juger_raffiner_fm(banc[m], target, freq, "am" if m == "am" else "nfm")
+        d = dict(getattr(_juger_raffiner_fm, "dernier", {}) or {})
+        print(f"[radio_watch] banc {freq / 1e6:.4f} MHz, {m} : {'voix prouvee' if vu else 'ecartee'} {d}")
+        if vu:
+            jugees[m] = (propre, taux, d)
+    if not jugees:
+        print(f"[radio_watch] banc {freq / 1e6:.4f} MHz : aucune voix prouvee (modulation : {raison})")
+        return None
+    classe = sorted(jugees, key=lambda m: -jugees[m][2].get("part", 0))
+    meilleure = classe[0]
+    if not preuve and len(classe) > 1 and \
+            jugees[classe[0]][2].get("part", 0) < BANC_DOMINANCE * jugees[classe[1]][2].get("part", 0):
+        print(f"[radio_watch] banc {freq / 1e6:.4f} MHz : {', '.join(classe)} passent sans preuve de "
+              f"modulation ni sortie dominante : ambigu, ecarte")
+        return None
+    propre, taux, d = jugees[meilleure]
+    d["preuve_modulation"] = raison if preuve else "aucune (sortie dominante)"
+    return meilleure, propre, taux, d
+
+
+def _presenter_banc(freq, mode, band_label, target, level_db, log_session, res, machine):
+    """Presentation d'une fenetre du banc : la modulation retenue sur preuve,
+    meme ceremonie qu'une captation locale. Rend True / False."""
+    banc = res.get("banc") or {}
+    if banc.get("nfm"):   # salves de signalisation dans la FM du banc (ASN/ATIS, MDC, FleetSync, MPT1327)
+        try:
+            import wave as _wave
+            import signalisation
+            with _wave.open(banc["nfm"]) as w:
+                signalisation.apres_coup(w.readframes(w.getnframes()), w.getframerate(), band_label, freq,
+                                         DECODING_MORSE_SOUND, "radio_watch")
+        except Exception as exc:
+            print(f"[radio_watch] signalisation (banc) : {exc!r}")
+    choix = _choisir_banc(res, target, freq)
+    if not choix:
+        log_session.discard()
+        return False
+    modulation, propre, taux, detail = choix
+    import wave as _wave
+    propre_wav = os.path.join(os.path.dirname(banc[modulation]), f"banc_{modulation}_propre.wav")
+    with _wave.open(propre_wav, "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(taux)
+        w.writeframes(propre)
+    speak_with_lead_sound(INCOMING_SOUND, band_label, label="radio_watch", repetitive=True)
+    play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
+    play_sound_effect(propre_wav, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch", contenu=True)
+    play_sound_effect(_son_fin(freq), label="radio_watch")
+    path = log_session.finalize()
+    noise_signatures.record_capture("rtl_fm", freq, modulation, band_label, target, path, None,
+                                    dict(detail, niveau_db=level_db, offload=machine, banc=True,
+                                         modulation_banc=modulation))
+    print(f"[radio_watch] banc {freq / 1e6:.4f} MHz : voix en {modulation} (via {machine}, {detail})")
+    return True
+
+
+def _banc_disponible():
+    """Une compagne connectee EN DIRECT offre le banc (pas une machine seulement
+    reveillable : l'ecoute est en temps reel)."""
+    try:
+        import compagnon
+        return any(c.get("directe") and "banc" in (c.get("capacites") or []) for c in compagnon.companions())
+    except Exception:
+        return False
 
 
 def _presenter_distant(freq, mode, band_label, target, level_db, log_session, res):
@@ -3314,6 +3400,8 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
         log_session.discard()
         print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : porteuse numerique active (sync {res.get('sync_hits')}), pas de decode clair, pas de FM")
         return "appris"
+    if res.get("banc"):
+        return _presenter_banc(freq, mode, band_label, target, level_db, log_session, res, machine)
     if audio:
         # Salves de signalisation (ASN/ATIS, MDC1200, FleetSync, MPT1327) dans le
         # brut rendu par la compagne, AVANT le tri de la voix (2026-11-01) : une
@@ -3362,7 +3450,7 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
     return False
 
 
-def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
+def _demod_deleguee(freq, mode, band_label, target, level_db, log_session, banc=False):
     """Intermediaire local/distant. Si le Pi doit deleguer (offload thermique)
     ET qu'une compagne "numerique" est libre : sert rtl_tcp, fait demoduler la
     fenetre a distance (demod.distant, plein demod), la presente, rend True/False
@@ -3378,7 +3466,7 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
     except Exception as exc:
         print(f"[radio_watch] offload : plan impossible ({exc!r}), demod locale")
         return None
-    if not plan.get("deleguer"):
+    if not plan.get("deleguer") and not banc:   # le banc delegue meme Pi froid : c'est l'option la plus fiable
         return None
     try:
         import compagnon
@@ -3407,7 +3495,8 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
         pass
     cie = plan.get("compagne") or {}
     nom = cie.get("nom") or cie.get("id") or "compagne"
-    print(f"[radio_watch] {freq / 1e6:.4f} MHz : Pi a {plan.get('temp_c')} C -> demod deleguee a {nom} ({mode_dsd})")
+    print(f"[radio_watch] {freq / 1e6:.4f} MHz : Pi a {plan.get('temp_c')} C -> demod deleguee a {nom} ({mode_dsd}"
+          f"{', banc AM/FM/BLU' if banc else ''})")
     try:
         proc = subprocess.Popen(["rtl_tcp", "-a", "0.0.0.0", "-p", str(TETRA_RTL_TCP_PORT)],
                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -3421,7 +3510,8 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
             print("[radio_watch] rtl_tcp (offload) arrete tout de suite (dongle occupe ?), demod locale")
             return None
         res = demod.distant(freq_decode, NUMERIQUE_GAIN, NUMERIQUE_SONDE_SEC, host=host,
-                            port=TETRA_RTL_TCP_PORT, max_secondes=NUMERIQUE_SUIVI_MAX_SEC, mode=mode_dsd)
+                            port=TETRA_RTL_TCP_PORT, max_secondes=NUMERIQUE_SUIVI_MAX_SEC, mode=mode_dsd,
+                            banc=banc)
     finally:
         try:
             proc.terminate()
@@ -3490,6 +3580,14 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     if ignores.frequence_ignoree(freq):
         print(f"[radio_watch] {freq / 1e6:.4f} MHz ignoree (commande ignorer), on passe")
         return False
+    if mode != "wfm" and _banc_disponible():
+        # Option la plus fiable (2026-11-01) : la compagne demodule le meme IQ dans
+        # toutes les modulations et prouve la modulation pendant l'emission ; le Pi
+        # juge la voix. Repli sur le chemin local si elle ne repond pas. La FM large
+        # (200 kHz) ne tient pas dans le flux reduit : chemin local.
+        r = _ecoute_candidat(freq, mode, band_label, target, level_db, dernier=True, banc=True)
+        if r is not None:
+            return r
     ordre = _modulations_prouvees(freq, mode)
     for i, m in enumerate(ordre):
         if i and _lock_pending():   # la console demande la main
@@ -3500,7 +3598,8 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     return False
 
 
-def _ecoute_candidat(freq, mode, band_label, target=None, level_db=None, dernier=True, prelisten_max=None):
+def _ecoute_candidat(freq, mode, band_label, target=None, level_db=None, dernier=True, prelisten_max=None,
+                     banc=False):
     # Verrou audio partage avec adsb_watch.py (processus separe) : garantit
     # qu'aucune annonce d'avion ne chevauche l'annonce/diffusion/son de fin
     # d'un candidat radio. Tenu pendant tout le cycle actif, relache des que
@@ -3524,8 +3623,11 @@ def _ecoute_candidat(freq, mode, band_label, target=None, level_db=None, dernier
         # Intermediaire offload (2c-final) : si le Pi chauffe et qu'une compagne
         # est libre, TOUTE la demod de la fenetre part a distance (numerique + FM
         # sur un seul flux) ; sinon None -> demod locale habituelle ci-dessous.
-        if mode == "nfm":
-            presente = _demod_deleguee(freq, mode, band_label, target, level_db, log_session)
+        if mode == "nfm" or banc:
+            presente = _demod_deleguee(freq, mode, band_label, target, level_db, log_session, banc=banc)
+            if presente is None and banc:
+                log_session.discard()
+                return None   # banc indisponible ou en echec : l'appelant reprend le chemin local
             if presente is not None:
                 saved = presente is True
                 if presente or dernier:

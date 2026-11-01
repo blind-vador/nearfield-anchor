@@ -41,6 +41,9 @@ class FanOut:
         self._red_lock = threading.Lock()
         self.octets_amont = 0
         self._debut = None
+        # Auditeurs du flux BRUT du Pi (2026-11-01, banc de demodulation) :
+        # fonction(octets, reducteur) appelee avant la reconstruction.
+        self.auditeurs = []
         self.up_host = up_host
         self.up_port = int(up_port)
         self.up = None
@@ -122,6 +125,11 @@ class FanOut:
                     break
                 self.octets_amont += len(data)
                 self._debut = self._debut or time.time()
+                for auditeur in list(self.auditeurs):
+                    try:
+                        auditeur(data, self.reducteur)
+                    except Exception:
+                        self.auditeurs.remove(auditeur)   # un auditeur en faute ne bloque pas le flux
                 if self.reducteur is not None:
                     with self._red_lock:
                         data = self.reducteur.flux(data)

@@ -159,7 +159,8 @@ class _Handler(socketserver.StreamRequestHandler):
                     file = _demandes_tetra.get(msg.get("reponse_a"))
                     if file is not None:
                         file.put(msg)
-                elif kind in ("numerique_voix", "numerique_audio", "numerique_resultat"):
+                elif kind in ("numerique_voix", "numerique_audio", "numerique_resultat") \
+                        or str(kind).startswith("numerique_banc_"):   # banc de demodulation (2026-11-01)
                     file = _demandes_numerique.get(msg.get("reponse_a"))
                     if file is not None:
                         file.put(msg)
@@ -533,6 +534,8 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
         def _ecrire(msg):
             w = wouts.get(msg["type"])
             if w is None:
+                if msg["type"].startswith("numerique_banc_"):   # un son par modulation du banc
+                    chemins[msg["type"]] = os.path.join(tmp, "banc_%s.wav" % msg["type"][len("numerique_banc_"):])
                 w = wave.open(chemins[msg["type"]], "wb")
                 w.setnchannels(1)
                 w.setsampwidth(2)
@@ -545,11 +548,13 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
                           "host": req.get("host") or compagnon._local_ip(),
                           "port": int(req.get("port", 1234)), "freq_hz": int(req["freq_hz"]),
                           "gain": req.get("gain", 32), "secondes": secondes, "max_secondes": max_secondes,
-                          "ppm": req.get("ppm", 0), "mode": req.get("mode", "-fa")})
+                          "ppm": req.get("ppm", 0), "mode": req.get("mode", "-fa"),
+                          "banc": bool(req.get("banc"))})
             delai = max_secondes + 30
             while True:
                 msg = file.get(timeout=delai)
-                if msg.get("type") in ("numerique_voix", "numerique_audio"):
+                if msg.get("type") in ("numerique_voix", "numerique_audio") \
+                        or str(msg.get("type")).startswith("numerique_banc_"):
                     _ecrire(msg)
                     delai = NUMERIQUE_DELAI_SEC
                 elif msg.get("type") == "numerique_resultat":
@@ -566,6 +571,9 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
                         msg.get("voix") and os.path.exists(chemins["numerique_voix"])) else None
                     res["audio_wav"] = chemins["numerique_audio"] if (
                         msg.get("audio") and os.path.exists(chemins["numerique_audio"])) else None
+                    res["banc"] = {m: chemins["numerique_banc_" + m] for m in (msg.get("banc") or [])
+                                   if os.path.exists(chemins.get("numerique_banc_" + m, ""))}
+                    res["banc_preuve"] = msg.get("banc_preuve")
                     res["machine"] = (compagnon.trusted().get(cid) or {}).get("nom")
                     res["_tmp"] = tmp
                     handed = True

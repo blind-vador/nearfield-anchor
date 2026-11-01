@@ -58,9 +58,9 @@ def capturer(freq_hz, gain=None):
     return x * np.exp(2j * np.pi * DECALAGE_HZ * np.arange(len(x)) / TAUX)
 
 
-def _psd(x):
+def _psd(x, taux=TAUX):
     blocs = len(x) // NFFT
-    f = np.fft.fftshift(np.fft.fftfreq(NFFT, 1 / TAUX))
+    f = np.fft.fftshift(np.fft.fftfreq(NFFT, 1 / taux))
     if not blocs:
         return f, None
     w = np.hanning(NFFT)
@@ -68,20 +68,23 @@ def _psd(x):
     return f, np.fft.fftshift(p)
 
 
-def _passe_bas(x, largeur_hz):
+def _passe_bas(x, largeur_hz, taux=TAUX):
     X = np.fft.fft(x)
-    f = np.fft.fftfreq(len(x), 1 / TAUX)
+    f = np.fft.fftfreq(len(x), 1 / taux)
     X[np.abs(f) > largeur_hz] = 0
     return np.fft.ifft(X)
 
 
-def mesurer(x):
-    """Signatures du signal (dict), sans decision."""
-    f, p = _psd(x)
+def mesurer(x, taux=TAUX):
+    """Signatures du signal (dict), sans decision. taux : la capture du Pi
+    (240 kS/s) ou le canal deja ramene a 32 kHz par le banc de la compagne
+    (bridge/banc_demod) -- memes regles, bandes de reference adaptees."""
+    f, p = _psd(x, taux)
     if p is None:
         return None
     db = 10 * np.log10(p + 1e-12)
-    plancher = np.median(db[np.abs(f) > 90_000]) if np.any(np.abs(f) > 90_000) else np.median(db)
+    loin = np.abs(f) > min(90_000, 0.8 * taux / 2)
+    plancher = np.median(db[loin]) if np.any(loin) else np.median(db)
     dans = np.abs(f) <= 12_500
     snr = float(np.max(db[dans]) - plancher)
     occupe = f[db > plancher + 10]
@@ -92,16 +95,18 @@ def mesurer(x):
     cote_haut = p[(f > 1_000) & (f <= 6_000)].mean()
     cote_bas = p[(f < -1_000) & (f >= -6_000)].mean()
     porteuse = float(np.max(db[centre]) - 10 * np.log10(max(cote_haut, cote_bas) + 1e-12))
-    voisin = np.median(p[(np.abs(f) >= 20_000) & (np.abs(f) <= 40_000)])
+    anneau = ((np.abs(f) >= 20_000) & (np.abs(f) <= 40_000)) if taux > 100_000 else \
+        ((np.abs(f) >= 0.6 * taux / 2) & (np.abs(f) <= 0.9 * taux / 2))
+    voisin = np.median(p[anneau])
     niveau = float(10 * np.log10(p[np.abs(f) <= 4_000].mean() / (voisin + 1e-12)))
     haut = p[(f > 300) & (f <= 4_000)].sum()
     bas = p[(f < -300) & (f >= -4_000)].sum()
     asym = float(10 * np.log10((haut + 1e-12) / (bas + 1e-12)))
-    nb = _passe_bas(x, 100_000 if largeur > 60_000 else 12_500)
+    nb = _passe_bas(x, 100_000 if largeur > 60_000 else 12_500, taux)
     env = np.abs(nb)
     actif = env > np.percentile(env, 30)                # ignore les creux (fin d'emission)
     cv = float(np.std(env[actif]) / (np.mean(env[actif]) + 1e-9))
-    inst = np.angle(nb[1:] * np.conj(nb[:-1])) * TAUX / (2 * np.pi)
+    inst = np.angle(nb[1:] * np.conj(nb[:-1])) * taux / (2 * np.pi)
     dev = float(np.std(inst[actif[1:]]))
     return {"snr_db": round(snr, 1), "largeur_hz": round(largeur), "porteuse_db": round(porteuse, 1),
             "asymetrie_db": round(asym, 1), "enveloppe_cv": round(cv, 3), "deviation_hz": round(dev),

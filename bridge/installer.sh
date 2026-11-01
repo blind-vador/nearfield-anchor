@@ -44,7 +44,14 @@ fi
 echo "-- module compagnon : fichiers --"
 mkdir -p "$DEST/bin" "$BUILD"
 cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/puissance.py" "$HERE/juges_radio.py" "$HERE/tetra_neo.py" "$HERE/lora_decode.py" "$HERE/decrire_images.py" \
-    "$HERE/voix_piper.py" "$HERE/voix_piper_worker.py" "$DEST/"
+    "$HERE/voix_piper.py" "$HERE/voix_piper_worker.py" "$HERE/numerique_neo.py" "$HERE/iq_fanout.py" \
+    "$HERE/iq_reduit.py" "$DEST/"
+# Decodeurs Python du scanner (2026-11-01) : les memes qu'au Pi (lib/), pour que
+# Pi et compagne rendent les memes verdicts ; RNNoise compile a part (dylib).
+mkdir -p "$DEST/decodeurs/rnnoise_lib"
+cp "$HERE/../lib/asn_dsc.py" "$HERE/../lib/ffsk_pro.py" "$HERE/../lib/sstv_veille.py" \
+    "$HERE/../lib/preuve_voix.py" "$HERE/../lib/modulation_iq.py" "$HERE/../lib/decodeurs.py" "$DEST/decodeurs/"
+cp "$HERE/../lib/rnnoise_lib/rnnoise.py" "$HERE/../lib/rnnoise_lib/__init__.py" "$DEST/decodeurs/rnnoise_lib/"
 
 echo "-- numpy, cryptography, cmake --"
 "$PY" -m pip install --user --quiet --upgrade numpy cryptography cmake
@@ -129,6 +136,9 @@ echo "-- dsd-fme (juges du scanner radio) --"
 bash "$HERE/construire_dsd.sh"
 # dsd-neo : decodeur TETRA pour la capacite "tetra" (2026-10-26)
 bash "$HERE/construire_dsd_neo.sh"
+# Les autres decodeurs du Pi, aux memes versions (2026-11-01) : multimon-ng,
+# direwolf, rtl_433, redsea, acarsdec, dumpvdl2, RNNoise, Python + sstv
+bash "$HERE/construire_decodeurs_mac.sh"
 rm -rf "$BUILD"
 
 echo "-- service --"

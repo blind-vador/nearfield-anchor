@@ -47,7 +47,7 @@ def plan(poids_sec, temp_c=None):
         return {"deleguer": False, "compagne": None, "temp_c": temp_c, "seuil": None, "raison": "local_sans_offload"}
 
 
-def distant(freq_hz, gain, secondes, host, port=1234, ppm=0, max_secondes=None, mode=DEFAUT_MODE):
+def distant(freq_hz, gain, secondes, host, port=1234, ppm=0, max_secondes=None, mode=DEFAUT_MODE, banc=False):
     """Delegue l'ecoute a la compagne (prise NUMERIQUE_SOCKET -> liaison ->
     dsd-neo). Le Pi doit DEJA servir rtl_tcp sur host:port et avoir tune le
     CENTRE RECENTRE. Rend le dict resultat (ok, protocole, voix_wav, ...), ou
@@ -57,7 +57,7 @@ def distant(freq_hz, gain, secondes, host, port=1234, ppm=0, max_secondes=None, 
     except Exception as exc:
         return {"ok": False, "erreur": "client distant absent (%r)" % exc}
     res = numerique_distant.decoder(freq_hz, gain, secondes, host=host, port=port, ppm=ppm,
-                                    max_secondes=max_secondes, mode=mode)
+                                    max_secondes=max_secondes, mode=mode, banc=banc)
     if not res.get("ok"):
         print(f"[demod] distant {freq_hz / 1e6:.4f} MHz : {res.get('erreur')}")
     return res

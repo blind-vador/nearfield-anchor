@@ -183,6 +183,10 @@ def capabilities():
         import numerique_neo
         if numerique_neo.disponible():
             caps.append("numerique")
+            # Banc de demodulation (2026-11-01) : AM/FM/BLU sur le meme IQ + preuve
+            # de modulation ; le Pi lui confie alors ses candidats.
+            import banc_demod  # noqa: F401
+            caps.append("banc")
     except Exception:
         pass
     return caps
@@ -376,7 +380,8 @@ def numerique_to_pi(link, msg):
     try:
         res = numerique_neo.decoder(msg["host"], msg["port"], msg["freq_hz"], msg.get("gain", 32),
                                     msg.get("secondes", 8), ppm=msg.get("ppm", 0),
-                                    max_seconds=msg.get("max_secondes"), mode=msg.get("mode", "-fa"))
+                                    max_seconds=msg.get("max_secondes"), mode=msg.get("mode", "-fa"),
+                                    banc=bool(msg.get("banc")))
     except Exception as exc:
         link.send({"type": "numerique_resultat", "reponse_a": rid, "ok": False, "erreur": repr(exc)[:200]})
         return
@@ -420,6 +425,9 @@ def numerique_to_pi(link, msg):
         # flux possibles d'une demod complete. Jamais rien de dechiffre.
         voix_envoyee = _streamer(res.get("voix_wav"), "numerique_voix") is not None
         audio_envoye = _streamer(res.get("audio_wav"), "numerique_audio") is not None
+        # Banc (2026-11-01) : un son par modulation, chacun sous son propre type.
+        banc_envoye = [m for m, chemin in sorted((res.get("banc") or {}).items())
+                       if _streamer(chemin, "numerique_banc_" + m) is not None]
         link.send({"type": "numerique_resultat", "reponse_a": rid, "ok": bool(res.get("ok")),
                    "erreur": res.get("erreur"), "protocole": res.get("protocole"),
                    "meta": res.get("meta") or {}, "chiffre": bool(res.get("chiffre")),
@@ -427,7 +435,8 @@ def numerique_to_pi(link, msg):
                    "numerique_confirme": bool(res.get("numerique_confirme")),
                    "digital_actif": bool(res.get("digital_actif")), "sync_hits": res.get("sync_hits"),
                    "voix_rms": res.get("voix_rms"), "audio_rms": res.get("audio_rms"),
-                   "resume": numerique_neo.resume_fr(res), "duree": res.get("duree")})
+                   "resume": numerique_neo.resume_fr(res), "duree": res.get("duree"),
+                   "banc": banc_envoye, "banc_preuve": res.get("banc_preuve")})
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)

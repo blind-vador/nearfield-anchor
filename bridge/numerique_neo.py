@@ -212,7 +212,7 @@ def _confirme(r, rms, texte=""):
 
 
 def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-fa", plein=True,
-            modes_extra=None):
+            modes_extra=None, banc=False):
     """Decode la fenetre freq_hz servie par le rtl_tcp du Pi, en lançant
     PLUSIEURS dsd-neo EN PARALLELE sur le meme flux (via le proxy iq_fanout, car
     rtl_tcp ne sert qu'un client). Modele arbitre local : chaque mode epingle
@@ -246,6 +246,21 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
         return {"ok": False, "erreur": "proxy IQ: %r" % exc}
     src = "rtltcp:127.0.0.1:%d:%d:%s:%d:%d" % (pport, int(freq_hz), str(gain), int(ppm), BW_KHZ)
     etat = {"activite": 0.0}
+    # Banc de demodulation (2026-11-01, bridge/banc_demod) : AM, FM etroite, BLU
+    # sur le meme IQ, plus la preuve de modulation mesuree pendant l'emission.
+    banc_obj = {}
+    if banc:
+        def ecouter_banc(data, red):
+            if not (red and red.reduit):
+                return                                  # flux non reduit : pas de banc
+            if "b" not in banc_obj:
+                import banc_demod
+                p = red.reduit[0]
+                banc_obj["b"] = banc_demod.Banc(p, -(p // 4))   # iq_reduit : cible a -P/4
+            banc_obj["b"].ajouter(data)
+            if banc_obj["b"].actif:
+                etat["activite"] = time.time()          # une emission en cours prolonge la fenetre
+        fo.auditeurs.append(ecouter_banc)
     decs = []
 
     def lanceur(m, wavpath, analog):
@@ -363,6 +378,10 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
         res["audio_rms"] = rms_a
         if rms_a >= AUDIO_RMS_MIN:
             res["audio_wav"] = audio
+    if banc_obj.get("b"):
+        res["banc"] = banc_obj["b"].ecrire(tmp)
+        mods, raison, mesures, tranches = banc_obj["b"].preuve()
+        res["banc_preuve"] = {"modulations": mods, "raison": raison, "mesures": mesures, "tranches": tranches}
     res["duree"] = duree
     res["ok"] = True
     res["_tmp"] = tmp
