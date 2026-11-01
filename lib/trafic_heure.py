@@ -42,10 +42,11 @@ SOURCES = {
     "vdl2": ("VDL mode 2 : liaison de donnees des avions de ligne", ["freq", "sig_level", "noise_level"]),
     "aprs": ("APRS radioamateur : positions, objets, meteo", ["from", "to", "object_name", "comment"]),
     "dmr_resume": ("resumes d'activite DMR", None),
+    "tetra": ("reseaux TETRA professionnels : identite reseau en clair, appels reperes dans la signalisation, messages d'exploitation en clair (bus, logistique...) -- jamais rien de dechiffre", None),
 }
 COURT = {"dmr_ars": "DMR", "adsb_local": "d'avions en ADS-B", "helicos": "d'hélicoptères", "ogn": "de planeurs OGN",
          "lora": "LoRa", "lora_decode": "LoRa décodées", "pagers": "de bipeurs", "vdl2": "VDL2 d'avions de ligne",
-         "aprs": "APRS", "dmr_resume": "de résumé DMR"}
+         "aprs": "APRS", "dmr_resume": "de résumé DMR", "tetra": "TETRA"}
 PROMPT = """Tu es la voix d'un poste d'écoute radio domestique, à {commune}, pour une personne
 aveugle passionnée de radio. Entre {debut} et {fin}, le scanner a capté ce trafic de données,
 qui n'est jamais lu à voix haute (comptes, identifiants distincts et quelques exemples) :
@@ -82,7 +83,49 @@ def _temps(e):
         return None
 
 
+def _resume_tetra(entrees):
+    """Resume horaire du TETRA : agrege les fenetres d'ecoute de l'heure. Tout
+    en clair (identite reseau, comptes d'appels, messages d'exploitation
+    decodes) ; jamais rien de dechiffre."""
+    reseaux = collections.Counter()
+    porteuses = set()
+    appels = clairs = suivis = sds = postes_max = 0
+    voix = False
+    textes = []
+    for e in entrees:
+        r = e.get("reseau") or {}
+        if r.get("mcc") is not None:
+            reseaux["%s-%s" % (r.get("mcc"), r.get("mnc"))] += 1
+        if r.get("freq_hz"):
+            porteuses.add(round(r["freq_hz"] / 1e6, 4))
+        n = e.get("nouvelles") or {}
+        appels += n.get("appels") or 0
+        clairs += n.get("appels_clairs") or 0
+        suivis += n.get("suivis") or 0
+        sds += n.get("sds") or 0
+        postes_max = max(postes_max, n.get("postes_actifs") or 0)
+        voix = voix or bool(n.get("voix"))
+        for t in (n.get("textes") or []):
+            txt = t.get("texte") if isinstance(t, dict) else t
+            if txt and txt not in textes:
+                textes.append(txt)
+        for m in (e.get("messages") or []):
+            if isinstance(m, dict) and m.get("texte") and m["texte"] not in textes:
+                textes.append(m["texte"])
+    out = {"quoi": SOURCES["tetra"][0], "nombre": len(entrees),
+           "reseaux": [k for k, _ in reseaux.most_common(4)],
+           "porteuses_mhz": sorted(porteuses)[:6],
+           "appels_vus": appels, "appels_en_clair": clairs, "appels_suivis_en_voix": suivis,
+           "messages_courts_sds": sds, "postes_actifs_max": postes_max,
+           "voix_en_clair_entendue": voix}
+    if textes:
+        out["messages_en_clair"] = textes[:6]
+    return out
+
+
 def _resume_source(source, entrees):
+    if source == "tetra":
+        return _resume_tetra(entrees)
     champs = SOURCES[source][1]
     ident = {"dmr_ars": "poste", "adsb_local": "icao24", "helicos": "icao24", "ogn": "from", "aprs": "from",
              "pagers": "ligne"}.get(source)
