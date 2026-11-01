@@ -571,6 +571,16 @@ DSD_FME_PRE_MAX = 500  # datagrammes gardes avant la confirmation (~10 s en ster
 # reponse qui suit de pres n'est pas perdue.
 MIN_ECOUTE_SEC = 8.0
 
+# Rafales (2026-11-01, demande utilisateur) : le "clic" d'une fin d'emission
+# (over, poste qui raccroche) ouvrait l'ecoute et journalisait une prise d'une
+# seconde au plus. On n'ouvre plus -- ceremonie, son, journal -- qu'apres
+# MIN_VOIX_OUVERTURE_SEC de voix reconnue. Une rafale plus courte reste en
+# tampon et on surveille encore le canal (ATTENTE_RAFALE_SEC en analogique, la
+# fenetre de fin du numerique sinon) : si une reponse vient, elle ouvre avec la
+# rafale en tete ; sinon rien n'est joue ni journalise.
+MIN_VOIX_OUVERTURE_SEC = 1.2
+ATTENTE_RAFALE_SEC = 6.0
+
 # Fenetre de reponse (2026-10-28, demande utilisateur) : une fois le locuteur
 # silencieux, on NE FERME PAS aussitot -- on garde le canal ouvert ce temps-la
 # pour qu'une reponse qui revient (l'autre interlocuteur, apres le "a vous") ne
@@ -1207,13 +1217,27 @@ def _annonce_dmr(protocol, band_label, ticket, reprise=False):
     de parole de la MEME conversation -- pas de ceremonie (le fil tourne quand
     meme, vide, pour ne rien changer au tampon ni a l'ouverture d'aplay)."""
     audio_lock._local.ticket = ticket
-    if reprise:
-        return
     try:
         # Morceaux en cache (lib/annonce_morceaux.py) : "Reception DMR", nom de bande.
         parts = morceaux.whole(dire("radio.reception", protocol=protocol) + ("," if band_label else "."))
         if band_label:
             parts += morceaux.whole(band_label + ".")
+        if reprise:
+            # Pas rejouee au haut-parleur, mais chaque prise du journal garde sa
+            # ceremonie entiere (2026-11-01 : des prises sans annonce ni carillon
+            # d'ouverture, seulement la voix puis la fin).
+            session = sound_player.get_recording_session()
+            if session is not None:
+                annonce = morceaux.prepare(parts).wait()
+                for chemin in (DMR_VOCAL_SOUND, annonce, FREQ_OPEN_SOUND):
+                    if chemin:
+                        session.add_audio_file(chemin)
+                if annonce:
+                    try:
+                        os.remove(annonce)
+                    except OSError:
+                        pass
+            return
         morceaux.say(DMR_VOCAL_SOUND, parts, label="radio_watch")
         # Meme encadrement que la voix analogique (2026-10-02) : son
         # d'ouverture avant la voix, son de fin apres (_handle_candidate).
@@ -1309,6 +1333,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         channels = 1 if mode_flag in DSD_FME_MONO_MODES else DSD_FME_VOICE_CHANNELS
         validated = False
         annonce, attente, validated_at = None, [], 0.0
+        voix_attendue = False
         filtered_out = False
         # Plus de coupure d'un appel en cours (2026-10-22 : des conversations coupees
         # pile a 2 minutes) : la duree max ne vaut que pour ce qui interesse peu.
@@ -1414,15 +1439,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                     protocol = stats["protocol"] or dire("radio.numerique")
                     print(f"[radio_watch] dsd-fme : decodage {protocol} confirme "
                           f"({stats['clean']} synchros propres sur {stats['total']}), {channels} voie(s)")
-                    # Carillon et annonce dans un fil a part (2026-10-19) : pendant
-                    # qu'ils jouent, cette boucle continue de lire la socket et met
-                    # TOUT en tampon (avant, la socket debordait au bout de ~6 s
-                    # d'annonce : le debut de la transmission etait perdu).
-                    reprise = _reprise_recente(freq_hz)
-                    _derniere_annonce.update(freq=freq_hz, t=time.time())
-                    annonce = threading.Thread(target=_annonce_dmr, daemon=True,
-                                               args=(protocol, band_label, audio_lock.ticket_courant(), reprise))
-                    annonce.start()
+                    voix_attendue = True   # la ceremonie attend assez de voix (rafales, plus bas)
                     validated_at = time.time()
                     try:  # guet appris : combien ce spot a mis a confirmer (lib/guet.py)
                         import guet
@@ -1434,6 +1451,26 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                         if dmr_vu:
                             noise_signatures.update_live(dmr=dmr_vu)
                     attente, pending, data = list(pending), [], None
+            if validated and voix_attendue:
+                # Rafales (2026-11-01) : un clic de fin d'emission ne declenche
+                # rien. La voix reste en tampon ; chaque paquet prolonge la
+                # surveillance (une reponse peut suivre). Assez de voix : la
+                # ceremonie part et rejouera tout le tampon, clic compris.
+                if data:
+                    attente.append(data)
+                    deadline = max(deadline, time.time() + idle_sec)
+                if _mesure_voix(attente, channels)[0] < MIN_VOIX_OUVERTURE_SEC:
+                    continue
+                voix_attendue, data = False, None
+                # Carillon et annonce dans un fil a part (2026-10-19) : pendant
+                # qu'ils jouent, cette boucle continue de lire la socket et met
+                # TOUT en tampon (avant, la socket debordait au bout de ~6 s
+                # d'annonce : le debut de la transmission etait perdu).
+                reprise = _reprise_recente(freq_hz)
+                _derniere_annonce.update(freq=freq_hz, t=time.time())
+                annonce = threading.Thread(target=_annonce_dmr, daemon=True,
+                                           args=(protocol, band_label, audio_lock.ticket_courant(), reprise))
+                annonce.start()
             if validated and annonce is not None:
                 if data:
                     attente.append(data)
@@ -1496,6 +1533,9 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
             return None
 
         _dmr_learn(stats)
+        if voix_attendue:
+            print(f"[radio_watch] dsd-fme : rafale de {_mesure_voix(attente, channels)[0]:.2f} s sans suite "
+                  f"(moins de {MIN_VOIX_OUVERTURE_SEC} s de voix), ni ouverture ni journal")
         voix_sec, voix_rms = _mesure_voix(captured_chunks, channels)
         assez = voix_sec >= DSD_FME_VOIX_MIN_SEC and voix_rms >= DSD_FME_VOIX_RMS_MIN
         if captured_chunks and not muted:
@@ -2099,9 +2139,14 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
     resample_state = smoothed_prob = None
     consecutive, filtered_all, decoded = 0, [], []
     analysed = 0
+    # Rafales (2026-11-01) : voix reconnue mais trop courte -> on garde tout en
+    # tampon et on surveille ATTENTE_RAFALE_SEC de plus, le temps d'une reponse.
+    voix_fenetres, voix_vue_a = 0, None
+    voix_min = int(MIN_VOIX_OUVERTURE_SEC * 1000 / ANALYSIS_WINDOW_MS)
     start = time.time()
     try:
-        while time.time() - start < PRELISTEN_MAX_SEC:
+        while time.time() - start < PRELISTEN_MAX_SEC or (
+                voix_vue_a is not None and time.time() - voix_vue_a < ATTENTE_RAFALE_SEC):
             if analysed < len(prebuffer):
                 chunk = prebuffer[analysed]
             else:
@@ -2126,7 +2171,13 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
             if multimon_queue is not None:
                 while not multimon_queue.empty():
                     decoded.append(multimon_queue.get_nowait())
-            if consecutive >= MIN_CONSECUTIVE_SIGNAL_WINDOWS:
+            if voix_vue_a is not None and is_signal:
+                voix_fenetres += 1
+                voix_vue_a = time.time()   # chaque morceau de voix prolonge la surveillance
+                if voix_fenetres >= voix_min:
+                    print(f"[radio_watch] pre-ecoute : assez de voix en {time.time() - start:.1f} s, on ouvre")
+                    return True, decoded, b"".join(filtered_all)
+            elif consecutive >= MIN_CONSECUTIVE_SIGNAL_WINDOWS:
                 # Ecremage (2026-10-27) : avant d'ouvrir, verifier que la rafale
                 # qui declenche n'est pas un parasite connu du canal. Si c'en est
                 # un, on NE confirme PAS -- on ecarte ce qui a ete analyse (pas
@@ -2149,11 +2200,16 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
                         continue
                 print(f"[radio_watch] pre-ecoute : voix reconnue en {time.time() - start:.1f} s "
                       f"(prob {smoothed_prob:.2f})")
-                return True, decoded, b"".join(filtered_all)
+                voix_fenetres, voix_vue_a = consecutive, time.time()
+                if voix_fenetres >= voix_min:
+                    return True, decoded, b"".join(filtered_all)
             if any(_is_meaningful_decoded_message(m) for m in decoded):
                 return True, decoded, b"".join(filtered_all)
     finally:
         _rnnoise_destroy(rnnoise_state)
+    if voix_vue_a is not None:
+        print(f"[radio_watch] pre-ecoute {freq_hz / 1e6:.4f} MHz : rafale de "
+              f"{voix_fenetres * ANALYSIS_WINDOW_MS / 1000:.1f} s sans suite, ni ouverture ni journal")
     return False, decoded, b"".join(filtered_all)
 
 
@@ -2836,8 +2892,14 @@ def _ecoute_prise(prise, freq, band_label, target):
     os.makedirs(BRUT_DIR, exist_ok=True)
     brut = os.path.join(BRUT_DIR, f"{int(freq)}_prise_{time.strftime('%Y%m%d_%H%M%S')}.wav")
     arreter_brut = prise.enregistrer(brut)
+    # Ticket du fil appelant, propage aux fils decodeurs (2026-11-01) : sans lui,
+    # leur ceremonie (_annonce_dmr) et leur voix n'atteignaient pas la session du
+    # journal (rattachee au ticket) -- seul le son de fin, joue ici, y entrait :
+    # prises "fin de reception" seules, sans annonce ni flux.
+    ticket = audio_lock.ticket_courant()
 
     def ecouter(i, mode_flag):
+        audio_lock._local.ticket = ticket
         resultats[mode_flag] = try_digital_voice_decode(freq, mode_flag, band_label, target=target, live=True,
                                                         prise=prise, port=DSD_FME_UDP_PORT + 1 + i, arbitre=arbitre)
     fils = {m: threading.Thread(target=ecouter, args=(i, m), daemon=True) for i, m in enumerate(modes)}

@@ -65,7 +65,12 @@ INCOMING_SOUND = f"{SOUND_EFFECTS_DIR}/incoming.mp3"
 # 1,5 -> 3 s (2026-09-30) : une fin coupee trop tot est pire qu'un peu de
 # silence en fin de capture (priorites de veille fixees avec l'utilisateur).
 SILENCE_DEBOUNCE_SEC = 3.0
-MIN_AUDIO_SEC = 0.6          # en dessous : eclat de squelch, prise abandonnee
+MIN_AUDIO_SEC = 1.2          # en dessous : eclat de squelch, prise abandonnee (0.6 avant le 2026-11-01)
+# Rafales (2026-11-01, meme regle que radio_watch) : il faut MIN_VOIX_OUVERTURE_SEC
+# de voix reconnue pour ouvrir ; une rafale plus courte (clic de fin d'emission)
+# reste en tampon et on surveille ATTENTE_RAFALE_SEC de plus, le temps d'une reponse.
+MIN_VOIX_OUVERTURE_SEC = 1.2
+ATTENTE_RAFALE_SEC = 6.0
 MIN_ECOUTE_SEC = 8.0         # duree minimale d'ecoute d'un canal ouvert (meme valeur que radio_watch)
 GAP_SEC = 0.3  # un trou plus long entre deux paquets = le silencieux s'est ferme puis rouvert
 MAX_HOLD_SEC = 45
@@ -345,8 +350,11 @@ def _prelisten(packet_queue, freq_hz=None):
     total = 0
     pres_parasite = freq_hz is not None and noise_signatures.has_signatures_near(freq_hz)
     bloc_voix = []  # audio f32le accumule depuis le dernier (re)depart, pour l'ecremage
+    voix_fenetres, voix_vue_a = 0, None
+    voix_min = int(MIN_VOIX_OUVERTURE_SEC / PRELISTEN_WINDOW_SEC)
     start = time.time()
-    while time.time() - start < PRELISTEN_MAX_SEC:
+    while time.time() - start < PRELISTEN_MAX_SEC or (
+            voix_vue_a is not None and time.time() - voix_vue_a < ATTENTE_RAFALE_SEC):
         try:
             data = packet_queue.get(timeout=0.3)
         except queue.Empty:
@@ -363,10 +371,19 @@ def _prelisten(packet_queue, freq_hz=None):
             if check is None:  # pas de detecteur : au moins une seconde de son suffit
                 voiced += 1
                 consecutive = voiced if total >= AIRBAND_SAMPLE_RATE_HZ * 4 else 0
+                is_voix = consecutive > 0
             else:
                 pcm = (np.clip(np.frombuffer(block, dtype="<f4"), -1, 1) * 32767).astype("<i2").tobytes()
-                consecutive = consecutive + 1 if check(pcm, AIRBAND_SAMPLE_RATE_HZ) else 0
-            if consecutive >= PRELISTEN_VOICE_WINDOWS:
+                is_voix = check(pcm, AIRBAND_SAMPLE_RATE_HZ)
+                consecutive = consecutive + 1 if is_voix else 0
+            if voix_vue_a is not None:
+                if is_voix:
+                    voix_fenetres += 1
+                    voix_vue_a = time.time()   # chaque morceau de voix prolonge la surveillance
+                    if voix_fenetres >= voix_min:
+                        print(f"[airband_bridge] pre-ecoute : assez de voix en {time.time() - start:.1f} s")
+                        return packets, True
+            elif consecutive >= PRELISTEN_VOICE_WINDOWS:
                 if pres_parasite:
                     recent = audio_filters.VoiceBandpassFilter(AIRBAND_SAMPLE_RATE_HZ).process_f32le(
                         b"".join(bloc_voix))
@@ -381,7 +398,12 @@ def _prelisten(packet_queue, freq_hz=None):
                         total = 0
                         continue
                 print(f"[airband_bridge] pre-ecoute : voix reconnue en {time.time() - start:.1f} s")
-                return packets, True
+                voix_fenetres, voix_vue_a = consecutive, time.time()
+                if voix_fenetres >= voix_min:
+                    return packets, True
+    if voix_vue_a is not None:
+        print(f"[airband_bridge] pre-ecoute {freq_hz / 1e6 if freq_hz else 0:.5f} MHz : rafale de "
+              f"{voix_fenetres * PRELISTEN_WINDOW_SEC:.1f} s sans suite, ni ouverture ni journal")
     return packets, False
 
 
