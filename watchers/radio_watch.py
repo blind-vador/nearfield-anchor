@@ -1621,6 +1621,8 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                   f"(moins de {MIN_VOIX_OUVERTURE_SEC} s de voix), ni ouverture ni journal")
         voix_sec, voix_rms = _mesure_voix(captured_chunks, channels)
         assez = voix_sec >= DSD_FME_VOIX_MIN_SEC and voix_rms >= DSD_FME_VOIX_RMS_MIN
+        if assez and captured_chunks and not muted:   # meme preuve de contenu que le delegue et l'analogique
+            assez = _voix_numerique_prouvee(b"".join(captured_chunks), DSD_FME_VOICE_SAMPLE_RATE, channels)
         if captured_chunks and not muted:
             print(f"[radio_watch] dsd-fme voix : {voix_sec:.2f} s, rms {voix_rms} -> "
                   f"{'gardee' if assez else 'ecartee (fantome)'}")
@@ -3245,6 +3247,21 @@ def _juger_raffiner_fm(wav_path, target, freq_hz, mode):
     return vu, b"".join(nettoye), taux
 
 
+def _voix_numerique_prouvee(pcm_s16, taux, channels=1, origine=""):
+    """Meme preuve de contenu que l'analogique (2026-11-01) pour une voix numerique
+    deja prouvee par son protocole : au moins MIN_VOIX_OUVERTURE_SEC, et pas de
+    refus du rythme syllabique des qu'il est mesurable (lib/preuve_voix)."""
+    if channels > 1:   # deux intervalles TDMA entrelaces : on les somme pour mesurer
+        x = np.frombuffer(pcm_s16[:len(pcm_s16) // 4 * 4], dtype=np.int16).reshape(-1, channels)
+        pcm_s16 = np.clip(x.astype(np.int32).sum(axis=1), -32768, 32767).astype(np.int16).tobytes()
+    duree = len(pcm_s16) / 2 / taux
+    verdict, mesure = preuve_voix.est_voix(pcm_s16, taux)
+    ok = duree >= MIN_VOIX_OUVERTURE_SEC and verdict is not False
+    print(f"[radio_watch] voix numerique{origine} : {duree:.1f} s, rythme syllabique "
+          f"{'-' if mesure is None else round(mesure, 2)} -> {'prouvee' if ok else 'ecartee'}")
+    return ok
+
+
 def _presenter_distant(freq, mode, band_label, target, level_db, log_session, res):
     """Presente une fenetre demodulee a distance : voix NUMERIQUE en clair, ou
     audio FM, ou rien (appris). Meme habillage que la demod locale / _annonce_tetra.
@@ -3260,7 +3277,16 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
         # Doctrine _reception_a_presenter : pas d'ouverture fantome ni
         # d'enregistrement vide. Clair capte -> ceremonie ; chiffre / repos /
         # signalisation seule -> appris (registre), mais pas de ceremonie.
-        if voix and _reception_a_presenter(proto, res.get("chiffre"), True):
+        voix_ok = False
+        if voix:
+            try:
+                import wave as _wave
+                with _wave.open(voix) as w:
+                    voix_ok = _voix_numerique_prouvee(w.readframes(w.getnframes()), w.getframerate(),
+                                                      w.getnchannels(), " deleguee")
+            except Exception as exc:
+                print(f"[radio_watch] voix deleguee illisible : {exc!r}")
+        if voix and voix_ok and _reception_a_presenter(proto, res.get("chiffre"), True):
             parts = morceaux.whole(dire("radio.reception", protocol=proto) + ("," if band_label else "."))
             if band_label:
                 parts += morceaux.whole(band_label + ".")

@@ -178,10 +178,34 @@ def _journaliser_brut(freq_hz, texte):
         pass
 
 
-def _confirme(r, rms):
+# Meme preuve que le direct du Pi (2026-11-01, lib/decodeurs.py) : synchros
+# PROPRES comptees par la regle commune juges_radio.compter_synchro (dPMR et M17
+# verifies sur leur en-tete). Rejoue sur 50 fenetres reelles : la regle d'avant
+# (une synchro + un Color Code ou un mot "Voice") confirmait 14 fenetres de plus,
+# presque toutes du bruit -- zero synchro propre, 4 ou 5 protocoles "vus" a la
+# fois (FM de diffusion a 99,1 MHz, GSM).
+CLEAN_SYNC_MIN = 2
+CLEAN_RATIO_MIN = 0.25
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _synchros_propres(texte):
+    """(propres, total) selon la regle commune au Pi et aux juges."""
+    import juges_radio
+    stats = {"clean": 0, "total": 0, "protocol": None}
+    for ligne in _ANSI.sub("", texte).splitlines():
+        juges_radio.compter_synchro(stats, ligne)
+    return stats["clean"], stats["total"]
+
+
+def _confirme(r, rms, texte=""):
     """Un decodeur a-t-il CONFIRME un mode numerique (pas un faux verrou) ?
-    Preuve positive : Color Code (DMR), NAC (P25), trame voix vue, ou voix de
-    synthese reellement produite."""
+    Preuve protocolaire d'abord (synchros propres, regle commune), puis preuve
+    positive : Color Code (DMR), NAC (P25), trame voix vue, ou voix de synthese
+    reellement produite."""
+    propres, total = _synchros_propres(texte)
+    if propres < CLEAN_SYNC_MIN or propres < CLEAN_RATIO_MIN * total:
+        return False
     meta = r.get("meta") or {}
     return bool(r.get("sync") and (meta.get("color_code") is not None or meta.get("nac") is not None
                                    or r.get("voix_vue") or rms >= VOIX_RMS_MIN))
@@ -308,7 +332,7 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
         r = parser(texte)
         rms = _rms_wav(d["wav"])
         cand.append({"mode": d["mode"], "r": r, "rms": rms, "wav": d["wav"],
-                     "conf": _confirme(r, rms), "hits": r.get("sync_hits", 0), "texte": texte})
+                     "conf": _confirme(r, rms, texte), "hits": r.get("sync_hits", 0), "texte": texte})
     confirmes = sorted([c for c in cand if c["conf"]],
                        key=lambda c: (c["rms"] >= VOIX_RMS_MIN, c["hits"]), reverse=True)
     gagnant = confirmes[0] if confirmes else (max(cand, key=lambda c: c["hits"]) if cand else None)
