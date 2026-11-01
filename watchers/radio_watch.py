@@ -42,6 +42,7 @@ import meteo_locale
 import mesure_antenne
 import ignores  # cibles mises de cote par la commande "ignorer" (2026-10-22)
 import donnees_prise  # AIS, EAS : Dire Wolf sur la prise unique (2026-11-01)
+import preuve_voix  # rythme syllabique, deuxieme preuve de voix (2026-11-01)
 import maintien  # tenir une ecoute selon l'interet ; "zapper" (2026-10-22)
 import ctcss  # tonalite d'acces des relais, retrouvee dans le son capte (2026-10-23)
 import prise_unique  # un seul rtl_fm, tous les decodeurs en meme temps (2026-10-25)
@@ -2350,10 +2351,15 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
     # tampon et on surveille ATTENTE_RAFALE_SEC de plus, le temps d'une reponse.
     voix_fenetres, voix_vue_a = 0, None
     voix_min = int(MIN_VOIX_OUVERTURE_SEC * 1000 / ANALYSIS_WINDOW_MS)
+    # Deuxieme preuve (2026-11-01, lib/preuve_voix) : le rythme syllabique du son
+    # depuis le debut de la voix reconnue ; RNNoise seul se laissait tromper par
+    # des sons tonals. On tamponne au moins preuve_voix.DUREE_MIN_SEC pour juger.
+    debut_voix, refus_dit = 0, False
     start = time.time()
     try:
         while time.time() - start < max_sec or (
-                voix_vue_a is not None and time.time() - voix_vue_a < ATTENTE_RAFALE_SEC):
+                voix_vue_a is not None and time.time() - voix_vue_a < ATTENTE_RAFALE_SEC
+                and time.time() - start < preuve_voix.PRE_ECOUTE_PLAFOND_SEC):
             if analysed < len(prebuffer):
                 chunk = prebuffer[analysed]
             else:
@@ -2381,10 +2387,7 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
             if voix_vue_a is not None and is_signal:
                 voix_fenetres += 1
                 voix_vue_a = time.time()   # chaque morceau de voix prolonge la surveillance
-                if voix_fenetres >= voix_min:
-                    print(f"[radio_watch] pre-ecoute : assez de voix en {time.time() - start:.1f} s, on ouvre")
-                    return True, decoded, b"".join(filtered_all)
-            elif consecutive >= MIN_CONSECUTIVE_SIGNAL_WINDOWS:
+            elif voix_vue_a is None and consecutive >= MIN_CONSECUTIVE_SIGNAL_WINDOWS:
                 # Ecremage (2026-10-27) : avant d'ouvrir, verifier que la rafale
                 # qui declenche n'est pas un parasite connu du canal. Si c'en est
                 # un, on NE confirme PAS -- on ecarte ce qui a ete analyse (pas
@@ -2408,8 +2411,19 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
                 print(f"[radio_watch] pre-ecoute : voix reconnue en {time.time() - start:.1f} s "
                       f"(prob {smoothed_prob:.2f})")
                 voix_fenetres, voix_vue_a = consecutive, time.time()
-                if voix_fenetres >= voix_min:
+                debut_voix = max(0, len(filtered_all) - consecutive)
+            if voix_vue_a is not None and voix_fenetres >= voix_min:
+                verdict, mesure = preuve_voix.est_voix(b"".join(filtered_all[debut_voix:]), sample_rate)
+                if verdict:
+                    print(f"[radio_watch] pre-ecoute : voix prouvee en {time.time() - start:.1f} s "
+                          f"(rythme syllabique {mesure:.2f}), on ouvre")
                     return True, decoded, b"".join(filtered_all)
+                if verdict is False and not refus_dit:
+                    refus_dit = True
+                    print(f"[radio_watch] pre-ecoute {freq_hz / 1e6:.4f} MHz : RNNoise dit voix mais rythme "
+                          f"syllabique {mesure:.2f} (< {preuve_voix.SEUIL}) : pas de la parole, on n'ouvre pas")
+                if verdict is False and (len(filtered_all) - debut_voix) * ANALYSIS_WINDOW_MS >= preuve_voix.DUREE_REFUS_SEC * 1000:
+                    break   # assez de son pour trancher : pas de la parole
             if any(_is_meaningful_decoded_message(m) for m in decoded):
                 return True, decoded, b"".join(filtered_all)
     finally:
@@ -3224,8 +3238,10 @@ def _juger_raffiner_fm(wav_path, target, freq_hz, mode):
         _rnnoise_destroy(rn)
     voix_sec = voix_fenetres * ANALYSIS_WINDOW_MS / 1000
     vu = suite_vue and voix_sec >= MIN_VOIX_OUVERTURE_SEC and voix_fenetres >= VOIX_PART_MIN * max(1, fenetres)
-    print(f"[radio_watch] juge FM delegue : {voix_sec:.1f} s de voix sur {fenetres * ANALYSIS_WINDOW_MS / 1000:.0f} s "
-          f"({'gardee' if vu else 'ecartee'})")
+    rythme_ok, rythme = preuve_voix.est_voix(b"".join(nettoye), taux) if vu else (None, None)
+    vu = vu and bool(rythme_ok)
+    print(f"[radio_watch] juge FM delegue : {voix_sec:.1f} s de voix sur {fenetres * ANALYSIS_WINDOW_MS / 1000:.0f} s, "
+          f"rythme syllabique {rythme if rythme is None else round(rythme, 2)} ({'gardee' if vu else 'ecartee'})")
     return vu, b"".join(nettoye), taux
 
 

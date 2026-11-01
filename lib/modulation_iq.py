@@ -24,7 +24,8 @@ TAUX = 240_000                # plage native du dongle, assez large pour la FM l
 DECALAGE_HZ = 60_000          # on accorde a cote de la cible : jamais sur le pic DC du dongle
 DUREE_SEC = 0.5
 NFFT = 4096
-ENVELOPPE_FM_MAX = 0.20       # ecart-type / moyenne de l'enveloppe (bruit pur ~0,52 ; DMR reel 0,10 ; GSM 0,25)
+ENVELOPPE_FM_MAX = 0.15       # ecart-type / moyenne de l'enveloppe (bruit pur ~0,52 ; DMR reel 0,07-0,10 ;
+                              # GSM 0,25 ; un signal douteux a 1353 MHz passait a 0,20)
 PORTEUSE_MIN_DB = 10.0        # raie centrale au-dessus des bandes laterales
 ASYMETRIE_BLU_DB = 8.0
 NIVEAU_BLU_MIN_DB = 10.0      # la bande occupee doit depasser le bruit voisin (une raie parasite seule ne suffit pas)
