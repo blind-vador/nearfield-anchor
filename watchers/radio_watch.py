@@ -1103,7 +1103,7 @@ def _dmr_ecoute(freq, dwell_sec=20):
     # Meme habillage qu'une capture du balayage (_handle_candidate) : verrou
     # audio, session du journal radio, son de fin, empreinte de la capture.
     lock = audio_lock.acquire()
-    log_session = radio_log.RadioLogSession(label)
+    log_session = radio_log.RadioLogSession(label, exiger_contenu=True)
     sound_player.set_recording_session(log_session)
     saved = False
     try:
@@ -2591,7 +2591,7 @@ def _annonce_tetra(freq_hz, res, news=None):
     identite = (r.get("mcc"), r.get("mnc"), r.get("la"))
     reseau_change = identite != _tetra_dernier_reseau
     lock = audio_lock.acquire()
-    log_session = radio_log.RadioLogSession(dire("tetra.libelle"))
+    log_session = radio_log.RadioLogSession(dire("tetra.libelle"), exiger_contenu=True)
     sound_player.set_recording_session(log_session)
     saved = False
     try:
@@ -2603,7 +2603,7 @@ def _annonce_tetra(freq_hz, res, news=None):
             # Par l'arbitre (play_sound_effect) : la voix s'attenue sous une
             # source plus prioritaire et est enregistree dans la prise du
             # ticket courant -- plus d'aplay brut a plein volume.
-            play_sound_effect(voix, timeout_sec=60, label="radio_watch")
+            play_sound_effect(voix, timeout_sec=60, label="radio_watch", contenu=True)
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
             path = log_session.finalize()
         else:
@@ -3173,6 +3173,7 @@ def _ecoute_prise(prise, freq, band_label, target, prelisten_max=None):
 # on rend la main a la demod locale.
 NUMERIQUE_SONDE_SEC = 14          # sonde de base d'une fenetre deleguee (= son poids pour offload)
 NUMERIQUE_SUIVI_MAX_SEC = 90      # plafond tant que de la voix numerique arrive (suivi d'appel)
+VOIX_PART_MIN = 0.10              # part minimale de voix dans l'audio FM rendu par la compagne
 NUMERIQUE_GAIN = 32               # gain du dongle servi (verrou local Saint-Etienne, cf tetra.GAIN_DEFAUT)
 
 
@@ -3200,6 +3201,12 @@ def _juger_raffiner_fm(wav_path, target, freq_hz, mode):
     nettoye = []
     consecutifs = 0
     vu = False
+    # Preuve de voix (2026-11-01) : 3 fenetres d'affilee n'importe ou dans 90 s
+    # d'audio ouvraient sur du bruit (AM d'aviation demodulee en FM, GSM). Meme
+    # exigence qu'en local -- MIN_VOIX_OUVERTURE_SEC de voix, dont une suite de
+    # MIN_CONSECUTIVE_SIGNAL_WINDOWS -- et au moins VOIX_PART_MIN de l'audio.
+    voix_fenetres = fenetres = 0
+    suite_vue = False
     try:
         for i in range(0, len(brut), pas):
             chunk = brut[i:i + pas]
@@ -3210,10 +3217,15 @@ def _juger_raffiner_fm(wav_path, target, freq_hz, mode):
             is_signal, _, resample_state, smoothed_prob = _chunk_is_signal(
                 filtre, taux, rn, resample_state, smoothed_prob)
             consecutifs = consecutifs + 1 if is_signal else 0
-            if consecutifs >= MIN_CONSECUTIVE_SIGNAL_WINDOWS:
-                vu = True
+            fenetres += 1
+            voix_fenetres += bool(is_signal)
+            suite_vue = suite_vue or consecutifs >= MIN_CONSECUTIVE_SIGNAL_WINDOWS
     finally:
         _rnnoise_destroy(rn)
+    voix_sec = voix_fenetres * ANALYSIS_WINDOW_MS / 1000
+    vu = suite_vue and voix_sec >= MIN_VOIX_OUVERTURE_SEC and voix_fenetres >= VOIX_PART_MIN * max(1, fenetres)
+    print(f"[radio_watch] juge FM delegue : {voix_sec:.1f} s de voix sur {fenetres * ANALYSIS_WINDOW_MS / 1000:.0f} s "
+          f"({'gardee' if vu else 'ecartee'})")
     return vu, b"".join(nettoye), taux
 
 
@@ -3238,7 +3250,7 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
                 parts += morceaux.whole(band_label + ".")
             morceaux.say(DMR_VOCAL_SOUND, parts, label="radio_watch")
             play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
-            play_sound_effect(voix, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch")
+            play_sound_effect(voix, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch", contenu=True)
             play_sound_effect(FREQ_OVER_SOUND, label="radio_watch")
             path = log_session.finalize()
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
@@ -3296,7 +3308,7 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
         # annonce de l'origine, puis shim d'ouverture, audio, son de fin).
         speak_with_lead_sound(INCOMING_SOUND, band_label, label="radio_watch", repetitive=True)
         play_sound_effect(FREQ_OPEN_SOUND, label="radio_watch")
-        play_sound_effect(propre_wav, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch")
+        play_sound_effect(propre_wav, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch", contenu=True)
         play_sound_effect(_son_fin(freq), label="radio_watch")
         path = log_session.finalize()
         noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
@@ -3400,35 +3412,48 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
-# Second regard (2026-11-01, doctrine : pas de mur logique) : le "mode" d'une
-# bande n'est qu'une PREMIERE HYPOTHESE. Un candidat qu'elle n'a pas su lire
-# repasse dans chacune des autres modulations -- la FM etroite emmene avec elle
-# tous les decodeurs numeriques et de donnees (prise unique), l'AM et la BLU
-# leurs propres voix et multimon-ng. Avant, l'AM (CB, aviation, 225-400 MHz,
-# 10 m) ne passait JAMAIS devant dsd-fme ni multimon, et la FM jamais en AM.
-# Le signal vient d'etre vu au balayage : la pre-ecoute de ces passes est
-# raccourcie (SECOND_REGARD_PRELISTEN_SEC). Seule la derniere passe consigne le
-# rejet (journal des rejets, empreinte de bruit, piste TETRA).
-# FM large en dernier (2026-11-01) : micros HF et liaisons de spectacle (PMSE,
-# 470-694 et 174-216 MHz) emettent en FM large -- demodules en FM etroite, ils
-# sortaient deformes ou etaient rejetes.
+# Choix de la modulation sur preuve (2026-11-01, remplace le second regard a
+# l'aveugle du meme jour). Le "mode" d'une bande n'est qu'une PREMIERE
+# HYPOTHESE ; on regarde d'abord le signal lui-meme (IQ brut, lib/modulation_iq :
+# enveloppe, frequence instantanee, porteuse, spectre) et on ne retient que les
+# modulations dont il porte la signature -- sans regle par frequence (doctrine).
+# Signal trop faible ou ambigu : seule la premiere hypothese est tentee. Avant,
+# essayer toutes les modulations ouvrait de l'AM d'aviation en FM etroite (bruit
+# mal demodule, juge "voix" ; des minutes au journal, signale par l'utilisateur).
+# La FM etroite emmene avec elle tous les decodeurs numeriques et de donnees.
 MODULATIONS = ["nfm", "am", "usb", "lsb", "wfm"]
 SECOND_REGARD_PRELISTEN_SEC = 3.0
+_derniere_preuve = {"freq": None, "raison": None, "mesures": None}
+
+
+def _modulations_prouvees(freq, mode):
+    """Modulations a essayer, dans l'ordre : celles que le signal prouve (la
+    premiere hypothese d'abord si elle en fait partie), sinon la seule premiere
+    hypothese."""
+    try:
+        import modulation_iq
+        prouvees, raison, mesures = modulation_iq.prouver(freq)
+    except Exception as exc:
+        prouvees, raison, mesures = [], f"preuve impossible ({exc!r})", None
+    _derniere_preuve.update(freq=freq, raison=raison, mesures=mesures)
+    if not prouvees:
+        print(f"[radio_watch] {freq / 1e6:.4f} MHz : pas de preuve de modulation ({raison}), {mode} seul")
+        return [mode]
+    ordre = sorted(prouvees, key=lambda m: m != mode)
+    print(f"[radio_watch] {freq / 1e6:.4f} MHz : modulation prouvee {', '.join(ordre)} ({raison})")
+    return ordre
 
 
 def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     if ignores.frequence_ignoree(freq):
         print(f"[radio_watch] {freq / 1e6:.4f} MHz ignoree (commande ignorer), on passe")
         return False
-    autres = [m for m in MODULATIONS if m != mode]
-    if _ecoute_candidat(freq, mode, band_label, target, level_db, dernier=not autres):
-        return True
-    for i, autre in enumerate(autres):
-        if _lock_pending():   # la console demande la main
+    ordre = _modulations_prouvees(freq, mode)
+    for i, m in enumerate(ordre):
+        if i and _lock_pending():   # la console demande la main
             return False
-        print(f"[radio_watch] {freq / 1e6:.4f} MHz : rien en {mode}, second regard en {autre}")
-        if _ecoute_candidat(freq, autre, band_label, target, level_db, dernier=i == len(autres) - 1,
-                            prelisten_max=SECOND_REGARD_PRELISTEN_SEC):
+        if _ecoute_candidat(freq, m, band_label, target, level_db, dernier=i == len(ordre) - 1,
+                            prelisten_max=SECOND_REGARD_PRELISTEN_SEC if i else None):
             return True
     return False
 
@@ -3446,7 +3471,7 @@ def _ecoute_candidat(freq, mode, band_label, target=None, level_db=None, dernier
     # capte y est ajoute explicitement dans try_digital_voice_decode()/
     # stream_until_quiet(). Sauvegardee seulement si un vrai signal a ete
     # entendu -- un candidat ecarte comme bruit n'est pas archive.
-    log_session = radio_log.RadioLogSession(band_label)
+    log_session = radio_log.RadioLogSession(band_label, exiger_contenu=True)
     sound_player.set_recording_session(log_session)
     saved = False
     # Ce qu'on entend maintenant : cible de "verrouille" pendant l'ecoute.
@@ -3500,6 +3525,8 @@ def _ecoute_candidat(freq, mode, band_label, target=None, level_db=None, dernier
             path = log_session.finalize()
             _save_raw(path)
             metrics = dict(_last_stream_metrics, niveau_db=level_db)
+            if _derniere_preuve["freq"] == freq:   # pourquoi cette modulation (lib/modulation_iq)
+                metrics["preuve_modulation"] = _derniere_preuve["raison"]
             try:  # relais connu : entendu, et confirme si sa tonalite y est (2026-10-23)
                 verdict = relais.note_capture(freq, metrics.get("ctcss_hz"))
                 if verdict:
@@ -3538,7 +3565,7 @@ def _ecoute_candidat(freq, mode, band_label, target=None, level_db=None, dernier
         for extra in (decodeurs.extra_modes(freq) if mode == "nfm" and prise is None else []):
             # Ecarte comme voix : peut-etre un mode numerique que -fa ne tente pas
             # (avec la prise unique, ils ont deja ecoute en meme temps que la FM).
-            log_session = radio_log.RadioLogSession(band_label)
+            log_session = radio_log.RadioLogSession(band_label, exiger_contenu=True)
             sound_player.set_recording_session(log_session)
             if try_digital_voice_decode(freq, extra[0], band_label, target=target) \
                     and _reception_a_presenter(extra[1], try_digital_voice_decode.last_muted,

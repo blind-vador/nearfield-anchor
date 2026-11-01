@@ -70,24 +70,31 @@ class RadioLogSession:
     MP3 au moment de finalize(). discard() efface tout sans rien
     sauvegarder (candidat ecarte comme bruit, pas un vrai signal)."""
 
-    def __init__(self, label):
+    def __init__(self, label, exiger_contenu=False):
         self.label = label
         self.segments = []
+        # Prises du scanner (2026-11-01) : sans aucun son capte (habillage et
+        # annonces seuls), la prise n'est pas gardee -- plus d'entrees vides au
+        # journal, meme si un chemin oublie de la jeter.
+        self.exiger_contenu = exiger_contenu
+        self.contenu = False
         self._tmpdir = tempfile.mkdtemp(prefix="radio_log_")
 
-    def add_audio_file(self, path):
+    def add_audio_file(self, path, contenu=False):
         """Convertit un fichier audio existant (chime mp3, annonce TTS
-        mp3...) en segment WAV normalise et l'ajoute a la sequence."""
+        mp3...) en segment WAV normalise et l'ajoute a la sequence. contenu :
+        son capte (voix rendue par une compagne...), pas un habillage."""
         idx = len(self.segments)
         out_path = os.path.join(self._tmpdir, f"{idx:03d}.wav")
         try:
             result = subprocess.run(
                 ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
                  "-i", path, "-ar", str(LOG_SAMPLE_RATE), "-ac", "1", out_path],
-                capture_output=True, timeout=15,
+                capture_output=True, timeout=60,
             )
             if result.returncode == 0 and os.path.getsize(out_path) > 0:
                 self.segments.append(out_path)
+                self.contenu = self.contenu or contenu
         except Exception as exc:
             print(f"[radio_log] segment ignore ({path}) : {exc}")
 
@@ -111,6 +118,7 @@ class RadioLogSession:
             )
             if result.returncode == 0 and os.path.getsize(out_path) > 0:
                 self.segments.append(out_path)
+                self.contenu = True
         except Exception as exc:
             print(f"[radio_log] segment PCM ignore : {exc}")
         finally:
@@ -127,6 +135,9 @@ class RadioLogSession:
         le dossier temporaire dans tous les cas."""
         try:
             if not self.segments:
+                return None
+            if self.exiger_contenu and not self.contenu:
+                print(f"[radio_log] prise sans son capte (habillage seul), non gardee : {self.label}")
                 return None
             out_dir = os.path.join(RADIO_LOG_DIR, subdir) if subdir else RADIO_LOG_DIR
             os.makedirs(out_dir, exist_ok=True)

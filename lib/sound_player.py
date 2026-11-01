@@ -111,7 +111,7 @@ def play_lead_then(lead_path, then, label="sound_player", reverb=False, timeout_
 
 
 def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, volume=1.0, on_start=None,
-                      canal=None):
+                      canal=None, contenu=False):
     """Joue un court effet sonore (mp3) sur le peripherique audio partage,
     de maniere bloquante. Module commun a radio_watch.py, adsb_watch.py et
     meteo_watch.py -- une seule implementation, evite la divergence entre
@@ -122,7 +122,13 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
     (ou True) = voix/jingles comme sortis d'un haut-parleur de quai ; "hall" =
     sons d'ambiance poses dans la salle, pleine bande ; False = aucun effet.
     Le journal garde malgre tout la source propre (non traitee). Si l'effet
-    echoue, on joue le son d'origine, jamais de silence."""
+    echoue, on joue le son d'origine, jamais de silence.
+
+    contenu (2026-11-01) : le fichier est du son CAPTE (voix rendue par une
+    machine compagne...), pas un habillage -- il compte comme contenu de la
+    prise du journal (radio_log, exiger_contenu). Coupe a timeout_sec, il est
+    quand meme garde au journal en entier (avant : la lecture coupee levait une
+    erreur et le flux manquait, prises "annonce + fin" sans rien entre)."""
     try:  # evenement regle sur "rien" (commande "sons", lib/sons.py, 2026-10-23)
         import sons
         if sons.mode_chemin(path) == "rien":
@@ -138,7 +144,7 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
         # (2026-10-03 : des prises sans habillage dans le journal).
         session = get_recording_session()
         if session is not None:
-            session.add_audio_file(path)
+            session.add_audio_file(path, contenu=contenu)
         return
     reverb_tmp = None
     if reverb:
@@ -147,6 +153,7 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
         reverb_tmp = audio_effets.reverb_gare(path, profile)
     to_play = reverb_tmp or path  # repli sur le son sec si la reverb a echoue
     decoder = player = None
+    garder = False
     try:
         decoder = subprocess.Popen(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", to_play,
@@ -167,16 +174,22 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
             if volume != 1.0:  # doublon d'ambiance joue plus bas (sncf_watch)
                 data = audioop.mul(data, 2, volume)
             player.stdin.write(data)
+        coupe = time.time() >= deadline
+        if coupe and decoder.poll() is None:
+            decoder.kill()          # lecture plafonnee : le decodeur attendait encore son lecteur
         player.stdin.close()
         player.wait(timeout=max(1.0, deadline - time.time() + 1))
         decoder.wait(timeout=2)
-        if decoder.returncode != 0:
+        if decoder.returncode != 0 and not coupe:
             err = decoder.stderr.read().decode(errors="replace").strip()[-300:]
             print(f"[{label}] effet sonore echoue ({path}): {err}")
         else:
-            session = get_recording_session()
-            if session is not None:
-                session.add_audio_file(path)
+            garder = True
+            if coupe:
+                print(f"[{label}] lecture coupee a {timeout_sec} s ({path}), gardee entiere au journal")
+    except subprocess.TimeoutExpired as exc:
+        garder = True               # le son existe : le journal le garde meme si la lecture a cale
+        print(f"[{label}] lecture interrompue ({path}): {exc}")
     except Exception as exc:
         print(f"[{label}] effet sonore indisponible ({path}): {exc}")
     finally:
@@ -189,3 +202,7 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
                 os.remove(reverb_tmp)
             except OSError:
                 pass
+    if garder:
+        session = get_recording_session()
+        if session is not None:
+            session.add_audio_file(path, contenu=contenu)

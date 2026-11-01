@@ -478,7 +478,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
     # principe, mais ici tout le cycle (annonce+relais+fin) tient dans
     # cette seule fonction, qui retourne toujours True (un appel n'arrive
     # que si un paquet reel est deja arrive), donc toujours sauvegardee.
-    log_session = radio_log.RadioLogSession(name_spoken)
+    log_session = radio_log.RadioLogSession(name_spoken, exiger_contenu=True)
     sound_player.set_recording_session(log_session)
     try:
         # Capture demarree AVANT l'annonce (voir _udp_reader) -- tout ce qui
