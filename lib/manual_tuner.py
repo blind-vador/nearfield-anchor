@@ -212,9 +212,8 @@ class ManualStream:
         # Station DMR connue : dsd-fme en DMR seul (-fs), qui accroche bien
         # mieux que l'auto-detection (-fa) sujette aux fausses synchros M17.
         flags = ["-fs"] if numerique else ["-fa"]
-        extra = decodeurs.extra_mode(freq_hz)
-        if extra and not numerique:
-            flags.append(extra[0])
+        if not numerique:  # tous les modes, partout (2026-11-01, plus de mur par plage)
+            flags += [f for f, _ in decodeurs.extra_modes(freq_hz)]
         try:
             server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)

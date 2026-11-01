@@ -30,13 +30,16 @@ LEVEL_NAMES = Etiquettes("interet.niveau", {l: l for l in LEVELS}, "niveau d'int
 CATEGORIES = {
     "talkies": (["pmr446", "lpd433"], "normal"),
     "aviation": (["aviation_atis", "aviation_atis_st_etienne", "aviation_st_etienne", "aviation_tour", "aviation_sol", "aviation_approche",
-                  "aviation", "milair", "acars", "vdl2", "adsb"], "normal"),
+                  "aviation", "milair", "radionav", "acars", "vdl2", "adsb"], "normal"),
     "radioamateurs": (["radioamateur_", "relais_", "aprs", "lora"], "normal"),
-    "cb": (["cb_am"], "normal"),
+    "cb": (["cb_am", "cb_haute", "hf_24"], "normal"),
     "meteo": (["capteurs", "sondes"], "normal"),
     "secours": (["pagers", "balises"], "normal"),
     "marine": (["marine_vhf"], "normal"),
-    "professionnels": (["uhf_business", "vhf_business", "vhf_80", "uhf_410", "vhf_low", "pmse", "dmr"], "normal"),
+    "professionnels": (["uhf_business", "vhf_business", "vhf_80", "uhf_410", "vhf_low", "pmse", "dmr",
+                        "vhf_137", "vhf_146", "vhf_haute", "uhf_400", "uhf_700", "uhf_900"], "normal"),
+    # Bandes hautes (2026-11-01) : 868 MHz et bande L, captables selon l'antenne.
+    "bandes_hautes": (["srd_868", "bande_l_"], "normal"),
     "fm": (["fm_diffusion"], "faible"),   # bandes de verification : du trafic tout le temps
     "dab": (["dab"], "normal"),
     "satellites": (["satellites"], "normal"),  # passages radioamateurs (ISS...) ; "désactivé" les saute
@@ -53,6 +56,7 @@ CATEGORY_NAMES = Etiquettes("interet.categorie", {
     "fm": "radio FM commerciale",
     "dab": "radio numérique DAB+ : textes et images des stations",
     "satellites": "passages de satellites radioamateurs : ISS et cubesats",
+    "bandes_hautes": "bandes hautes : 868 mégahertz et bande L, selon l'antenne",
 }, "catégorie d'écoute du scanner, dans la commande intérêts")
 CACHE_SEC = 30
 _cache = {"t": 0.0, "niveaux": None}

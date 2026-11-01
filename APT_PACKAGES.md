@@ -13,7 +13,8 @@ sudo apt-get install -y \
     build-essential \
     cmake \
     git \
-    python3-pip
+    python3-pip \
+    direwolf
 ```
 
 - `espeak` : synthèse vocale locale de secours (voir `lib/speak.py`), toujours
@@ -23,6 +24,9 @@ sudo apt-get install -y \
 - `rtl-sdr` + `librtlsdr-dev` : outils et bibliothèque de développement pour
   le dongle RTL-SDR (rtl_power, rtl_fm, et compilation des outils ci-dessous).
 - `libjansson-dev` : sortie JSON pour `libacars`/`acarsdec` (voir plus bas).
+- `direwolf` : décodeur de données branché sur la prise unique
+  (`lib/donnees_prise.py`, config `config/direwolf_donnees.conf`) : AIS des
+  navires (9600 bauds) et alertes EAS/SAME, que multimon-ng ne décode pas.
 - `build-essential`, `cmake`, `git` : nécessaires pour compiler les
   bibliothèques ci-dessous depuis les sources (aucune n'est empaquetée
   Debian/Raspbian).

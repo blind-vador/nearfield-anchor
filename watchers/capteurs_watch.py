@@ -33,7 +33,14 @@ import voitures
 from sound_paths import RADIO_SCANER_DIR
 from phrases import Etiquettes, dire
 
-FREQUENCIES = ["433.92M", "868.3M"]
+# 868,95 MHz (2026-11-01) : compteurs d'eau/chaleur/gaz en Wireless M-Bus
+# mode C/T (le plus courant en Europe, trames en clair pour beaucoup), decode
+# par rtl_433 a 1,2 MHz d'echantillonnage. 315/345/915 MHz : capteurs, pneus et
+# alarmes des appareils nord-americains -- le scanner est distribue (doctrine :
+# pas de mur, ce qui est rare ici ne l'est pas ailleurs).
+FREQUENCIES = ["433.92M", "868.3M", "868.95M", "315M", "345M", "915M"]
+SAMPLE_RATES = {"868.95M": "1200000"}   # sinon le defaut de rtl_433 (250 kHz)
+TPMS_FREQUENCIES = ("433.92M", "315M")  # pneus : Europe, Amerique du Nord
 SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
 import sons
 VOITURE_SOUND = sons.chemin("voiture", SOUND)  # son propre (2026-10-23, sons.py)
@@ -307,7 +314,7 @@ def _process(event, freq, tpms, at):
         return True
     if first:
         what = KIND_NAMES.get(kind) or dire("capteur.type_inconnu")
-        freq_txt = "433" if freq.startswith("433") else "868"
+        freq_txt = f"{float(freq.rstrip('M')):g}".replace(".", ",")
         number = dire("capteur.numero", id=event['id']) if event.get("id") is not None else ""
         plain = (dire("capteur.nouveau_sans_fil_megahertz", what=what, freq_txt=freq_txt, v1=_name(event), number=number)
                  + (f", {values}" if values else "") + ".")
@@ -476,7 +483,7 @@ def _reader(proc, events):
 
 def _cars(tpms, freq, listened_sec):
     """Apprentissage et annonces des vehicules (pneus) apres une passe."""
-    if not freq.startswith("433"):
+    if freq not in TPMS_FREQUENCIES:
         return False
     try:
         voitures.record_listening(listened_sec)
@@ -556,7 +563,8 @@ def scan_window(dwell_sec=30):
     freq = FREQUENCIES[_next % len(FREQUENCIES)]
     _next += 1
     try:
-        proc = subprocess.Popen(["rtl_433", "-d", "0", "-f", freq, "-F", "json", "-M", "level",
+        taux = ["-s", SAMPLE_RATES[freq]] if freq in SAMPLE_RATES else []
+        proc = subprocess.Popen(["rtl_433", "-d", "0", "-f", freq] + taux + ["-F", "json", "-M", "level",
                                  "-C", "si", "-T", str(int(dwell_sec))],
                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except FileNotFoundError:

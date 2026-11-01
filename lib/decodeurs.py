@@ -20,27 +20,30 @@ DSD_MIN_CLEAN_RATIO = 0.25
 DSD_STEREO_DATAGRAM = 640   # 16 bits, deux slots TDMA
 DSD_MONO_DATAGRAM = 320
 DSD_VOICE_RATE = 8000
-# Modes que l'auto-detection (-fa) ne tente pas, essayes selon la bande.
+# Modes que l'auto-detection (-fa) ne tente pas. PARTOUT (2026-11-01, doctrine :
+# pas de mur logique) : ils etaient bornes par plage (dPMR au 446 et aux bandes
+# pro, M17 aux bandes amateur, NXDN aux bandes pro) -- un dPMR sur 52-85 MHz ou
+# un NXDN sur 406-430 n'etait jamais tente. Le format (bas, haut, option, nom)
+# reste pour les appelants ; les bornes couvrent tout ce qu'un dongle accorde.
+_PARTOUT = (0, 10_000_000_000)
 DSD_EXTRA_MODES = [
-    (446_000_000, 446_200_000, "-fm", "dPMR"),
-    (144_000_000, 146_000_000, "-fz", "M17"),
-    (430_000_000, 440_000_000, "-fz", "M17"),
-    # Bandes professionnelles (2026-10-24 : bribes de voix numerique non
-    # decodees vers 460 MHz) : NXDN etroit, dPMR, puis NXDN large, essayes
-    # lun apres lautre quand la voix FM est ecartee (extra_modes).
-    (148_000_000, 174_000_000, "-fi", "NXDN"),
-    (148_000_000, 174_000_000, "-fm", "dPMR"),
-    (148_000_000, 174_000_000, "-fn", "NXDN"),
-    (440_000_000, 470_000_000, "-fi", "NXDN"),
-    (440_000_000, 470_000_000, "-fm", "dPMR"),
-    (440_000_000, 470_000_000, "-fn", "NXDN"),
+    (*_PARTOUT, "-fm", "dPMR"),
+    (*_PARTOUT, "-fz", "M17"),
+    (*_PARTOUT, "-fi", "NXDN"),
+    (*_PARTOUT, "-fn", "NXDN"),
 ]
 DSD_MONO_MODES = {"-fm", "-fz", "-fi", "-fn"}
+# Tous les demodulateurs de donnees de multimon-ng (2026-11-01, doctrine) : on
+# avait ecarte FLEX_NEXT, EAS, UFSK1200, CLIPFSK, FMSFSK, AFSK2400*, HAPN4800 et
+# X10 comme "rares ici". Le scanner est distribue : ce qui est rare a
+# Saint-Etienne ne l'est pas ailleurs. Seuls DUMPCSV/SCOPE (outils de mise au
+# point, pas des decodeurs) restent dehors.
 MULTIMON_ARGS = [
-    "-a", "AFSK1200",
+    "-a", "AFSK1200", "-a", "AFSK2400", "-a", "AFSK2400_2", "-a", "AFSK2400_3",
     "-a", "POCSAG512", "-a", "POCSAG1200", "-a", "POCSAG2400",
-    "-a", "FLEX",
-    "-a", "FSK9600",
+    "-a", "FLEX", "-a", "FLEX_NEXT",
+    "-a", "FSK9600", "-a", "HAPN4800",
+    "-a", "EAS", "-a", "UFSK1200", "-a", "CLIPFSK", "-a", "FMSFSK", "-a", "X10",
     "-a", "MORSE_CW",
     "-a", "DTMF",
     "-a", "EEA", "-a", "EIA", "-a", "CCIR",

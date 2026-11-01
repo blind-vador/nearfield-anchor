@@ -41,6 +41,7 @@ import relais
 import meteo_locale
 import mesure_antenne
 import ignores  # cibles mises de cote par la commande "ignorer" (2026-10-22)
+import donnees_prise  # AIS, EAS : Dire Wolf sur la prise unique (2026-11-01)
 import maintien  # tenir une ecoute selon l'interet ; "zapper" (2026-10-22)
 import ctcss  # tonalite d'acces des relais, retrouvee dans le son capte (2026-10-23)
 import prise_unique  # un seul rtl_fm, tous les decodeurs en meme temps (2026-10-25)
@@ -246,9 +247,8 @@ ENV_BONUS_MAX_C = 5.0
 # - EEA/EIA/CCIR/ZVEI1/ZVEI2/ZVEI3/DZVEI/PZVEI : signalisation selective a
 #   tons (normes francaise/europeennes, dispatch prive/securite -- pas les
 #   services d'urgence officiels, deja exclus car chiffres/ANTARES).
-# Ecartes : EAS (specifique USA), UFSK1200/CLIPFSK/FMSFSK/HAPN4800/AFSK2400_*
-# (rares/obscurs dans ce contexte), X10 (domotique/alarme -- rabbit hole
-# potentiellement invasif, pas ajoute sans demande explicite).
+# Depuis le 2026-11-01 : TOUS les demodulateurs de donnees (doctrine, scanner
+# distribue -- ce qui est rare ici ne l'est pas ailleurs), voir lib/decodeurs.py.
 MULTIMON_ARGS = decodeurs.MULTIMON_ARGS  # regles communes (lib/decodeurs.py)
 
 from sound_player import AUDIO_DEVICE, play_sound_effect
@@ -374,7 +374,7 @@ BANDS = [
      "low_hz": 28_000_000, "high_hz": 29_700_000, "step_hz": 25_000, "mode": "am",
      "margin_db": 8.3},
     {"name": "radioamateur_6m", "name_spoken": "radioamateur 6 mètres", "type": "sweep",
-     "low_hz": 50_000_000, "high_hz": 51_000_000, "step_hz": 12_500, "mode": "nfm",
+     "low_hz": 50_000_000, "high_hz": 52_000_000, "step_hz": 12_500, "mode": "nfm",  # 50-52 en France (51-52 manquait)
      "margin_db": 11.7},
     {"name": "radioamateur_2m", "name_spoken": "radioamateur 2 mètres", "type": "sweep",
      "low_hz": 144_000_000, "high_hz": 146_000_000, "step_hz": 12_500, "mode": "nfm",
@@ -421,7 +421,7 @@ BANDS = [
      # Trou entre la CB (jusqu'a 27.41 MHz) et le radioamateur 6m (50 MHz).
      # Historiquement dispatch taxi/forestier, en declin mais possibles
      # survivances locales.
-     "low_hz": 30_000_000, "high_hz": 50_000_000, "step_hz": 12_500, "mode": "nfm",
+     "low_hz": 29_700_000, "high_hz": 50_000_000, "step_hz": 12_500, "mode": "nfm",  # 29,7-30 manquait
      "margin_db": 11.4},
     {"name": "fm_diffusion", "name_spoken": "radio FM", "type": "sweep",
      # Plage legerement elargie (85-110 au lieu de 87.5-108 legal) pour
@@ -434,6 +434,54 @@ BANDS = [
      # Saint-Etienne (97.1 MHz) mesuree a 7.17 dB au-dessus du plancher local
      # -- 6 dB capte ce signal reel avec une petite marge de securite.
      "margin_db": 6.0},
+    # --- Trous combles (2026-11-01, doctrine : tout ce que le dongle accorde,
+    # ~24 a ~1766 MHz pour un R820T). Ce qui n'est pas captable avec une
+    # antenne donnee le sera avec une autre : le scanner est distribue. La
+    # "mode" n'est qu'une premiere hypothese (second regard, _handle_candidate) ;
+    # marges de depart non calibrees (10 dB), le bilan les ajustera. Les bandes
+    # tres larges sont coupees en morceaux de 280 MHz au plus (milair, 175 MHz, deja
+    # eprouve) pour garder un balayage rtl_power raisonnable (_delai_rtl_power).
+    {"name": "hf_24", "name_spoken": "HF 24 à 27 mégahertz", "type": "sweep",
+     # 12 m amateur, 11 m diffusion, bipeurs et telecommandes 26 MHz, bas de la CB
+     "low_hz": 24_000_000, "high_hz": 26_960_000, "step_hz": 10_000, "mode": "am", "margin_db": 10.0},
+    {"name": "cb_haute", "name_spoken": "CB haute", "type": "sweep",
+     # au-dessus des 40 canaux : CB etendue, "freeband" 27,41-28 MHz
+     "low_hz": 27_410_000, "high_hz": 28_000_000, "step_hz": 10_000, "mode": "am", "margin_db": 10.0},
+    {"name": "radionav", "name_spoken": "radionavigation 110 à 118 mégahertz", "type": "sweep",
+     # VOR/ILS (identifiants morse, ATIS de VOR en AM), GBAS (donnees)
+     "low_hz": 110_000_000, "high_hz": 118_000_000, "step_hz": 25_000, "mode": "am", "margin_db": 10.0},
+    {"name": "vhf_137", "name_spoken": "VHF 137 à 144 mégahertz", "type": "sweep",
+     # satellites meteo et Orbcomm (137-138), reseaux militaires/pro 138-144
+     "low_hz": 137_000_000, "high_hz": 144_000_000, "step_hz": 12_500, "mode": "nfm", "margin_db": 10.0},
+    {"name": "vhf_146", "name_spoken": "VHF 146 à 148 mégahertz", "type": "sweep",
+     "low_hz": 146_000_000, "high_hz": 148_000_000, "step_hz": 12_500, "mode": "nfm", "margin_db": 10.0},
+    {"name": "vhf_haute", "name_spoken": "VHF haute 174 à 225 mégahertz", "type": "sweep",
+     # bande III : DAB (aussi veille dab_watch), micros HF et liaisons PMSE
+     "low_hz": 174_000_000, "high_hz": 225_000_000, "step_hz": 25_000, "mode": "nfm", "margin_db": 10.0},
+    {"name": "uhf_400", "name_spoken": "UHF 400 à 406 mégahertz", "type": "sweep",
+     # radiosondes (aussi veille sondes_watch), balises, telemesures
+     "low_hz": 400_000_000, "high_hz": 406_100_000, "step_hz": 12_500, "mode": "nfm", "margin_db": 10.0},
+    {"name": "uhf_700", "name_spoken": "UHF 694 à 862 mégahertz", "type": "sweep",
+     # micros HF historiques, reseaux PPDR/LTE (chiffres : appris, pas ecoutes)
+     "low_hz": 694_000_000, "high_hz": 862_000_000, "step_hz": 25_000, "mode": "nfm", "margin_db": 10.0},
+    {"name": "srd_868", "name_spoken": "bande 868 mégahertz", "type": "sweep",
+     # SRD/ISM : capteurs, compteurs Wireless M-Bus, LoRa, alarmes, RFID ; TETRA civil
+     "low_hz": 862_000_000, "high_hz": 876_000_000, "step_hz": 12_500, "mode": "nfm", "margin_db": 10.0},
+    {"name": "uhf_900", "name_spoken": "UHF 876 à 960 mégahertz", "type": "sweep",
+     # GSM-R, GSM 900, TETRA civil 915-921 : surtout chiffre, appris tel quel
+     "low_hz": 876_000_000, "high_hz": 960_000_000, "step_hz": 25_000, "mode": "nfm", "margin_db": 10.0},
+    {"name": "bande_l_basse", "name_spoken": "bande L basse", "type": "sweep",
+     # DME/TACAN, transpondeurs (1030/1090, aussi adsb_watch), GNSS L5/L2
+     "low_hz": 960_000_000, "high_hz": 1_240_000_000, "step_hz": 25_000, "mode": "nfm", "margin_db": 10.0},
+    {"name": "bande_l_1300", "name_spoken": "bande L 1300 à 1525 mégahertz", "type": "sweep",
+     # radars, DAB bande L (1452-1492), telemesures
+     "low_hz": 1_300_000_000, "high_hz": 1_525_000_000, "step_hz": 25_000, "mode": "nfm", "margin_db": 10.0},
+    {"name": "bande_l_satellites", "name_spoken": "bande L satellites", "type": "sweep",
+     # Inmarsat (AERO, STD-C : messages en clair), GNSS L1, Iridium
+     "low_hz": 1_525_000_000, "high_hz": 1_660_000_000, "step_hz": 25_000, "mode": "nfm", "margin_db": 10.0},
+    {"name": "bande_l_meteo", "name_spoken": "bande L météo", "type": "sweep",
+     # satellites meteo HRPT/LRIT (1690-1710) ; plafond pratique du R820T
+     "low_hz": 1_660_000_000, "high_hz": 1_766_000_000, "step_hz": 25_000, "mode": "nfm", "margin_db": 10.0},
 ]
 # Note : le trafic radioamateur relaye par satellite (ISS, cubesats...) tombe dans les
 # memes plages 2m/70cm/23cm ci-dessus, pas besoin d'entree dediee.
@@ -709,6 +757,12 @@ def check_channels_relative(freqs, span_hz=25_000, margin_db=None):
             os.remove(tmp_path)
 
 
+def _delai_rtl_power(low_hz, high_hz):
+    """Delai d'un balayage rtl_power selon sa largeur (2026-11-01 : bandes jusqu'a
+    280 MHz ; 60 s fixes suffisaient tout juste aux 175 MHz de milair)."""
+    return 60 + (high_hz - low_hz) / 1e6 * 0.4
+
+
 def sweep_band_peak_relative(low_hz, high_hz, step_hz, margin_db=None):
     """Balaye une plage large, calcule le plancher de bruit local (mediane du
     balayage) et retourne (freq, db) du pic seulement s'il depasse
@@ -722,7 +776,7 @@ def sweep_band_peak_relative(low_hz, high_hz, step_hz, margin_db=None):
         band = f"{low_hz}:{high_hz}:{step_hz}"
         result = subprocess.run(
             ["rtl_power", "-f", band, "-i", "1", "-1", tmp_path],
-            capture_output=True, text=True, errors="replace", timeout=60,
+            capture_output=True, text=True, errors="replace", timeout=_delai_rtl_power(low_hz, high_hz),
         )
         global _rtl_power_failure_count
         if result.returncode != 0:
@@ -766,7 +820,7 @@ def sweep_band_peaks_relative(low_hz, high_hz, step_hz, margin_db=None, max_peak
         band = f"{low_hz}:{high_hz}:{step_hz}"
         result = subprocess.run(
             ["rtl_power", "-f", band, "-i", "1", "-1", tmp_path],
-            capture_output=True, text=True, errors="replace", timeout=60,
+            capture_output=True, text=True, errors="replace", timeout=_delai_rtl_power(low_hz, high_hz),
         )
         global _rtl_power_failure_count
         if result.returncode != 0:
@@ -1091,7 +1145,20 @@ def _dmr_ecoute(freq, dwell_sec=20):
 # Recherche DMR (touche R de l'exploration dmr, 2026-10-17) : balayage des
 # bandes professionnelles, puis courte sonde dsd-fme muette sur chaque pic
 # inconnu ; ce qui accroche en DMR entre au registre (et dans l'exploration).
-DMR_SEARCH_RANGES = [(440_000_000, 470_000_000), (148_000_000, 174_000_000)]
+# Toutes les plages balayees (2026-11-01, doctrine) et non plus deux bandes pro :
+# recherche manuelle, longue sur tout le spectre, mais annulable a la console.
+def _plages_balayees():
+    plages = sorted((b["low_hz"], b["high_hz"]) for b in BANDS if b["type"] == "sweep")
+    fusion = []
+    for bas, haut in plages:
+        if fusion and bas < fusion[-1][1]:   # chevauchement seulement : chaque bande garde son plancher
+            fusion[-1] = (fusion[-1][0], max(fusion[-1][1], haut))
+        else:
+            fusion.append((bas, haut))
+    return fusion
+
+
+DMR_SEARCH_RANGES = _plages_balayees()
 DMR_SEARCH_STEP_HZ = 6250
 DMR_SEARCH_MARGIN_DB = 10.0
 DMR_SEARCH_MAX_PEAKS = 10
@@ -1137,7 +1204,7 @@ def _dmr_search():
         os.close(fd)
         try:
             run = subprocess.run(["rtl_power", "-f", f"{low}:{high}:{DMR_SEARCH_STEP_HZ}", "-i", "1", "-1", path],
-                                 capture_output=True, timeout=90)
+                                 capture_output=True, timeout=_delai_rtl_power(low, high) + 30)
             all_db, bins = _read_csv_bins(path) if run.returncode == 0 else ([], [])
         except Exception as exc:
             print(f"[radio_watch] recherche DMR : balayage impossible ({exc!r})")
@@ -1753,7 +1820,8 @@ def _rtl_fm_reader(stream, out_queue, chunk_size):
         out_queue.put(None)
 
 
-def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None, prise=None, arbitre=None):
+def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None, prise=None, arbitre=None,
+                       prelisten_max=None):
     """Diffuse en direct sur les haut-parleurs tant qu'il y a un vrai signal
     (pas juste du bruit), coupe des que le canal redevient silencieux/bruite
     (avec un court debounce), plafonne a MAX_HOLD_SEC. Pour les canaux FM, tente
@@ -1848,7 +1916,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     multimon = None
     multimon_queue = None
     multimon_thread = None
-    if mode == "nfm":
+    if mode != "wfm":  # AM et BLU aussi (2026-11-01) : SELCAL, CW, tonalites en AM...
         try:
             multimon = subprocess.Popen(
                 ["multimon-ng"] + MULTIMON_ARGS,
@@ -1866,7 +1934,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     # son que si ca vaut la peine -- voix reconnue ou message decode --, puis
     # on joue tout ce qui a ete mis en attente (tant pis pour le temps reel).
     confirmed, decoded_early, pre_filtered = _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode,
-                                                        multimon, multimon_queue)
+                                                        multimon, multimon_queue, prelisten_max or PRELISTEN_MAX_SEC)
     if not confirmed:
         print(f"[radio_watch] pre-ecoute {mhz:.4f} MHz : rien qui vaille la peine, son jamais ouvert")
         _last_stream_fingerprint = (noise_signatures.fingerprint(pre_filtered, sample_rate, "s16le")
@@ -2129,7 +2197,8 @@ PRELISTEN_MAX_SEC = 6.0   # pre-ecoute silencieuse au plus ; voix reconnue = ouv
 ATTENTE_NUMERIQUE_SEC = 2.0  # prise unique : synchros vues, la voix FM attend que le numerique se confirme
 
 
-def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multimon, multimon_queue):
+def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multimon, multimon_queue,
+               max_sec=PRELISTEN_MAX_SEC):
     """Ecoute sans rien jouer : (ca vaut la peine ?, messages decodes, audio
     filtre). Vaut la peine : MIN_CONSECUTIVE_SIGNAL_WINDOWS fenetres de voix
     d'affilee (RNNoise, meme detecteur que pendant la diffusion) ou un message
@@ -2145,7 +2214,7 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
     voix_min = int(MIN_VOIX_OUVERTURE_SEC * 1000 / ANALYSIS_WINDOW_MS)
     start = time.time()
     try:
-        while time.time() - start < PRELISTEN_MAX_SEC or (
+        while time.time() - start < max_sec or (
                 voix_vue_a is not None and time.time() - voix_vue_a < ATTENTE_RAFALE_SEC):
             if analysed < len(prebuffer):
                 chunk = prebuffer[analysed]
@@ -2880,12 +2949,14 @@ def _ouvrir_prise(freq):
         return None
 
 
-def _ecoute_prise(prise, freq, band_label, target):
+def _ecoute_prise(prise, freq, band_label, target, prelisten_max=None):
     """Tous les decodeurs sur le meme flux, en meme temps (2026-10-25) : un
     dsd-fme par mode utile sur la bande (auto-detection + NXDN/dPMR/M17 selon
     decodeurs.extra_modes) et la voix FM, l'arbitre donnant la parole. Le son
-    brut de toute l'ecoute est garde une fois pour les juges. Rend (protocole
-    numerique entendu ou None, voix FM entendue)."""
+    brut de toute l'ecoute est garde une fois pour les juges, et Dire Wolf
+    (AIS, EAS : lib/donnees_prise.py) ecoute le meme flux. Rend (protocole
+    numerique entendu ou None, voix FM entendue) ; "données" comme protocole si
+    seules des trames de donnees ont ete decodees (annoncees, rien a ouvrir)."""
     arbitre = prise_unique.Arbitre()
     modes = list(dict.fromkeys(["-fa"] + [f for f, _ in decodeurs.extra_modes(freq)]))
     resultats = {}
@@ -2905,10 +2976,12 @@ def _ecoute_prise(prise, freq, band_label, target):
     fils = {m: threading.Thread(target=ecouter, args=(i, m), daemon=True) for i, m in enumerate(modes)}
     for f in fils.values():
         f.start()
+    donnees = donnees_prise.Ecoute(prise)
     print(f"[radio_watch] prise unique {freq / 1e6:.4f} MHz : FM + {' '.join(modes)} en meme temps")
     analogique = False
     try:
-        analogique = stream_until_quiet(freq, "nfm", band_label, target=target, prise=prise, arbitre=arbitre)
+        analogique = stream_until_quiet(freq, "nfm", band_label, target=target, prise=prise, arbitre=arbitre,
+                                        prelisten_max=prelisten_max)
         if not arbitre.numerique_gagne() and arbitre.numerique_en_vue():
             arbitre.attendre_numerique(ATTENTE_NUMERIQUE_SEC)  # un decodeur etait sur le point de se confirmer
         while True:  # le numerique a la parole : il finit de lui-meme au silence
@@ -2925,10 +2998,24 @@ def _ecoute_prise(prise, freq, band_label, target):
         for f in fils.values():
             f.join(timeout=5)
         arreter_brut()
+        donnees.arreter()
     gagnant = arbitre.gagnant if arbitre.numerique_gagne() else None
     protocol = resultats.get(gagnant) if gagnant else None
     if protocol == "SUIVANT":
         protocol = None
+    messages = donnees.messages()
+    if messages:
+        import veille_donnees as vd
+        for nom, texte in messages:
+            vd.archive("donnees_prise", {"freq_hz": int(freq), "mode": nom, "texte": texte, "bande": band_label})
+            vd.announce(dire("radio.message_donnees", nom=nom, msg=texte), DECODING_MORSE_SOUND,
+                        "message_donnees", "radio_watch")
+        if not protocol and not analogique:
+            # Des donnees seulement : apprises et dites, rien a ouvrir au journal
+            # audio (pas de ceremonie sans flux).
+            try_digital_voice_decode.last_muted = False
+            try_digital_voice_decode.last_had_audio = False
+            protocol = "données"
     muet = bool(protocol) and try_digital_voice_decode.last_muted
     _garder_brut(brut, freq, gagnant or "prise", band_label, arbitre.stats.get(gagnant) or {},
                  bool(protocol) and not muet, muet)
@@ -2993,7 +3080,9 @@ def _juger_raffiner_fm(wav_path, target, freq_hz, mode):
 def _presenter_distant(freq, mode, band_label, target, level_db, log_session, res):
     """Presente une fenetre demodulee a distance : voix NUMERIQUE en clair, ou
     audio FM, ou rien (appris). Meme habillage que la demod locale / _annonce_tetra.
-    Rend True si une vraie reception a ete presentee."""
+    Rend True si une vraie reception a ete presentee, "appris" si une porteuse
+    numerique a ete reconnue sans clair (pas besoin d'un second regard), sinon
+    False."""
     proto = res.get("protocole")
     machine = res.get("machine")
     meta = res.get("meta") or {}
@@ -3022,7 +3111,7 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
                                         {"niveau_db": level_db, "numerique": True, "offload": machine,
                                          "protocole": proto, "chiffre": bool(res.get("chiffre")), "dmr": meta})
         print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : {res.get('resume')} (appris, pas de clair)")
-        return False
+        return "appris"
     if res.get("digital_actif"):
         # Porteuse NUMERIQUE active (detectee au SIGNAL : synchro soutenue) mais
         # non decodee proprement cette fenetre (auto-detection qui flotte, FEC,
@@ -3030,7 +3119,7 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
         # le bruit du numerique demodule (bruit blanc signale 2026-10-31).
         log_session.discard()
         print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : porteuse numerique active (sync {res.get('sync_hits')}), pas de decode clair, pas de FM")
-        return False
+        return "appris"
     if audio:
         # FM analogique : le Mac rend le brut, le Pi RAFFINE + JUGE la voix (meme
         # chaine que le local). Pas de voix reconnue -> ecarte : pas de ceremonie
@@ -3159,10 +3248,37 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+# Second regard (2026-11-01, doctrine : pas de mur logique) : le "mode" d'une
+# bande n'est qu'une PREMIERE HYPOTHESE. Un candidat qu'elle n'a pas su lire
+# repasse dans chacune des autres modulations -- la FM etroite emmene avec elle
+# tous les decodeurs numeriques et de donnees (prise unique), l'AM et la BLU
+# leurs propres voix et multimon-ng. Avant, l'AM (CB, aviation, 225-400 MHz,
+# 10 m) ne passait JAMAIS devant dsd-fme ni multimon, et la FM jamais en AM.
+# Le signal vient d'etre vu au balayage : la pre-ecoute de ces passes est
+# raccourcie (SECOND_REGARD_PRELISTEN_SEC). Seule la derniere passe consigne le
+# rejet (journal des rejets, empreinte de bruit, piste TETRA).
+MODULATIONS = ["nfm", "am", "usb", "lsb"]
+SECOND_REGARD_PRELISTEN_SEC = 3.0
+
+
 def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
     if ignores.frequence_ignoree(freq):
         print(f"[radio_watch] {freq / 1e6:.4f} MHz ignoree (commande ignorer), on passe")
         return False
+    autres = [m for m in MODULATIONS if m != mode]
+    if _ecoute_candidat(freq, mode, band_label, target, level_db, dernier=not autres):
+        return True
+    for i, autre in enumerate(autres):
+        if _lock_pending():   # la console demande la main
+            return False
+        print(f"[radio_watch] {freq / 1e6:.4f} MHz : rien en {mode}, second regard en {autre}")
+        if _ecoute_candidat(freq, autre, band_label, target, level_db, dernier=i == len(autres) - 1,
+                            prelisten_max=SECOND_REGARD_PRELISTEN_SEC):
+            return True
+    return False
+
+
+def _ecoute_candidat(freq, mode, band_label, target=None, level_db=None, dernier=True, prelisten_max=None):
     # Verrou audio partage avec adsb_watch.py (processus separe) : garantit
     # qu'aucune annonce d'avion ne chevauche l'annonce/diffusion/son de fin
     # d'un candidat radio. Tenu pendant tout le cycle actif, relache des que
@@ -3189,14 +3305,16 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
         if mode == "nfm":
             presente = _demod_deleguee(freq, mode, band_label, target, level_db, log_session)
             if presente is not None:
-                saved = bool(presente)
-                return True
+                saved = presente is True
+                if presente or dernier:
+                    return True
+                return False   # rien d'exploitable : les autres modulations regardent encore
         # Prise unique (2026-10-25) : FM et decodeurs numeriques sur le meme flux,
         # en meme temps ; sinon (interrupteur, echec) l'ancien enchainement.
         prise = _ouvrir_prise(freq) if mode == "nfm" and prise_unique.active() else None
         if prise is not None:
             try_digital_voice_decode.last_muted = False
-            protocol, entendu_fm = _ecoute_prise(prise, freq, band_label, target)
+            protocol, entendu_fm = _ecoute_prise(prise, freq, band_label, target, prelisten_max)
         else:
             protocol = _numerique_live(freq, band_label, target) if mode == "nfm" else None
         if protocol and not _reception_a_presenter(protocol, try_digital_voice_decode.last_muted,
@@ -3214,7 +3332,8 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
                                              "dmr": getattr(try_digital_voice_decode, "last_dmr", {})})
             saved = True
             return True
-        heard = entendu_fm if prise is not None else stream_until_quiet(freq, mode, band_label, target=target)
+        heard = entendu_fm if prise is not None else stream_until_quiet(freq, mode, band_label, target=target,
+                                                                        prelisten_max=prelisten_max)
         if heard:
             _etiqueter_bruts("analogique")
             if mode == "nfm":  # canal mixte : la suite de la conversation peut venir en DMR (2026-10-24)
@@ -3251,6 +3370,11 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
                                             _last_stream_fingerprint, metrics)
             saved = True
             return True
+        if not dernier:
+            # Une autre modulation va encore regarder ce candidat (second
+            # regard) : le rejet ne se consigne qu'a la derniere passe.
+            log_session.discard()
+            return False
         # Au lieu de jeter l'audio : on le garde comme extrait de rejet
         # (journal des rejets, lib/rejets.py) pour un tri humain a l'oreille
         # et le recalibrage. Si c'etait en fait du numerique (extra ci-dessous),
@@ -3283,7 +3407,7 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
         # TETRA (pi/4-DQPSK, inaudible en FM). On la note comme piste a sonder
         # par la fenetre TETRA (la machine compagne tranchera), sans chauffer le
         # Pi ici. Meme logique de decouverte que le reste du scanner.
-        if mode == "nfm" and tetra.active() and tetra.dans_bande(freq):
+        if tetra.active() and tetra.dans_bande(freq):  # toutes modulations essayees : peut-etre du TETRA
             try:
                 if tetra.decouvrir(freq):
                     print(f"[radio_watch] {freq / 1e6:.4f} MHz : piste TETRA notee (fenetre TETRA)")

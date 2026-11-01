@@ -46,8 +46,12 @@ ARRET = os.path.expanduser("~/autopilot/tetra_off")   # interrupteur, comme pris
 # si on tombe dessus on NOTE "chiffre" et on ignore le contenu (hors
 # prerogatives), on ne se bride pas -- ailleurs ce meme 380-400 peut porter du
 # TETRA en clair (doctrine, mur retire le 2026-10-28). Sert au mode manuel et a
-# l'autodecouverte au balayage.
-BANDES = ((380_000_000, 430_000_000), (450_000_000, 470_000_000))
+# l'autodecouverte au balayage. Elargi le 2026-11-01 a toutes les attributions
+# TETRA connues dans le monde (350-470 MHz, 806-934 MHz) : le scanner est
+# distribue, et une porteuse a 415 ou 870 MHz n'a rien d'exotique ailleurs.
+# Les pistes muettes sont elaguees (PISTE_ESSAIS_AVANT_ELAGAGE), le surplus de
+# pistes reste donc borne.
+BANDES = ((350_000_000, 470_000_000), (806_000_000, 934_000_000))
 
 RASTER_HZ = 25_000          # pas des porteuses TETRA
 TOLERANCE_HZ = 15_000       # une frequence a moins de ca d'une porteuse connue = la meme
