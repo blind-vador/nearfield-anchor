@@ -56,6 +56,7 @@ import pagers_watch
 import sondes_watch
 import vdl2_watch
 import rds_watch  # RDS des radios FM (2026-11-01)
+import marine_watch  # AIS + ASN canal 70 (2026-11-01)
 import spectral_diagnostic
 import noise_signatures
 import attention
@@ -2899,6 +2900,7 @@ DATA_SCANNERS = {name: _guarded(name, scan) for name, scan in {
     "dab": dab_watch.scan_window,
     "tetra": _tetra_window,
     "rds": rds_watch.scan_window,
+    "marine_donnees": marine_watch.scan_window,
 }.items()}
 
 
@@ -3393,7 +3395,10 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session):
 # Le signal vient d'etre vu au balayage : la pre-ecoute de ces passes est
 # raccourcie (SECOND_REGARD_PRELISTEN_SEC). Seule la derniere passe consigne le
 # rejet (journal des rejets, empreinte de bruit, piste TETRA).
-MODULATIONS = ["nfm", "am", "usb", "lsb"]
+# FM large en dernier (2026-11-01) : micros HF et liaisons de spectacle (PMSE,
+# 470-694 et 174-216 MHz) emettent en FM large -- demodules en FM etroite, ils
+# sortaient deformes ou etaient rejetes.
+MODULATIONS = ["nfm", "am", "usb", "lsb", "wfm"]
 SECOND_REGARD_PRELISTEN_SEC = 3.0
 
 

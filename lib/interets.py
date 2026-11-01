@@ -35,7 +35,7 @@ CATEGORIES = {
     "cb": (["cb_am", "cb_haute", "hf_24"], "normal"),
     "meteo": (["capteurs", "sondes"], "normal"),
     "secours": (["pagers", "balises"], "normal"),
-    "marine": (["marine_vhf"], "normal"),
+    "marine": (["marine_vhf", "marine_canaux", "marine_cotiere", "marine_donnees"], "normal"),
     "professionnels": (["uhf_business", "vhf_business", "vhf_80", "uhf_410", "vhf_low", "pmse", "dmr",
                         "vhf_137", "vhf_146", "vhf_haute", "uhf_400", "uhf_700", "uhf_900"], "normal"),
     # Bandes hautes (2026-11-01) : 868 MHz et bande L, captables selon l'antenne.
@@ -51,7 +51,7 @@ CATEGORY_NAMES = Etiquettes("interet.categorie", {
     "cb": "CB 27 mégahertz",
     "meteo": "météo : capteurs sans fil et ballons-sondes",
     "secours": "secours : pagers et balises de détresse",
-    "marine": "VHF marine",
+    "marine": "VHF marine et fluviale : canaux, AIS des navires, appels ASN",
     "professionnels": "radios professionnelles et micros sans fil",
     "fm": "radio FM commerciale",
     "dab": "radio numérique DAB+ : textes et images des stations",

@@ -17,7 +17,7 @@ import wave
 
 PROTOCOLES = {"DMR": "DMR", "P25p1": "P25", "P25p2": "P25", "YSF": "YSF", "DSTAR": "D-Star",
               "M17": "M17", "NXDN48": "NXDN", "NXDN96": "NXDN", "NXDN": "NXDN", "dPMR": "dPMR",
-              "X2-TDMA": "X2-TDMA"}
+              "X2-TDMA": "X2-TDMA", "EDACS": "EDACS", "PV": "ProVoice", "ProVoice": "ProVoice"}
 SYNC_RE = re.compile(r"Sync: [+-]([\w-]+)")
 ENC_RE = re.compile(r"\b(ENC|Encrypt\w*|ALG ID|Key ID|KID)\b", re.I)
 # Trame de VOIX DMR en clair : superframe VC1..VC6 ou en-tete voix VLC, apres

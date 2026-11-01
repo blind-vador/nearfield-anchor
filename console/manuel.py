@@ -8,6 +8,9 @@
   V                        bonne reception : comme V dans le journal (note,
                            station probable, reglages automatiques)
   page haut / page bas     dix pas
+  M                        modulation suivante sur la meme frequence (FM etroite,
+                           AM, BLU haute, BLU basse, FM large ; 2026-11-01, pas
+                           de mur : la plage ne fait que proposer la premiere)
   F                        filtre on/off : filtre de bande vocale + silencieux,
                            comme en reception normale (coupe sifflements et souffle)
   O                        station reperee sous le curseur : activee / desactivee
@@ -39,7 +42,9 @@ import notation  # noqa: E402
 from phrases import Etiquettes, dire, nombre  # noqa: E402
 
 BIG_STEP = 10
-MODES = Etiquettes("mode", {"nfm": "FM étroite", "wfm": "FM large", "am": "AM"}, "mode de réception radio")
+MODES = Etiquettes("mode", {"nfm": "FM étroite", "wfm": "FM large", "am": "AM", "usb": "BLU haute", "lsb": "BLU basse"},
+                   "mode de réception radio")
+MODULATIONS = ["nfm", "am", "usb", "lsb", "wfm"]   # ordre de la touche M
 
 
 def stations_plage():
@@ -66,6 +71,7 @@ class Tuner:
     def __init__(self, plages, start=None):
         self.plages = plages
         self.filtered = False
+        self.mode_force = None   # touche M : modulation choisie a la main
         self.index = 0
         self.freq = None
         if start:
@@ -98,6 +104,7 @@ class Tuner:
         return plage["low_hz"] <= freq <= plage["high_hz"]
 
     def change_plage(self, delta):
+        self.mode_force = None
         self.index = (self.index + delta) % len(self.plages)
         self.freq = self._first(self.plage)
         return self.describe(with_plage=True)
@@ -122,11 +129,22 @@ class Tuner:
             return dire("manuel.debut_plage" if count < 0 else "manuel.fin_plage", suite=now)
         return now
 
+    def mode(self):
+        station = self.station()
+        return self.mode_force or (station["mode"] if station else self.plage["mode"])
+
+    def next_mode(self):
+        """Touche M : modulation suivante, sur la meme frequence."""
+        actuel = self.mode()
+        i = MODULATIONS.index(actuel) if actuel in MODULATIONS else -1
+        self.mode_force = MODULATIONS[(i + 1) % len(MODULATIONS)]
+        return MODES[self.mode_force]
+
     def toggle_filter(self):
         self.filtered = not self.filtered
         if not self.filtered:
             return dire("manuel.filtre_off")
-        if self.plage["mode"] == "wfm":
+        if self.mode() == "wfm":
             return dire("manuel.filtre_fm")
         return dire("manuel.filtre_on")
 
@@ -231,7 +249,7 @@ class Tuner:
             self._refresh_stations(known["freq_hz"])
             return dire("manuel.station_deja_la", frequence=spoken_mhz(known["freq_hz"])) + " " + self.describe()
         mode, bande, label = self._guess(freq)
-        order = ["nfm", "wfm", "am"]
+        order = list(MODULATIONS)
         i = order.index(mode)
         say(dire("manuel.ajout_mode", frequence=spoken_mhz(freq), mode=MODES[order[i]]))
         for key in key_source:
@@ -275,11 +293,11 @@ class Tuner:
         station = self.station()
         if station:
             import stations
-            return {"source": station.get("source", "rtl_fm"), "freq_hz": self.freq, "mode": station["mode"],
+            return {"source": station.get("source", "rtl_fm"), "freq_hz": self.freq, "mode": self.mode(),
                     "label": station.get("nom") or station.get("label") or dire("manuel.station_reperee"), "target": station.get("bande"),
                     "numerique": stations.is_digital(station),
                     "log_path": None, "fingerprint": None, "time": 0, "filter": self.filtered}
-        return {"source": plage["source"], "freq_hz": self.freq, "mode": plage["mode"],
+        return {"source": plage["source"] if not self.mode_force else "rtl_fm", "freq_hz": self.freq, "mode": self.mode(),
                 "label": plage["label"], "target": plage["target"], "numerique": plage.get("numerique", False),
                 "log_path": None, "fingerprint": None, "time": 0, "filter": self.filtered}
 
@@ -359,6 +377,8 @@ def run(key_source, say, out, read_line=None):
             text = tuner.step(action[1])
         elif key in ("f", "F"):
             text = tuner.toggle_filter()
+        elif key in ("m", "M"):
+            text = tuner.next_mode()
         elif key in ("v", "V"):
             text = tuner.validate()
         elif key in ("o", "O"):

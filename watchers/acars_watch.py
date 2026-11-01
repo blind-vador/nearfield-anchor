@@ -14,7 +14,10 @@ from phrases import Etiquettes, dire
 # 136.900/136.975 MHz existent aussi mais sont trop loin (~5.4 MHz) pour
 # rentrer dans la meme capture avec ce dongle, laissees de cote pour
 # l'instant plutot que d'ajouter un second passage dedie.
-ACARS_FREQUENCIES_MHZ = ["131.525", "131.550", "131.725"]
+# Elargi le 2026-11-01 (scanner distribue) : 8 canaux au plus pour acarsdec, tous
+# dans la largeur captee par le dongle -- 131,125 a 131,850 (0,73 MHz). Les
+# frequences americaines (129-130 MHz) ne tiennent pas dans la meme fenetre.
+ACARS_FREQUENCIES_MHZ = ["131.125", "131.450", "131.475", "131.525", "131.550", "131.725", "131.825", "131.850"]
 ACARS_UDP_PORT = 23457  # local uniquement, distinct du port dsd-fme (23456)
 ACARS_DEDUP_WINDOW_SEC = 300  # meme evenement (vol+phase, ou vol+texte) pas repete avant 5 min
 ACARS_DEDUP_PURGE_FACTOR = 4  # purge les entrees > 4x la fenetre pour ne pas grossir indefiniment

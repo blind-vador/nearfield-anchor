@@ -31,7 +31,15 @@ RX_PHASES = list(range(111, 103, -1))   # 111 ... 104
 MESSAGE_MAX = 40
 
 FORMATS = {102: "zone géographique", 112: "détresse", 114: "groupe", 116: "tous navires",
-           120: "individuel", 123: "individuel automatique"}
+           120: "individuel", 123: "individuel automatique", 121: "ATIS"}
+# ATIS (2026-11-01) : identification automatique de l'emetteur sur les voies
+# navigables (accord RAINWAT), meme modulation que l'ASN, envoyee a la fin de
+# chaque emission vocale. Specificateur 121 puis le code ATIS (10 chiffres,
+# "9" + pays + indicatif) -- a confirmer sur une vraie salve.
+PAYS = {"226": "France", "227": "France", "228": "France", "211": "Allemagne", "218": "Allemagne",
+        "244": "Pays-Bas", "245": "Pays-Bas", "246": "Pays-Bas", "205": "Belgique", "253": "Luxembourg",
+        "269": "Suisse", "203": "Autriche", "270": "Tchéquie", "243": "Hongrie", "238": "Croatie",
+        "264": "Roumanie", "207": "Bulgarie", "261": "Pologne", "267": "Slovaquie", "279": "Serbie"}
 CATEGORIES = {100: "routine", 108: "sécurité", 110: "urgence", 112: "détresse"}
 NATURES = {100: "incendie ou explosion", 101: "voie d'eau", 102: "abordage", 103: "échouement",
            104: "gîte, risque de chavirer", 105: "naufrage", 106: "désemparé, à la dérive",
@@ -156,9 +164,15 @@ def interpreter(chars):
     fmt = chars[0]
     if fmt not in FORMATS:
         return None
-    reste = chars[2:]
+    reste = chars[2:] if len(chars) > 1 and chars[1] == fmt else chars[1:]   # specificateur double ou simple
     morceaux = []
-    if fmt == 112:
+    if fmt == 121:
+        if len(reste) < 5 or any(c is None or c > 99 for c in reste[:5]):
+            return None
+        code = "".join(f"{c:02d}" for c in reste[:5])
+        pays = PAYS.get(code[1:4]) if code.startswith("9") else None
+        morceaux.append(f"identification ATIS du bateau {code}" + (f", {pays}" if pays else ""))
+    elif fmt == 112:
         moi = _mmsi(reste[0:5])
         nature = NATURES.get(reste[5]) if len(reste) > 5 else None
         pos = _position(reste[6:11])

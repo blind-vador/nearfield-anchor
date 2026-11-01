@@ -65,7 +65,10 @@ def main():
     detresse = [112, 112] + _mmsi_chars("227006760") + [100] + [4, 52, 60, 4, 23] + [99, 99, 100, 127, 7, 127, 127]
     # Individuel : 227123450 appelle 227006760, routine, telephonie
     individuel = [120, 120] + _mmsi_chars("227006760") + [100] + _mmsi_chars("227123450") + [100, 126, 126, 126, 117, 3, 117, 117]
+    # ATIS fluvial : 121 (une seule fois), code 9 + 226 (France) + 123456
+    atis = [121] + [92, 26, 12, 34, 56] + [127, 7, 127, 127]
     cas = [
+        ("ATIS fluvial", fabriquer(atis), ["ATIS", "9226123456", "France"]),
         ("detresse", fabriquer(detresse), ["DÉTRESSE", "227006760", "incendie", "45 degrés 26 nord"]),
         ("individuel", fabriquer(individuel), ["individuel", "routine", "de 227123450", "station 227006760", "téléphonie"]),
         ("DX abimes, RX en secours", fabriquer(individuel, abimer_dx={3, 7, 9}), ["de 227123450", "station 227006760"]),

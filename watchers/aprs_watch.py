@@ -30,6 +30,13 @@ from sound_paths import RADIO_SCANER_DIR
 from phrases import dire
 
 APRS_FREQ_HZ = 144_800_000
+# Autres regions (2026-11-01, scanner distribue) : Ameriques 144,390, Chine
+# 144,640, Japon 144,660, Australie 145,175, Nouvelle-Zelande 144,575, Bresil
+# 145,570. Un passage sur APRS_AUTRES_TOUS va a l'une d'elles, a tour de role ;
+# l'ISS (145,825) est ecoutee a ses passages (satellites_watch, via=...).
+APRS_AUTRES_HZ = [144_390_000, 144_640_000, 144_660_000, 145_175_000, 144_575_000, 145_570_000]
+APRS_AUTRES_TOUS = 5
+_passages = [0]
 SAMPLE_RATE = 22050
 import sons
 SOUND = sons.chemin("aprs", os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3"))  # son propre (2026-10-23, sons.py)
@@ -223,6 +230,11 @@ def _reader(proc, packets):
 def scan_window(dwell_sec=30, freq_hz=APRS_FREQ_HZ, via=None):
     """Une passe d'ecoute APRS. Rend True si au moins une annonce a eu lieu.
     via : nom d'un relais en orbite ecoute sur freq_hz (passage de l'ISS)."""
+    if via is None and freq_hz == APRS_FREQ_HZ:
+        _passages[0] += 1
+        if _passages[0] % APRS_AUTRES_TOUS == 0:
+            freq_hz = APRS_AUTRES_HZ[(_passages[0] // APRS_AUTRES_TOUS - 1) % len(APRS_AUTRES_HZ)]
+            print(f"[aprs_watch] passage sur une frequence APRS d'une autre region : {freq_hz / 1e6:.3f} MHz")
     _via.update(nom=via, annonces=0)
     try:
         rtl = subprocess.Popen(["rtl_fm", "-f", str(freq_hz), "-M", "fm", "-s", str(SAMPLE_RATE),

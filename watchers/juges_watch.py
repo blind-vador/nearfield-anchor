@@ -45,7 +45,10 @@ TRUST_SUR = 0.8                     # au-dessus, un juge decode tout seul au jou
 # juge -> protocole qu'il reconnait (None : auto). L'ordre du dict est l'ordre
 # par defaut quand une bande n'a rien de confirme : auto, DMR, puis les rares.
 JUGES = {"-fa": None, "-fs": "DMR", "-fi": "NXDN", "-fn": "NXDN", "-fm": "dPMR", "-fz": "M17",
-         "-f1": "P25", "-fd": "D-Star", "-fy": "YSF", "-fx": "X2-TDMA"}
+         "-f1": "P25", "-fd": "D-Star", "-fy": "YSF", "-fx": "X2-TDMA",
+         # 2026-11-01 : modes jamais tentes jusque-la (doctrine, scanner distribue) :
+         # P25 phase 2, ProVoice, EDACS standard et EA.
+         "-f2": "P25", "-fp": "ProVoice", "-fh": "EDACS", "-fe": "EDACS"}
 DEFAUT_ORDRE = list(JUGES)
 
 # Machines compagnes (2026-10-25) : un son a juger part a la machine qui finira

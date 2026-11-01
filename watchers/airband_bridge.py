@@ -18,6 +18,7 @@ import maintien  # tenir une ecoute selon l'interet ; "zapper" (2026-10-22)
 import audio_filters
 import chaine_audio
 from sound_paths import RADIO_SCANER_DIR
+from phrases import dire
 
 # --- RTLSDR-Airband : chemin de detection pour les bandes a canaux fixes ---
 # Remplace, pour ces bandes precises, le balayage rtl_power + capture rtl_fm +
@@ -236,6 +237,49 @@ AIRBAND_WINDOWS = [
     },
 ]
 
+# --- VHF marine et fluviale (2026-11-01) ------------------------------------
+# Tous les canaux tiennent dans moins de 1,5 MHz : une seule fenetre les ecoute
+# tous en meme temps, avec un vrai silencieux par canal -- avant, la voix
+# marine n'etait captee que si le balayage tombait pile sur l'emission. Memes
+# canaux en fluvial (Rhone, Saone, Loire : canal 10 entre bateaux, ecluses,
+# ports) et en plaisance (lac de Grangent, port de Saint-Victor). Le canal 70
+# (ASN, donnees seules) est ecoute a part par la fenetre de donnees marine.
+def _canal_marine_navire(n):
+    """Frequence d'emission navire du canal n (Appendice 18 du RR)."""
+    return 156_050_000 + (n - 1) * 50_000 if n <= 28 else 156_025_000 + (n - 60) * 50_000
+
+
+_CANAUX_MARINE = [n for n in list(range(1, 29)) + list(range(60, 89)) if n != 70]
+# Canaux duplex : la station cotiere emet 4,6 MHz plus haut (87/88 B : AIS, a part).
+_CANAUX_DUPLEX = [1, 2, 3, 4, 5, 7, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28,
+                  60, 61, 62, 63, 64, 65, 66, 78, 79, 80, 81, 82, 83, 84, 85, 86]
+AIRBAND_WINDOWS += [
+    {
+        "name": "marine_canaux",
+        "name_spoken": "VHF marine et fluviale",
+        "centerfreq_hz": 156_737_500,   # entre deux canaux : jamais sur le pic DC
+        "mode": "nfm",
+        "ampfactor": 5.5,
+        "squelch_snr_threshold": 5,
+        "silence_debounce_sec": 5.0,
+        "dwell_sec": 15,
+        "channels": [(_canal_marine_navire(n), 9300 + i) for i, n in enumerate(_CANAUX_MARINE)],
+        "noms_canaux": {_canal_marine_navire(n): f"canal {n} marine" for n in _CANAUX_MARINE},
+    },
+    {
+        "name": "marine_cotiere",
+        "name_spoken": "stations côtières VHF",
+        "centerfreq_hz": 161_312_500,
+        "mode": "nfm",
+        "ampfactor": 5.5,
+        "squelch_snr_threshold": 5,
+        "silence_debounce_sec": 5.0,
+        "dwell_sec": 10,
+        "channels": [(_canal_marine_navire(n) + 4_600_000, 9400 + i) for i, n in enumerate(_CANAUX_DUPLEX)],
+        "noms_canaux": {_canal_marine_navire(n) + 4_600_000: f"canal {n} station côtière" for n in _CANAUX_DUPLEX},
+    },
+]
+
 
 def _settings(window_name):
     try:
@@ -407,6 +451,30 @@ def _prelisten(packet_queue, freq_hz=None):
     return packets, False
 
 
+def _signalisation_asn(brut_f32, nom, freq_hz):
+    """Salves ASN / ATIS dans l'audio relaye (2026-11-01) : sur les voies
+    navigables, chaque emission vocale finit par l'identification ATIS du
+    bateau. Decodee apres coup (lib/asn_dsc.py, quelques ms), annoncee a part."""
+    if not brut_f32:
+        return
+    try:
+        import numpy as np
+        import asn_dsc
+        import veille_donnees as vd
+        pcm = (np.clip(np.frombuffer(brut_f32[:len(brut_f32) // 4 * 4], dtype="<f4"), -1, 1) * 32767).astype("<i2")
+        vus = []
+        for chars in asn_dsc.chercher(asn_dsc.demoduler(pcm.tobytes(), AIRBAND_SAMPLE_RATE_HZ)):
+            texte = asn_dsc.interpreter(chars)
+            if texte and texte not in vus:
+                vus.append(texte)
+                print(f"[airband_bridge] {nom} : {texte}")
+                vd.archive("asn", {"freq_hz": freq_hz, "canal": nom, "texte": texte})
+                vd.announce(dire("radio.signalisation_asn", canal=nom, texte=texte), INCOMING_SOUND,
+                            "message_asn", "airband_bridge", fiche={"protocole": "ASN/ATIS", "frequence_hz": freq_hz})
+    except Exception as exc:   # jamais bloquant pour le relais
+        print(f"[airband_bridge] ASN/ATIS : {exc!r}")
+
+
 def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window_name=None):
     """Diffuse en direct l'audio UDP recu tant qu'il arrive, coupe apres
     SILENCE_DEBOUNCE_SEC sans paquet (le squelch de RTLSDR-Airband a alors
@@ -556,6 +624,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
             return False
         if captured_chunks:
             log_session.add_raw_pcm(b"".join(captured_chunks), AIRBAND_SAMPLE_RATE_HZ, "f32le")
+        _signalisation_asn(b"".join(raw_chunks), name_spoken, freq_hz)
 
         print(f"[airband_bridge] canal termine : {total_bytes} octets relayes")
         play_sound_effect(_son_fin(freq_hz), label="airband_bridge")
@@ -644,7 +713,8 @@ def scan_window(window, dwell_sec=25):
                     pass
                 continue
             print(f"[airband_bridge] activite detectee sur {window['name']} a {freq_hz/1e6:.5f} MHz")
-            return _relay_channel(s, freq_hz, window["name_spoken"], max_hold_sec=window.get("max_hold_sec", MAX_HOLD_SEC),
+            nom = window.get("noms_canaux", {}).get(freq_hz, window["name_spoken"])
+            return _relay_channel(s, freq_hz, nom, max_hold_sec=window.get("max_hold_sec", MAX_HOLD_SEC),
                                   window_name=window["name"])
         return False
     finally:
