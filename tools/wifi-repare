@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# Gestes de reparation de la puce Wi-Fi integree (brcmfmac, reliee en SDIO),
+# les seuls qui demandent root (2026-11-01). Installe dans
+# /usr/local/sbin/wifi-repare par install.sh ; veille_systeme.py (utilisateur
+# vador) l'appelle via "sudo -n", regle sudoers limitee a ce script.
+#
+# Panne constatee (30/10 23 h 10, 01/11 13 h 01) : sous emission soutenue (flux
+# rtl_tcp vers une machine compagne), le bus SDIO de la puce cale
+# ("CMD53 ... write failed -110") et ne revient jamais seul -- plus de reseau
+# jusqu'au redemarrage.
+#
+#   wifi-repare pilote   decharge puis recharge le pilote brcmfmac
+#   wifi-repare bus      detache puis rattache le controleur SDIO qui porte la
+#                        puce Wi-Fi (reinitialise la puce), puis recharge le pilote
+#
+# Le controleur vise est retrouve par le chemin de wlan0 (ou, puce deja perdue,
+# par le seul hote "*.mmcnr" du Pi 4) : jamais celui de la carte SD.
+set -euo pipefail
+
+die() { echo "wifi-repare: $*" >&2; exit 2; }
+
+recharger() {
+    modprobe -r brcmfmac_wcc 2>/dev/null || true
+    modprobe -r brcmfmac || true
+    sleep 2
+    modprobe brcmfmac
+}
+
+hote_sdio() {
+    local chemin hote
+    if [ -e /sys/class/net/wlan0/device ]; then
+        chemin=$(readlink -f /sys/class/net/wlan0/device)
+        hote=$(echo "$chemin" | tr '/' '\n' | grep -E '\.mmcnr$|\.mmc$' | head -1)
+    fi
+    if [ -z "${hote:-}" ]; then
+        hote=$(ls /sys/bus/platform/devices | grep -E '\.mmcnr$' | head -1)
+    fi
+    [ -n "${hote:-}" ] || die "controleur SDIO du Wi-Fi introuvable"
+    case "$hote" in
+        *mmcnr) ;;
+        *) die "refus : $hote n'est pas le controleur du Wi-Fi" ;;
+    esac
+    echo "$hote"
+}
+
+case "${1:-}" in
+    pilote)
+        recharger
+        ;;
+    bus)
+        hote=$(hote_sdio)
+        pilote=$(basename "$(readlink -f "/sys/bus/platform/devices/$hote/driver")")
+        [ -n "$pilote" ] && [ "$pilote" != "driver" ] || die "pilote de $hote introuvable"
+        modprobe -r brcmfmac_wcc 2>/dev/null || true
+        modprobe -r brcmfmac || true
+        echo "$hote" > "/sys/bus/platform/drivers/$pilote/unbind"
+        sleep 3
+        echo "$hote" > "/sys/bus/platform/drivers/$pilote/bind"
+        sleep 3
+        modprobe brcmfmac
+        ;;
+    *)
+        die "usage : wifi-repare pilote|bus"
+        ;;
+esac

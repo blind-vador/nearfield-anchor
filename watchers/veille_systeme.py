@@ -11,6 +11,9 @@ seul ne suffit pas a agir.
                          boucle, copie des journaux arretee, camera arretee,
                          fin d'une mise de cote ("ignorer"), antenne muette
                          (plus aucune trame de capteur depuis 2 heures)
+  puce Wi-Fi calee       (2026-11-01) erreurs SDIO de brcmfmac et plus de reseau :
+                         pilote recharge, puis bus SDIO reinitialise, puis
+                         redemarrage du Pi (au plus un par heure), sinon alarme
 
 Le NAS perdu / retrouve reste a nas_watch (il le dit deja, avec ce son)."""
 import chemins
@@ -35,6 +38,11 @@ HORLOGE_MAX_SEC = 15 * 60       # horloge non synchronisee plus longtemps : son
 PLEIN_POURCENT = 90
 PLEIN_RAPPEL_SEC = 24 * 3600
 BOUCLE_FENETRE_SEC = 15 * 60
+WIFI_ERREURS = 5                # erreurs SDIO de la puce Wi-Fi en WIFI_FENETRE_SEC : elle est calee
+WIFI_FENETRE_SEC = 60
+WIFI_ATTENTE_SEC = (60, 90)     # temps laisse au reseau pour revenir apres chaque geste
+WIFI_REDEMARRAGE_SEC = 3600     # au plus un redemarrage automatique par heure (pas de boucle)
+WIFI_REDEMARRAGE = chemins.base("wifi_redemarrage")   # carte SD : survit au redemarrage
 BOUCLE_REDEMARRAGES = 3
 RAPPEL_SEC = 15 * 60            # veille en boucle : alarme redite de temps en temps
 ALARME_ECART_SEC = 10 * 60      # une seule alarme electrique par episode
@@ -125,6 +133,8 @@ def _noyau():
                 elif "undervoltage" in bas or "under-voltage" in bas:
                     if _une_fois("sous_tension", CHALEUR_ECART_SEC):
                         _sous_tension()
+                elif "brcmf" in bas and ("-110" in bas or "sdio error" in bas or "txfail" in bas):
+                    _WIFI.erreur()
                 elif "new usb device found" in bas:
                     usb.note("branche")
                 elif "usb disconnect" in bas:
@@ -202,6 +212,82 @@ def _diagnostic_reseau():
     if not _ping(passerelle):
         return "systeme_veille.reseau_box"
     return "systeme_veille.reseau_internet"
+
+
+class _Wifi:
+    """Puce Wi-Fi calee (2026-11-01) : sous emission soutenue (flux rtl_tcp vers
+    une machine compagne), le bus SDIO de la puce brcmfmac cale et ne revient
+    jamais seul -- 77 min sans reseau le 30/10, jusqu'au redemarrage. Gestes de
+    plus en plus forts (tools/wifi-repare), chacun suivi d'une attente du
+    reseau ; en dernier recours un redemarrage, au plus un par heure."""
+
+    def __init__(self):
+        self._erreurs = []
+        self._garde = threading.Lock()
+        self._en_cours = False
+        self.passerelle = None      # derniere passerelle joignable (la route peut rester sans reseau)
+
+    def erreur(self):
+        with self._garde:
+            now = time.time()
+            self._erreurs = [t for t in self._erreurs if now - t < WIFI_FENETRE_SEC] + [now]
+
+    def verifier(self):
+        passerelle = _passerelle()
+        if passerelle and _ping(passerelle):
+            self.passerelle = passerelle
+        with self._garde:
+            calee = len([t for t in self._erreurs if time.time() - t < WIFI_FENETRE_SEC]) >= WIFI_ERREURS
+            if not calee or self._en_cours or self._reseau_ok():
+                return
+            self._en_cours = True
+        _plus_tard(self._reparer)
+
+    def _reseau_ok(self):
+        cible = self.passerelle or _passerelle()
+        return bool(cible) and _ping(cible)
+
+    def _attendre(self, secondes):
+        fin = time.time() + secondes
+        while time.time() < fin:
+            time.sleep(5)
+            if self._reseau_ok():
+                return True
+        return False
+
+    def _reparer(self):
+        try:
+            _jouer(None, dire("systeme_veille.wifi_decroche"))
+            for geste, attente in zip(("pilote", "bus"), WIFI_ATTENTE_SEC):
+                _log(f"puce Wi-Fi calee : wifi-repare {geste}")
+                sortie = subprocess.run(["sudo", "-n", "/usr/local/sbin/wifi-repare", geste],
+                                        capture_output=True, text=True, timeout=60)
+                if sortie.returncode:
+                    _log(f"wifi-repare {geste} : {sortie.stderr.strip()[-200:]}")
+                with self._garde:
+                    self._erreurs = []
+                if self._attendre(attente):
+                    _jouer(None, dire("systeme_veille.wifi_revenu"))
+                    return
+            try:
+                dernier = os.path.getmtime(WIFI_REDEMARRAGE)
+            except OSError:
+                dernier = 0
+            if time.time() - dernier >= WIFI_REDEMARRAGE_SEC:
+                with open(WIFI_REDEMARRAGE, "w") as f:
+                    f.write(time.strftime("%Y-%m-%d %H:%M:%S\n"))
+                _jouer(None, dire("systeme_veille.wifi_redemarrage"))
+                subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "reboot"], timeout=30)
+            else:
+                alarmes.declencher("wifi_perdu", dire("systeme_veille.wifi_echec"), source="systeme", une_fois=True)
+        except Exception as exc:
+            _log(f"reparation Wi-Fi : {exc!r}")
+        finally:
+            with self._garde:
+                self._en_cours = False
+
+
+_WIFI = _Wifi()
 
 
 class _Reseau:
@@ -348,7 +434,7 @@ def main():
     threading.Thread(target=_noyau, daemon=True).start()
     horloge, reseau, services, ignores_ = _Horloge(), _Reseau(), _Services(), _Ignores()
     while True:
-        for verif in (_alimentation, horloge.verifier, reseau.verifier, _disques, services.verifier,
+        for verif in (_alimentation, horloge.verifier, reseau.verifier, _WIFI.verifier, _disques, services.verifier,
                       ignores_.verifier, _antenne, _sonde_sol):
             try:
                 verif()
