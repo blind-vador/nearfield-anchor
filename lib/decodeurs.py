@@ -177,8 +177,18 @@ def extra_mode(freq_hz):
     return None
 
 
+_OCTET = re.compile(r"\[0x[0-9A-Fa-f]{2}\]")
+
+
 def meaningful(msg, min_chars=MIN_DECODED_MESSAGE_CHARS):
     """Faux positifs de multimon-ng : fragments morse non resolus ("<___.>")
-    retires, puis assez de caracteres alphanumeriques reels."""
-    cleaned = re.sub(r"<[^>]*>", "", msg)
-    return sum(1 for c in cleaned if c.isalnum()) >= min_chars
+    retires, puis assez de caracteres alphanumeriques reels. Octets non
+    imprimables ("[0x81]") : ce sont des octets au hasard sortis du bruit par
+    les demodulateurs FSK (2026-11-01 : des rafales de "[0xC4]", "T [0x06]B"
+    lues une a une, scanner bloque) -- ils ne comptent pas comme des
+    caracteres, et un message qui en contient plus d'un pour quatre vrais
+    caracteres est du bruit."""
+    octets = len(_OCTET.findall(msg))
+    cleaned = _OCTET.sub("", re.sub(r"<[^>]*>", "", msg))
+    reels = sum(1 for c in cleaned if c.isalnum())
+    return reels >= min_chars and octets * 4 <= reels

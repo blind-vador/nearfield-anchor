@@ -472,6 +472,10 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
 
         start = time.time()
         last_packet_time = time.time()
+        # Micro-emissions (2026-11-01) : seule une rafale continue d'au moins
+        # MIN_VOIX_OUVERTURE_SEC repousse la fermeture ; des clics repetes de
+        # squelch ne retiennent plus le canal.
+        rafale_debut = last_voice_time = time.time()
         total_bytes = 0
         max_hold_sec = maintien.plafond(max_hold_sec, window_name, freq_hz)  # plus de coupure d'un echange interessant
         max_bytes = int(AIRBAND_SAMPLE_RATE_HZ * 4 * max_hold_sec)
@@ -499,7 +503,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
                     break
                 # Au moins MIN_ECOUTE_SEC d'ecoute (2026-10-19) : un clic de
                 # squelch ne ferme pas le canal en 3 s, une reponse n'est pas perdue.
-                if time.time() - last_packet_time > debounce and time.time() - start >= MIN_ECOUTE_SEC:
+                if time.time() - last_voice_time > debounce and time.time() - start >= MIN_ECOUTE_SEC:
                     break
                 if prebuffer:
                     data = prebuffer.pop(0)
@@ -512,7 +516,10 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
                     break
                 if time.time() - last_packet_time > GAP_SEC:
                     gaps += 1
+                    rafale_debut = time.time()
                 last_packet_time = time.time()
+                if last_packet_time - rafale_debut >= MIN_VOIX_OUVERTURE_SEC or prebuffer:
+                    last_voice_time = last_packet_time
                 raw_chunks.append(data)
                 filtered, data = chain.process_f32le(data)
                 fingerprint_chunks.append(filtered)

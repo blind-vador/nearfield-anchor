@@ -628,6 +628,7 @@ MIN_ECOUTE_SEC = 8.0
 # rafale en tete ; sinon rien n'est joue ni journalise.
 MIN_VOIX_OUVERTURE_SEC = 1.2
 ATTENTE_RAFALE_SEC = 6.0
+RAFALE_TROU_SEC = 0.5      # un trou plus long entre deux paquets de voix : nouvelle rafale
 
 # Fenetre de reponse (2026-10-28, demande utilisateur) : une fois le locuteur
 # silencieux, on NE FERME PAS aussitot -- on garde le canal ouvert ce temps-la
@@ -1401,6 +1402,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
         validated = False
         annonce, attente, validated_at = None, [], 0.0
         voix_attendue = False
+        rafale_sec, dernier_paquet = 0.0, 0.0   # rafale de voix en cours (paquets sans trou)
         filtered_out = False
         # Plus de coupure d'un appel en cours (2026-10-22 : des conversations coupees
         # pile a 2 minutes) : la duree max ne vaut que pour ce qui interesse peu.
@@ -1463,6 +1465,15 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 data, _ = sock.recvfrom(65536)
             except socket.timeout:
                 data = None
+            if data and validated:
+                # Micro-emissions (2026-11-01 : un canal UHF pro tenu ouvert par
+                # des clics de micro repetes) : on mesure la rafale CONTINUE ;
+                # seule une vraie prise de parole ouvre et prolonge l'ecoute.
+                maintenant = time.time()
+                if maintenant - dernier_paquet > RAFALE_TROU_SEC:
+                    rafale_sec = 0.0
+                dernier_paquet = maintenant
+                rafale_sec += len(data) / (DSD_FME_VOICE_SAMPLE_RATE * 2 * channels)
             if data and not validated:
                 pending.append(data)
                 pending = pending[-DSD_FME_PRE_MAX:]  # avant la confirmation : les dernieres secondes
@@ -1508,6 +1519,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                           f"({stats['clean']} synchros propres sur {stats['total']}), {channels} voie(s)")
                     voix_attendue = True   # la ceremonie attend assez de voix (rafales, plus bas)
                     validated_at = time.time()
+                    deadline = max(deadline, validated_at + idle_sec)   # une fenetre de reponse, une seule
                     try:  # guet appris : combien ce spot a mis a confirmer (lib/guet.py)
                         import guet
                         guet.noter(freq_hz, validated_at - start)
@@ -1525,8 +1537,7 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 # ceremonie part et rejouera tout le tampon, clic compris.
                 if data:
                     attente.append(data)
-                    deadline = max(deadline, time.time() + idle_sec)
-                if _mesure_voix(attente, channels)[0] < MIN_VOIX_OUVERTURE_SEC:
+                if rafale_sec < MIN_VOIX_OUVERTURE_SEC:   # des clics, meme nombreux, n'ouvrent pas
                     continue
                 voix_attendue, data = False, None
                 # Carillon et annonce dans un fil a part (2026-10-19) : pendant
@@ -1558,7 +1569,9 @@ def try_digital_voice_decode(freq_hz, mode_flag="-fa", band_label="", probe_sec=
                 continue  # groupe ignore ou hors cible : ne prolonge pas l'ecoute
             # Ecoute au moins MIN_ECOUTE_SEC apres la confirmation : un clic de
             # micro ne ferme pas l'ecoute, une reponse qui suit n'est pas perdue.
-            deadline = min(max(time.time() + idle_sec, validated_at + MIN_ECOUTE_SEC), start + max_sec)
+            # Seule une vraie prise de parole prolonge (un clic ne retient plus le scanner).
+            if rafale_sec >= MIN_VOIX_OUVERTURE_SEC:
+                deadline = min(max(time.time() + idle_sec, validated_at + MIN_ECOUTE_SEC), start + max_sec)
             # Seul le chiffrement coupe le son (regle utilisateur, 2026-10-25 : un
             # appel prive en clair, simple adressage point a point, nous interesse
             # aussi). Un chiffrement a clef connue reste du son chiffre tant qu'on
@@ -1706,13 +1719,9 @@ MIN_DECODED_MESSAGE_CHARS = 4
 
 
 def _is_meaningful_decoded_message(msg, min_chars=MIN_DECODED_MESSAGE_CHARS):
-    """Filtre les faux positifs des decodeurs multimon-ng : retire d'abord
-    les fragments morse non resolus (notation entre chevrons, ex:
-    "<___.>") puis exige un minimum de caracteres alphanumeriques reels
-    dans ce qui reste."""
-    cleaned = re.sub(r"<[^>]*>", "", msg)
-    alnum_count = sum(1 for c in cleaned if c.isalnum())
-    return alnum_count >= min_chars
+    """Filtre les faux positifs des decodeurs multimon-ng : regle commune
+    (lib/decodeurs.meaningful : fragments morse, octets non imprimables)."""
+    return decodeurs.meaningful(msg, min_chars)
 
 
 def _multimon_reader(proc, out_queue):
@@ -2103,7 +2112,8 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
                 probs_seen.append(smoothed_prob)
             if is_signal:
                 consecutive_signal_windows += 1
-                quiet_windows_seen = 0
+                if consecutive_signal_windows * ANALYSIS_WINDOW_MS >= MIN_VOIX_OUVERTURE_SEC * 1000:
+                    quiet_windows_seen = 0   # une vraie prise de parole ; un clic ne relance pas l'attente
                 if consecutive_signal_windows >= MIN_CONSECUTIVE_SIGNAL_WINDOWS and not heard_signal:
                     # Diagnostic (2026-08-30) : trace la valeur reelle qui a
                     # declenche la detection -- indispensable pour calibrer
@@ -2186,13 +2196,20 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     ignored_count = len(decoded_messages) - len(meaningful_messages)
     if ignored_count:
         print(f"[radio_watch] {ignored_count} message(s) decode(s) ignore(s) (trop court/bruit)")
-    for msg in meaningful_messages:
+    # Pas plus de MESSAGES_DITS_MAX lus a voix haute par ecoute (2026-11-01 : une
+    # rafale de trames lue une a une bloquait le scanner) ; tous restent au log.
+    for msg in meaningful_messages[MESSAGES_DITS_MAX:]:
+        print(f"[radio_watch] decode numerique (non lu) : {msg}")
+    if len(meaningful_messages) > MESSAGES_DITS_MAX:
+        print(f"[radio_watch] {len(meaningful_messages)} messages decodes, {MESSAGES_DITS_MAX} lus")
+    for msg in meaningful_messages[:MESSAGES_DITS_MAX]:
         print(f"[radio_watch] decode numerique: {msg}")
         speak_with_lead_sound(DECODING_MORSE_SOUND, dire("radio.message_numerique_decode", msg=msg), label="radio_watch")
 
     return heard_signal or bool(meaningful_messages)
 
 
+MESSAGES_DITS_MAX = 3
 PRELISTEN_MAX_SEC = 6.0   # pre-ecoute silencieuse au plus ; voix reconnue = ouverture aussitot
 ATTENTE_NUMERIQUE_SEC = 2.0  # prise unique : synchros vues, la voix FM attend que le numerique se confirme
 
