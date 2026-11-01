@@ -3261,6 +3261,18 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
         print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : porteuse numerique active (sync {res.get('sync_hits')}), pas de decode clair, pas de FM")
         return "appris"
     if audio:
+        # Salves de signalisation (ASN/ATIS, MDC1200, FleetSync, MPT1327) dans le
+        # brut rendu par la compagne, AVANT le tri de la voix (2026-11-01) : une
+        # salve de donnees sans voix etait ecartee comme "sans voix reconnue".
+        try:
+            import wave as _wave
+            import signalisation
+            with _wave.open(audio) as w:
+                if w.getsampwidth() == 2 and w.getnchannels() == 1:
+                    signalisation.apres_coup(w.readframes(w.getnframes()), w.getframerate(), band_label, freq,
+                                             DECODING_MORSE_SOUND, "radio_watch")
+        except Exception as exc:
+            print(f"[radio_watch] signalisation (deleguee) : {exc!r}")
         # FM analogique : le Mac rend le brut, le Pi RAFFINE + JUGE la voix (meme
         # chaine que le local). Pas de voix reconnue -> ecarte : pas de ceremonie
         # ni de capture (fausses captations de bruit signalees 2026-10-31).

@@ -452,29 +452,16 @@ def _prelisten(packet_queue, freq_hz=None):
 
 
 def _signalisation_asn(brut_f32, nom, freq_hz):
-    """Salves de signalisation dans l'audio relaye (2026-11-01), decodees apres
-    coup (quelques ms) et annoncees a part : ASN / ATIS (lib/asn_dsc.py ; sur
-    les voies navigables, chaque emission vocale finit par l'identification du
-    bateau) et identifiants des radios pro analogiques (lib/ffsk_pro.py :
-    MDC1200, FleetSync II, MPT1327)."""
+    """Salves de signalisation dans l'audio relaye (2026-11-01) : ASN / ATIS et
+    identifiants MDC1200 / FleetSync / MPT1327, decodes apres coup
+    (lib/signalisation.py) et annonces a part."""
     if not brut_f32:
         return
     try:
         import numpy as np
-        import asn_dsc
-        import ffsk_pro
-        import veille_donnees as vd
+        import signalisation
         pcm = (np.clip(np.frombuffer(brut_f32[:len(brut_f32) // 4 * 4], dtype="<f4"), -1, 1) * 32767).astype("<i2")
-        vus = []
-        trouves = [asn_dsc.interpreter(c) for c in asn_dsc.chercher(asn_dsc.demoduler(pcm.tobytes(), AIRBAND_SAMPLE_RATE_HZ))]
-        trouves += [f"{proto}, {t}" for proto, t in ffsk_pro.decoder(pcm.tobytes(), AIRBAND_SAMPLE_RATE_HZ)]
-        for texte in trouves:
-            if texte and texte not in vus:
-                vus.append(texte)
-                print(f"[airband_bridge] {nom} : {texte}")
-                vd.archive("signalisation", {"freq_hz": freq_hz, "canal": nom, "texte": texte})
-                vd.announce(dire("radio.signalisation_asn", canal=nom, texte=texte), INCOMING_SOUND,
-                            "message_asn", "airband_bridge", fiche={"protocole": "ASN/ATIS", "frequence_hz": freq_hz})
+        signalisation.apres_coup(pcm.tobytes(), AIRBAND_SAMPLE_RATE_HZ, nom, freq_hz, INCOMING_SOUND, "airband_bridge")
     except Exception as exc:   # jamais bloquant pour le relais
         print(f"[airband_bridge] signalisation : {exc!r}")
 
