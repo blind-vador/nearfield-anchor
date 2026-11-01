@@ -355,12 +355,23 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
     max_seconds = max(seconds, float(max_seconds or seconds))
     tmp = tempfile.mkdtemp(prefix="tetra_")
     voix = os.path.join(tmp, "voix.wav")
+    # Par le relais iq_fanout (2026-11-01) : IQ reduit cote Pi, 4 fois moins de
+    # Wi-Fi (sa puce calait sous le flux brut a 1,152 MS/s).
+    try:
+        import iq_fanout
+        fo = iq_fanout.FanOut(host, int(port))
+        host, port = "127.0.0.1", fo.start()
+    except Exception as exc:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+        return {"ok": False, "erreur": "proxy IQ: %r" % exc}
     source = "rtltcp:%s:%d:%d:%s:%d:%d" % (host, int(port), int(freq_hz), str(gain), int(ppm), BW_KHZ)
     cmd = [DSD_NEO, "-fT", "-i", source, "-w", voix]  # PAS -T : il casse le decodage voix TETRA (2026-10-31)
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, start_new_session=True)
     except Exception as exc:
+        fo.stop()
         return {"ok": False, "erreur": "lancement dsd-neo : %r" % exc}
     sortie = []
     etat = {"suivi": False, "retour": 0.0}
@@ -412,6 +423,7 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
         except subprocess.TimeoutExpired:
             continue
     fil.join(timeout=2)
+    fo.stop()
     texte = "".join(sortie)
     _journaliser_brut(freq_hz, texte)
     res = parser(texte)

@@ -11,10 +11,18 @@ Le client envoie des commandes de 5 octets (1 octet commande + 4 octets BE :
 frequence, taux, gain...). Ici : on relaie l'IQ a tous les clients ; les commandes
 du PREMIER client connecte (le "commandant") sont transmises en amont (il regle
 frequence/taux/gain pour la fenetre), celles des autres sont ignorees -- tous nos
-clients demandent les MEMES reglages (meme fenetre), donc c'est deterministe."""
+clients demandent les MEMES reglages (meme fenetre), donc c'est deterministe.
+
+IQ reduit (2026-11-01, lib iq_reduit) : les commandes du commandant passent par
+un Reducteur qui fait servir au Pi un taux bas natif (256 ou 288 kS/s) et
+reconstruit ici le flux au taux demande par dsd-neo -- 4 a 6 fois moins de Wi-Fi
+cote Pi (sa puce calait sous ~25 Mbit/s continus)."""
 import socket
 import struct
 import threading
+import time
+
+import iq_reduit
 
 
 def _recvn(sock, n):
@@ -28,7 +36,11 @@ def _recvn(sock, n):
 
 
 class FanOut:
-    def __init__(self, up_host, up_port):
+    def __init__(self, up_host, up_port, reduire=True):
+        self.reducteur = iq_reduit.Reducteur() if reduire else None
+        self._red_lock = threading.Lock()
+        self.octets_amont = 0
+        self._debut = None
         self.up_host = up_host
         self.up_port = int(up_port)
         self.up = None
@@ -88,7 +100,13 @@ class FanOut:
                 break
             if commandant and self.up is not None:
                 try:
-                    self.up.sendall(cmd)
+                    if self.reducteur is None:
+                        self.up.sendall(cmd)
+                    else:
+                        with self._red_lock:
+                            envois = self.reducteur.commande(cmd)
+                        for c in envois:
+                            self.up.sendall(c)
                 except OSError:
                     break
         self._drop(conn)
@@ -99,6 +117,13 @@ class FanOut:
                 data = self.up.recv(262144)
                 if not data:
                     break
+                self.octets_amont += len(data)
+                self._debut = self._debut or time.time()
+                if self.reducteur is not None:
+                    with self._red_lock:
+                        data = self.reducteur.flux(data)
+                    if not data:
+                        continue
                 with self._lock:
                     clients = list(self._clients)
                 for c in clients:
@@ -122,10 +147,21 @@ class FanOut:
         except OSError:
             pass
 
+    def debit_mbits(self):
+        """Debit moyen recu du Pi (Mbit/s) depuis le premier octet."""
+        if not self._debut:
+            return 0.0
+        return self.octets_amont * 8 / 1e6 / max(0.1, time.time() - self._debut)
+
     def stop(self):
         if self._stop.is_set():
             return
         self._stop.set()
+        if self.octets_amont:
+            red = self.reducteur.reduit if self.reducteur else None
+            print("[iq_fanout] %.1f Mo recus du Pi, %.1f Mbit/s%s" % (
+                self.octets_amont / 1e6, self.debit_mbits(),
+                " (Pi a %d S/s, x%d)" % red if red else " (non reduit)"), flush=True)
         with self._lock:
             socks = list(self._clients)
             self._clients = []
