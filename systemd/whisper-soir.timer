@@ -1,0 +1,9 @@
+[Unit]
+Description=Lance Whisper a 21 h 10 sur les prises validees dans la journee
+
+[Timer]
+OnCalendar=*-*-* 21:10:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

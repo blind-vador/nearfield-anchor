@@ -66,7 +66,7 @@ class FanOut:
         self.srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self.srv.bind(("127.0.0.1", 0))
-        self.srv.listen(8)
+        self.srv.listen(32)   # tous les juges numeriques + le moniteur analogique
         self.port = self.srv.getsockname()[1]
         self.srv.settimeout(0.5)
         threading.Thread(target=self._accept_loop, daemon=True).start()

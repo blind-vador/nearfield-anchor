@@ -71,6 +71,10 @@ def run(line, key_source, say, out, read_line=None):
 
     pos = 0
     intro = conseils.intro("mode", dire("mode.titre"), dire("mode.consigne"))
+    import voix
+    voix.prechauffer(
+        [intro, dire("mode.consigne"), dire("mode.aide_courte"), dire("mode.rien_change")]
+        + [e["libelle"] for e in entrees])
     out(intro + "\n")
     say(f"{intro} {entrees[pos]['libelle']}")
     for key in key_source:

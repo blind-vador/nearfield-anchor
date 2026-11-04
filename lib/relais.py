@@ -141,12 +141,101 @@ def learn(name, comment, symbol, km, lat=None, lon=None):
     return nouveau
 
 
+def _entree(f, r):
+    """Frequence d'entree d'un relais dont on connait le decalage."""
+    d = r.get("decalage_hz")
+    return int(f) + int(d) if d else None
+
+
+def detecte(freq_hz, raisons, nom=None, protocole=None):
+    """Relais suppose d'apres ce qu'on observe sur l'air (lib/frequences_actives) ;
+    une fiche APRS deja la n'est pas ecrasee. Hors bande radioamateur : rien ici,
+    la frequence reste suivie comme frequence active."""
+    f = int(freq_hz)
+    if not any(low <= f <= high for _, _, low, high in GROUPS):
+        return False
+    data = load()
+    if relais_proche(f)[0] is not None:
+        return False
+    mode = next((code for word, code in MODES.items() if word == protocole), "fm")
+    data[str(f)] = {"nom": nom or "relais possible", "mode": mode, "km": None, "tonalite": None,
+                    "decalage_hz": None, "lieu": None, "lien": None, "lat": None, "lon": None,
+                    "commentaire": ", ".join(raisons)[:120], "source": "air", "vu": time.time(), "appris": time.time()}
+    _save(data)
+    return True
+
+
+# Texte decode (SMS et alias DMR, morse, pagers, transcription Whisper...) : il peut
+# dire une frequence, une tonalite, un indicatif. Meme grammaire que l'APRS.
+MOTS_RELAIS = re.compile(r"\b(relais|repeater|rpt|qrg|qsy|sortie|entr[ée]e|shift|d[ée]calage|ctcss|subton|"
+                         r"tonalit[ée]|T\d{3})\b", re.IGNORECASE)
+FREQ_ANNONCEE = re.compile(r"(?<![\d.])(\d{2,4}\.\d{1,5})\s?MHz", re.IGNORECASE)
+INDICATIF_RELAIS = re.compile(r"\b(F[0-9]?Z[0-9A-Z]{2,4}|TK[0-9]Z[A-Z]{1,3}|ON0[A-Z]{2,3}|HB9[A-Z]{1,2}R)\b")
+INDICATIF = re.compile(r"\b([A-Z]{1,2}[0-9][A-Z]{2,4})\b")
+INDICATIF_NOM_APRES = 2       # un indicatif ordinaire doit revenir avant d'etre propose comme nom
+
+
+def depuis_texte(texte, freq_source=None, source="texte", mode=None, label=None, sur=False):
+    """Lit un texte decode. sur : le canal garantit le texte (CRC, ou voix transcrite).
+    Rend les frequences apprises. Rien n'est nomme sans l'utilisateur (lib/nommage)."""
+    if not texte:
+        return []
+    import frequences_actives
+    propre = re.sub(r"(?<=\d),(?=\d)", ".", str(texte))
+    appris = []
+    annonce_relais = bool(MOTS_RELAIS.search(propre))
+    radioamateur = _frequences(propre) if annonce_relais or FREQ.search(propre) else []
+    if radioamateur:
+        data = load()
+        for f in radioamateur:
+            if not relais_proche(f)[1]:
+                ton = re.search(r"\bT(\d{3})\b|tone\s*(\d+)|CTCSS\s*(\d+)", propre, re.IGNORECASE)
+                data[str(f)] = {"nom": "relais annoncé", "mode": next((c for w, c in MODES.items() if w in propre), "fm"),
+                                "km": None, "tonalite": int(next(g for g in ton.groups() if g)) if ton else None,
+                                "decalage_hz": _decalage_hz(propre), "lieu": _lieu(propre), "lien": None, "lat": None,
+                                "lon": None, "commentaire": propre[:120], "source": source, "vu": time.time(),
+                                "appris": time.time()}
+                appris.append(f)
+        if appris:
+            _save(data)
+    for f in radioamateur:
+        frequences_actives.noter(f, "annoncee", annoncee=True, texte=propre)
+    for brut in FREQ_ANNONCEE.findall(propre):   # hors radioamateur : on y va voir quand meme
+        f = int(round(float(brut) * 1e6))
+        if f not in radioamateur and 1_000_000 <= f <= 1_800_000_000:
+            frequences_actives.noter(f, "annoncee", annoncee=True, texte=propre)
+            appris.append(f)
+    if freq_source:
+        haut = propre.upper()
+        rel = INDICATIF_RELAIS.search(haut)
+        ind = rel or INDICATIF.search(haut)
+        if ind:
+            frequences_actives.noter(freq_source, "texte", indicatif=ind.group(1),
+                                     indicatif_relais=rel.group(1) if rel else None, texte=propre, label=label)
+            vus = (frequences_actives.load().get(frequences_actives._cle(freq_source)) or {}).get("indicatifs") or {}
+            if rel or sur or vus.get(ind.group(1), 0) >= INDICATIF_NOM_APRES:
+                try:
+                    import nommage
+                    nommage.deposer(freq_source, mode, None, label or "", ind.group(1), propre, source)
+                except Exception as exc:
+                    print(f"[relais] nom non propose : {exc!r}")
+    if appris:
+        print(f"[relais] {source} : frequences lues dans un texte : {appris}")
+    return appris
+
+
 def bands():
-    """Bandes "fm_channels" du scanner, une par groupe qui contient des relais."""
+    """Bandes "fm_channels" du scanner, une par groupe qui contient des relais.
+    L'entree y est aussi quand on la connait : on y entend les postes en direct."""
     data = load()
     result = []
     for name, spoken, low, high in GROUPS:
-        channels = sorted(int(f) for f in data if low <= int(f) <= high)
+        channels = set()
+        for f, r in data.items():
+            for c in (int(f), _entree(f, r)):
+                if c and low <= c <= high:
+                    channels.add(c)
+        channels = sorted(channels)
         if channels:
             result.append({"name": name, "name_spoken": spoken, "type": "fm_channels",
                            "channels": channels, "mode": "nfm", "margin_db": 8.0, "span_hz": 12_500})

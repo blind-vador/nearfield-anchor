@@ -4,7 +4,9 @@ chacun (lib/rejets.py). On TRIE A L'OREILLE :
 
   fleches haut / bas   rejet precedent / suivant, joue aussitot (pas de
                        fioriture : juste le son, pour trier vite)
-  n                    c'etait un VRAI signal, ecarte a tort (noté)
+  j                    autre demodulation du meme candidat
+  n                    c'etait un VRAI signal, ecarte a tort : il est repeche au
+                       journal, avec sa ceremonie, et V, C et les fleches y apprennent
   r                    c'etait bien du bruit / un parasite (rejet confirmé)
   i                    infos : frequence, bande, raison, verdict
   Entree               rejoue      Echap ferme. F1 : les touches.
@@ -16,6 +18,7 @@ import sys
 
 
 import conseils  # noqa: E402
+import propositions  # noqa: E402
 import rejets  # noqa: E402
 import voix  # noqa: E402
 from journal import Player  # noqa: E402  (meme lecteur audio que le journal)
@@ -37,6 +40,7 @@ def _position(items, i):
 def run(line, key_source, say, out):
     items = rejets.entries()
     i = 0
+    rendu = 0        # 0 : l'extrait principal ; sinon les autres demodulations
     player = Player()
     title = dire("rejets.titre", nombre=nombre(len(items), "rejet", "rejets"))
     intro = conseils.intro("rejets", title, dire("rejets.consigne"))
@@ -63,6 +67,7 @@ def run(line, key_source, say, out):
                 j = i + (-1 if key == UP else 1)
                 if 0 <= j < len(items):
                     i = j
+                    rendu = 0
                     player.play(rejets.path_of(items[i]["fichier"]))
                     text = _position(items, i)
                 else:
@@ -70,10 +75,29 @@ def run(line, key_source, say, out):
                     text = edge
             elif key in ("\r", "\n"):
                 player.play(rejets.path_of(items[i]["fichier"]))
+            elif key in ("j", "J"):
+                autres = items[i].get("rendus") or []
+                if autres:
+                    rendu = (rendu + 1) % (len(autres) + 1)
+                    e = autres[rendu - 1] if rendu else items[i]
+                    player.play(rejets.path_of(e["fichier"]))
+                    text = dire("rejets.rendu", juge=propositions.nom(e.get("juge")))
+                else:
+                    text = dire("rejets.pas_d_autre_rendu")
             elif key in ("n", "N"):
-                rejets.set_verdict(items[i]["fichier"], "signal")
-                items[i]["verdict"] = "signal"
-                text = dire("rejets.note_signal")
+                player.stop()
+                if rejets.repecher(items[i]["fichier"]):
+                    items.pop(i)
+                    rendu = 0
+                    text = dire("rejets.repeche")
+                    if not items:
+                        say(text)
+                        return dire("rejets.fermee")
+                    i = min(i, len(items) - 1)
+                else:
+                    rejets.set_verdict(items[i]["fichier"], "signal")
+                    items[i]["verdict"] = "signal"
+                    text = dire("rejets.note_signal")
             elif key in ("r", "R"):
                 rejets.set_verdict(items[i]["fichier"], "bruit")
                 items[i]["verdict"] = "bruit"

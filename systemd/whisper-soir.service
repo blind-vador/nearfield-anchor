@@ -1,0 +1,11 @@
+[Unit]
+Description=Whisper du soir sur les prises radio validees
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@RUN_USER@
+Environment=PYTHONPATH=@REPO@/lib:@REPO@/watchers:@REPO@/tools:@REPO@/config:@REPO@/bridge
+ExecStart=/usr/bin/python3 -u @REPO@/watchers/whisper_soir.py
+StandardOutput=journal
+StandardError=journal

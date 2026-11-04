@@ -1,124 +1,738 @@
-"""Journal des propositions (2026-10-09) : suggestions de reglages que la passe
-d'analyse du Mac mini (classification + debruitage/isolation de voix, bien plus
-costaud que le RNNoise du Pi) depose pour revue HUMAINE le matin.
+"""Plusieurs rendus pour une même prise (2026-11-02).
 
-Principe (garde-fou anti-hallucination) : le Mac ne remplace JAMAIS l'audio par
-du son genere. Il a le droit de "creuser fort" (debruitage agressif) pour faire
-apparaitre une voix, MAIS c'est l'utilisateur qui tranche a l'oreille dans le
-dialogue "journal proposition" (console/proposition_cmd.py) : c = confirme (le
-reglage est applique au Pi), r = refuse. Une proposition porte un extrait AVANT
-et, si l'IA a nettoye, un extrait APRES, pour comparer.
+Quand plusieurs juges ont trouvé du clair, on garde chaque rendu à côté de
+l'enregistrement du journal. Flèche gauche rejette le rendu en cours et lance le
+suivant : tant qu'il reste d'autres rendus, c'est une erreur de juge, ce juge
+descend ici, sans apprendre d'empreinte (2026-11-05). J passe au rendu suivant
+sans le rejeter. V ou C sur le rendu entendu retient ce juge. Trois
+confirmations recentes, sans rival serieux, suffisent : il passe devant, et s'il
+confirme on presente lui seul, sauf si la modulation mesuree sur l'IQ dit autre
+chose (un nouveau locuteur, une autre modulation). Tous les decodeurs tournent
+toujours. En dessous, ou si il ne confirme pas cette prise, toutes les
+demodulations restent au journal. Une confirmation vieille
+d'une semaine ne pese plus que la moitie, pour qu'un contexte change
+ne reste pas colle a d'anciennes prises. Si une sortie ressemble a une
+empreinte deja rejetee sur cette frequence, ce n'est probablement pas
+le bon juge.
 
-Chaque proposition :
-  id, le (epoch), origine ("ia" | "metadonnees" | "note"), confiance 0..1,
-  resume (texte pret a dire -- donnee, pas une cle de phrase),
-  brut (chemin de l'extrait AVANT traitement, optionnel),
-  traitements : liste ORDONNEE (du plus leger au plus agressif) de niveaux de
-    nettoyage, chacun {niveau: nom, audio: chemin, action: dict}. L'utilisateur
-    passe de l'un a l'autre avec "t", en confirme UN SEUL (c) ou les refuse
-    tous (r). Peut etre vide (proposition sans audio, ex. reglage simple).
-  action : dict applique a la confirmation d'une proposition SANS niveaux (ou
-    porte par chaque niveau). Types geres cote Pi :
-    {"kind": "parasite_off", "cle": [label, bucket]}   -> desactive un filtre
-    {"kind": "interet", "categorie": c, "niveau": n}    -> change un interet
-    {"kind": "filtre", "target": ..., "params": {...}}  -> (a venir) reglage de
-        nettoyage du Pi ; non applique automatiquement pour l'instant ("manuel").
-  etat : "attente" | "confirme" | "refuse".
+Aucune fréquence n'est devinée. Le souvenir est celui de l'antenne, ici,
+comme les empreintes de parasites déjà en place.
 """
-import chemins
-import fcntl
+import hashlib
+import math
 import json
 import os
+import shutil
+import subprocess
+import threading
 import time
+import wave
 
-NAS_ROOT = "/media/nas/nd1"
-STORE_NAS = f"{NAS_ROOT}/server/radio_log/propositions.json"
-STORE_LOCAL = chemins.base("propositions.json")  # etat runtime, hors pi_console (axe 4)
-LOCK_PATH = "/tmp/propositions.lock"
-MAX_ENTRIES = 300
+import chemins
+import noise_signatures as ns
+from phrases import dire, nombre
+
+_verrou = threading.Lock()
+SCORES = chemins.base("juges_freq.json")
+# Même pas que les parasites : une fréquence, pas une bande entière.
+PAS_HZ = 12_500
+# Un seul oui, sans non : (1+1)/(1+0+2). En dessous, le juge n'a pas
+# encore été retenu : la preuve du signal départage, pas le souvenir.
+SEUIL_RETENU = 0.66
+# Trois confirmations fraiches. A une semaine, chacune ne pese plus que moitie.
+DEMI_VIE_S = 7 * 24 * 3600
+TAU_S = DEMI_VIE_S / math.log(2)
+POIDS_SUR = 2.4
+MARGE_SUR = 2.0
+FAITS_MAX = 30
+
+NOMS = {
+    "am": "AM", "nfm": "FM étroite", "wfm": "FM large",
+    "usb": "BLU haute", "lsb": "BLU basse",
+    "-fa": "détection automatique", "-fs": "DMR",
+    "-fi": "NXDN 48", "-fn": "NXDN 96", "-fm": "dPMR", "-fz": "M17",
+    "-f1": "P25", "-f2": "P25 phase 2", "-fd": "D-Star", "-fy": "YSF",
+    "-fx": "X2 TDMA", "-fp": "ProVoice", "-fh": "EDACS", "-fe": "EDACS EA",
+    "analogique": "FM analogique",
+    "freedv-700D": "FreeDV 700D",
+    "freedv-700E": "FreeDV 700E",
+    "freedv-1600": "FreeDV 1600",
+}
 
 
-def _path():
-    return STORE_NAS if os.path.ismount(NAS_ROOT) else STORE_LOCAL
+def nom(juge):
+    return NOMS.get(juge or "", juge or "juge")
 
 
-def _read():
+def _cle(freq_hz):
     try:
-        with open(_path()) as f:
-            return json.load(f)
+        return str(round(float(freq_hz) / PAS_HZ))
+    except (TypeError, ValueError):
+        return None
+
+
+def _lire_scores():
+    try:
+        with open(SCORES, encoding="utf-8") as f:
+            data = json.load(f)
     except (OSError, ValueError):
-        return []
+        data = {}
+    data.setdefault("frequences", {})
+    return data
 
 
-def _with_lock(fn):
-    os.makedirs(os.path.dirname(_path()), exist_ok=True)
-    with open(LOCK_PATH, "w") as lock:
-        fcntl.flock(lock, fcntl.LOCK_EX)
-        data = _read()
-        result = fn(data)
-        tmp = _path() + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False)
-        os.replace(tmp, _path())
-        return result
+def _ecrire_scores(data):
+    os.makedirs(os.path.dirname(SCORES), exist_ok=True)
+    tmp = SCORES + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, SCORES)
 
 
-def add(resume, action=None, origine="ia", confiance=0.5, brut=None, traitements=None):
-    """Depose une proposition (ecrit par la passe Mac sur le NAS, ou en local).
-    traitements : liste [{niveau, audio, action}] du plus leger au plus
-    agressif. Retourne l'id attribue."""
-    pid = f"{int(time.time()*1000)}"
-
-    def put(data):
-        data.append({"id": pid, "le": time.time(), "origine": origine,
-                     "confiance": confiance, "resume": resume, "brut": brut,
-                     "traitements": traitements or [], "action": action or {},
-                     "etat": "attente"})
-        del data[:-MAX_ENTRIES]
-    _with_lock(put)
-    return pid
+def _poids(faits, bon):
+    """Poids des confirmations (ou des refus) encore frais."""
+    maintenant = time.time()
+    total = 0.0
+    for ev in faits or []:
+        if bool(ev.get("bon")) != bool(bon):
+            continue
+        age = max(0.0, maintenant - float(ev.get("t") or maintenant))
+        total += math.exp(-age / TAU_S)
+    return total
 
 
-def entries(include_traitees=False):
-    """A traiter (etat "attente") d'abord, de la plus confiante a la moins ;
-    puis, si include_traitees, les deja vues."""
-    data = _read()
-    attente = sorted([p for p in data if p.get("etat") == "attente"],
-                     key=lambda p: -p.get("confiance", 0))
-    if not include_traitees:
-        return attente
-    return attente + [p for p in data if p.get("etat") != "attente"]
+def _faits_anciens(st):
+    """Les oui/non notes avant l'horloge : le decompte part d'aujourd'hui."""
+    maintenant = time.time()
+    faits = [{"t": maintenant, "bon": True} for _ in range(int(st.get("oui") or 0))]
+    faits += [{"t": maintenant, "bon": False} for _ in range(int(st.get("non") or 0))]
+    return faits[-FAITS_MAX:]
 
 
-def set_etat(pid, etat):
-    def apply(data):
-        for p in data:
-            if p.get("id") == pid:
-                p["etat"] = etat
-    _with_lock(apply)
+def _migrer(data):
+    change = False
+    for juges in (data.get("frequences") or {}).values():
+        if not isinstance(juges, dict):
+            continue
+        for st in juges.values():
+            if not isinstance(st, dict) or "faits" in st:
+                continue
+            st["faits"] = _faits_anciens(st)
+            change = True
+    return change
 
 
-def apply(action):
-    """Applique une action (celle du niveau confirme, ou l'action simple de la
-    proposition). Retourne (ok, detail) ou detail est un court texte decrivant
-    ce qui a ete fait, ou la raison de l'echec."""
-    action = action or {}
-    kind = action.get("kind")
+def _rang_de(st):
+    faits = st.get("faits")
+    if faits:
+        oui, non = _poids(faits, True), _poids(faits, False)
+    else:
+        oui, non = st.get("oui", 0), st.get("non", 0)
+    return (oui + 1) / (oui + non + 2)
+
+
+def suffisant(freq_hz):
+    """Juge assez confirme recemment pour qu'on s'en tienne a lui s'il
+    confirme cette prise. None tant que les prises recentes ne tranchent pas."""
+    cle = _cle(freq_hz)
+    if not cle:
+        return None
+    with _verrou:
+        data = _lire_scores()
+        if _migrer(data):
+            _ecrire_scores(data)
+        juges = data["frequences"].get(cle) or {}
+    poids = []
+    for juge, st in juges.items():
+        if not isinstance(st, dict):
+            continue
+        oui = _poids(st.get("faits"), True)
+        non = _poids(st.get("faits"), False)
+        if oui <= non:
+            continue
+        poids.append((oui, juge))
+    if not poids:
+        return None
+    poids.sort(reverse=True)
+    meilleur, juge = poids[0]
+    second = poids[1][0] if len(poids) > 1 else 0.0
+    if meilleur < POIDS_SUR:
+        return None
+    if second and meilleur < MARGE_SUR * second:
+        return None
+    return juge
+
+
+def rang(freq_hz, juge):
+    """0,5 sans souvenir. Monte quand l'utilisateur valide ce juge ici,
+    descend quand il le rejette. Sert à le tester plus ou moins tôt."""
+    cle = _cle(freq_hz)
+    if not cle or not juge:
+        return 0.5
+    with _verrou:
+        st = _lire_scores()["frequences"].get(cle, {}).get(juge) or {}
+    return _rang_de(st)
+
+
+def en_tete(freq_hz):
+    """Juge retenu sur cette fréquence (au moins un oui, score au-dessus
+    du seuil), ou None. Il passe devant. Les autres restent essayés."""
+    cle = _cle(freq_hz)
+    if not cle:
+        return None
+    with _verrou:
+        juges = dict(_lire_scores()["frequences"].get(cle) or {})
+    choix = None
+    for juge, st in juges.items():
+        if not juge or st.get("oui", 0) <= 0:
+            continue
+        score = _rang_de(st)
+        if score < SEUIL_RETENU:
+            continue
+        marque = (score, st.get("oui", 0))
+        if choix is None or marque > choix[0]:
+            choix = (marque, juge)
+    return choix[1] if choix else None
+
+
+def vu(freq_hz, juge):
+    """Combien de fois ce juge a deja sorti du clair sur cette frequence."""
+    cle = _cle(freq_hz)
+    if not cle or not juge:
+        return 0
+    with _verrou:
+        st = (_lire_scores()["frequences"].get(cle) or {}).get(juge) or {}
+    return int(st.get("vu") or 0)
+
+
+def noter_vu(freq_hz, juge):
+    """Ce juge a sorti de la voix ou des donnees en clair. La prochaine fois
+    il passe devant. Ce n'est pas un oui de l'utilisateur : les autres juges,
+    et l'analogique, continuent d'etre essayes."""
+    cle = _cle(freq_hz)
+    if not cle or not juge:
+        return
+    with _verrou:
+        data = _lire_scores()
+        st = data["frequences"].setdefault(cle, {}).setdefault(juge, {"oui": 0, "non": 0})
+        st["vu"] = int(st.get("vu") or 0) + 1
+        _ecrire_scores(data)
+
+
+def _noter_bande(label, juge, bon):
+    """La meme note, pour la confiance du juge sur la bande (juges_scores.json) :
+    sans elle, seule la commande "juge" nourrissait ce score."""
+    if not label or not str(juge).startswith("-"):
+        return
+    chemin = chemins.base("juges_scores.json")
     try:
-        if kind == "parasite_off":
-            import noise_signatures
-            noise_signatures.set_group_active(action["cle"], False)
-            mhz = f"{action.get('freq_hz', 0) / 1e6:.4f}".rstrip("0").rstrip(".").replace(".", ",")
-            return True, f"filtre {mhz} mégahertz désactivé"
-        if kind == "interet":
-            import interets
-            niveaux = dict(interets.levels(fresh=True))
-            niveaux[action["categorie"]] = action["niveau"]
-            if not interets.save(niveaux):
-                return False, "NAS inaccessible"
-            return True, f"{action['categorie']} réglé sur {action['niveau']}"
-        # Types non appliques automatiquement (reglages de nettoyage fins) :
-        # confirmes mais a appliquer plus tard, cote Pi.
-        return False, "à appliquer manuellement"
-    except Exception as exc:
-        return False, f"échec : {exc}"
+        with open(chemin, encoding="utf-8") as f:
+            s = json.load(f)
+    except (OSError, ValueError):
+        s = {}
+    b = s.setdefault("bandes", {}).setdefault(label, {"_protocoles": {}})
+    js = b.setdefault(juge, {"oui": 0, "non": 0, "propositions": 0})
+    js["oui" if bon else "non"] = js.get("oui" if bon else "non", 0) + 1
+    tmp = chemin + f".{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(s, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, chemin)
+
+
+def _noter(freq_hz, juge, bon, label=None):
+    cle = _cle(freq_hz)
+    if not cle or not juge:
+        return
+    try:
+        _noter_bande(label, juge, bon)
+    except OSError as exc:
+        print(f"[propositions] confiance de bande non notee : {exc}")
+    with _verrou:
+        data = _lire_scores()
+        st = data["frequences"].setdefault(cle, {}).setdefault(juge, {"oui": 0, "non": 0})
+        if "faits" not in st:
+            st["faits"] = _faits_anciens(st)
+        st["oui" if bon else "non"] = st.get("oui" if bon else "non", 0) + 1
+        st["faits"].append({"t": time.time(), "bon": bool(bon)})
+        st["faits"] = st["faits"][-FAITS_MAX:]
+        _ecrire_scores(data)
+
+
+def _chemin(journal):
+    return journal[:-4] + ".propositions.json"
+
+
+def _charger(journal):
+    if not journal:
+        return None
+    try:
+        with open(_chemin(journal), encoding="utf-8") as f:
+            doc = json.load(f)
+    except (OSError, ValueError):
+        return None
+    if not doc.get("items"):
+        return None
+    return doc
+
+
+def _sauver(journal, doc):
+    path = _chemin(journal)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(doc, f, ensure_ascii=False, indent=1)
+    os.replace(tmp, path)
+
+
+def _empreinte_wav(chemin):
+    try:
+        with wave.open(chemin) as w:
+            if w.getsampwidth() != 2:
+                return None
+            pcm = w.readframes(w.getnframes())
+            if w.getnchannels() == 2:
+                import audioop
+                pcm = audioop.tomono(pcm, 2, 0.5, 0.5)
+            return ns.fingerprint(pcm, w.getframerate(), "s16le")
+    except (OSError, wave.Error, EOFError):
+        return None
+
+
+def _empreinte_pcm(pcm, taux, canaux):
+    if canaux == 2:
+        import audioop
+        pcm = audioop.tomono(pcm, 2, 0.5, 0.5)
+    return ns.fingerprint(pcm, taux, "s16le")
+
+
+def _vers_mp3(pcm, taux, canaux, dest):
+    if canaux == 2:
+        import audioop
+        pcm = audioop.tomono(pcm, 2, 0.5, 0.5)
+        canaux = 1
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+         "-f", "s16le", "-ar", str(taux), "-ac", str(canaux), "-i", "-",
+         "-codec:a", "libmp3lame", "-q:a", "5", dest],
+        input=pcm, capture_output=True, timeout=60)
+    return proc.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 200
+
+
+def _wav_vers_mp3(src, dest):
+    proc = subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", src,
+         "-ac", "1", "-codec:a", "libmp3lame", "-q:a", "5", dest],
+        capture_output=True, timeout=60)
+    return proc.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 200
+
+
+def poser(journal, freq_hz, label, juge, empreinte, autres):
+    """autres : rendus en plus de celui déjà dans le journal.
+    Chaque autre est {juge, pcm, taux, canaux} ou {juge, wav}."""
+    if not journal or not autres:
+        return
+    items = [{"juge": juge, "fichier": None, "empreinte": empreinte}]
+    base = os.path.basename(journal)[:-4]
+    dossier = os.path.dirname(journal)
+    for i, autre in enumerate(autres, start=1):
+        dest = os.path.join(dossier, f"{base}.p{i}.mp3")
+        if autre.get("wav"):
+            ok = _wav_vers_mp3(autre["wav"], dest)
+            emp = _empreinte_wav(autre["wav"])
+        else:
+            ok = _vers_mp3(autre.get("pcm") or b"", autre.get("taux") or 22050,
+                           autre.get("canaux") or 1, dest)
+            emp = _empreinte_pcm(autre.get("pcm") or b"", autre.get("taux") or 22050,
+                                 autre.get("canaux") or 1)
+        if not ok:
+            try:
+                os.remove(dest)
+            except OSError:
+                pass
+            continue
+        items.append({"juge": autre.get("juge"), "fichier": os.path.basename(dest), "empreinte": emp})
+    if len(items) < 2:
+        return
+    _sauver(journal, {"courante": 0, "freq_hz": freq_hz, "label": label or "", "items": items})
+    print(f"[propositions] {os.path.basename(journal)} : {len(items)} rendus")
+
+
+def fichier_courant(journal):
+    """Fichier à jouer : le journal, ou le rendu d'un autre juge."""
+    doc = _charger(journal)
+    if not doc:
+        return journal
+    item = doc["items"][min(doc.get("courante", 0), len(doc["items"]) - 1)]
+    if not item.get("fichier"):
+        return journal
+    chemin = os.path.join(os.path.dirname(journal), item["fichier"])
+    return chemin if os.path.exists(chemin) else journal
+
+
+def annonce_courante(journal):
+    doc = _charger(journal)
+    if not doc or len(doc["items"]) < 2:
+        return None
+    i = min(doc.get("courante", 0), len(doc["items"]) - 1)
+    return dire("journal.proposition", indice=i + 1, total=len(doc["items"]),
+                juge=nom(doc["items"][i].get("juge")))
+
+
+def avancer(journal):
+    """J : rendu suivant, sans rejeter. None s'il n'y en a qu'un."""
+    doc = _charger(journal)
+    if not doc or len(doc["items"]) < 2:
+        return None
+    doc["courante"] = (doc.get("courante", 0) + 1) % len(doc["items"])
+    _sauver(journal, doc)
+    return annonce_courante(journal)
+
+
+def _apprendre(doc, item):
+    emp = item.get("empreinte")
+    freq = doc.get("freq_hz")
+    if not emp or not freq:
+        return False
+    ns.add_signature({"freq_hz": freq, "label": doc.get("label") or "", "fingerprint": emp, "juge": item.get("juge")})
+    return True
+
+
+def _oter_fichier(journal, item):
+    nom_f = item.get("fichier")
+    if not nom_f:
+        return
+    try:
+        os.remove(os.path.join(os.path.dirname(journal), nom_f))
+    except OSError:
+        pass
+
+
+def rejeter(journal):
+    """Flèche gauche sur le rendu en cours.
+
+    Rend une phrase si d'autres rendus restent (la prise demeure au journal).
+    Rend None si la prise entière doit suivre le rejet habituel.
+    """
+    doc = _charger(journal)
+    if not doc:
+        return None
+    i = min(doc.get("courante", 0), len(doc["items"]) - 1)
+    item = doc["items"][i]
+    _noter(doc.get("freq_hz"), item.get("juge"), False, doc.get("label"))
+    if len(doc["items"]) == 1:
+        if item.get("fichier"):
+            _apprendre(doc, item)
+            _oter_fichier(journal, item)
+        try:
+            os.remove(_chemin(journal))
+        except OSError:
+            pass
+        return None
+    _oter_fichier(journal, item)
+    del doc["items"][i]
+    if not doc["items"]:
+        try:
+            os.remove(_chemin(journal))
+        except OSError:
+            pass
+        return None
+    doc["courante"] = min(i, len(doc["items"]) - 1)
+    _sauver(journal, doc)
+    suivant = doc["items"][doc["courante"]]
+    reste = nombre(len(doc["items"]), "autre proposition", "autres propositions")
+    return dire("journal.rejet_suivant_sans_empreinte", reste=reste, juge=nom(suivant.get("juge")))
+
+
+def a_fiche(journal):
+    return _charger(journal) is not None
+
+
+def confirmer(journal):
+    """V, C ou N : le rendu entendu est le bon pour cette fréquence."""
+    doc = _charger(journal)
+    if doc:
+        if doc.get("confirmee"):
+            return
+        i = min(doc.get("courante", 0), len(doc["items"]) - 1)
+        item = doc["items"][i]
+        _noter(doc.get("freq_hz"), item.get("juge"), True, doc.get("label"))
+        doc["confirmee"] = item.get("juge")
+        _sauver(journal, doc)
+        return
+    info = ns.capture_info(journal) or {}
+    metrics = info.get("metrics") or {}
+    juge = metrics.get("juge") or metrics.get("modulation_banc") or info.get("mode")
+    _noter(info.get("freq_hz"), juge, True, info.get("label"))
+
+
+def noter_rejet_simple(journal):
+    """Rejet d'une prise qui n'a qu'un rendu : ce juge descend sur cette fréquence."""
+    info = ns.capture_info(journal) or {}
+    metrics = info.get("metrics") or {}
+    juge = metrics.get("juge") or metrics.get("modulation_banc") or info.get("mode")
+    _noter(info.get("freq_hz"), juge, False, info.get("label"))
+
+
+def _juge_courant(journal):
+    """Juge du rendu en cours, fréquence et bande."""
+    doc = _charger(journal)
+    if doc and doc.get("items"):
+        i = min(doc.get("courante", 0), len(doc["items"]) - 1)
+        return doc["items"][i].get("juge"), doc.get("freq_hz"), doc.get("label") or ""
+    info = ns.capture_info(journal) or {}
+    metrics = info.get("metrics") or {}
+    juge = metrics.get("juge") or metrics.get("modulation_banc") or info.get("mode")
+    return juge, info.get("freq_hz"), info.get("label") or ""
+
+
+def renvoyer_flux(journal):
+    """Touche R : le flux non décodé repart aux juges, sauf celui en cours.
+
+    Le wav reste sur le NAS, à côté du journal. On en dépose une copie dans
+    la file des juges. Rend la phrase à dire."""
+    flux = journal[:-4] + ".flux.wav" if journal and journal.endswith(".mp3") else ""
+    if not flux or not os.path.isfile(flux) or os.path.getsize(flux) < 48_000:
+        return dire("journal.pas_flux")
+    juge, freq, label = _juge_courant(journal)
+    if not freq:
+        return dire("journal.pas_flux")
+    dossier = chemins.base("brut_dsd")
+    os.makedirs(dossier, exist_ok=True)
+    cle = hashlib.md5(os.path.basename(journal).encode()).hexdigest()[:10]
+    dest = os.path.join(dossier, f"renvoi_{cle}.wav")
+    fiche_path = dest[:-4] + ".json"
+    if os.path.isfile(dest) and os.path.isfile(fiche_path):
+        return dire("journal.flux_deja")
+    shutil.copyfile(flux, dest)
+    fiche = {
+        "freq_hz": int(freq),
+        "mode": "renvoi",
+        "band": label,
+        "t": time.time(),
+        "etiquette": "renvoi",
+        "direct": {"valide": False, "protocole": None, "propres": 0, "total": 0,
+                   "prive": False, "chiffre": False},
+        "juges": {},
+    }
+    fiche["journal"] = journal
+    tmp = fiche_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(fiche, f, ensure_ascii=False)
+    os.replace(tmp, fiche_path)
+    return dire("journal.flux_renvoye")
+
+
+def renvoyer_decodeur(journal, juge):
+    """Contrôle+R : le flux part à un seul décodeur. Son fichier est gardé,
+    même court, même marqué chiffré. Ce n'est pas un déchiffrement."""
+    flux = journal[:-4] + ".flux.wav" if journal and journal.endswith(".mp3") else ""
+    if not flux or not os.path.isfile(flux) or os.path.getsize(flux) < 48_000:
+        return dire("journal.pas_flux")
+    if juge not in NOMS:
+        return dire("journal.decodeur_rien", nom=juge or "décodeur")
+    _juge, freq, label = _juge_courant(journal)
+    if not freq:
+        return dire("journal.pas_flux")
+    dossier = chemins.base("brut_dsd")
+    os.makedirs(dossier, exist_ok=True)
+    cle = hashlib.md5(os.path.basename(journal).encode()).hexdigest()[:10]
+    dest = os.path.join(dossier, f"decodeur_{cle}_{str(juge).lstrip('-')}.wav")
+    fiche_path = dest[:-4] + ".json"
+    if os.path.isfile(dest) and os.path.isfile(fiche_path):
+        return dire("journal.flux_deja")
+    shutil.copyfile(flux, dest)
+    fiche = {
+        "freq_hz": int(freq),
+        "mode": "decodeur",
+        "band": label,
+        "t": time.time(),
+        "etiquette": "decodeur",
+        "decodeur": juge,
+        "journal": journal,
+        "direct": {"valide": False, "protocole": None, "propres": 0, "total": 0,
+                   "prive": False, "chiffre": False},
+        "juges": {},
+    }
+    tmp = fiche_path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(fiche, f, ensure_ascii=False)
+    os.replace(tmp, fiche_path)
+    return dire("journal.decodeur_envoye", nom=nom(juge))
+
+
+def rendre_decodeur(wav, fiche, juge, verdict, dossier):
+    """Dépose la sortie de ce seul décodeur sur la prise, et la phrase."""
+    journal = _journal_du_renvoi(wav, fiche)
+    verdict = verdict or {}
+    secondes = str(verdict.get("voix_s") or 0).replace(".", ",")
+    nom_j = nom(juge)
+    if not journal:
+        return dire("journal.decodeur_rien", nom=nom_j)
+    chemin = None
+    if dossier and juge:
+        candidat = os.path.join(dossier, "voix_%s.wav" % str(juge).lstrip("-"))
+        if os.path.isfile(candidat) and os.path.getsize(candidat) > 44:
+            chemin = candidat
+    ajoute = False
+    if chemin:
+        try:
+            info = ns.capture_info(journal) or {}
+        except Exception:
+            info = {}
+        origine = (info.get("metrics") or {}).get("juge") or info.get("mode") or "prise"
+        ajoute = ajouter_rendu(journal, (fiche or {}).get("freq_hz"),
+                                (fiche or {}).get("band") or "", origine, juge, chemin)
+    if ajoute and verdict.get("chiffre"):
+        return dire("journal.decodeur_chiffre", nom=nom_j, secondes=secondes)
+    if ajoute:
+        return dire("journal.decodeur_ajoute", nom=nom_j, secondes=secondes)
+    if verdict.get("protocole"):
+        return dire("journal.decodeur_sans_voix", nom=nom_j, protocole=verdict.get("protocole"))
+    return dire("journal.decodeur_rien", nom=nom_j)
+
+
+def _journal_du_renvoi(wav, fiche):
+    """La prise d'origine. Le nom est dans la fiche, sinon on le retrouve
+    par l'empreinte posee au moment du renvoi."""
+    chemin = (fiche or {}).get("journal")
+    if chemin and os.path.isfile(chemin):
+        return chemin
+    nom = os.path.basename(wav or "")
+    if not (nom.startswith("renvoi_") and nom.endswith(".wav")):
+        return None
+    cle = nom[len("renvoi_"):-4]
+    try:
+        from sound_paths import RADIO_LOG_DIR
+    except Exception:
+        RADIO_LOG_DIR = "/media/nas/nd1/server/radio_log"
+    if not os.path.isdir(RADIO_LOG_DIR):
+        return None
+    for dossier, _sous, fichiers in os.walk(RADIO_LOG_DIR):
+        for fichier in fichiers:
+            if not fichier.endswith(".mp3") or ".p" in fichier[:-4]:
+                continue
+            if hashlib.md5(fichier.encode()).hexdigest()[:10] == cle:
+                return os.path.join(dossier, fichier)
+    return None
+
+
+def _capital(texte):
+    texte = (texte or "").strip()
+    if not texte:
+        return ""
+    return texte[0].upper() + texte[1:]
+
+
+def _phrase_renvoi(verdicts, ajoutes):
+    """Ce que chaque juge a repondu, y compris ceux qui n'ont rien sorti."""
+    morceaux = []
+    poses = set(ajoutes)
+    if len(ajoutes) == 1:
+        morceaux.append(dire("journal.rendu_ajoute", nom=nom(ajoutes[0])))
+    elif ajoutes:
+        morceaux.append(dire("journal.rendus_ajoutes",
+                             nombre=nombre(len(ajoutes), "rendu", "rendus"),
+                             liste=", ".join(nom(j) for j in ajoutes)))
+    else:
+        morceaux.append(dire("journal.rendu_aucun"))
+    vus = []
+    rien = 0
+    for juge, v in (verdicts or {}).items():
+        v = v or {}
+        if juge in poses:
+            if v.get("chiffre"):
+                vus.append(_capital(dire("journal.juge_chiffre", juge=nom(juge))))
+            continue
+        if v.get("chiffre"):
+            vus.append(_capital(dire("journal.juge_chiffre", juge=nom(juge))))
+        elif v.get("protocole") and v.get("voix_s", 0) < 0.4:
+            vus.append(_capital(dire("journal.juge_sans_voix", juge=nom(juge), protocole=v["protocole"])))
+        elif v.get("voix_s", 0) >= 0.4:
+            vus.append(_capital(dire("journal.juge_voix", juge=nom(juge),
+                                     secondes=str(v.get("voix_s")).replace(".", ","))))
+        else:
+            rien += 1
+    morceaux.extend(vus)
+    if rien:
+        morceaux.append(_capital(dire("journal.juges_rien",
+                                     nombre=nombre(rien, "juge", "juges"))))
+    return dire("journal.juges_repondu", detail=" ".join(m for m in morceaux if m))
+
+
+def ajouter_rendu(journal, freq_hz, label, origine, juge, wav):
+    """Ajoute un rendu à la prise, sans effacer ceux déjà là. Le curseur
+    se place dessus : entrée le joue."""
+    if not journal or not wav or not os.path.isfile(wav):
+        return False
+    doc = _charger(journal)
+    if doc:
+        items = list(doc.get("items") or [])
+        freq_hz = doc.get("freq_hz", freq_hz)
+        label = doc.get("label") or label
+    else:
+        items = [{"juge": origine or "prise", "fichier": None, "empreinte": None}]
+        doc = None
+    base = os.path.basename(journal)[:-4]
+    dossier = os.path.dirname(journal)
+    n = 1
+    while os.path.exists(os.path.join(dossier, f"{base}.p{n}.mp3")):
+        n += 1
+    dest = os.path.join(dossier, f"{base}.p{n}.mp3")
+    if not _wav_vers_mp3(wav, dest):
+        try:
+            os.remove(dest)
+        except OSError:
+            pass
+        return False
+    items.append({"juge": juge, "fichier": os.path.basename(dest),
+                  "empreinte": _empreinte_wav(wav)})
+    if doc:
+        doc["items"] = items
+        doc["courante"] = len(items) - 1
+        if freq_hz is not None:
+            doc["freq_hz"] = freq_hz
+        _sauver(journal, doc)
+    else:
+        _sauver(journal, {"courante": len(items) - 1, "freq_hz": freq_hz,
+                          "label": label or "", "items": items})
+    print(f"[propositions] {os.path.basename(journal)} : rendu {nom(juge)} ajouté")
+    return True
+
+
+def rendre_renvoi(wav, fiche, verdicts, dossier, flux_fm=True):
+    """Depose sur la prise d'origine chaque son ecoutable, et la phrase a dire.
+
+    Le flux est le son FM du recepteur : il devient l'ecoute FM etroite.
+    Les voix numeriques presentes (meme en dessous du seuil automatique)
+    deviennent les autres rendus. Touche J les parcours. None si deja dit.
+    """
+    journal = _journal_du_renvoi(wav, fiche)
+    if not journal:
+        print(f"[propositions] renvoi sans prise : {wav}")
+        return _phrase_renvoi(verdicts, [])
+    doc = _charger(journal)
+    if doc and doc.get("renvoi_wav") == os.path.basename(wav or ""):
+        return None
+    voix = {}
+    if flux_fm and wav and os.path.isfile(wav) and os.path.getsize(wav) > 48_000:
+        voix["nfm"] = wav
+    if dossier and os.path.isdir(dossier):
+        for juge in verdicts or {}:
+            chemin = os.path.join(dossier, "voix_%s.wav" % str(juge).lstrip("-"))
+            if os.path.isfile(chemin) and os.path.getsize(chemin) > 44:
+                voix[juge] = chemin
+    ajoutes = list(voix)
+    if ajoutes:
+        try:
+            info = ns.capture_info(journal) or {}
+        except Exception:
+            info = {}
+        origine = (info.get("metrics") or {}).get("juge") or info.get("mode") or "prise"
+        poser(journal, (fiche or {}).get("freq_hz"), (fiche or {}).get("band") or "",
+              origine, None, [{"juge": j, "wav": voix[j]} for j in ajoutes])
+        doc = _charger(journal)
+        if doc:
+            doc["renvoi_wav"] = os.path.basename(wav or "")
+            _sauver(journal, doc)
+    phrase = _phrase_renvoi(verdicts, ajoutes)
+    print(f"[propositions] renvoi {os.path.basename(journal)} : {phrase}")
+    return phrase

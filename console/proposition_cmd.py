@@ -14,7 +14,7 @@ import sys
 
 
 import conseils  # noqa: E402
-import propositions  # noqa: E402
+import propositions_reglages as propositions  # noqa: E402
 import voix  # noqa: E402
 from journal import Player  # noqa: E402
 from phrases import dire, nombre  # noqa: E402
@@ -116,6 +116,13 @@ def run(line, key_source, say, out):
                 action = traits[lvl]["action"] if (traits and lvl < len(traits)) else items[i].get("action")
                 ok, detail = propositions.apply(action)
                 propositions.set_etat(items[i]["id"], "confirme")
+                brut = items[i].get("brut") or ""
+                if brut.startswith("rejets" + os.sep):   # l'IA a entendu une voix dans un rejet : repeche
+                    try:
+                        import rejets
+                        rejets.repecher(os.path.basename(brut))
+                    except Exception as exc:
+                        print(f"[proposition] repechage : {exc!r}")
                 items.pop(i)
                 say(dire("proposition.confirmee", detail=detail) if ok
                     else dire("proposition.confirmee_manuelle", detail=detail))

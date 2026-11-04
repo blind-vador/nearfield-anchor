@@ -264,6 +264,8 @@ def _match(line):
     if "rejets" in tokens or "rejet" in tokens:
         return next(c for c in commands.COMMANDS if c.name == "rejets"), 100
     # "journal proposition" / "propositions" : revue des reglages proposes.
+    if "nommage" in tokens or ("journal" in tokens and "noms" in tokens):
+        return next(c for c in commands.COMMANDS if c.name == "nommage"), 100
     if "proposition" in tokens or "propositions" in tokens:
         return next(c for c in commands.COMMANDS if c.name == "proposition"), 100
     first = (tokens or [""])[0]
@@ -391,6 +393,9 @@ def run_command(line, key_source, last_response):
     if cmd.name == "son":
         import son_cmd
         return son_cmd.run(line, key_source, voix.say, out)
+    if cmd.name == "sonneries":
+        import sonneries_cmd
+        return sonneries_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "sons":
         import sons_cmd
         return sons_cmd.run(line, key_source, voix.say, out)
@@ -491,9 +496,20 @@ def run_command(line, key_source, last_response):
     if cmd.name == "rejets":
         import rejets_cmd
         return rejets_cmd.run(line, key_source, voix.say, out)
+    if cmd.name == "nommage":
+        import nommage_cmd
+        try:
+            return nommage_cmd.run(line, key_source, voix.say, out)
+        except Exception as exc:
+            print(f"[console] erreur dans nommage : {exc!r}", file=sys.stderr)
+            return dire("console.erreur_pendant_commande", name="nommage")
     if cmd.name == "proposition":
         import proposition_cmd
-        return proposition_cmd.run(line, key_source, voix.say, out)
+        try:
+            return proposition_cmd.run(line, key_source, voix.say, out)
+        except Exception as exc:
+            print(f"[console] erreur dans proposition : {exc!r}", file=sys.stderr)
+            return dire("console.erreur_pendant_commande", name="proposition")
     if cmd.name == "intérêts":
         import interets_cmd
         return interets_cmd.run(line, key_source, voix.say, out)

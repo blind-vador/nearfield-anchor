@@ -55,7 +55,7 @@ export DEBIAN_FRONTEND=noninteractive
 echo "=== 1/6 : paquets systeme (apt) ==="
 apt-get update
 apt-get install -y \
-    espeak ffmpeg mpg123 sox python3-ephem multimon-ng direwolf rtl-433 dump1090-mutability libglib2.0-dev libairspy-dev libiio-dev rtl-sdr librtlsdr-dev libjansson-dev \
+    espeak ffmpeg mpg123 sox python3-ephem multimon-ng direwolf wsjtx rtl-433 dump1090-mutability libglib2.0-dev libairspy-dev libiio-dev rtl-sdr librtlsdr-dev libjansson-dev \
     build-essential cmake git python3-pip pkg-config wget \
     libconfig++-dev libmp3lame-dev libshout3-dev libfftw3-dev libpulse-dev \
     libsndfile1-dev libitpp-dev libncurses-dev libcodec2-dev portaudio19-dev \
@@ -66,6 +66,16 @@ apt-get install -y \
 
 echo "=== 2/6 : compilation des bibliotheques externes (idempotent) ==="
 mkdir -p "$BUILD_DIR"
+
+# freedv_rx (juges de la BLU, lib/juges_sync.py) : le paquet Debian codec2 ne l'a pas.
+if ! command -v freedv_rx >/dev/null 2>&1; then
+    echo "-- freedv_rx (codec2) --"
+    rm -rf "$BUILD_DIR/codec2"
+    git clone --quiet --branch 1.2.0 --depth 1 https://github.com/drowe67/codec2.git "$BUILD_DIR/codec2"
+    cmake -S "$BUILD_DIR/codec2" -B "$BUILD_DIR/codec2/build" -DUNITTEST=OFF >/dev/null
+    cmake --build "$BUILD_DIR/codec2/build" -j4 --target freedv_rx >/dev/null
+    install -m 755 "$BUILD_DIR/codec2/build/src/freedv_rx" /usr/local/bin/freedv_rx
+fi
 
 if [ ! -f "$AIRBAND_DIR/src/build/src/rtl_airband" ]; then
     echo "-- RTLSDR-Airband --"

@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 import sys
@@ -84,6 +85,76 @@ def _disk_present(uuid):
     return os.path.exists(f"/dev/disk/by-uuid/{uuid}")
 
 
+PORTS = os.path.expanduser("~/autopilot/nas_ports.json")
+REVEIL_APRES = 4          # ~2 min : le disque n'est pas revenu seul
+REVEIL_TOUS_LES = 10      # puis une impulsion toutes les ~5 min
+
+
+def _charger_ports():
+    try:
+        with open(PORTS) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _sauver_ports(ports):
+    try:
+        tmp = PORTS + ".tmp"
+        with open(tmp, "w") as f:
+            json.dump(ports, f)
+        os.replace(tmp, PORTS)
+    except OSError as exc:
+        print(f"[nas_watch] ports : {exc}")
+
+
+def _port_usb(uuid):
+    # Le lien sysfs 2-2.4 devient le port 2-2-port4. Rien sur le bus USB2.
+    try:
+        noeud = os.path.realpath(f"/dev/disk/by-uuid/{uuid}")
+    except OSError:
+        return None
+    nom = os.path.basename(noeud)
+    while nom and nom[-1].isdigit():
+        nom = nom[:-1]
+    if not nom:
+        return None
+    lien = os.path.realpath(f"/sys/class/block/{nom}")
+    vu = None
+    for morceau in lien.split("/"):
+        # 2-2.4:1.0 est l interface, pas le peripherique.
+        if ":" in morceau:
+            continue
+        if morceau[:1].isdigit() and morceau.count("-") == 1 and "." in morceau:
+            vu = morceau
+    if not vu:
+        return None
+    parent, _, numero = vu.rpartition(".")
+    if not numero.isdigit() or not parent.startswith("2-"):
+        return None
+    return f"{parent}-port{numero}"
+
+
+def _reveiller(port):
+    if not port or not str(port).startswith("2-"):
+        print(f"[nas_watch] reveil refuse : {port}")
+        return False
+    try:
+        result = subprocess.run(
+            ["sudo", "-n", "/usr/local/sbin/usb-repare", "port-reveil", port],
+            capture_output=True, text=True, timeout=20,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"[nas_watch] reveil {port} : {exc!r}")
+        return False
+    if result.returncode != 0:
+        print(f"[nas_watch] reveil {port} : {result.stderr.strip()}")
+        return False
+    print(f"[nas_watch] reveil {port} : impulsion envoyee")
+    return True
+
+
 def _remount(disk):
     subprocess.run(
         ["sudo", "-n", "/usr/bin/umount", "-l", disk["mount_point"]],
@@ -127,11 +198,17 @@ def main():
     print("[nas_watch] demarrage de la surveillance des disques NAS")
     _startup_announcement()
     fail_streak = {disk["mount_point"]: 0 for disk in DISKS}
+    ports = _charger_ports()
 
     while True:
         for disk in DISKS:
             mount_point = disk["mount_point"]
             if _mount_is_healthy(mount_point):
+                port = _port_usb(disk["uuid"])
+                if port and ports.get(disk["uuid"]) != port:
+                    ports[disk["uuid"]] = port
+                    _sauver_ports(ports)
+                    print(f"[nas_watch] {mount_point} sur {port}")
                 if fail_streak[mount_point] > 0:
                     print(f"[nas_watch] {mount_point} de nouveau sain")
                 fail_streak[mount_point] = 0
@@ -146,6 +223,9 @@ def main():
                     alarmes.declencher("nas_injoignable", f"Attention, {disk['label']} introuvable. Vérifie la connexion.",
                                        rappel_sec=RAPPEL_SEC,
                                        encore=lambda mp=mount_point: not _mount_is_healthy(mp))
+                n = fail_streak[mount_point]
+                if n == REVEIL_APRES or (n > REVEIL_APRES and n % REVEIL_TOUS_LES == 0):
+                    _reveiller(ports.get(disk["uuid"]))
                 continue
 
             print(f"[nas_watch] {mount_point} en erreur -- tentative de remontage automatique")

@@ -4,6 +4,7 @@ import os
 import random
 import shutil
 import subprocess
+import unicodedata
 
 import audio_lock
 import espeak_out
@@ -150,7 +151,9 @@ def _synthesize_edge_tts(text, result_holder, candidate_voices=None, rate="+0%",
 def _phrase_folder_name(text):
     """Nom de dossier lisible (utile en cas d'inspection manuelle via
     NVDA/Samba) mais borne en longueur, complete d'un court hash pour
-    garantir l'unicite meme entre phrases tronquees identiques."""
+    garantir l'unicite meme entre phrases tronquees identiques.
+    NFC : le meme mot accentue ne rate pas le cache selon la machine qui l'ecrit."""
+    text = unicodedata.normalize("NFC", text)
     slug = "".join(c if c.isalnum() else "_" for c in text).strip("_")[:60].strip("_")
     digest = hashlib.md5(text.encode("utf-8")).hexdigest()[:8]
     return f"{slug}_{digest}" if slug else digest
@@ -315,6 +318,56 @@ def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=
         else:
             voix()
 
+    if voix_sources.en_direct(choix):
+        import atomes_parole
+        text = atomes_parole.indicatifs_en_clair(text)
+        print(text)
+        lead()
+        _dire_sans_cache(text, choix, label, reverb)
+        return
+    if choix["moteur"] in ("edge", "piper") and not voix_sources.phrase_entiere(choix):
+        # Nombres et indicatifs : colles depuis les mots en cache.
+        # Google et le Mac passent en une phrase, plus bas.
+        try:
+            import annonce_morceaux as morceaux
+            if morceaux.a_assembler(text):
+                parts = morceaux.expand_texte(text)
+                if reverb:
+                    chemin = morceaux.assemble(parts, choix)
+                    if chemin:
+                        try:
+                            play(chemin)
+                        finally:
+                            try:
+                                os.remove(chemin)
+                            except OSError:
+                                pass
+                        return
+                else:
+                    ticket = audio_lock.ticket_courant()
+                    repli = voix_sources.secours(source)
+                    if repli.get("moteur") not in ("edge", "piper"):
+                        repli = None
+                    lecture = morceaux.Lecture(
+                        parts, choix, lead=None if lead_done[0] else sound_path, label=label,
+                        regler=lambda data, ticket=ticket: audio_lock.scale(data, ticket=ticket),
+                        journal=True, repli=repli)
+                    print(text)
+                    lecture.wait()
+                    if sound_path:
+                        lead_done[0] = True
+                    if lecture.a_parle:
+                        return
+                dit = morceaux.spoken(parts)
+                if dit:
+                    text = dit
+            else:
+                # Flash et longs textes : un seul passage, mais l'indicatif
+                # est deja en alphabet radio (Foxtrot, pas « F »).
+                import atomes_parole
+                text = atomes_parole.indicatifs_en_clair(text)
+        except Exception as exc:
+            print(f"[speak] assemblage : {exc!r}")
     if repetitive:
         remember_repetitive(text)
         # Microsoft absent : ce que la voix demandee a deja dit passe avant le secours.
@@ -363,6 +416,46 @@ def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=
     _espeak_recorded(text, label, reverb=reverb, choix=choix)
 
 
+def _dire_sans_cache(text, choix, label, reverb):
+    """MBROLA ou espeak, en direct. Le fichier sert au journal, puis il est
+    effacé : il n'entre pas dans le cache d'une voix."""
+    voix = (choix or {}).get("voix") or ""
+    if voix.startswith("piper:mbrola#") and not audio_lock.dropped():
+        fd, path = tempfile.mkstemp(suffix=".wav", prefix="mbrola_")
+        os.close(fd)
+        try:
+            if piper_out.say(text, scale=audio_lock.scale, record_path=path, voice_id=voix,
+                             scale_len=piper_out.length_scale((choix or {}).get("debit"))):
+                session = sound_player.get_recording_session()
+                if session is not None:
+                    session.add_audio_file(path)
+                return
+        finally:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+    fd, path = tempfile.mkstemp(suffix=".wav", prefix="espeak_")
+    os.close(fd)
+    try:
+        subprocess.run(["espeak", "-v", "fr", "-b", "1", "-w", path, text], capture_output=True,
+                       timeout=espeak_out.duree_max(text))
+        if os.path.getsize(path) > 0:
+            play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb)
+            return
+    except Exception as exc:
+        print(f"[espeak fichier indisponible: {exc}]")
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    try:
+        espeak_out.say(text, "fr", scale=audio_lock.scale)
+    except Exception as exc:
+        print(f"[espeak indisponible: {exc}]")
+
+
 def _espeak_recorded(text, label, reverb=False, choix=None):
     """Voix locale : Piper (voix et debit de la source, en flux, copiee au
     journal en cours, 2026-10-18), puis espeak en passant par un fichier :
@@ -384,6 +477,37 @@ def _espeak_recorded(text, label, reverb=False, choix=None):
             except OSError:
                 pass
         return
+    if voix_sources.phrase_entiere(choix):
+        # Google ou le Mac n a pas parle : le secours choisi, phrase entiere.
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        repli = voix_sources.secours(voix_sources.source_pour())
+        print("[voix] %s muette, secours %s" % (choix.get("voix"), repli.get("voix")))
+        if voix_sources.en_direct(repli):
+            _dire_sans_cache(text, repli, label, reverb)
+            return
+        fd, path = tempfile.mkstemp(suffix=".wav", prefix="secours_")
+        os.close(fd)
+        if repli.get("moteur") == "piper" and not audio_lock.dropped() and piper_out.say(
+                text, scale=audio_lock.scale, record_path=path, voice_id=repli["voix"],
+                scale_len=piper_out.length_scale(repli.get("debit"))):
+            try:
+                if session is not None:
+                    session.add_audio_file(path)
+            finally:
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+            return
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        fd, path = tempfile.mkstemp(suffix=".wav", prefix="espeak_")
+        os.close(fd)
     try:
         subprocess.run(["espeak", "-v", "fr", "-b", "1", "-w", path, text], capture_output=True,
                        timeout=espeak_out.duree_max(text))

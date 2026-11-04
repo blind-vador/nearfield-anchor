@@ -81,6 +81,24 @@ case "$action" in
         dir=$(port_dir "$cible")
         echo 0 > "$dir/disable"
         ;;
+    port-reveil)
+        # Impulsion sur un port USB3 dont le disque connu a disparu.
+        # Le bus USB2 (1-*) porte le dongle radio, la carte son et le clavier :
+        # on n'y touche jamais. Un port deja configure non plus.
+        [[ "$cible" =~ $PORT_RE ]] || die "port invalide : $cible"
+        case "$cible" in
+            2-*-port[0-9]*) ;;
+            *) die "port-reveil refuse $cible (bus USB3 seulement)" ;;
+        esac
+        dir=$(port_dir "$cible")
+        state=$(cat "$dir/state")
+        if [ "$state" = "configured" ]; then
+            die "port $cible occupe : on n'y touche pas"
+        fi
+        echo 1 > "$dir/disable"
+        sleep 2
+        echo 0 > "$dir/disable"
+        ;;
     rebranche)
         [[ "$cible" =~ $DEV_RE ]] || die "appareil invalide : $cible"
         [ -e "$SYS/$cible/authorized" ] || die "appareil introuvable : $cible"
@@ -104,6 +122,6 @@ case "$action" in
         systemctl restart webcamd
         ;;
     *)
-        die "usage : usb-repare port|port-ancien|port-off|port-on|rebranche|detache|sans-veille <cible> | webcam"
+        die "usage : usb-repare port|port-ancien|port-off|port-on|port-reveil|rebranche|detache|sans-veille <cible> | webcam"
         ;;
 esac

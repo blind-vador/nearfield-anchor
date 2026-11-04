@@ -47,6 +47,7 @@ SONS = {
     "capteur_meteo": "radio_scaner/capteur_meteo.mp3",
     "nouveau_capteur": "radio_scaner/nouveau_capteur.mp3",
     "nouvel_emetteur": "radio_scaner/nouvel_emetteur.mp3",
+    "nommage": "radio_scaner/nommage.mp3",
     "fin_ignore": "radio_scaner/fin_ignore.mp3",
     "scanner_reprise": "radio_scaner/scanner_reprise.mp3",
     "antenne_muette": "radio_scaner/antenne_muette_loop.mp3",
@@ -104,24 +105,34 @@ SONS = {
 }
 
 
+def _variantes(rel):
+    """Le fichier catalogué, puis le même nom sous une autre extension audio."""
+    dossier, base = os.path.split(rel)
+    tige, ext = os.path.splitext(base)
+    exts = [ext] + [e for e in (".mp3", ".wav", ".ogg", ".flac", ".m4a", ".aac", ".opus") if e != ext]
+    return [os.path.join(dossier, tige + e) if dossier else tige + e for e in exts]
+
+
 def chemin(evenement, repli=None):
     rel = SONS.get(evenement)
     if not rel:
         return repli
-    local = os.path.join(LOCAL_BASE, rel)
-    if os.path.exists(local):
-        return local
-    nas = os.path.join(NAS_BASE, rel)
-    if not os.path.exists(nas):
-        return repli
-    try:
-        os.makedirs(os.path.dirname(local), exist_ok=True)
-        tmp = f"{local}.{os.getpid()}"
-        shutil.copyfile(nas, tmp)
-        os.replace(tmp, local)
-        return local
-    except OSError:
-        return nas
+    for variante in _variantes(rel):
+        local = os.path.join(LOCAL_BASE, variante)
+        if os.path.exists(local):
+            return local
+        nas = os.path.join(NAS_BASE, variante)
+        if not os.path.exists(nas):
+            continue
+        try:
+            os.makedirs(os.path.dirname(local), exist_ok=True)
+            tmp = f"{local}.{os.getpid()}"
+            shutil.copyfile(nas, tmp)
+            os.replace(tmp, local)
+            return local
+        except OSError:
+            return nas
+    return repli
 
 
 # --- reglages de la commande "sons" (console/sons_cmd.py) ---------------------------
@@ -172,8 +183,9 @@ def mode_chemin(chemin):
     """Mode de l'evenement dont c'est le son ; "son_phrase" pour tout autre son."""
     if not chemin or not _lire_reglages():
         return MODES[0]
+    tige = os.path.splitext(os.path.basename(chemin))[0]
     for evenement, rel in SONS.items():
-        if chemin.endswith("/" + rel):
+        if os.path.splitext(os.path.basename(rel))[0] == tige:
             return mode(evenement)
     return MODES[0]
 

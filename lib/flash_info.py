@@ -554,8 +554,10 @@ def collect(lieu, complet=False, scan=None, scan_failed=None):
             "plantes": (plantes_flash.text, complet)}
     if complet:
         import meteo_locale
+        import trafic_heure
         jobs["meteo"] = (lambda: meteo_locale.bulletin(lieu, scan=scan, scan_failed=scan_failed),)
         jobs["routes"] = (trafic.summary,)
+        jobs["radio"] = (trafic_heure.depuis_minuit,)
     else:
         jobs.update(alertes=(alerts_text, lieu), meteo=(weather_text, lieu), station=(nearby_station_text, lieu))
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs)) as pool:
@@ -581,7 +583,8 @@ def build(complet=False, scan=None, scan_failed=None):
         transport = [(dire("flash.sur_les_routes") + " " + found["routes"]) if found["routes"] else "",
                      found["trains"], found["bus"]]
         sections = [(son("jingle_meteo") + " " + found["meteo"]) if found["meteo"] else "", found["plantes"],
-                    " ".join([son("jingle_transport")] + [t for t in transport if t]) if any(transport) else ""]
+                    " ".join([son("jingle_transport")] + [t for t in transport if t]) if any(transport) else "",
+                    (son("jingle_flashinfo") + " " + found["radio"]) if found.get("radio") else ""]
         intro = son("jingle_flashinfo") + " "
     else:
         sections = [found["alertes"], found["meteo"], found["station"], found["plantes"], found["trains"], found["bus"]]

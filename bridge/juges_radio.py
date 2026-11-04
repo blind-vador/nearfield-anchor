@@ -84,7 +84,7 @@ def duree_wav(chemin):
         return 0.0
 
 
-def juger(juge, wav, dsd="dsd-fme", voix=None, priorite=("nice", "-n", "19"), timeout=TIMEOUT_SEC):
+def juger(juge, wav, dsd="dsd-fme", voix=None, priorite=("nice", "-n", "19"), timeout=TIMEOUT_SEC, garder=False):
     """Fait passer un son devant un juge. Rend (verdict, chemin de la voix
     decodee) ; la voix n'est gardee que si le juge propose quelque chose."""
     voix = voix or tempfile.mktemp(prefix="juge_", suffix=".wav")
@@ -106,7 +106,18 @@ def juger(juge, wav, dsd="dsd-fme", voix=None, priorite=("nice", "-n", "19"), ti
     # Une "proposition" (a confirmer) : assez de synchros propres et de la voix.
     verdict["propose"] = (not verdict["chiffre"] and propres >= SEUIL_MIN
                           and propres >= RATIO_MIN * max(total, 1) and voix_sec >= VOIX_MIN_SEC)
-    if not verdict["propose"]:
+    # Un renvoi garde aussi une voix courte : l'utilisateur ecoute et tranche,
+    # le seuil automatique a pu laisser passer un faux negatif.
+    # Renvoi : on garde la sortie telle quelle, meme courte, meme peu propre,
+    # meme si le decodeur a vu du chiffre. L'utilisateur ecoute et tranche.
+    # Le fichier n'est pas une decryption : c'est l'audio que le juge a ecrit.
+    assez = os.path.exists(voix) and os.path.getsize(voix) > 44
+    verdict["ecoutable"] = assez and voix_sec >= 0.05
+    if garder:
+        if not assez and os.path.exists(voix):
+            os.remove(voix)
+            voix = None
+    elif not verdict["propose"]:
         if os.path.exists(voix):
             os.remove(voix)
         voix = None

@@ -57,18 +57,21 @@ DATA_WINDOWS = {"acars": ACARS_BASE_DWELL, "vdl2": 25, "aprs": 30, "capteurs": 3
                 "dmr": 20,  # veille des frequences DMR captees (radio_watch._dmr_window, 2026-10-07)
                 "tetra": 28,  # porteuses TETRA via la machine compagne (radio_watch._tetra_window, 2026-10-26)
                 "rds": 45,  # RDS des radios FM via redsea (watchers/rds_watch.py, 2026-11-01)
-                "marine_donnees": 30}  # AIS + ASN canal 70 (watchers/marine_watch.py, 2026-11-01)
+                "marine_donnees": 30,  # AIS + ASN canal 70 (watchers/marine_watch.py, 2026-11-01)
+                "gsm_r": 12}  # energie de la bande montante des trains (lib/rail_radio.py)
 DATA_LABELS = Etiquettes("attention.donnees", {"acars": "ACARS", "vdl2": "VDL2", "aprs": "APRS", "capteurs": "capteurs sans fil",
                "pagers": "pagers 466", "adsb": "avions en direct", "balises": "balises de détresse",
                "sondes": "ballons-sondes", "lora": "LoRa et Meshtastic", "dab": "radio numérique DAB+",
                "dmr": "veille DMR", "tetra": "TETRA", "rds": "RDS des radios FM",
-               "marine_donnees": "AIS des navires et appels ASN"},
+               "marine_donnees": "AIS des navires et appels ASN",
+               "gsm_r": "radio des trains"},
                          "nom d'une fenêtre d'écoute de données")
 # Fenetres espacees : pas plus d'une visite par intervalle (sauf si ca pique).
 # TETRA (2026-10-26) : prend le dongle en entier et mobilise la machine
 # compagne -- espace a 3 min, l'identite reseau change peu (la voix, elle, est
 # guettee a chaque passage).
-DATA_MIN_INTERVAL = {"balises": 900, "adsb": 240, "atis": 1200, "tetra": 180}
+DATA_MIN_INTERVAL = {"balises": 900, "adsb": 240, "atis": 1200, "tetra": 180,
+                     "gsm_r": 90}
 
 
 # --- etat partage (scanner + console), ecritures sous verrou ---

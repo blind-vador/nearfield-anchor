@@ -106,9 +106,12 @@ def announce_jobs():
     from sound_paths import TTS_CACHE_DIR
     par_source = {src: vs.voix_piper_source(src) for src in vs.ANNONCES}
     toutes = set().union(*par_source.values()) if par_source else set()
-    if not toutes:
-        return []
     textes = {}
+    try:
+        import atomes_parole
+        vocab = set(atomes_parole.vocabulaire())
+    except Exception:
+        vocab = set()
 
     def add(text, sources):
         if text and text.strip():
@@ -131,6 +134,11 @@ def announce_jobs():
     for text in sorted(textes):
         sources = textes[text]
         voix = toutes if None in sources else set().union(*(par_source.get(src, set()) for src in sources))
+        if text in vocab:
+            # Google ne prepare pas les phrases (il bloquerait), mais le petit
+            # vocabulaire des nombres et des lettres, oui : ce sont les voix distantes.
+            import piper_out
+            voix = set(voix) | {(v, "+0%") for v in piper_out.GOOGLE_VOIX}
         if not voix:
             continue
         speak.remember_repetitive(text)
@@ -231,8 +239,53 @@ def confier(jobs):
 _ECHECS_EXTERNES = set()
 
 
+def _edge_atomes():
+    """Quelques mots des nombres et des lettres, dans chaque voix Microsoft.
+    Le premier « 410 » n'attend pas le reseau : les mots sont deja la."""
+    try:
+        import atomes_parole
+        import speak
+        import voix_sources as vs
+        import annonce_morceaux
+    except Exception as exc:
+        print(f"[voix_preparation] atomes : {exc!r}")
+        return
+    if not vs.microsoft_ok():
+        return
+    # Pas le debit des touches (+45 %) : un echo de frappe n'est pas assemble,
+    # et cela doublerait les appels Microsoft pour rien.
+    debits = {("+0%", "+0Hz")}
+    for src in list(getattr(vs, "ANNONCES", ())) + ["console"]:
+        try:
+            r = vs.reglage(src)
+            debits.add((r.get("debit") or "+0%", r.get("hauteur") or "+0Hz"))
+        except Exception:
+            pass
+    manquants = []
+    for mot in atomes_parole.vocabulaire():
+        speak.remember_repetitive(mot)
+        folder = speak._repetitive_cache_dir(mot)
+        for voix in speak.EDGE_TTS_VOICES:
+            for debit, hauteur in debits:
+                choix = {"moteur": "edge", "voix": voix, "debit": debit, "hauteur": hauteur}
+                path = vs.fichier_cache(folder, choix)
+                if not os.path.exists(path):
+                    manquants.append((mot, choix, path))
+    if not manquants:
+        return
+    faits = 0
+    for mot, choix, path in manquants[:3]:
+        if annonce_morceaux._synth_edge(mot, choix, path):
+            faits += 1
+    print(f"[voix_preparation] {faits}/3 atomes Microsoft, {len(manquants) - faits} restants")
+
+
 def run_once():
     """Un lot ; rend le nombre restant avant ce lot (-1 : travail confie, on attend)."""
+    try:
+        _edge_atomes()
+    except Exception as exc:
+        print(f"[voix_preparation] atomes Microsoft : {exc!r}")
     jobs = announce_jobs() + console_jobs() + presentation_jobs()
     if not jobs:
         return 0
@@ -240,8 +293,14 @@ def run_once():
     # modele a lui envoyer) ; faites sur place, sans attendre la fraicheur (rien a
     # calculer ici). Google seulement pour la presentation de la voix : des
     # centaines de phrases d'un coup lui vaudraient un blocage.
+    try:
+        import atomes_parole
+        atomes = set(atomes_parole.vocabulaire())
+    except Exception:
+        atomes = set()
     externes = [j for j in jobs if piper_out.virtuelle(j[0])
-                and (not piper_out.canonical(j[0]).startswith("piper:google#") or j in presentation_jobs())
+                and (not piper_out.canonical(j[0]).startswith("piper:google#")
+                     or j[2] in atomes or j in presentation_jobs())
                 and (j[0], j[1], j[2]) not in _ECHECS_EXTERNES]
     jobs = [j for j in jobs if not piper_out.virtuelle(j[0])]
     if externes:

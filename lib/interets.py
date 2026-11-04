@@ -36,13 +36,15 @@ CATEGORIES = {
     "meteo": (["capteurs", "sondes"], "normal"),
     "secours": (["pagers", "balises"], "normal"),
     "marine": (["marine_vhf", "marine_canaux", "marine_cotiere", "marine_donnees"], "normal"),
-    "professionnels": (["uhf_business", "vhf_business", "vhf_80", "uhf_410", "vhf_low", "pmse", "dmr",
+    "professionnels": (["uhf_business", "vhf_business", "vhf_80", "uhf_410", "vhf_low", "pmse", "dmr", "tetra",
                         "vhf_137", "vhf_146", "vhf_haute", "uhf_400", "uhf_700", "uhf_900"], "normal"),
     # Bandes hautes (2026-11-01) : 868 MHz et bande L, captables selon l'antenne.
     "bandes_hautes": (["srd_868", "bande_l_"], "normal"),
     "fm": (["fm_diffusion", "rds"], "faible"),   # bandes de verification : du trafic tout le temps
     "dab": (["dab"], "normal"),
     "satellites": (["satellites"], "normal"),  # passages radioamateurs (ISS...) ; "désactivé" les saute
+    # Bande montante GSM-R : un poste de train qui emet, contenu non ouvert.
+    "trains": (["gsm_r"], "normal"),
 }
 CATEGORY_NAMES = Etiquettes("interet.categorie", {
     "talkies": "talkies-walkies 446 et LPD",
@@ -57,6 +59,7 @@ CATEGORY_NAMES = Etiquettes("interet.categorie", {
     "dab": "radio numérique DAB+ : textes et images des stations",
     "satellites": "passages de satellites radioamateurs : ISS et cubesats",
     "bandes_hautes": "bandes hautes : 868 mégahertz et bande L, selon l'antenne",
+    "trains": "trains : radio des trains vers le sol",
 }, "catégorie d'écoute du scanner, dans la commande intérêts")
 CACHE_SEC = 30
 _cache = {"t": 0.0, "niveaux": None}

@@ -221,6 +221,14 @@ class Arbitre:
         self.stats = {}              # mode -> stats de dsd-fme (decodeurs.dsd_line)
         self.cedes = set()           # modes ecartes par "juge suivant"
         self.termine = threading.Event()  # l'ecoute est finie : les decodeurs en attente s'arretent
+        self.pref = None             # juge le mieux note sur cette frequence
+        self.pref_jusqua = 0.0       # il a la parole en premier pendant ce delai
+
+    def prioritaire(self, qui):
+        """Un juge deja confirme ici n'a pas encore parle : les autres attendent."""
+        with self._verrou:
+            return bool(self.pref and qui != self.pref and self.gagnant is None
+                        and time.time() < self.pref_jusqua and self.pref not in self.cedes)
 
     def prendre(self, qui, protocole=None):
         with self._verrou:
@@ -229,6 +237,9 @@ class Arbitre:
             if qui == "analogique":
                 ok = self.gagnant is None
             else:
+                if (self.pref and qui != self.pref and self.gagnant is None
+                        and time.time() < self.pref_jusqua and self.pref not in self.cedes):
+                    return False
                 ok = self.gagnant in (None, "analogique", qui)
             if ok:
                 self.gagnant, self.protocole = qui, protocole if qui != "analogique" else None

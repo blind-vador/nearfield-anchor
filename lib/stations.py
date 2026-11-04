@@ -378,6 +378,21 @@ def name_near(freq_hz, mode):
     return s.get("nom") if s else None
 
 
+def proposer_nom(freq_hz, mode, nom, contexte):
+    """Nom propose par Whisper. N'ecrase pas un nom deja pose. Rend True
+    si la station existe."""
+    with _Locked() as data:
+        s = _near(data, freq_hz, mode)
+        if s is None:
+            return False
+        if nom and not s.get("nom"):
+            s["nom"] = nom
+            s["nom_origine"] = "whisper"
+        if contexte:
+            s["contexte"] = contexte[:400]
+        return True
+
+
 def _interest_weight(station):
     try:
         import interets

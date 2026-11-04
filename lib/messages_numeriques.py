@@ -38,6 +38,12 @@ def found(kind, value, stats):
     _memory.save()
     protocol = stats.get("protocol") or dire("radio.numerique")
     freq = stats.get("freq_hz")
+    if kind != "gps":  # alias ou SMS : une frequence, un relais, un indicatif ?
+        try:
+            import relais
+            relais.depuis_texte(value, freq, "dmr " + kind, sur=True)
+        except Exception as exc:
+            print(f"[messages_numeriques] texte non lu pour les relais : {exc!r}")
     mhz = f"{freq / 1e6:.4f}".rstrip("0").replace(".", ",") if freq else None
     fiche = {"protocole": protocol, "frequence_hz": freq, "source": src, "groupe": stats.get("tgt"),
              "genre": kind, "texte_original": value}

@@ -32,10 +32,14 @@ def texte():
         return dire("relais.aucun")
     aud = relais.audibilite()
     parts = []
-    for f, r in sorted(connus.items(), key=lambda kv: kv[1].get("km", 999)):
+    for f, r in sorted(connus.items(), key=lambda kv: kv[1].get("km") or 999):
         a = aud.get(f, {})
-        tete = dire("relais.fiche", nom=r.get("nom", "?"), mhz=_mhz(f), mode=MODES.get(r.get("mode"), r.get("mode")),
-                    km=round(r.get("km", 0)))
+        if r.get("km") is None:   # appris sur l'air ou dans un texte, pas par l'APRS
+            tete = dire("relais.fiche_detecte", nom=r.get("nom", "?"), mhz=_mhz(f), mode=MODES.get(r.get("mode"), r.get("mode")),
+                        pourquoi=r.get("commentaire") or "")
+        else:
+            tete = dire("relais.fiche", nom=r.get("nom", "?"), mhz=_mhz(f), mode=MODES.get(r.get("mode"), r.get("mode")),
+                        km=round(r.get("km", 0)))
         if r.get("tonalite"):
             tete += ", " + dire("relais.tonalite", hz=r["tonalite"])
         if a.get("captures"):
@@ -55,4 +59,13 @@ def texte():
         texte_ += " " + dire("relais.lointains", nombre=nombre(len(loin), "relais", "relais"),
                              exemples=", ".join(f"{r.get('lieu') or r.get('nom')} à {round(r.get('km', 0))} kilomètres"
                                                 for r in proches))
+    try:
+        import frequences_actives
+        actives, possibles, sans_voix = frequences_actives.resume()
+        if actives:
+            texte_ += " " + dire("relais.actives", actives=nombre(actives, "fréquence active", "fréquences actives"),
+                                 possibles=nombre(possibles, "relais possible", "relais possibles"),
+                                 sans_voix=sans_voix)
+    except Exception:
+        pass
     return texte_

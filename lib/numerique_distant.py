@@ -10,7 +10,7 @@ NUMERIQUE_SOCKET = "/tmp/numerique_pont.sock"   # prise tenue par compagnon_serv
 
 
 def decoder(freq_hz, gain, secondes, host=None, port=1234, ppm=0, delai=None, max_secondes=None, mode="-fa",
-            banc=False):
+            banc=False, modes=None):
     """Demande a compagnon_serveur un decodage numerique en direct de freq_hz.
     Le Pi doit DEJA servir rtl_tcp sur host:port, et avoir tune le CENTRE
     RECENTRE (sinon FEC ERR). `mode` = flag dsd-neo impose (-fs pour un relais
@@ -19,6 +19,8 @@ def decoder(freq_hz, gain, secondes, host=None, port=1234, ppm=0, delai=None, ma
     max_secondes = max(int(secondes), int(max_secondes or secondes))
     req = {"freq_hz": int(freq_hz), "gain": gain, "secondes": int(secondes), "max_secondes": max_secondes,
            "port": int(port), "ppm": ppm, "mode": mode, "banc": bool(banc)}
+    if modes:
+        req["modes"] = list(modes)
     if host:
         req["host"] = host
     s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)

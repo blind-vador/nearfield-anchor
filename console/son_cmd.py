@@ -1,19 +1,19 @@
-"""Commande "son" / "tuto" (2026-10-30, demande utilisateur) : TUTORIEL des
-sons. On parcourt le catalogue (lib/sons.py), groupe par veille, et on ECOUTE
-chaque son pour les apprendre -- chacun annonce par un nom court et une breve
-description (phrases "sons.evenement_...").
+"""Commande "son" / "tuto" : tutoriel des sonneries.
 
-Soeur de la commande "sons" : celle-ci APPREND (on ecoute), l'autre REGLE
-(son et phrase, son seul, ou rien). On reutilise ses aides (liste, lecture).
+Même carte que le dialogue sonneries : toutes les veilles sauf les sons SNCF,
+les bandes radio, DMR, TETRA, puis les messages. On écoute le son qui sera
+vraiment joué, repli compris.
 
-  fleches haut / bas   son precedent / suivant
-  Tab / Maj+Tab        groupe suivant / precedent
-  Entree               ecouter le son (une touche l'arrete)
-  Echap ferme. F1 : les touches.
+  flèches haut / bas   l'événement
+  contrôle + flèches   le groupe suivant : une bande, DMR, TETRA, les messages
+  Tab / Maj+Tab        la veille suivante
+  Entrée               écouter le son (une touche l'arrête)
+  Échap ferme. F1 : les touches.
 """
 import conseils  # noqa: E402
 import keys  # noqa: E402
-import sons_cmd  # noqa: E402  -- _items, _ecouter, _arreter_ecoute
+import sonneries  # noqa: E402
+import sonneries_cmd  # noqa: E402
 import voix  # noqa: E402
 from phrases import dire  # noqa: E402
 
@@ -23,51 +23,55 @@ ENTREE = ("\r", "\n")
 ESC = "\x1b"
 
 
-def _texte(item, avec_groupe=False):
-    """Nom court + breve description du son ; precede du groupe si on en change."""
-    evenement, groupe = item
-    nom = dire(f"sons.evenement_{evenement}")
-    if avec_groupe:
-        return f"{dire(f'sons.groupe_{groupe}').capitalize()}, {nom}"
-    return nom
-
-
 def run(line, key_source, say, out):
-    items = sons_cmd._items()
+    sonneries.assurer()
+    items = sonneries.slots()
+    if not items:
+        return dire("sonneries.vide")
     i = 0
     consigne = dire("son.consigne")
     intro = conseils.intro("son", dire("son.titre"), consigne)
     out(intro + "\n")
-    say(f"{intro} {_texte(items[0], True)}")
+    say(f"{intro} {sonneries_cmd._texte(items[0], None)}")
     for key in key_source:
         if key == keys.WAKE:
             continue
         voix.stop()
-        sons_cmd._arreter_ecoute()
+        sonneries_cmd._arreter()
         text = None
         if conseils.is_help(key):
             text = consigne
         elif key == ESC:
             break
-        elif key in (UP, DOWN):
-            j = i + (-1 if key == UP else 1)
-            if 0 <= j < len(items):
-                nouveau_groupe = items[j][1] != items[i][1]
-                i = j
-                text = _texte(items[i], nouveau_groupe)
-            else:
-                bord = dire("commun.debut_liste") if j < 0 else dire("commun.fin_liste")
-                text = f"{bord} {_texte(items[i])}"
         elif key in (TAB, SHIFT_TAB):
             pas = 1 if key == TAB else -1
-            groupes = list(dict.fromkeys(g for _, g in items))
-            k = (groupes.index(items[i][1]) + pas) % len(groupes)
-            i = next(n for n, (_, g) in enumerate(items) if g == groupes[k])
-            text = _texte(items[i], True)
+            precedent, i = items[i], sonneries.saut(items, i, pas, "veille")
+            text = sonneries_cmd._texte(items[i], precedent)
+        elif key in (UP, DOWN):
+            pas = -1 if key == UP else 1
+            if keys.modifier_held("ctrl"):
+                n = sonneries.saut(items, i, pas, "groupe")
+                if n is None:
+                    text = dire("commun.debut_liste") if pas < 0 else dire("commun.fin_liste")
+                else:
+                    precedent, i = items[i], n
+                    text = sonneries_cmd._texte(items[i], precedent)
+            else:
+                n = i + pas
+                if 0 <= n < len(items):
+                    precedent, i = items[i], n
+                    text = sonneries_cmd._texte(items[i], precedent)
+                else:
+                    bord = dire("commun.debut_liste") if n < 0 else dire("commun.fin_liste")
+                    text = f"{bord} {sonneries_cmd._texte(items[i], None)}"
         elif key in ENTREE:
-            text = sons_cmd._ecouter(items[i][0])  # joue le son ; None si tout va bien
+            chemin = sonneries.entendre(items[i])
+            if chemin:
+                sonneries_cmd._jouer(chemin)
+            else:
+                text = dire("sonneries.vide")
         if text:
             out(text + "\n")
             say(text)
-    sons_cmd._arreter_ecoute()
+    sonneries_cmd._arreter()
     return dire("son.ferme")

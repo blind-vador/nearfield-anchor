@@ -71,6 +71,46 @@ def _espeak(text, path):
     return os.path.exists(path) and os.path.getsize(path) > 0
 
 
+def _depuis_morceaux(text, path, choix):
+    """Voix collee depuis le cache (phrases fixes, nombres, alphabet radio).
+    Microsoft comme Piper : un morceau deja dit n'est plus redemande au reseau."""
+    import annonce_morceaux as morceaux
+    if choix.get("moteur") not in ("edge", "piper"):
+        return False
+    if choix["moteur"] == "piper":
+        import piper_out
+        if not piper_out.available(choix.get("voix")):
+            return False
+    # Flash info, trafic, meteo : un seul passage au moteur, pas mot a mot.
+    if not morceaux.a_assembler(text):
+        return False
+    wav = morceaux.assemble(morceaux.expand_texte(text), choix)
+    if not wav:
+        return False
+    try:
+        subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", wav, path],
+                       capture_output=True, timeout=60)
+    finally:
+        try:
+            os.remove(wav)
+        except OSError:
+            pass
+    return os.path.exists(path) and os.path.getsize(path) > 0
+
+
+def _texte_dit(text):
+    """Secours espeak : les nombres et les lettres sont deja des mots."""
+    import annonce_morceaux as morceaux
+    try:
+        if morceaux.a_assembler(text):
+            dit = morceaux.spoken(morceaux.expand_texte(text))
+            if dit:
+                return dit
+    except Exception:
+        pass
+    return text
+
+
 def _piper(text, path, choix):
     """Voix Piper, phrase par phrase (2026-10-18) : les phrases fixes des
     annonces viennent du cache (preparees d'avance, une voix par annonce),
@@ -98,9 +138,19 @@ def synthesize(text, path, source=None):
     "voix") : Microsoft s'il est choisi et present, sinon la voix de secours
     Piper (2026-10-18), espeak en dernier. True si reussi."""
     import voix_sources
+    import annonce_morceaux as morceaux
     source = source or voix_sources.source_pour()
     choix = voix_sources.choisir(source)
+    if not morceaux.a_assembler(text):
+        # Indicatif dans un texte dit d'un bloc (message long) : mots radio.
+        import atomes_parole
+        text = atomes_parole.indicatifs_en_clair(text)
     if choix["moteur"] == "edge":
+        try:
+            if _depuis_morceaux(text, path, choix):
+                return True
+        except Exception as exc:
+            print(f"[prise_vocale] cache : {exc!r}")
         try:
             if _edge(text, path, choix):
                 return True
@@ -108,12 +158,17 @@ def synthesize(text, path, source=None):
             print(f"[prise_vocale] edge-tts : {str(exc)[:120]}")
         choix = voix_sources.secours(source)
     try:
+        if _depuis_morceaux(text, path, choix):
+            return True
+    except Exception as exc:
+        print(f"[prise_vocale] cache : {exc!r}")
+    try:
         if _piper(text, path, choix):
             return True
     except Exception as exc:
         print(f"[prise_vocale] piper : {exc!r}")
     try:
-        return _espeak(text, path)
+        return _espeak(_texte_dit(text), path)
     except Exception as exc:
         print(f"[prise_vocale] espeak : {exc!r}")
         return False
@@ -175,6 +230,51 @@ def play(path, label):
 
 # --- file au fil de l'eau --------------------------------------------------------------
 
+def _dire_en_flux(item, text):
+    """Jingle tout de suite, voix au fil des morceaux deja prets. Le fichier
+    du journal est ecrit apres, sans rejouer."""
+    try:
+        import sons
+        if item["son"] and sons.mode_chemin(item["son"]) != "son_phrase":
+            return False
+        import voix_sources
+        import annonce_morceaux as morceaux
+        source = item.get("source")
+        choix = voix_sources.choisir(source or voix_sources.source_pour())
+        if (choix.get("moteur") not in ("edge", "piper") or voix_sources.phrase_entiere(choix)
+                or voix_sources.en_direct(choix) or not morceaux.a_assembler(text)):
+            return False
+        lock = audio_lock.acquire("donnees")
+        lecture = None
+        try:
+            if not lock.dropped:
+                ticket = audio_lock.ticket_courant()
+                repli = voix_sources.secours(source or voix_sources.source_pour())
+                if repli.get("moteur") not in ("edge", "piper"):
+                    repli = None
+                lecture = morceaux.Lecture(
+                    morceaux.expand_texte(text), choix, lead=item["son"], label=item["tag"],
+                    regler=lambda data, ticket=ticket: audio_lock.scale(data, ticket=ticket),
+                    garder=True, repli=repli)
+                lecture.wait(timeout=120)
+        finally:
+            audio_lock.release(lock)
+        if lecture is None or not lecture.a_parle:
+            return False
+        if lecture.wav:
+            try:
+                record(text, item["son"], item["etiquette"], item["fiche"], source, voix=lecture.wav)
+            finally:
+                try:
+                    os.remove(lecture.wav)
+                except OSError:
+                    pass
+        return True
+    except Exception as exc:
+        print(f"[prise_vocale] flux : {exc!r}")
+        return False
+
+
 def _run():
     while True:
         item = _queue.get()
@@ -183,6 +283,8 @@ def _run():
             if not text:
                 continue
             print(f"[{item['tag']}] annonce : {text}")
+            if _dire_en_flux(item, text):
+                continue
             path = record(text, item["son"], item["etiquette"], item["fiche"], item.get("source"))
             import sons
             if item["son"] and sons.mode_chemin(item["son"]) != "son_phrase":

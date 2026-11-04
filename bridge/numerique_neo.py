@@ -68,15 +68,16 @@ _VOICE = re.compile(r"\bVC[12]?\b|\bVOICE\b|\bVoice\b|synthesiz", re.I)
 # Modes dsd-neo que le Pi peut imposer (il sait ce qu'il delegue) : evite le
 # flottement de -fa vers NXDN/dPMR sur un relais DMR connu. Liste blanche.
 MODES_OK = {"-fa", "-fs", "-ft", "-fr", "-f1", "-f2", "-fd", "-fx", "-fy",
-            "-fi", "-fn", "-fm", "-fz", "-fp"}
+            "-fi", "-fn", "-fm", "-fz", "-fp", "-fh", "-fe"}
 
-# Decodeurs NUMERIQUES lances EN PARALLELE (modele arbitre local) sur UN meme
-# flux via le proxy iq_fanout : chacun epingle a un mode, on garde celui qui
-# CONFIRME le mieux. -fa seul FLOTTE (DMR vu comme dPMR...) ; les modes epingles
-# a cote tranchent. -fa couvre deja P25/NXDN/D-STAR/YSF ; on ajoute DMR (-fs),
-# dPMR (-fm), M17 (-fz) qu'il verrouille mal ou pas. AGNOSTIQUE : on DECOUVRE
-# lequel accroche, on ne devine pas le mode.
-MODES_PARALLELES = ["-fa", "-fs", "-fm", "-fz"]
+# Tous les modes dont les trames portent un terminateur ou des donnees
+# identifiables. On les lance TOUS, a chaque fenetre : -fa seul flotte
+# (un DMR lu comme du dPMR), les modes epingles tranchent. On ne devine pas
+# lequel accrochera. -ft (trunking) recalerait le tuner partage, -fr est le
+# meme DMR que -fs : ils restent dehors. L'analogique (-fA et le banc AM/BLU)
+# tourne a cote, pour lever le doute, pas a la place.
+MODES_PARALLELES = ["-fa", "-fs", "-fm", "-fi", "-fn", "-fz",
+                    "-f1", "-f2", "-fd", "-fy", "-fx", "-fp", "-fh", "-fe"]
 MODE_ANALOGIQUE = "-fA"           # moniteur FM analogique (en parallele, pour le -6)
 
 
@@ -212,7 +213,7 @@ def _confirme(r, rms, texte=""):
 
 
 def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-fa", plein=True,
-            modes_extra=None, banc=False):
+            modes_extra=None, banc=False, modes_seul=None):
     """Decode la fenetre freq_hz servie par le rtl_tcp du Pi, en lançant
     PLUSIEURS dsd-neo EN PARALLELE sur le meme flux (via le proxy iq_fanout, car
     rtl_tcp ne sert qu'un client). Modele arbitre local : chaque mode epingle
@@ -226,13 +227,18 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
         return {"ok": False, "erreur": "dsd-neo absent"}
     seconds = max(1.0, float(seconds))
     max_seconds = max(seconds, float(max_seconds or seconds))
-    # Jeu de modes numeriques a essayer en parallele (dedup, liste blanche).
+    # Jeu de modes numeriques. Si la frequence a deja un decodeur confirme,
+    # on ne lance que lui : les autres attendront un rejetuge si il ne confirme pas.
     modes = []
-    for m in ([mode] if mode else []) + MODES_PARALLELES + list(modes_extra or []):
+    imposes = [m for m in (modes_seul or []) if m in MODES_OK]
+    source = imposes or (([mode] if mode else []) + MODES_PARALLELES + list(modes_extra or []))
+    for m in source:
         if m in MODES_OK and m not in modes:
             modes.append(m)
     if not modes:
         modes = ["-fa"]
+    if imposes:
+        print("[numerique] decodeur retenu seul : %s" % " ".join(modes))
     tmp = tempfile.mkdtemp(prefix="numerique_")
     audio = os.path.join(tmp, "audio.wav")
     # Proxy fan-out : UNE connexion a l'amont, rediffusee aux N dsd-neo locaux.
@@ -378,12 +384,37 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
         res["audio_rms"] = rms_a
         if rms_a >= AUDIO_RMS_MIN:
             res["audio_wav"] = audio
+    # Discriminateur 48 kHz, pour la touche R. On le garde aussi quand le
+    # numerique a gagne : c'est justement la que l'utilisateur veut reessayer
+    # un autre decodeur. Ce n'est pas la voix a ouvrir.
+    res["flux_wav"] = audio if (
+        plein and os.path.isfile(audio) and os.path.getsize(audio) >= 48000) else None
     if banc_obj.get("b"):
         res["banc"] = banc_obj["b"].ecrire(tmp)
         mods, raison, mesures, tranches = banc_obj["b"].preuve()
         res["banc_preuve"] = {"modulations": mods, "raison": raison, "mesures": mesures, "tranches": tranches}
     res["duree"] = duree
     res["ok"] = True
+    # Chaque juge qui a confirme, ou qui a sorti de la voix en clair.
+    # Le gagnant reste dans les champs historiques. Les autres voix partent
+    # au journal, de la plus probable a la moins probable.
+    rendus = []
+    for c in sorted(cand, key=lambda c: (c["conf"], c["rms"] >= VOIX_RMS_MIN, c["hits"]), reverse=True):
+        chiffre = bool(c["r"].get("chiffre"))
+        voix = (not chiffre) and c["rms"] >= VOIX_RMS_MIN and (c["conf"] or c["r"].get("voix_vue"))
+        if not c["conf"] and not voix:
+            continue
+        rendus.append({
+            "mode": c["mode"],
+            "protocole": c["r"].get("protocole") or c["mode"],
+            "confirme": bool(c["conf"]),
+            "hits": c["hits"],
+            "rms": c["rms"],
+            "chiffre": chiffre,
+            "voix": bool(voix),
+            "wav": c["wav"] if voix else None,
+        })
+    res["rendus"] = rendus
     res["_tmp"] = tmp
     return res
 

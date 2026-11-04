@@ -14,6 +14,7 @@ import subprocess
 import time
 
 import radio_log
+import ceremonie_radio as ceremonie
 import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
 from lecture_flux import lire
@@ -93,10 +94,9 @@ def _fm(p, seconds, speech_detector):
         print(f"[satellites_watch] {p['nom']} : pas de voix ({voice_sec:.0f} s)")
         return
     session = radio_log.RadioLogSession(f"satellite {p['nom']}")
-    session.add_audio_file(INCOMING_SOUND)
-    session.add_audio_file(FREQ_OPEN_SOUND)
+    ceremonie.poser_ouverture(session, p["nom"], "FM")
     session.add_raw_pcm(b"".join(kept), FM_RATE, "s16le")
-    session.add_audio_file(FREQ_OVER_SOUND)
+    ceremonie.poser_fin(session)
     session.finalize()
     _announce(dire("satellite.passage_satellite_secondes_voix", nom=p['nom'], round=round(voice_sec)),
               f"satellite_{p['nom']}")

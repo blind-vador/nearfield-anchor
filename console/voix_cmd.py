@@ -20,7 +20,7 @@ import voix_sources  # noqa: E402
 from speak import EDGE_TTS_VOICES  # noqa: E402  (les voix deja retenues pour les annonces)
 from phrases import Etiquettes, dire
 
-UP, DOWN, ENTER, ESCAPE = "\x1b[A", "\x1b[B", ("\r", "\n"), "\x1b"
+UP, DOWN, RIGHT, LEFT, ENTER, ESCAPE = "\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D", ("\r", "\n"), "\x1b"
 COUNTRIES = Etiquettes("pays", {"FR": "France", "BE": "Belgique", "CA": "Canada", "CH": "Suisse"}, "pays d'une voix")
 RATES = Etiquettes("debit", {"+0%": "normal", "+15%": "un peu rapide", "+30%": "rapide",
                              "+50%": "très rapide", "+80%": "extrêmement rapide"}, "débit de la voix")
@@ -62,6 +62,9 @@ def _choose(labels, start, speak, key_source, out, title, feature, consigne=None
     index = start
     consigne = consigne or dire("voix.consigne")
     intro = (prefix + " " if prefix else "") + conseils.intro(feature, title, consigne)
+    voix.prechauffer(
+        [intro, consigne, dire("voix.debut_liste"), dire("commun.fin_liste"),
+         dire("voix.fleches_haut_bas_entree")] + list(labels))
     out(intro + "\n")
     speak(index, f"{intro} {labels[index]}")
     for key in key_source:
@@ -193,17 +196,75 @@ def _regler(source, key_source, say, out):
     return dire("voix.source_enregistree", source=nom, resume=voix_sources.resume(source))
 
 
+def _preferences(key_source, say, out):
+    """Fournisseurs du tirage aléatoire. Haut et bas parcourent, gauche et
+    droite changent le niveau. Échap enregistre."""
+    noms = list(voix_sources.FOURNISSEURS)
+    niveaux = voix_sources.NIVEAUX
+    valeurs = voix_sources.preferences()
+    i = 0
+
+    def ligne(n):
+        return dire("voix.preferences_ligne",
+                    fournisseur=dire(f"voix.fournisseur.{noms[n]}"),
+                    niveau=dire(f"voix.niveau.{valeurs[noms[n]]}"))
+
+    consigne = dire("voix.preferences_consigne")
+    intro = conseils.intro("voix_preferences", dire("voix.preferences_aleatoires"), consigne)
+    textes = [intro, consigne, dire("voix.niveau.deja")]
+    for n, nom in enumerate(noms):
+        for niveau in niveaux:
+            valeurs_ligne = dict(valeurs)
+            valeurs_ligne[nom] = niveau
+            textes.append(dire("voix.preferences_ligne",
+                               fournisseur=dire(f"voix.fournisseur.{nom}"),
+                               niveau=dire(f"voix.niveau.{niveau}")))
+    voix.prechauffer(textes)
+    out(intro + "\n")
+    say(f"{intro} {ligne(0)}")
+    for key in key_source:
+        if key == ESCAPE:
+            if not voix_sources.enregistrer_preferences(valeurs):
+                return dire("voix.disque_nas_inaccessible_voix")
+            return dire("voix.preferences_fermees")
+        if key in (UP, DOWN):
+            i = (i + (-1 if key == UP else 1)) % len(noms)
+            text = ligne(i)
+        elif key in (LEFT, RIGHT):
+            k = niveaux.index(valeurs[noms[i]]) + (-1 if key == LEFT else 1)
+            if k < 0 or k >= len(niveaux):
+                text = dire("voix.niveau.deja") + " " + ligne(i)
+            else:
+                valeurs[noms[i]] = niveaux[k]
+                text = ligne(i)
+        elif conseils.is_help(key):
+            text = consigne
+        else:
+            text = consigne
+        out(f"[{text}]\n")
+        say(text)
+    return dire("voix.preferences_fermees")
+
+
 def run(key_source, say, out):
     """Commande "voix" : chaque source (console, touches du clavier, chaque
     veille) a sa voix principale (ou aleatoire), son debit et sa hauteur, sa
-    voix de secours Piper (ou aleatoire) et son debit."""
+    voix de secours Piper (ou aleatoire) et son debit.
+    Si une veille est sur « toutes les voix », la première entrée règle
+    le poids de chaque fournisseur."""
     sources = list(voix_sources.SOURCES)
     pos, message = 0, ""
     while True:
-        labels = [f"{voix_sources.SOURCES[s]} : {voix_sources.resume(s)}" for s in sources]
+        prefs = voix_sources.aleatoire_tout_actif()
+        labels = ([dire("voix.preferences_aleatoires")] if prefs else []) + [
+            f"{voix_sources.SOURCES[s]} : {voix_sources.resume(s)}" for s in sources]
         index = _choose(labels, pos, lambda i, text: say(text), key_source, out, dire("voix.titre_sources"),
                         "voix_sources", consigne=dire("voix.consigne_sources"), prefix=message)
         if index is None:
             return dire("voix.reglages_fermes")
+        if prefs and index == 0:
+            pos = 0
+            message = _preferences(key_source, say, out)
+            continue
         pos = index
-        message = _regler(sources[index], key_source, say, out)
+        message = _regler(sources[index - (1 if prefs else 0)], key_source, say, out)

@@ -159,8 +159,9 @@ class _Handler(socketserver.StreamRequestHandler):
                     file = _demandes_tetra.get(msg.get("reponse_a"))
                     if file is not None:
                         file.put(msg)
-                elif kind in ("numerique_voix", "numerique_audio", "numerique_resultat") \
-                        or str(kind).startswith("numerique_banc_"):   # banc de demodulation (2026-11-01)
+                elif kind in ("numerique_voix", "numerique_audio", "numerique_flux", "numerique_resultat") \
+                        or str(kind).startswith("numerique_banc_") \
+                        or str(kind).startswith("numerique_rendu_"):
                     file = _demandes_numerique.get(msg.get("reponse_a"))
                     if file is not None:
                         file.put(msg)
@@ -271,6 +272,24 @@ def _notify(cid, job_id):
         return True
     except OSError:
         return False
+
+
+def _signal_tickets():
+    """Du neuf sur les tickets (tickets_pi.signaler, autre process) : on previent
+    les machines par la liaison, elles n'ont pas a relire le NAS sans arret."""
+    encours = "/tmp/tickets_signal.encours"
+    try:
+        os.replace("/tmp/tickets_signal", encours)
+        with open(encours) as f:
+            ids = sorted({ln.strip() for ln in f if ln.strip()})
+    except OSError:
+        return
+    with _lock:
+        for channel in list(_channels.values()):
+            try:
+                channel.send({"type": "tickets", "ids": ids})
+            except OSError:
+                pass
 
 
 def _dispatch():
@@ -525,7 +544,8 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
         # Deux flux possibles d'une demod complete : voix NUMERIQUE en clair (-w)
         # ET audio ANALOGIQUE FM (-6). On ecrit chacun dans son wav.
         chemins = {"numerique_voix": os.path.join(tmp, "voix.wav"),
-                   "numerique_audio": os.path.join(tmp, "audio.wav")}
+                   "numerique_audio": os.path.join(tmp, "audio.wav"),
+                   "numerique_flux": os.path.join(tmp, "flux.wav")}
         wouts = {}
         handed = False
         secondes = int(req.get("secondes", 8))
@@ -536,6 +556,8 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
             if w is None:
                 if msg["type"].startswith("numerique_banc_"):   # un son par modulation du banc
                     chemins[msg["type"]] = os.path.join(tmp, "banc_%s.wav" % msg["type"][len("numerique_banc_"):])
+                elif msg["type"].startswith("numerique_rendu_"):
+                    chemins[msg["type"]] = os.path.join(tmp, "rendu_%s.wav" % msg["type"][len("numerique_rendu_"):])
                 w = wave.open(chemins[msg["type"]], "wb")
                 w.setnchannels(1)
                 w.setsampwidth(2)
@@ -549,12 +571,13 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
                           "port": int(req.get("port", 1234)), "freq_hz": int(req["freq_hz"]),
                           "gain": req.get("gain", 32), "secondes": secondes, "max_secondes": max_secondes,
                           "ppm": req.get("ppm", 0), "mode": req.get("mode", "-fa"),
-                          "banc": bool(req.get("banc"))})
+                          "banc": bool(req.get("banc")), "modes": req.get("modes") or None})
             delai = max_secondes + 30
             while True:
                 msg = file.get(timeout=delai)
-                if msg.get("type") in ("numerique_voix", "numerique_audio") \
-                        or str(msg.get("type")).startswith("numerique_banc_"):
+                if msg.get("type") in ("numerique_voix", "numerique_audio", "numerique_flux") \
+                        or str(msg.get("type")).startswith("numerique_banc_") \
+                        or str(msg.get("type")).startswith("numerique_rendu_"):
                     _ecrire(msg)
                     delai = NUMERIQUE_DELAI_SEC
                 elif msg.get("type") == "numerique_resultat":
@@ -571,9 +594,21 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
                         msg.get("voix") and os.path.exists(chemins["numerique_voix"])) else None
                     res["audio_wav"] = chemins["numerique_audio"] if (
                         msg.get("audio") and os.path.exists(chemins["numerique_audio"])) else None
+                    res["flux_wav"] = chemins["numerique_flux"] if (
+                        msg.get("flux") and os.path.exists(chemins["numerique_flux"])) else None
                     res["banc"] = {m: chemins["numerique_banc_" + m] for m in (msg.get("banc") or [])
                                    if os.path.exists(chemins.get("numerique_banc_" + m, ""))}
                     res["banc_preuve"] = msg.get("banc_preuve")
+                    rendus = []
+                    for item in msg.get("rendus") or []:
+                        if not isinstance(item, dict):
+                            continue
+                        mode = str(item.get("mode") or "")
+                        kind = "numerique_rendu_" + mode.lstrip("-")
+                        wav = chemins.get(kind)
+                        if item.get("voix") and wav and os.path.exists(wav):
+                            rendus.append(dict(item, wav=wav))
+                    res["rendus"] = rendus
                     res["machine"] = (compagnon.trusted().get(cid) or {}).get("nom")
                     res["_tmp"] = tmp
                     handed = True
@@ -627,6 +662,7 @@ def run():
     while True:
         try:
             _drain_force_notify()
+            _signal_tickets()
             _dispatch()
             if _results_ready.is_set() or time.time() - last_poll > POLL_SEC:
                 _results_ready.clear()

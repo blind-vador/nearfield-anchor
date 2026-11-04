@@ -136,8 +136,36 @@ def _voix(job, result, folder):
         pass
 
 
+def _whisper(job, result, folder):
+    """Texte d'une prise validee. Le nom et l'annonce sont dans noms_whisper."""
+    import json
+    import noms_whisper
+    params = job.get("params") or {}
+    origine = params.get("origine") or ""
+    if result.get("etat") != "fait":
+        noms_whisper.oublier_envoi(origine)
+        print("[whisper] echec %s : %s" % (job.get("id"), result.get("message")))
+        return
+    texte = ""
+    chemin = os.path.join(folder, "texte.json")
+    try:
+        with open(chemin, encoding="utf-8") as f:
+            texte = (json.load(f).get("texte") or "").strip()
+    except (OSError, ValueError) as exc:
+        print("[whisper] texte illisible : %r" % (exc,))
+    machine = ""
+    try:
+        import compagnon
+        machine = (compagnon.trusted().get(result.get("compagnon"), {}) or {}).get("nom") or ""
+    except Exception:
+        machine = ""
+    noms_whisper.annoncer(
+        params.get("freq_hz"), params.get("mode"), params.get("bande"),
+        params.get("label") or "", texte, origine, machine)
+
+
 HANDLERS = {"meteor": _meteor, "lora": _lora, "decrire_images": _decrire_images, "voix": _voix,
-            "radio_juges": _radio_juges}
+            "radio_juges": _radio_juges, "whisper": _whisper}
 
 
 def poll_once():

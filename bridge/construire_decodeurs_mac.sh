@@ -4,7 +4,8 @@
 # verdicts sur les memes sons (travail partage, tickets) :
 #   multimon-ng 1.2.0, direwolf 1.6, rtl_433 22.11, redsea 7555c9f,
 #   libacars 2.2.1 + acarsdec 3.7 + dumpvdl2 2.7.0, RNNoise (pyrnnoise),
-#   Python 3.11 + numpy + Pillow + sstv 0.2.0 (decodeurs Python du depot).
+#   Python 3.11 + numpy + Pillow + sstv 0.2.0 (decodeurs Python du depot),
+#   freedv_rx (codec2, juges de la BLU), whisper.cpp (transcription du soir).
 # Conda-forge n'a aucun d'eux pour Mac arm64 : compiles depuis les sources
 # officielles dans l'environnement conda "radio" (comme dsd-neo).
 #   bash construire_decodeurs_mac.sh            (relancable, saute ce qui est fait)
@@ -24,7 +25,7 @@ fait() { [ -x "$ENV/bin/$1" ] && [ "$REFAIRE" != "--refaire" ]; }
 
 echo "-- dependances (conda-forge) --"
 "$CONDA" install -y -q -p "$ENV" -c conda-forge cmake make pkg-config rtl-sdr libsndfile \
-    portaudio liquid-dsp nlohmann_json meson ninja glib libxml2 zlib >/dev/null
+    portaudio liquid-dsp nlohmann_json meson ninja glib libxml2 zlib codec2 >/dev/null
 
 SDK="$(xcrun --show-sdk-path)"
 export PATH="$ENV/bin:$PATH"
@@ -112,8 +113,18 @@ if [ ! -x "$PY/bin/python" ] || [ "$REFAIRE" = "--refaire" ]; then
     "$PY/bin/pip" install -q sstv==0.2.0
 fi
 
+WH="$DEST/whisper.cpp"
+if [ ! -x "$WH/build/bin/whisper-cli" ] || [ "$REFAIRE" = "--refaire" ]; then
+    echo "-- whisper.cpp v1.8.2 + modele small (transcription du soir) --"
+    [ -d "$WH/.git" ] || git clone --quiet https://github.com/ggml-org/whisper.cpp.git "$WH"
+    git -C "$WH" checkout --quiet v1.8.2
+    cmake -S "$WH" -B "$WH/build" -DCMAKE_BUILD_TYPE=Release -DCMAKE_OSX_SYSROOT="$SDK" >/dev/null
+    cmake --build "$WH/build" -j4 --target whisper-cli >/dev/null
+    (cd "$WH" && bash models/download-ggml-model.sh small >/dev/null)
+fi
+
 echo "-- verification --"
-for b in multimon-ng direwolf rtl_433 redsea acarsdec dumpvdl2; do
+for b in multimon-ng direwolf rtl_433 redsea acarsdec dumpvdl2 freedv_rx; do
     [ -x "$ENV/bin/$b" ] && echo "  $b : ok" || echo "  $b : ABSENT"
 done
 [ -f "$RN/librnnoise.dylib" ] && echo "  RNNoise : ok" || echo "  RNNoise : ABSENT"

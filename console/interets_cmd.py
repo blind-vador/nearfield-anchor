@@ -62,6 +62,13 @@ def run(line, key_source, say, out):
     values = dict(interets.levels(fresh=True))
     i = 0
     intro = conseils.intro("interets", dire("interets.titre"), dire("interets.consigne"))
+    import voix
+    textes = [intro, dire("interets.consigne"), dire("interets.annule"),
+              dire("interets.enregistres"), dire("interets.deja_min"), dire("interets.deja_max"),
+              dire("commun.debut_liste"), dire("commun.fin_liste")]
+    textes += [_label(cats, values, n) for n in range(len(cats))]
+    textes += [interets.LEVEL_NAMES[k] for k in interets.LEVELS]
+    voix.prechauffer(textes)
     out(intro + "\n")
     say(f"{intro} {_label(cats, values, i)}")
     for key in key_source:

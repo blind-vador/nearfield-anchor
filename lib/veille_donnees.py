@@ -111,7 +111,9 @@ def where(lat, lon):
 
 
 def spell(code):
-    """Indicatif lu caractere par caractere : "F4ABC-9" -> "F 4 A B C tiret 9"."""
+    """Indicatif lu caractere par caractere : "F4ABC-9" -> "F 4 A B C tiret 9".
+    La voix en fait l'alphabet radio (Foxtrot, quatre, Alpha...) en collant
+    les mots en cache (lib/atomes_parole.py) : le journal garde l'indicatif court."""
     return " ".join(SPELL.get(c, c) for c in code.upper())
 
 

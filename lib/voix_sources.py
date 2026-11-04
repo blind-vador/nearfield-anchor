@@ -256,10 +256,113 @@ def tirage(mode, ms_ok=None):
     return []
 
 
+FOURNISSEURS = ("microsoft", "mac", "google", "piper", "mbrola")
+NIVEAUX = ("desactive", "faible", "normale", "appreciees")
+# Désactivé : ignoré. Faible, normale, appréciées : parts du tirage.
+POIDS = {"desactive": 0, "faible": 1, "normale": 3, "appreciees": 8}
+_PREFS = "_fournisseurs"
+
+
+def fournisseur(voix):
+    """Famille d'une voix tirée : microsoft, mac, google, piper ou mbrola."""
+    if (voix or "").startswith("piper:mbrola#"):
+        return "mbrola"
+    if (voix or "").startswith("piper:google#"):
+        return "google"
+    if (voix or "").startswith("piper:mac#"):
+        return "mac"
+    if (voix or "").startswith("piper:"):
+        return "piper"
+    if voix == ESPEAK:
+        return "espeak"
+    return "microsoft"
+
+
+def en_direct(choix):
+    """Espeak et MBROLA se pilotent en direct. Rien n'entre dans le cache."""
+    if not choix:
+        return False
+    if choix.get("moteur") in (ESPEAK, "mbrola"):
+        return True
+    return (choix.get("voix") or "").startswith("piper:mbrola#")
+
+
+def phrase_entiere(choix):
+    """Google et le Mac : une seule requête pour toute la phrase, puis le cache.
+    Découpée en mots, Google échoue sur les mots courts et le secours Piper
+    prend toute l'annonce."""
+    voix = (choix or {}).get("voix") or ""
+    return voix.startswith("piper:google#") or voix.startswith("piper:mac#")
+
+
+def preferences():
+    """Niveau de chaque fournisseur. Défaut : normale."""
+    data = _tout().get(_PREFS) or {}
+    return {nom: data[nom] if data.get(nom) in NIVEAUX else "normale" for nom in FOURNISSEURS}
+
+
+def enregistrer_preferences(valeurs):
+    import reglages
+    data = dict(reglages.get("voix_sources") or {})
+    data[_PREFS] = {nom: valeurs.get(nom, "normale") if valeurs.get(nom) in NIVEAUX else "normale"
+                    for nom in FOURNISSEURS}
+    ok = reglages.save("voix_sources", data)
+    _cache["data"] = None
+    return ok
+
+
+def aleatoire_tout_actif():
+    """Vrai si au moins une veille est sur « aléatoire, toutes les voix »."""
+    return any(reglage(s).get("voix") == ALEATOIRE_TOUT for s in ANNONCES)
+
+
+def peser(pool, prefs):
+    """Une voix. Chaque fournisseur pèse son niveau, puis une voix au hasard
+    dedans. None si tout ce qui reste est désactivé."""
+    groupes = {}
+    for voix in pool or ():
+        groupes.setdefault(fournisseur(voix), []).append(voix)
+    poids = []
+    for nom, voix in groupes.items():
+        w = POIDS.get((prefs or {}).get(nom, "normale"), 3)
+        if w > 0 and voix:
+            poids.append((w, voix))
+    if not poids:
+        return None
+    total = sum(w for w, _ in poids)
+    marque = random.uniform(0, total)
+    cumul = 0.0
+    for w, voix in poids:
+        cumul += w
+        if marque < cumul:
+            return random.choice(voix)
+    return random.choice(poids[-1][1])
+
+
+def _rendu(v, r):
+    if v.startswith("piper:mbrola#"):
+        return {"moteur": "mbrola", "voix": v, "debit": r["debit"], "hauteur": NEUTRE_HAUTEUR,
+                "aleatoire": True}
+    if v.startswith("piper:"):
+        return {"moteur": "piper", "voix": v, "debit": r["debit"], "hauteur": NEUTRE_HAUTEUR,
+                "aleatoire": True}
+    return {"moteur": "edge", "voix": v, "debit": r["debit"], "hauteur": r["hauteur"], "aleatoire": True}
+
+
 def a_preparer(mode):
-    """Voix d'un tirage dont les phrases fixes se preparent d'avance : pas
-    Microsoft (son propre cache), pas Google (il bloquerait)."""
-    return [v for v in tirage(mode, ms_ok=False) if v.startswith("piper:") and not v.startswith("piper:google#")]
+    """Voix d'un tirage dont les phrases fixes se préparent d'avance.
+    Pas Microsoft (son cache à lui), pas Google (une phrase entière, au moment
+    où elle est dite), pas MBROLA (en direct, sans cache). Un fournisseur
+    désactivé n'est pas préparé."""
+    prefs = preferences()
+    out = []
+    for v in tirage(mode, ms_ok=False):
+        if not v.startswith("piper:") or v.startswith(("piper:google#", "piper:mbrola#")):
+            continue
+        if POIDS.get(prefs.get(fournisseur(v), "normale"), 3) <= 0:
+            continue
+        out.append(v)
+    return out
 
 
 def choisir(source, ms_ok=None):
@@ -272,17 +375,15 @@ def choisir(source, ms_ok=None):
     voix = r["voix"]
     if voix in MODES_MELANGES:
         pool = tirage(voix, ms_ok)
-        if not pool:
+        v = peser(pool, preferences()) if pool else None
+        if not v:
             return secours(source)
-        v = random.choice(pool)
-        if v.startswith("piper:"):
-            return {"moteur": "piper", "voix": v, "debit": r["debit"], "hauteur": NEUTRE_HAUTEUR, "aleatoire": True}
-        return {"moteur": "edge", "voix": v, "debit": r["debit"], "hauteur": r["hauteur"], "aleatoire": True}
+        return _rendu(v, r)
     if voix == ALEATOIRE_PIPER:
         pool = _pool()
-        if pool:
-            return {"moteur": "piper", "voix": random.choice(pool), "debit": r["debit"], "hauteur": NEUTRE_HAUTEUR,
-                    "aleatoire": True}
+        v = peser(pool, preferences()) if pool else None
+        if v:
+            return _rendu(v, r)
         voix = ESPEAK
     if voix == ESPEAK:
         return {"moteur": ESPEAK, "voix": ESPEAK, "debit": r["debit"], "hauteur": NEUTRE_HAUTEUR, "aleatoire": False}

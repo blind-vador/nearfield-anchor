@@ -78,7 +78,13 @@ class RadioLogSession:
         # journal, meme si un chemin oublie de la jeter.
         self.exiger_contenu = exiger_contenu
         self.contenu = False
+        self.flux = None
         self._tmpdir = tempfile.mkdtemp(prefix="radio_log_")
+
+    def noter_flux(self, chemin):
+        """Flux non décodé, 48 kHz, à garder à côté du journal pour la touche R."""
+        if chemin:
+            self.flux = chemin
 
     def add_audio_file(self, path, contenu=False):
         """Convertit un fichier audio existant (chime mp3, annonce TTS
@@ -156,6 +162,7 @@ class RadioLogSession:
             )
             if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
                 print(f"[radio_log] capture enregistree : {out_path}")
+                _poser_flux(self.flux, out_path)
                 _touch(JOURNAL_UPDATE_FLAG)  # le journal ouvert se met a jour
                 return out_path
             print(f"[radio_log] assemblage echoue : {result.stderr.decode(errors='replace')[-300:]}")
@@ -170,6 +177,20 @@ class RadioLogSession:
         shutil.rmtree(self._tmpdir, ignore_errors=True)
 
 
+def _poser_flux(src, journal):
+    """Copie le flux non décodé à côté du mp3. Même dossier, même purge."""
+    if not src or not journal or not os.path.isfile(src):
+        return
+    try:
+        if os.path.getsize(src) < 48_000:
+            return
+        dest = journal[:-4] + ".flux.wav" if journal.endswith(".mp3") else journal + ".flux.wav"
+        shutil.copyfile(src, dest)
+        print(f"[radio_log] flux non decode : {dest}")
+    except OSError as exc:
+        print(f"[radio_log] flux non garde : {exc}")
+
+
 def purge_old_logs():
     """Supprime tout fichier de RADIO_LOG_DIR plus vieux que
     RETENTION_HOURS. Base sur la date de modification du fichier (donc
@@ -181,7 +202,9 @@ def purge_old_logs():
         removed = 0
         # RADIO_LOG_DIR/*.mp3 et le sous-dossier rejets/ (journal des rejets)
         for path in (glob.glob(os.path.join(RADIO_LOG_DIR, "*.mp3"))
-                     + glob.glob(os.path.join(RADIO_LOG_DIR, "rejets", "*.mp3"))):
+                     + glob.glob(os.path.join(RADIO_LOG_DIR, "rejets", "*.mp3"))
+                     + glob.glob(os.path.join(RADIO_LOG_DIR, "*.flux.wav"))
+                     + glob.glob(os.path.join(RADIO_LOG_DIR, "*", "*.flux.wav"))):
             try:
                 if os.path.getmtime(path) < cutoff:
                     os.remove(path)

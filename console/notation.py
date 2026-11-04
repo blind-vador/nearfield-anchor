@@ -243,6 +243,7 @@ def _good_degrees(cut=False):
 
 
 def _record(info, path, stamp, reponses, rapide=False, degres=None, coupee=False):
+    nouvelle = not any(n.get("fichier") == os.path.basename(path) for n in load_notes())
     note = {
         "fichier": os.path.basename(path),
         "capture_le": stamp.isoformat(),
@@ -283,6 +284,12 @@ def _record(info, path, stamp, reponses, rapide=False, degres=None, coupee=False
         auto = bilan.auto_step(note["bande"])
     except Exception as exc:
         print(f"[notation] reglage automatique : {exc!r}")
+    if nouvelle:
+        try:  # le juge entendu sur cette frequence passe devant la prochaine fois
+            import propositions
+            propositions.confirmer(path)
+        except Exception as exc:
+            print(f"[notation] juge non retenu : {exc!r}")
     return total, station, auto
 
 

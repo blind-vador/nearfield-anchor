@@ -43,14 +43,15 @@ fi
 
 echo "-- module compagnon : fichiers --"
 mkdir -p "$DEST/bin" "$BUILD"
-cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/puissance.py" "$HERE/juges_radio.py" "$HERE/tetra_neo.py" "$HERE/lora_decode.py" "$HERE/decrire_images.py" \
+cp "$HERE/nearfield_bridge.py" "$HERE/meteor.py" "$HERE/pont_protocole.py" "$HERE/puissance.py" "$HERE/juges_radio.py" "$HERE/tetra_neo.py" "$HERE/lora_decode.py" "$HERE/decrire_images.py" "$HERE/whisper_radio.py" "$HERE/tickets_partages.py" \
     "$HERE/voix_piper.py" "$HERE/voix_piper_worker.py" "$HERE/numerique_neo.py" "$HERE/iq_fanout.py" \
     "$HERE/iq_reduit.py" "$DEST/"
 # Decodeurs Python du scanner (2026-11-01) : les memes qu'au Pi (lib/), pour que
 # Pi et compagne rendent les memes verdicts ; RNNoise compile a part (dylib).
 mkdir -p "$DEST/decodeurs/rnnoise_lib"
 cp "$HERE/../lib/asn_dsc.py" "$HERE/../lib/ffsk_pro.py" "$HERE/../lib/sstv_veille.py" \
-    "$HERE/../lib/preuve_voix.py" "$HERE/../lib/modulation_iq.py" "$HERE/../lib/decodeurs.py" "$DEST/decodeurs/"
+    "$HERE/../lib/preuve_voix.py" "$HERE/../lib/modulation_iq.py" "$HERE/../lib/decodeurs.py" \
+    "$HERE/../lib/juges_sync.py" "$HERE/../config/direwolf_donnees.conf" "$DEST/decodeurs/"
 cp "$HERE/../lib/rnnoise_lib/rnnoise.py" "$HERE/../lib/rnnoise_lib/__init__.py" "$DEST/decodeurs/rnnoise_lib/"
 
 echo "-- numpy, cryptography, cmake --"

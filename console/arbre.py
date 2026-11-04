@@ -185,11 +185,45 @@ class Navigator:
         return text
 
 
+def _freres(nav):
+    try:
+        return list(nav._siblings())
+    except Exception:
+        return []
+
+
+def _prechauffer_niveau(nav, intro, consigne):
+    """Le niveau affiché : ses entrées, la consigne, les bords de liste."""
+    import voix
+    freres = _freres(nav)
+    labels = [n.label for n in freres if getattr(n, "label", None)]
+    textes = [intro, consigne, dire("arbre.consigne_dialogue"),
+              dire("arbre.fleches_lettres_chercher_etoile"), dire("arbre.rien_ici"),
+              dire("arbre.cette_entree_peut_etre"), dire("arbre.recherche_cours"),
+              dire("arbre.recherche_effacee"), dire("arbre.deja_au_premier_niveau", current=""),
+              dire("arbre.replie", current="")]
+    textes.extend(labels)
+    if labels:
+        textes.append("Début, " + labels[0])
+        textes.append("Fin, " + labels[-1])
+    voix.prechauffer(textes)
+
+
 def run(nav, key_source, say, out, title, consigne="", feature=None):
     """Boucle du dialogue. Rend ce que select() a rendu, ou None (Echap).
     consigne : touches du dialogue, dite selon le niveau d'aide (conseils.py)
     et a la demande par F1."""
     intro = conseils.intro(feature, title, consigne)
+    niveau = None
+
+    def maj():
+        nonlocal niveau
+        ici = tuple(id(n) for n in _freres(nav))
+        if ici != niveau:
+            niveau = ici
+            _prechauffer_niveau(nav, intro, consigne)
+
+    maj()
     out(intro + "\n")
     say(f"{intro} {nav.current()}")
     for key in key_source:
@@ -224,6 +258,7 @@ def run(nav, key_source, say, out, title, consigne="", feature=None):
             text = dire("arbre.fleches_lettres_chercher_etoile")
         out(f"[{text}]\n")
         say(text)
+        maj()
     return None
 
 
@@ -235,6 +270,13 @@ def run_list(labels, key_source, say, out, title, consigne=None, feature="liste"
     consigne = consigne or dire("arbre.list_consigne")
     index = 0
     intro = conseils.intro(feature, title, consigne)
+    import voix
+    textes = [intro, consigne, dire("arbre.debut_liste"), dire("commun.fin_liste"),
+              dire("arbre.fleches_haut_bas_entree")] + list(labels)
+    if labels:
+        textes.append(dire("arbre.debut_liste") + " " + labels[0])
+        textes.append(dire("commun.fin_liste") + " " + labels[-1])
+    voix.prechauffer(textes)
     out(intro + "\n")
     say(f"{intro} {labels[0]}")
     for key in key_source:

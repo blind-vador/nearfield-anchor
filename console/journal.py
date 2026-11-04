@@ -15,14 +15,19 @@ satellites -- "journal capteurs", "journal satellites"...
                            sur une prise deja notee, corrige seulement la fin
   fleche droite            garde : copie dans les extraits interessants
                            (storage/radio), nommee par sa date de capture
-  fleche gauche            rejette : meme procedure que "parasite"
-                           (supprime + apprend l'empreinte si elle existe) ;
-                           un message DAB+ rejete interdit sa station
-                           (reglage dab, "interdites", lu par dab_watch)
+  fleche gauche            rejette le rendu en cours. S'il reste d'autres
+                           juges, ce juge descend ici et le suivant est lu.
+                           Sinon : empreinte apprise, pour ce juge seul.
+                           Un message DAB+ rejete interdit sa station.
+  J                        proposition suivante d'un autre juge, meme prise
   I                        informations : frequence, mode, et pour la CB et
                            le 10 m le verdict "vraie emission ou artefact"
   B                        ecoute le son brut, avant nettoyage (journal
                            radio : <nom>.brut.mp3, garde 48 h comme le reste)
+  R                        renvoie le flux non decode a tous les juges
+                           (<nom>.flux.wav, sur le NAS, 48 h)
+  Ctrl+R                   le meme flux, a un seul decodeur choisi.
+                           Sa sortie est gardee, meme si elle semble mauvaise.
   Entree                   rejoue          Echap : ferme
 
 Sources : server/radio_log/ (48 dernieres heures, date dans le nom) et
@@ -51,6 +56,7 @@ from phrases import Etiquettes, dire, nombre  # noqa: E402
 import keys  # noqa: E402
 import noise_signatures as ns  # noqa: E402
 import notation  # noqa: E402
+import propositions  # noqa: E402
 import conseils  # noqa: E402
 import voix  # noqa: E402
 
@@ -333,7 +339,8 @@ def _reject(path):
     except Exception:
         pass
     if info and info.get("fingerprint"):
-        ns.add_signature(info)
+        metrics = info.get("metrics") or {}
+        ns.add_signature(dict(info, juge=metrics.get("juge") or metrics.get("modulation_banc") or info.get("mode")))
         return dire("journal.rejete_appris")
     return dire("journal.rejete_supprime")
 
@@ -369,6 +376,34 @@ def notifications():
     return dire("notifications.liste", liste=" ; ".join(parts))
 
 
+DECODEURS = ("-fs", "-fm", "-fi", "-fn", "-f1", "-f2", "-fd", "-fy", "-fz",
+             "-fx", "-fp", "-fh", "-fe", "-fa")
+
+
+def _envoyer_decodeur(path, key_source):
+    """Contrôle+R : on choisit un décodeur, le flux part chez lui seul."""
+    import voix
+    import propositions
+    i = 0
+    noms = [propositions.nom(d) for d in DECODEURS]
+    voix.prechauffer(
+        [dire("journal.decodeur_choisir", nom=n) for n in noms] + noms
+        + [dire("journal.decodeur_aide"), dire("journal.decodeur_annule")],
+        echo=False)
+    voix.say_blocking(dire("journal.decodeur_choisir", nom=noms[0]))
+    for key in key_source:
+        if key in ("\x1b[A", "\x1b[B", "\x1b[C", "\x1b[D"):
+            i = (i + (1 if key in ("\x1b[B", "\x1b[C") else -1)) % len(DECODEURS)
+            voix.say_blocking(propositions.nom(DECODEURS[i]))
+        elif key in ("\r", "\n"):
+            return propositions.renvoyer_decodeur(path, DECODEURS[i])
+        elif key == "\x1b":
+            return dire("journal.decodeur_annule")
+        else:
+            voix.say_blocking(dire("journal.decodeur_aide"))
+    return dire("journal.decodeur_annule")
+
+
 def run(key_source, say, out, category="radio"):
     name = journaux.NAMES[category]
     if not os.path.ismount("/media/nas/nd1"):
@@ -378,6 +413,14 @@ def run(key_source, say, out, category="radio"):
         return dire("journal.vide", nom=name)
     title = dire("journal.titre", nom=name)
     consigne = dire("journal.consigne_capteurs" if category == "capteurs" else "journal.consigne")
+    import voix
+    voix.prechauffer([
+        title, consigne, dire("journal.plus_de_non_notee"), dire("journal.choisir"),
+        dire("journal.releve"), dire("journal.son_brut"), dire("journal.pas_son_brut"),
+        dire("journal.releve_non_notable"), dire("journal.plus_rien"),
+        dire("nav.premier_jour"), dire("nav.dernier_jour"),
+        dire("nav.debut_journee"), dire("nav.fin_journee"),
+    ])
     order = sorted(days, reverse=True)  # du plus recent au plus ancien
     # rec_i = -1 : "avant le premier" -- la premiere fleche bas joue le 1er enregistrement.
     day_i, rec_i = 0, -1
@@ -413,7 +456,7 @@ def run(key_source, say, out, category="radio"):
             say(text)
             out(f"[{text}]\n")
         else:
-            player.play(path)
+            player.play(propositions.fichier_courant(path))
             out(f"[{os.path.basename(path)}]\n")
             try:
                 import journal_vus
@@ -502,7 +545,7 @@ def run(key_source, say, out, category="radio"):
                         # selectionne (sinon on croit l'avoir ecoute alors que non).
                         voix.say_blocking(bound)
                         play(rec_i)
-            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "c", "C", "b", "B", "i", "I", "e", "E"):
+            elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "c", "C", "b", "B", "i", "I", "e", "E", "j", "J", "r", "R", "\x12"):
                 text = dire("journal.choisir")
             elif key in ("\r", "\n"):
                 play(rec_i)
@@ -529,25 +572,43 @@ def run(key_source, say, out, category="radio"):
                 if key == "\x1b[C":
                     text = _keep(stamp, path, spoken, category)
                 else:
-                    text = _reject(path)
-                    del recs[rec_i]
-                    if not recs:
-                        del days[order[day_i]]
-                        order.pop(day_i)
-                        if not order:
-                            text += " " + dire("journal.plus_rien")
-                            say(text)
-                            break
-                        day_i %= len(order)
-                        rec_i = -1
-                        text += " " + dire("journal.journee_vide") + " " + announce_day()
-                    else:
-                        # Le suivant prend la place du rejete : on le joue tout de
-                        # suite, sinon fleche bas le sauterait.
-                        rec_i = min(rec_i, len(recs) - 1)
-                        voix.say_blocking(text)
+                    fiche = propositions.a_fiche(path)
+                    suite = propositions.rejeter(path)
+                    if suite:
+                        # D'autres juges ont un rendu : on le lit, la prise reste.
+                        voix.say_blocking(suite)
                         text = None
                         play(rec_i)
+                    else:
+                        if not fiche:
+                            propositions.noter_rejet_simple(path)
+                        text = _reject(path)
+                        del recs[rec_i]
+                        if not recs:
+                            del days[order[day_i]]
+                            order.pop(day_i)
+                            if not order:
+                                text += " " + dire("journal.plus_rien")
+                                say(text)
+                                break
+                            day_i %= len(order)
+                            rec_i = -1
+                            text += " " + dire("journal.journee_vide") + " " + announce_day()
+                        else:
+                            # Le suivant prend la place du rejete : on le joue tout de
+                            # suite, sinon fleche bas le sauterait.
+                            rec_i = min(rec_i, len(recs) - 1)
+                            voix.say_blocking(text)
+                            text = None
+                            play(rec_i)
+            elif key in ("j", "J"):
+                annonce = propositions.avancer(recs[rec_i][1])
+                if not annonce:
+                    text = dire("journal.une_seule")
+                else:
+                    player.stop()
+                    voix.say_blocking(annonce)
+                    play(rec_i)
             elif key in ("v", "V", "c", "C"):
                 # La lecture continue : on valide sans interrompre l'ecoute ;
                 # C : bonne prise mais coupee trop tot (2026-10-14).
@@ -557,6 +618,10 @@ def run(key_source, say, out, category="radio"):
                 player.stop()
                 stamp, path, _ = recs[rec_i]
                 text = notation.rate(key_source, say, out, path, stamp)
+            elif key == "\x12" or (key in ("r", "R") and ctrl_held()):
+                text = _envoyer_decodeur(recs[rec_i][1], key_source)
+            elif key in ("r", "R"):
+                text = propositions.renvoyer_flux(recs[rec_i][1])
             elif key in ("e", "E"):
                 # Envoi a l'examen IA du Mac mini (en differe) : il reprendra le
                 # brut, tentera plusieurs nettoyages, et deposera une proposition.

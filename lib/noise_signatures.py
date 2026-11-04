@@ -134,11 +134,27 @@ def has_signatures_near(freq_hz):
                for e in load_signatures())
 
 
-def matches_known_noise(freq_hz, pcm_bytes, sample_rate, sample_format):
+def matches_wav(freq_hz, chemin, juge=None):
+    """Même comparaison qu'un tampon, sur un wav déjà écrit (sortie d'un juge)."""
+    import audioop
+    import wave
+    try:
+        with wave.open(chemin) as w:
+            pcm = w.readframes(w.getnframes())
+            if w.getnchannels() == 2:
+                pcm = audioop.tomono(pcm, w.getsampwidth(), 0.5, 0.5)
+            return matches_known_noise(freq_hz, pcm, w.getframerate(), "s16le", juge)
+    except (OSError, EOFError, ValueError, wave.Error):
+        return False, None
+
+
+def matches_known_noise(freq_hz, pcm_bytes, sample_rate, sample_format, juge=None):
     """(True, similarite) si l'audio ressemble a un parasite connu proche
     en frequence ; sinon (False, meilleure similarite ou None).
     Les filtres desactives (actif=False, commande console "filtres") sont
-    ignores : le parasite est garde mais ne bloque plus rien."""
+    ignores : le parasite est garde mais ne bloque plus rien. Une empreinte
+    rejetee sur le rendu d'un juge ne vaut que pour ce juge : le rejet peut dire
+    "mauvais decodeur", pas "ce son n'est jamais rien" (2026-11-05)."""
     fp = fingerprint(pcm_bytes, sample_rate, sample_format)
     if fp is None:
         return False, None
@@ -147,6 +163,8 @@ def matches_known_noise(freq_hz, pcm_bytes, sample_rate, sample_format):
         if not entry.get("actif", True):
             continue
         if abs(entry["freq_hz"] - freq_hz) > FREQ_TOLERANCE_HZ:
+            continue
+        if juge and entry.get("juge") and entry["juge"] != juge:
             continue
         sim = similarity(fp, entry["fingerprint"])
         best = sim if best is None else max(best, sim)
@@ -170,10 +188,22 @@ def add_signature(capture):
         "label": capture["label"],
         "fingerprint": capture["fingerprint"],
         "ajoute_le": time.strftime("%Y-%m-%d %H:%M"),
+        **({"juge": capture["juge"]} if capture.get("juge") else {}),
     })
     os.makedirs(os.path.dirname(path), exist_ok=True)
     _atomic_write_json(path, entries)
     return len(entries)
+
+
+def oublier_ressemblantes(freq_hz, fp):
+    """Un son repeche des rejets : l'empreinte qui l'avait ecarte etait fausse."""
+    path = _signatures_path()
+    entries = _read_json(path, [])
+    gardees = [e for e in entries if not (abs(e["freq_hz"] - freq_hz) <= FREQ_TOLERANCE_HZ
+                                          and similarity(e["fingerprint"], fp) >= MATCH_SIMILARITY)]
+    if len(gardees) != len(entries):
+        _atomic_write_json(path, gardees)
+    return len(entries) - len(gardees)
 
 
 # --- Gestion des filtres par la console (commande "filtres", 2026-10-09) ---
@@ -310,6 +340,11 @@ def record_capture(source, freq_hz, mode, label, target, log_path, fp, metrics=N
         except OSError as exc:
             print(f"[noise_signatures] empreinte non rangee pres de l'enregistrement : {exc}")
     _consommer_parasite_en_attente(freq_hz, target, log_path, fp)
+    try:  # toute ecoute, de tous les chemins, nourrit ce qu'on sait de la frequence
+        import frequences_actives
+        frequences_actives.depuis_capture(freq_hz, mode, label, target, metrics)
+    except Exception as exc:
+        print(f"[noise_signatures] frequence active non notee : {exc!r}")
 
 
 # --- Empreintes rangees a cote des enregistrements du journal ---

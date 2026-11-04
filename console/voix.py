@@ -403,6 +403,47 @@ def prewarm(texts):
     return len(todo)
 
 
+def prechauffer(texts, echo=True):
+    """Phrases du dialogue affiché, dans la voix qui va les dire.
+    Une seule voix. Espeak n'a pas de cache à remplir."""
+    propres = []
+    for text in texts or ():
+        if text and str(text).strip() and text not in propres:
+            propres.append(text)
+    if not propres:
+        return 0
+    threading.Thread(target=_prechauffer, args=(propres, echo), daemon=True).start()
+    return len(propres)
+
+
+def _prechauffer(texts, echo):
+    try:
+        source = "touches" if echo else "console"
+        ch = voix_sources.choisir(source, ms_ok=cloud_ok())
+        if voix_sources.en_direct(ch):
+            return
+        if ch["moteur"] not in ("edge", "piper") or (ch["moteur"] == "edge" and ch.get("aleatoire")):
+            return
+        import annonce_morceaux as morceaux
+        import atomes_parole
+        for text in texts:
+            if not echo and morceaux.a_assembler(text) and not voix_sources.phrase_entiere(ch):
+                morceaux.ensure(morceaux.expand_texte(text), ch)
+                continue
+            dit = text if echo else atomes_parole.indicatifs_en_clair(text)
+            if not _cacheable(dit):
+                continue
+            if ch["moteur"] == "piper":
+                if not _cached(dit, ch["voix"], ch["debit"]):
+                    _prepare_piper(dit, ch["voix"], ch["debit"])
+            else:
+                rate = _rk(ch)
+                if not _cached(dit, ch["voix"], rate):
+                    _prepare(dit, ch["voix"], rate)
+    except Exception as exc:
+        print(f"[voix] prechauffe : {exc!r}", file=sys.stderr)
+
+
 def pending():
     with _pending_guard:
         return len(_pending)
@@ -411,13 +452,23 @@ def pending():
 # --- Lecteurs ------------------------------------------------------------------
 
 class Clip:
-    """Son deja en cache."""
+    """Son deja en cache. supprimer : efface le fichier a la fin (annonce
+    collee dans un fichier temporaire ; les mots, eux, restent en cache)."""
 
-    def __init__(self, path):
+    def __init__(self, path, supprimer=False):
+        self._path, self._supprimer = path, supprimer
         f = _facteur()
         args = ["aplay", "-q", "-D", "default", path] if abs(f - 1.0) < 0.005 \
             else ["play", "-q", "-v", f"{f:.3f}", path]  # sox : le volume de la console
         self._p = subprocess.Popen(args, stderr=subprocess.DEVNULL)
+
+    def _jeter(self):
+        if self._supprimer:
+            self._supprimer = False
+            try:
+                os.remove(self._path)
+            except OSError:
+                pass
 
     def wait(self, timeout=None):
         try:
@@ -425,6 +476,8 @@ class Clip:
         except subprocess.TimeoutExpired:
             self.kill()
             return None
+        finally:
+            self._jeter()
 
     def kill(self):
         if self._p.poll() is None:
@@ -433,6 +486,7 @@ class Clip:
             self._p.wait(timeout=2)
         except subprocess.TimeoutExpired:
             pass
+        self._jeter()
 
 
 class Cloud:
@@ -625,6 +679,11 @@ class Suite:
     def __init__(self, parts, voice, rate, espeak_rate, demande=None):
         self.parts, self.voice, self.rate, self.espeak_rate = parts, voice, rate, espeak_rate
         self.demande = demande
+        # Le cache Microsoft ne sert que s'il contient toute la suite.
+        # Sinon tout est dit dans la voix choisie : pas Denise puis espeak.
+        self._demande_entiere = demande if (
+            demande and all(_demande_cached(p, demande) for p in parts)
+        ) else None
         self._current = None
         self._killed = False
         self._guard = threading.Lock()
@@ -636,7 +695,8 @@ class Suite:
             with self._guard:
                 if self._killed:
                     return
-                path = _demande_cached(part, self.demande) or _cached(part, self.voice, self.rate)
+                path = (_demande_cached(part, self._demande_entiere)
+                if self._demande_entiere else _cached(part, self.voice, self.rate))
                 if path:
                     self._current = Clip(path)
                 else:
@@ -675,6 +735,38 @@ def _spawn(text, echo):
     espeak_rate = RATE_ECHO if echo else RATE_REPONSE
     source = "touches" if echo else "console"
     ch = voix_sources.choisir(source, ms_ok=cloud_ok())
+    if voix_sources.en_direct(ch):
+        if not echo:
+            try:
+                import atomes_parole
+                text = atomes_parole.indicatifs_en_clair(text)
+            except Exception as exc:
+                print(f"[voix] direct : {exc!r}", file=sys.stderr)
+        voix_id = ch.get("voix") or ""
+        if voix_id.startswith("piper:mbrola#") and piper_out.available(voix_id):
+            return _set_current(piper_out.Speech(
+                text, scale=_echelle(), voice_id=voix_id,
+                scale_len=piper_out.length_scale(ch.get("debit"))))
+        return _set_current(espeak_out.Speech(text, "fr", espeak_rate, scale=_echelle()))
+    if not echo and ch["moteur"] in ("edge", "piper"):
+        # « 410 » et un indicatif : mots deja en cache, pas la phrase entiere
+        # (elle contient l'heure ou un nombre, le cache de la console la refuse).
+        try:
+            import annonce_morceaux as morceaux
+            if morceaux.a_assembler(text) and not voix_sources.phrase_entiere(ch):
+                choix = {"moteur": ch["moteur"], "voix": ch["voix"],
+                         "debit": ch.get("debit") or voix_sources.NEUTRE_DEBIT,
+                         "hauteur": ch.get("hauteur") or voix_sources.NEUTRE_HAUTEUR}
+                # Toute la phrase dans une voix. Le secours reprend tout,
+                # il ne bouche pas les trous.
+                sec = voix_sources.secours(source)
+                repli = sec if sec.get("moteur") in ("edge", "piper") else None
+                return _set_current(morceaux.Lecture(
+                    morceaux.expand_texte(text), choix, volume=_facteur(), repli=repli))
+            import atomes_parole
+            text = atomes_parole.indicatifs_en_clair(text)
+        except Exception as exc:
+            print(f"[voix] assemblage : {exc!r}", file=sys.stderr)
     if ch["moteur"] == voix_sources.ESPEAK:
         return _set_current(espeak_out.Speech(text, "fr", espeak_rate, scale=_echelle()))
     if ch["moteur"] == "piper":

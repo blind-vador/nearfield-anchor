@@ -46,6 +46,13 @@ def run(line, key_source, say, out):
     consigne = dire("restreint.consigne")
     state = _summary(checked, items) if restreint.actif() else dire("restreint.inactif")
     intro = conseils.intro("restreint", dire("restreint.titre"), consigne)
+    import voix
+    textes = [intro, state, consigne, dire("restreint.rien_change"), dire("restreint.tout_decoche"),
+              dire("restreint.aide_courte"), dire("restreint.arrete")]
+    for item in items:
+        textes.append(_say_item(item, {item["nom"]}))
+        textes.append(_say_item(item, set()))
+    voix.prechauffer(textes)
     out(intro + "\n")
     say(f"{intro} {state} {_say_item(items[pos], checked)}")
     for key in key_source:

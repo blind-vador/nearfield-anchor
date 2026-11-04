@@ -56,6 +56,11 @@ def get_recording_session():
     return getattr(_local, "session", None)
 
 
+# La cérémonie écrit d'abord les trois fichiers dans la prise, puis les joue.
+# Pendant cette lecture on ne les recopie pas : sinon l'arrivée entre deux fois.
+enregistrer_journal = True
+
+
 # Jingle puis voix (2026-10-19) : la voix part juste apres la derniere note du
 # jingle, PAR-DESSUS sa traine (reverberation de gare), au lieu d'attendre la
 # fin du fichier. La derniere note se mesure sur le son sec (seuil sous la
@@ -143,7 +148,7 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
         # haut-parleurs, mais l'enregistrement du journal garde son carillon
         # (2026-10-03 : des prises sans habillage dans le journal).
         session = get_recording_session()
-        if session is not None:
+        if session is not None and enregistrer_journal:
             session.add_audio_file(path, contenu=contenu)
         return
     reverb_tmp = None
@@ -202,7 +207,7 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
                 os.remove(reverb_tmp)
             except OSError:
                 pass
-    if garder:
+    if garder and enregistrer_journal:
         session = get_recording_session()
         if session is not None:
             session.add_audio_file(path, contenu=contenu)

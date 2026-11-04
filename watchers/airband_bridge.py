@@ -17,6 +17,7 @@ import ignores  # commande "ignorer" (2026-10-22)
 import maintien  # tenir une ecoute selon l'interet ; "zapper" (2026-10-22)
 import audio_filters
 import chaine_audio
+import ceremonie_radio as ceremonie
 from sound_paths import RADIO_SCANER_DIR
 from phrases import dire
 
@@ -379,6 +380,19 @@ PRELISTEN_WINDOW_SEC = 0.2
 PRELISTEN_VOICE_WINDOWS = 3
 
 
+def _au_rejet(freq_hz, mode, label, target, raison, pcm):
+    """Pas ouvert ne veut pas dire perdu (journal des rejets, lib/rejets.py)."""
+    try:
+        import frequences_actives
+        import rejets
+        if len(pcm) >= rejets.EXTRAIT_MIN_SEC * AIRBAND_SAMPLE_RATE_HZ * 4:
+            rejets.garder_fond(freq_hz, mode, label, raison,
+                               [{"juge": mode, "pcm": pcm, "taux": AIRBAND_SAMPLE_RATE_HZ, "format": "f32le"}], target=target)
+            frequences_actives.noter(freq_hz, "signal", modulation=mode, target=target, label=label)
+    except Exception as exc:
+        print(f"[airband_bridge] rejet non garde : {exc!r}")
+
+
 def _prelisten(packet_queue, freq_hz=None):
     """(paquets recus, voix reconnue ?) apres une ecoute silencieuse.
 
@@ -454,6 +468,7 @@ def _prelisten(packet_queue, freq_hz=None):
                     if is_parasite:
                         print(f"[airband_bridge] pre-ecoute {freq_hz/1e6:.5f} MHz : rafale parasite connue "
                               f"ecremee (similarite {psim:.2f}), on continue d'ecouter")
+                        _au_rejet(freq_hz, "am", "airband", "airband", "ressemble a un parasite appris", b"".join(bloc_voix))
                         packets.clear()      # ne pas rejouer la rafale
                         bloc_voix = []
                         voiced = consecutive = 0
@@ -522,6 +537,9 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         if not worth:
             print(f"[airband_bridge] pre-ecoute {freq_hz/1e6:.5f} MHz : pas de voix, son jamais ouvert")
             stop_event.set()
+            _au_rejet(freq_hz, next((w for w in AIRBAND_WINDOWS if w["name"] == window_name), {}).get("mode", "am"),
+                      name_spoken, window_name, "aucune voix prouvee",
+                      b"".join(p for p in prebuffer if p))
             log_session.discard()
             return False
         # Parasites : plus d'ABANDON de frequence (demande utilisateur 2026-10-27).
@@ -529,17 +547,12 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         # d'ecouter la vraie voix -- un parasite ne doit jamais faire ignorer un
         # canal (PMR446 en est plein, et il y a du trafic utile dessous).
 
-        # "incoming" avant l'annonce (tampon pendant la synthese cloud, voir
-        # speak_with_lead_sound) ; annonce simplifiee (2026-08-30, demande de
-        # l'utilisateur) : le nom d'usage seul, sans la frequence exacte en
-        # MHz -- peu intelligible a l'oral, name_spoken porte deja le nom
-        # clair ("446 civil", "ATIS Lyon Saint-Exupéry"...).
-        # name_spoken : petit ensemble fixe (voir AIRBAND_WINDOWS) --
-        # candidat naturel au cache repetitif (2026-08-31).
-        speak_with_lead_sound(INCOMING_SOUND, name_spoken, label="airband_bridge", repetitive=True)
-        play_sound_effect(FREQ_OPEN_SOUND, label="airband_bridge")
-        # Ce qu'on entend maintenant : cible de "verrouille" pendant l'ecoute.
+        # Ceremonie : shim, nom et modulation, shim de transition. Le fil UDP
+        # a deja rempli la file : la lecture qui suit reprend le tampon.
         live_window = next((w for w in AIRBAND_WINDOWS if w["name"] == window_name), {})
+        ceremonie.ouvrir(name_spoken, ceremonie.modulation_dite(live_window.get("mode", "am")),
+                         label="airband_bridge", bande_id="aviation")
+        # Ce qu'on entend maintenant : cible de "verrouille" pendant l'ecoute.
         noise_signatures.capture_started("airband", freq_hz, live_window.get("mode", "am"), name_spoken, window_name)
 
         aplay = subprocess.Popen(
@@ -629,7 +642,9 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
             # Simple eclat de squelch (2026-10-03 : des prises de 0,1 s dans le
             # journal) : rien a garder.
             print(f"[airband_bridge] canal ignore : {audio_sec:.1f} s de son seulement")
-            play_sound_effect(_son_fin(freq_hz), label="airband_bridge")
+            _au_rejet(freq_hz, window.get("mode", "am"), name_spoken, window_name, "eclat tres court",
+                      b"".join(captured_chunks))
+            ceremonie.fermer(freq_hz, label="airband_bridge")
             log_session.discard()
             return False
         if captured_chunks:
@@ -637,7 +652,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         _signalisation_asn(b"".join(raw_chunks), name_spoken, freq_hz)
 
         print(f"[airband_bridge] canal termine : {total_bytes} octets relayes")
-        play_sound_effect(_son_fin(freq_hz), label="airband_bridge")
+        ceremonie.fermer(freq_hz, label="airband_bridge")
         path = log_session.finalize()
         if path and raw_chunks:
             _save_raw(path, b"".join(raw_chunks))

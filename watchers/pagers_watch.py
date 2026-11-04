@@ -118,6 +118,12 @@ def scan_window(dwell_sec=30):
                 vd.archive("pagers", {"freq": freq, "ligne": line})
                 m = ALPHA.search(line)
                 text = _readable(m.group(1) or m.group(2) or "") if m else ""
+                if text:  # un pager peut donner une frequence, un relais
+                    try:
+                        import relais
+                        relais.depuis_texte(text, None, "pager")
+                    except Exception as exc:
+                        print(f"[pagers_watch] texte non lu pour les relais : {exc!r}")
                 if text and _memory.due(f"pager|{text[:80]}", REPEAT_SEC):
                     vd.announce(dire("pager.message_pager", text=text), SOUND, "message_pager", "pagers_watch",
                                 fiche={"protocole": "POCSAG ou FLEX", "frequence_hz": freq, "texte_original": text})

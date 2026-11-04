@@ -230,6 +230,12 @@ def _publish_air_context(states):
             add("acars", 0.3)
             add("vdl2", 0.3)
             add("aviation", 0.2)
+    try:
+        import alerte_avion
+        for target, points in alerte_avion.piqures().items():
+            add(target, points)
+    except Exception as exc:
+        print(f"[adsb_watch] piqure d'alerte non ajoutee : {exc}")
     detail, now = {}, time.time()
     for st in states:
         if not st[IDX_ICAO24]:
@@ -318,31 +324,52 @@ def _merge(remote, local):
     return remote + [s for s in local if s[0] in local_only], local_only
 
 
+def _urgence(state):
+    """Fiche d'un appareil en code d'urgence, ou None."""
+    squawk = state[IDX_SQUAWK] if len(state) > IDX_SQUAWK else None
+    code = str(squawk).strip() if squawk else ""
+    kind = EMERGENCY_SQUAWKS.get(code)
+    if not kind:
+        return None
+    lat, lon = state[IDX_LATITUDE], state[IDX_LONGITUDE]
+    dist = _distance_km(REF_LAT, REF_LON, lat, lon) if lat is not None and lon is not None else None
+    return {
+        "icao": state[IDX_ICAO24], "squawk": code, "kind": kind,
+        "callsign": (state[IDX_CALLSIGN] or "").strip(), "dist": dist,
+        "alt": state[IDX_BARO_ALTITUDE], "sol": bool(state[IDX_ON_GROUND]),
+        "vz": state[IDX_VERTICAL_RATE] if len(state) > IDX_VERTICAL_RATE else None,
+        "vitesse": state[IDX_VELOCITY] if len(state) > IDX_VELOCITY else None,
+        "track": state[10] if len(state) > 10 else None,
+    }
+
+
 def _check_emergencies(states, emergencies, now):
     """Avions en code d'urgence (7500/7600/7700). Annonce en priorite, une
-    fois par appareil et par code (anti-repetition EMERGENCY_FORGET_SEC)."""
+    fois par appareil et par code, puis suit la distance tant que le code dure."""
+    import alerte_avion
+    actifs = []
     for state in states:
-        squawk = state[IDX_SQUAWK] if len(state) > IDX_SQUAWK else None
-        kind = EMERGENCY_SQUAWKS.get(str(squawk).strip() if squawk else "")
-        if not kind:
+        info = _urgence(state)
+        if not info:
             continue
-        icao24 = state[IDX_ICAO24]
-        key = (icao24, str(squawk))
+        actifs.append(info)
+        key = (info["icao"], info["squawk"])
         if now - emergencies.get(key, 0) <= EMERGENCY_FORGET_SEC:
             continue
         emergencies[key] = now
-        callsign = (state[IDX_CALLSIGN] or "").strip() or dire("avion.indicatif_inconnu")
-        parts = [dire(f"avion.urgence_{kind}", callsign=callsign)]
-        lat, lon = state[IDX_LATITUDE], state[IDX_LONGITUDE]
-        if lat is not None and lon is not None:
-            dist = _distance_km(REF_LAT, REF_LON, lat, lon)
-            parts.append(dire("avion.distance_kilometres", dist=format(dist, ".0f")))
-        alt = state[IDX_BARO_ALTITUDE]
-        if alt:
-            parts.append(dire("avion.altitude_metres", altitude_m=format(alt, ".0f")))
+        callsign = info["callsign"] or dire("avion.indicatif_inconnu")
+        parts = [dire(f"avion.urgence_{info['kind']}", callsign=callsign)]
+        if info["dist"] is not None:
+            parts.append(dire("avion.distance_kilometres", dist=format(info["dist"], ".0f")))
+        if info["alt"]:
+            parts.append(dire("avion.altitude_metres", altitude_m=format(info["alt"], ".0f")))
+        parts.extend(alerte_avion.ouvrir(info))
         import alarmes  # en boucle jusqu'au "compris" (2026-10-24)
-        alarmes.declencher(f"urgence_{str(squawk).strip()}", " ".join(parts))
-        print(f"[adsb_watch] URGENCE {squawk} : {callsign} ({icao24})")
+        alarmes.declencher(f"urgence_{info['squawk']}", " ".join(parts))
+        print(f"[adsb_watch] URGENCE {info['squawk']} : {callsign} ({info['icao']})")
+    suite = alerte_avion.suivre(actifs, now)
+    if suite:
+        _speak_coordinated(suite)
     for key in [k for k, t in emergencies.items() if now - t > EMERGENCY_FORGET_SEC]:
         del emergencies[key]
 
@@ -374,8 +401,8 @@ def main():
         states, local_only = _merge(remote or [], local)
         now = time.time()
 
-        _publish_air_context(states)
         _check_emergencies(states, emergencies, now)
+        _publish_air_context(states)
         # Veille helicopteres (lib/helicos.py) : annonces a part, sondage
         # plus serre tant qu'il y en a un dans le rayon.
         try:

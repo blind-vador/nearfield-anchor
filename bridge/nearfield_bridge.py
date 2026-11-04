@@ -173,6 +173,20 @@ def capabilities():
         caps.append("voix_mac")
     if os.access(RADIO_DSD, os.X_OK):  # juges du scanner radio (2026-10-25, construire_dsd.sh)
         caps.append("radio_juges")
+    if os.access(RADIO_DSD, os.X_OK):  # tickets partages : "ticket_sans_x" = ce que cette machine ne sait pas
+        try:
+            import tickets_partages as tp
+            caps.append("tickets")
+            toutes = list(tp.DONNEES_SON) + tp.epreuves_blu(["usb", "lsb"])
+            caps += ["ticket_sans_" + e for e in tp.impossibles(toutes, _outils_tickets())]
+        except Exception:
+            traceback.print_exc()
+    try:  # transcription du soir des prises validees (whisper.cpp)
+        import whisper_radio
+        if whisper_radio.disponible():
+            caps.append("whisper")
+    except Exception:
+        pass
     try:  # TETRA : decode en direct le flux rtl_tcp du Pi (2026-10-26, dsd-neo)
         import tetra_neo
         if tetra_neo.disponible():
@@ -211,7 +225,8 @@ def _radio_juges(job, folder):
 
     def un(juge):
         voix = os.path.join(folder, "voix_%s.wav" % juge.lstrip("-"))
-        return juge, juges_radio.juger(juge, wav, dsd=RADIO_DSD, voix=voix, priorite=("nice", "-n", "10"))
+        return juge, juges_radio.juger(juge, wav, dsd=RADIO_DSD, voix=voix, priorite=("nice", "-n", "10"),
+                                       garder=bool(p.get("garder_voix")))
 
     verdicts, sorties = {}, ["verdicts.json"]
     with ThreadPoolExecutor(max_workers=workers) as pool:
@@ -223,6 +238,71 @@ def _radio_juges(job, folder):
     props = sum(1 for v in verdicts.values() if v.get("propose"))
     return "fait", sorties, "%d juges (%d a la fois), %d proposition%s" % (
         len(verdicts), workers, props, "s" if props > 1 else "")
+
+
+# --- tickets partages (2026-11-04, tickets_partages.py) ----------------------------------
+# Le Pi pose les sons sur le NAS ; ici on prend ce qu'on sait faire et on rend
+# nos verdicts sur le ticket. Reveille par le Pi (message "tickets") ; le NAS
+# n'est relu qu'au rythme du filet de securite (SCAN_SEC). Le Pi donne le nom du
+# ticket : le cache SMB de macOS cache un dossier neuf une trentaine de secondes.
+_tickets_reveil = threading.Event()
+_tickets_attendus = {}             # {ticket annonce: on cesse de le guetter a}
+TICKET_ATTENTE_SEC = 20
+
+
+def _outil_radio(nom):
+    chemin = os.path.join(HOME, "radio", "bin", nom)
+    return chemin if os.access(chemin, os.X_OK) else None
+
+
+def _outils_tickets():
+    deco = os.path.join(HOME, "decodeurs")
+    return {"dsd": _outil_radio("dsd-fme"), "multimon": _outil_radio("multimon-ng"),
+            "direwolf": _outil_radio("direwolf"), "direwolf_conf": os.path.join(deco, "direwolf_donnees.conf"),
+            "python_sstv": os.path.join(HOME, "py311", "bin", "python"),
+            "sstv_script": os.path.join(deco, "sstv_veille.py"),
+            "freedv": _outil_radio("freedv_rx"), "jt9": _outil_radio("jt9")}
+
+
+def _part_de_tickets():
+    m = power(session_state()) or {}
+    part = (m.get("disponible") or 0) / m["puissance"] if m.get("puissance") else 0.5
+    return max(1, int(round((m.get("coeurs") or 2) * part)))
+
+
+def _tickets_boucle():
+    import tickets_partages as tp
+    sys.path.insert(0, os.path.join(HOME, "decodeurs"))
+    outils = _outils_tickets()
+    while True:
+        _tickets_reveil.wait(1 if _tickets_attendus else SCAN_SEC)
+        _tickets_reveil.clear()
+        for tid, jusque in list(_tickets_attendus.items()):
+            if time.time() > jusque:
+                _tickets_attendus.pop(tid, None)
+        conf = config()
+        for pi, card in bridges().items():
+            link = _links.get(pi)
+            if not link or link.channel is None:
+                continue
+            cles = {pi: card["cle"], conf["id"]: proto.public_b64(key())}
+            try:
+                share = find_share(card)
+                if not share:
+                    continue
+                encore = True
+                while encore:
+                    encore = False
+                    for tid in sorted(set(tp.ouverts(share)) | set(_tickets_attendus)):
+                        if tp.existe(share, tid):
+                            _tickets_attendus.pop(tid, None)
+                        fait = tp.travailler(share, tid, conf["id"], conf["nom"], key(), cles, outils,
+                                             _part_de_tickets(), priorite=("nice", "-n", "10"))
+                        if fait:
+                            encore = True
+                            log("%s : ticket %s, %d epreuves" % (pi, tid, fait))
+            except Exception:
+                traceback.print_exc()
 
 
 # --- voix macOS en direct (2026-10-22) ---------------------------------------------
@@ -381,7 +461,7 @@ def numerique_to_pi(link, msg):
         res = numerique_neo.decoder(msg["host"], msg["port"], msg["freq_hz"], msg.get("gain", 32),
                                     msg.get("secondes", 8), ppm=msg.get("ppm", 0),
                                     max_seconds=msg.get("max_secondes"), mode=msg.get("mode", "-fa"),
-                                    banc=bool(msg.get("banc")))
+                                    banc=bool(msg.get("banc")), modes_seul=msg.get("modes"))
     except Exception as exc:
         link.send({"type": "numerique_resultat", "reponse_a": rid, "ok": False, "erreur": repr(exc)[:200]})
         return
@@ -425,18 +505,31 @@ def numerique_to_pi(link, msg):
         # flux possibles d'une demod complete. Jamais rien de dechiffre.
         voix_envoyee = _streamer(res.get("voix_wav"), "numerique_voix") is not None
         audio_envoye = _streamer(res.get("audio_wav"), "numerique_audio") is not None
+        flux_envoye = _streamer(res.get("flux_wav"), "numerique_flux") is not None
         # Banc (2026-11-01) : un son par modulation, chacun sous son propre type.
         banc_envoye = [m for m, chemin in sorted((res.get("banc") or {}).items())
                        if _streamer(chemin, "numerique_banc_" + m) is not None]
+        # Chaque juge numerique qui a une voix en clair, pas seulement le gagnant.
+        rendus_meta = []
+        for r in res.get("rendus") or []:
+            mode = str(r.get("mode") or "")
+            envoye = False
+            if r.get("voix") and not r.get("chiffre"):
+                envoye = _streamer(r.get("wav"), "numerique_rendu_" + mode.lstrip("-")) is not None
+            rendus_meta.append({"mode": mode, "protocole": r.get("protocole"),
+                                "confirme": bool(r.get("confirme")), "hits": r.get("hits") or 0,
+                                "rms": r.get("rms") or 0, "chiffre": bool(r.get("chiffre")),
+                                "voix": envoye})
         link.send({"type": "numerique_resultat", "reponse_a": rid, "ok": bool(res.get("ok")),
                    "erreur": res.get("erreur"), "protocole": res.get("protocole"),
                    "meta": res.get("meta") or {}, "chiffre": bool(res.get("chiffre")),
-                   "clair": bool(res.get("clair")), "voix": voix_envoyee, "audio": audio_envoye,
+                   "clair": bool(res.get("clair")), "voix": voix_envoyee, "audio": audio_envoye, "flux": flux_envoye,
                    "numerique_confirme": bool(res.get("numerique_confirme")),
                    "digital_actif": bool(res.get("digital_actif")), "sync_hits": res.get("sync_hits"),
                    "voix_rms": res.get("voix_rms"), "audio_rms": res.get("audio_rms"),
                    "resume": numerique_neo.resume_fr(res), "duree": res.get("duree"),
-                   "banc": banc_envoye, "banc_preuve": res.get("banc_preuve")})
+                   "banc": banc_envoye, "banc_preuve": res.get("banc_preuve"),
+                   "rendus": rendus_meta})
     finally:
         if tmp:
             shutil.rmtree(tmp, ignore_errors=True)
@@ -787,6 +880,10 @@ class Link(threading.Thread):
                 if msg.get("type") == "travail":
                     log("%s : travail %s annonce" % (self.pi, msg.get("travail")))
                     _wake_workers(self.pi)
+                elif msg.get("type") == "tickets":
+                    for tid in msg.get("ids") or []:
+                        _tickets_attendus[tid] = time.time() + TICKET_ATTENTE_SEC
+                    _tickets_reveil.set()
                 elif msg.get("type") == "dire":
                     threading.Thread(target=say_to_pi, args=(self, msg), daemon=True).start()
                 elif msg.get("type") == "tetra":
@@ -921,6 +1018,9 @@ def _process(job, folder):
         return voix_piper.process(folder, job.get("params") or {})
     if job.get("type") == "radio_juges":
         return _radio_juges(job, folder)
+    if job.get("type") == "whisper":
+        import whisper_radio
+        return whisper_radio.process(folder, job.get("params") or {})
     return "echec", [], "cette machine ne sait pas faire « %s »" % job.get("type")
 
 
@@ -999,6 +1099,8 @@ def service():
         traceback.print_exc()
     for name in _queues:
         threading.Thread(target=worker, args=(name,), daemon=True).start()
+    if "tickets" in capabilities():
+        threading.Thread(target=_tickets_boucle, daemon=True).start()
     last_scan = last_beat = 0
     while True:
         current = bridges()
