@@ -538,6 +538,12 @@ COMMANDS = [
             examples=["capture démarre", "capture stop", "enregistre ce qui sort du haut-parleur"]),
     # Tutoriel (ecouter) AVANT "sons" (regler) : sur "apprendre les sons" les deux
     # matchent a 100, le premier gagne -> le tutoriel (2026-10-30).
+    Command("cherche des sons", "chercher des sons en ligne, les écouter et télécharger ceux qu'on coche, "
+            "pour en faire des sonneries",
+            None, keywords=["cherche des sons", "chercher des sons", "cherche un son", "chercher un son",
+                            "telecharger des sons", "telecharge des sons", "telecharger un son",
+                            "telecharge un son", "sons en ligne", "banque de sons"],
+            examples=["télécharge des sons", "trouve-moi un son de cloche"]),
     Command("son", "tutoriel des sons : parcourir le catalogue et écouter chaque son pour les apprendre",
             None, keywords=["son", "apprendre les sons", "apprendre le son", "tutoriel des sons",
                             "tutoriel son", "tuto des sons", "tuto son", "tuto sons", "tutoriel", "tuto"],

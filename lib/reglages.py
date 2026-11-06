@@ -84,8 +84,8 @@ KEYS = {
     "airlabs": ("AIRLABS_API_KEY", "tableau des aéroports"),
     "prim": ("PRIM_API_KEY", "perturbations des transports d'Île-de-France"),
 }
-# Services d'IA facultatifs (lib/connecteurs_ia.py) : un fichier vide n'est pas un manque.
-IA_KEYS = {"groq": "GROQ_API_KEY", "cerebras": "CEREBRAS_API_KEY", "mistral": "MISTRAL_API_KEY",
+# Services facultatifs (lib/connecteurs_ia.py, lib/sons_en_ligne.py) : un fichier vide n'est pas un manque.
+CLES_FACULTATIVES = {"freesound": "FREESOUND_API_KEY", "groq": "GROQ_API_KEY", "cerebras": "CEREBRAS_API_KEY", "mistral": "MISTRAL_API_KEY",
            "openrouter": "OPENROUTER_API_KEY", "grok": "GROK_API_KEY"}
 KEY_LABELS = Etiquettes("reglages.cle", {k: v[1] for k, v in KEYS.items()}, "usage d'une clé API, dit quand elle manque")
 
@@ -117,6 +117,9 @@ Essayés dans cet ordre, puis Gemini, puis Grok.
 Ces services reçoivent le texte des questions (messages captés, commune). Sur les
 offres gratuites, ils peuvent s'en servir pour améliorer leurs modèles : voir leurs
 conditions avant d'ajouter une clé.
+
+freesound.txt         Freesound, gratuit, facultatif (commande cherche des sons) :
+                      freesound.org/apiv2/apply ; sans lui, Openverse suffit.
 
 lieu.json, trains.json, avions.json : se règlent depuis la console avec
 les commandes ville, gare et aéroport. favoris.json : l'étoile dans les
@@ -209,7 +212,7 @@ def _clean_key(text):
 
 
 def _credentials_value(name):
-    attr = KEYS[name][0] if name in KEYS else IA_KEYS[name]
+    attr = KEYS[name][0] if name in KEYS else CLES_FACULTATIVES[name]
     if CREDENTIALS_DIR not in sys.path:
         sys.path.insert(0, CREDENTIALS_DIR)
     try:
@@ -257,7 +260,7 @@ def ensure():
             current_readme = None
         if current_readme != README:  # notre fichier : tenu a jour
             _atomic_write(readme, README)
-        for name in [*KEYS, *IA_KEYS]:
+        for name in [*KEYS, *CLES_FACULTATIVES]:
             path = os.path.join(KEYS_DIR, f"{name}.txt")
             try:
                 current = _clean_key(_read_text(path))

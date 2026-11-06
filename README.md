@@ -89,7 +89,7 @@ mémoire, disques, veilles), `rire` ("fais-moi rire" : lance radiono),
 `décris` ("qu'est-ce que tu vois", "photo, la pièce est-elle décollée ?" :
 photo de la webcam de l'imprimante décrite par Gemini, rien n'est gardé),
 `mise à jour` (mise à jour complète + nettoyage, confirmée, suivie à la voix
-par étapes ; retaper la commande donne l'avancement), `bilan` (notes radio par bande, propositions de réglages sans rien appliquer),
+par étapes ; retaper la commande donne l'avancement), `cherche des sons` (fournisseur, Tab, mot, Entrée ; haut/bas = écouter, Espace = cocher, Entrée = télécharger dans le dépôt des sonneries), `bilan` (notes radio par bande, propositions de réglages sans rien appliquer),
 `archives` (extraits gardés : Tab = jour, haut/bas = écouter, gauche/droite = volume
 temporaire, rien n'est supprimé), `journal` (enregistrements radio : Tab/Maj+Tab = jour, haut/bas = écouter,
 droite = garder le rendu entendu dans le dossier du jour de storage/radio, gauche = rejeter comme

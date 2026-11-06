@@ -28,6 +28,7 @@ OCTOPRINT_API_KEY = ""
 GEMINI_API_KEY = ""
 
 # Autres services d'IA, facultatifs (lib/connecteurs_ia.py). Grok est payant.
+FREESOUND_API_KEY = ""   # commande "cherche des sons", facultatif
 GROQ_API_KEY = ""
 CEREBRAS_API_KEY = ""
 MISTRAL_API_KEY = ""

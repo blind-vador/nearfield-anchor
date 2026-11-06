@@ -7027,3 +7027,11 @@ Même jour : `gemini.ask` ne s'arrêtait plus au premier modèle muet. Mesuré :
 gratuit de 20 requêtes par jour sur gemini-2.5-flash, gemini-flash-latest muet 30 s,
 gemini-flash-lite-latest disponible, et on disait « pas d'accès à Gemini ». Un modèle
 épuisé ou muet se repose désormais, pour le délai annoncé par Google s'il y en a un.
+
+## 2026-11-07 : commande « cherche des sons »
+
+`console/sons_en_ligne_cmd.py`, `lib/sons_en_ligne.py` : fournisseur, Tab, mot, Entrée ;
+haut et bas écoutent, Espace coche, Entrée télécharge dans `sonneries/depot`, avec une
+ligne de crédit par son dans `sonneries/credits_sons_telecharges.txt`. Openverse sans
+clé, Freesound en direct avec `cles/freesound.txt`. Wikimedia écarté : son serveur de
+fichiers répond 429 à ce client (Retry-After 600 s le 2026-11-07), limite respectée.
