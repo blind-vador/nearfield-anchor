@@ -308,7 +308,13 @@ def cluster(articles):
 # --- Redaction ------------------------------------------------------------
 
 def _gemini(prompt):
-    """(dict JSON, None) ou (None, raison)."""
+    """(dict JSON, None) ou (None, raison). Les autres services d'abord, s'il y en a."""
+    import connecteurs_ia
+    texte = connecteurs_ia.demander(prompt, 0.3, True, 60)
+    if texte:
+        data = json.loads(texte)
+        if isinstance(data, dict) and isinstance(data.get("flash"), str) and data["flash"].strip():
+            return data, None
     key = reglages.cle("gemini")
     if not key:
         return None, dire("flash.cle_gemini")

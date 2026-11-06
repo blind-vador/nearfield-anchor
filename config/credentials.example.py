@@ -26,3 +26,10 @@ OCTOPRINT_API_KEY = ""
 # commande "décris" de la console (console/vision.py). Sur l'offre gratuite,
 # Google peut utiliser les photos envoyees pour ameliorer ses modeles.
 GEMINI_API_KEY = ""
+
+# Autres services d'IA, facultatifs (lib/connecteurs_ia.py). Grok est payant.
+GROQ_API_KEY = ""
+CEREBRAS_API_KEY = ""
+MISTRAL_API_KEY = ""
+OPENROUTER_API_KEY = ""
+GROK_API_KEY = ""

@@ -1,8 +1,11 @@
 """Appel texte simple a Gemini (cle cles/gemini.txt, voir reglages.py),
-avec repli sur les modeles suivants si l'un est epuise ou retire.
+avec repli sur les modeles suivants si l'un est epuise ou retire. Une question
+en texte passe d'abord par les autres services dont la cle est remplie
+(lib/connecteurs_ia.py) ; sans autre cle, rien ne change.
 Rend (texte, None) ou (None, raison parlee)."""
 import requests
 
+import connecteurs_ia
 import reglages
 from phrases import dire
 
@@ -15,6 +18,23 @@ def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT, mi
     """jpeg : image (octets ; type mime, JPEG par defaut) jointe a la question.
     audio : son (octets, type audio_mime) joint, pour transcrire une voix captee
     (ATIS...). json_mode : Gemini rend du JSON strict (responseMimeType)."""
+    texte_seul = jpeg is None and audio is None
+    if texte_seul:
+        texte = connecteurs_ia.demander(prompt, temperature, json_mode, timeout)
+        if texte:
+            return texte, None
+    texte, raison = _demander_gemini(prompt, temperature, jpeg, json_mode, timeout, mime, audio, audio_mime)
+    if texte:
+        connecteurs_ia.compter("gemini")
+        return texte, None
+    if texte_seul:
+        texte = connecteurs_ia.demander(prompt, temperature, json_mode, timeout, dernier=True)
+        if texte:
+            return texte, None
+    return None, raison
+
+
+def _demander_gemini(prompt, temperature, jpeg, json_mode, timeout, mime, audio, audio_mime):
     import base64
     key = reglages.cle("gemini")
     if not key:

@@ -45,6 +45,10 @@ def status():
         (dire("reglages.toutes_cles_sont_presentes") if not missing
          else dire("reglages.cles_presentes_manquantes", v1=len(keys) - len(missing), len=len(keys), join=', '.join(missing))),
     ]
+    import connecteurs_ia
+    autres = connecteurs_ia.actifs()
+    if autres:
+        parts.append(dire("reglages.connecteurs_ia", liste=", ".join(autres)))
     if migrated:
         parts.append(dire("reglages.cles_recopiees", cles=nombre(len(migrated), "clé recopiée", "clés recopiées")))
     if migrated is None:

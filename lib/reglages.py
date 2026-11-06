@@ -84,6 +84,9 @@ KEYS = {
     "airlabs": ("AIRLABS_API_KEY", "tableau des aéroports"),
     "prim": ("PRIM_API_KEY", "perturbations des transports d'Île-de-France"),
 }
+# Services d'IA facultatifs (lib/connecteurs_ia.py) : un fichier vide n'est pas un manque.
+IA_KEYS = {"groq": "GROQ_API_KEY", "cerebras": "CEREBRAS_API_KEY", "mistral": "MISTRAL_API_KEY",
+           "openrouter": "OPENROUTER_API_KEY", "grok": "GROK_API_KEY"}
 KEY_LABELS = Etiquettes("reglages.cle", {k: v[1] for k, v in KEYS.items()}, "usage d'une clé API, dit quand elle manque")
 
 README = """Réglages de nearfield anchor (ce Pi)
@@ -94,7 +97,7 @@ relisent les clés à chaque usage : rien à redémarrer.
   sncf.txt            api.sncf.com (veille trains)
   opensky_id.txt      OpenSky, client id (veille avions)
   opensky_secret.txt  OpenSky, client secret (veille avions)
-  gemini.txt          Google Gemini (commande décris)
+  gemini.txt          Google Gemini : images, sons, et texte si rien d'autre ne répond
   octoprint.txt       OctoPrint (commande imprimante)
   airlabs.txt         AirLabs, airlabs.co (commande tableau aéroport)
   prim.txt            Île-de-France Mobilités, plateforme PRIM : perturbations
@@ -102,6 +105,18 @@ relisent les clés à chaque usage : rien à redémarrer.
                       en Île-de-France. Compte sur prim.iledefrance-mobilites.fr,
                       menu personnel, Mon jeton d'API, Générer le jeton d'API
                       (affiché une seule fois : le coller ici aussitôt).
+
+Autres services d'IA, tous facultatifs : ils soulagent le quota de Gemini pour
+les questions en texte. Fichier vide : le service est ignoré, rien ne casse.
+Essayés dans cet ordre, puis Gemini, puis Grok.
+  groq.txt            Groq, gratuit : console.groq.com/keys
+  cerebras.txt        Cerebras, gratuit : cloud.cerebras.ai
+  mistral.txt         Mistral, gratuit, numéro de téléphone demandé : console.mistral.ai
+  openrouter.txt      OpenRouter, modèles gratuits : openrouter.ai/keys
+  grok.txt            xAI Grok, PAYANT, utilisé seulement si tout le reste a échoué : console.x.ai
+Ces services reçoivent le texte des questions (messages captés, commune). Sur les
+offres gratuites, ils peuvent s'en servir pour améliorer leurs modèles : voir leurs
+conditions avant d'ajouter une clé.
 
 lieu.json, trains.json, avions.json : se règlent depuis la console avec
 les commandes ville, gare et aéroport. favoris.json : l'étoile dans les
@@ -194,7 +209,7 @@ def _clean_key(text):
 
 
 def _credentials_value(name):
-    attr = KEYS[name][0]
+    attr = KEYS[name][0] if name in KEYS else IA_KEYS[name]
     if CREDENTIALS_DIR not in sys.path:
         sys.path.insert(0, CREDENTIALS_DIR)
     try:
@@ -242,7 +257,7 @@ def ensure():
             current_readme = None
         if current_readme != README:  # notre fichier : tenu a jour
             _atomic_write(readme, README)
-        for name in KEYS:
+        for name in [*KEYS, *IA_KEYS]:
             path = os.path.join(KEYS_DIR, f"{name}.txt")
             try:
                 current = _clean_key(_read_text(path))

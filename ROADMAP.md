@@ -7010,3 +7010,15 @@ physique du Pi, pas à la ville de référence. Cas de bord (le Pi est au domici
   (`storage/radio/<jour>`, `<mois>/<jour>`, `<année>/<mois>/<jour>`), remis à leur
   place par `journaux.ranger_archives()` au premier archivage ou à l'ouverture des
   archives. Flèche droite garde le rendu entendu.
+
+## 2026-11-07 : connecteurs d'IA en plus de Gemini
+
+`lib/connecteurs_ia.py`, appelé par `gemini.ask` et `flash_info` : les questions en
+texte vont d'abord aux services dont le fichier `cles/<nom>.txt` est rempli (groq,
+cerebras, mistral, openrouter), puis à Gemini, puis à Grok (payant, `grok.txt`).
+Fichier vide : le service n'existe pas, tout marche comme avant. Images et sons
+restent chez Gemini. Quota, clé refusée ou panne : le service se repose, pour toutes
+les veilles (état en mémoire, `/dev/shm/nearfield_tmp/connecteurs_ia.json`, avec le
+compte des réponses du jour). L'API de Grok n'a ni accès sans clé ni offre gratuite
+d'après les sources consultées le 2026-11-07. Les alias Mistral n'ont pas pu être
+vérifiés dans sa documentation.
