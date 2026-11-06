@@ -12,6 +12,8 @@ import subprocess
 import tempfile
 import wave
 
+import numpy as np
+
 FREEDV = ("700D", "700E", "1600")
 _PAROLE_MIN = 1600          # 0,1 s de parole à 8 kHz : en dessous, pas de synchro
 # La vraie preuve (2026-11-05) : les trames où freedv_rx -v annonce "sync: 1". La
@@ -50,8 +52,37 @@ def _mono_8_ou_12(chemin, taux_voulu):
         return pcm
 
 
+def _recaler_freedv(pcm, taux=8000):
+    """FreeDV attend son signal a 1,5 kHz, a quelques dizaines de Hz pres, et une BLU sans
+    porteuse n'a pas de zero connu : on ramene le milieu de ce qui occupe l'audio a 1,5 kHz.
+    Mesure 2026-11-05 : sans ca, aucun signal parfait ne prenait la synchro apres le banc."""
+    x = np.frombuffer(pcm, dtype="<i2").astype(np.float64)
+    if len(x) < taux:
+        return pcm
+    n = 4096
+    trames = x[:(len(x) // n) * n].reshape(-1, n) * np.hanning(n)
+    p = (np.abs(np.fft.rfft(trames, axis=1)) ** 2).mean(axis=0)
+    f = np.fft.rfftfreq(n, 1 / taux)
+    garde = (f >= 200) & (f <= 3500)
+    fg, pg = f[garde], p[garde]
+    exces = np.maximum(pg - 4 * np.median(pg), 0)
+    if exces.sum() <= 0:
+        return pcm
+    cumul = np.cumsum(exces) / exces.sum()
+    milieu = (fg[np.searchsorted(cumul, 0.05)] + fg[np.searchsorted(cumul, 0.95)]) / 2
+    ecart = 1500 - milieu
+    if abs(ecart) < 10:
+        return pcm
+    spectre = np.fft.rfft(x)
+    spectre[1:] *= 2
+    analytique = np.fft.irfft(spectre, len(x)) + 1j * np.fft.irfft(-1j * spectre, len(x))
+    y = (analytique * np.exp(2j * np.pi * ecart * np.arange(len(x)) / taux)).real / 2
+    return np.clip(y, -32768, 32767).astype("<i2").tobytes()
+
+
 def freedv_mesure(binaire, mode, pcm):
     """{wav, synchro, trames} si ce mode a vraiment sa synchro, sinon None."""
+    pcm = _recaler_freedv(pcm)
     dossier = tempfile.mkdtemp(prefix="freedv_")
     src = os.path.join(dossier, "in.raw")
     dst = os.path.join(dossier, "out.raw")

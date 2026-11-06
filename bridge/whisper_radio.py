@@ -9,7 +9,9 @@ import subprocess
 HOME = os.path.expanduser("~/.nearfield-bridge")
 CLI = os.path.join(HOME, "whisper.cpp", "build", "bin", "whisper-cli")
 MODEL = os.path.join(HOME, "whisper.cpp", "models", "ggml-small.bin")
-PROMPT = "Conversation radio en français, sans titre ni sous-titre."
+PROMPT = ("Conversation radio en français, sans titre ni sous-titre. Indicatifs épelés en alphabet radio : "
+          "alpha, bravo, charlie, delta, echo, foxtrot, golf, hôtel, india, juliet, kilo, lima, mike, november, "
+          "oscar, papa, québec, romeo, sierra, tango, uniform, victor, whiskey, x-ray, yankee, zulu.")
 
 
 def disponible():

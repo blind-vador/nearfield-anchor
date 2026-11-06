@@ -41,7 +41,8 @@ def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT, mi
             reason = dire("gemini.quota_gemini_epuise") if resp.status_code == 429 else reason
             continue
         try:
-            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
+            # La reponse peut venir en plusieurs morceaux : n'en lire qu'un la coupait net.
+            text = "".join(p.get("text", "") for p in resp.json()["candidates"][0]["content"]["parts"])
         except (KeyError, IndexError, ValueError):
             reason = dire("gemini.reponse_gemini_inutilisable")
             continue

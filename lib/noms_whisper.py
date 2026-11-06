@@ -99,6 +99,8 @@ def texte_utile(texte, label=""):
         mots = [m for m in _mots(phrase) if m not in _VIDES]
         if len(mots) < 2:
             continue
+        if sum(m in _OTAN for m in mots) >= 10:  # l'alphabet de la consigne, repete sur un silence
+            continue
         annonce = sum(m in label_mots or m in _ANNONCE for m in mots)
         if annonce >= max(2, len(mots) - 1):
             continue
@@ -106,17 +108,26 @@ def texte_utile(texte, label=""):
     return " ".join(gardes).strip()
 
 
-def nom_propose(texte):
-    """Deux mots assez longs, dans l'ordre dit. Pas l'alphabet radio, pas l'annonce."""
-    mots = []
-    for mot in re.findall(r"[0-9A-Za-zÀ-ÿ']+", texte or ""):
-        bas = mot.lower()
-        if bas in _VIDES or bas in _ANNONCE or bas in _OTAN or len(mot) < 5:
-            continue
-        mots.append(mot)
-    if len(mots) < 2:
+def nom_propose(texte, label="", mode=""):
+    """Nom clair, tire du sujet de la conversation (Gemini). None si le texte ne
+    dit rien de net ou si Gemini ne repond pas (2026-11-06 : prendre les deux
+    premiers mots longs donnait « Alfred Sisley » pour une epellation mal entendue)."""
+    if not (texte or "").strip():
         return None
-    return (mots[0] + " " + mots[1])[:42]
+    import gemini
+    from phrases import dire
+    reponse, probleme = gemini.ask(dire("whisper.consigne_nom", bande=label or "inconnue", modulation=mode or "inconnue",
+                                        texte=texte[:2000]), temperature=0.2, json_mode=True)
+    if not reponse:
+        print("[whisper] pas de nom, Gemini : %s" % (probleme,))
+        return None
+    try:
+        nom = json.loads(reponse).get("nom")
+    except (ValueError, AttributeError):
+        print("[whisper] reponse illisible : %r" % (reponse[:200],))
+        return None
+    nom = " ".join(str(nom or "").split()).strip(" .,;:")
+    return nom[:42] if len(nom) >= 3 else None
 
 
 def _cle(freq_hz):
@@ -147,7 +158,7 @@ def annoncer(freq_hz, mode, bande, label, texte, fichier, machine=""):
         relais.depuis_texte(re.sub(r"m[ée]gahertz", "MHz", propre, flags=re.I), freq_hz, "whisper", mode, label, sur=True)
     except Exception as exc:
         print("[whisper] texte non lu pour les relais : %r" % (exc,))
-    nom = nom_propose(propre)
+    nom = nom_propose(propre, label or bande, mode)
     if not nom:
         print("[whisper] %s : pas de nom a proposer" % fichier)
         return None

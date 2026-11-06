@@ -380,8 +380,21 @@ PRELISTEN_WINDOW_SEC = 0.2
 PRELISTEN_VOICE_WINDOWS = 3
 
 
+def _vers_les_decodeurs(freq_hz, label, pcm_f32):
+    """Une fenetre airband rend une seule modulation, mais ce son passe quand meme
+    devant tous les decodeurs (tickets, 2026-11-05) : donnees dans l'audio, ACARS..."""
+    try:
+        import flux_tickets
+        flux_tickets.deposer(pcm_f32, AIRBAND_SAMPLE_RATE_HZ, freq_hz, label, "f32le", origine="airband")
+    except Exception as exc:
+        print(f"[airband_bridge] flux non depose : {exc!r}")
+
+
 def _au_rejet(freq_hz, mode, label, target, raison, pcm):
-    """Pas ouvert ne veut pas dire perdu (journal des rejets, lib/rejets.py)."""
+    """Pas ouvert ne veut pas dire perdu (journal des rejets, lib/rejets.py) ;
+    un signal d'une fenetre a une seule modulation repasse par le banc complet
+    au prochain tour, grace a frequences_actives."""
+    _vers_les_decodeurs(freq_hz, label, pcm)
     try:
         import frequences_actives
         import rejets
@@ -393,7 +406,7 @@ def _au_rejet(freq_hz, mode, label, target, raison, pcm):
         print(f"[airband_bridge] rejet non garde : {exc!r}")
 
 
-def _prelisten(packet_queue, freq_hz=None):
+def _prelisten(packet_queue, freq_hz=None, juge="am"):
     """(paquets recus, voix reconnue ?) apres une ecoute silencieuse.
 
     Ecremage (2026-10-27) : si le canal a des parasites connus, une rafale qui
@@ -406,7 +419,7 @@ def _prelisten(packet_queue, freq_hz=None):
     window = int(AIRBAND_SAMPLE_RATE_HZ * 4 * PRELISTEN_WINDOW_SEC)
     voiced = consecutive = 0
     total = 0
-    pres_parasite = freq_hz is not None and noise_signatures.has_signatures_near(freq_hz)
+    pres_parasite = freq_hz is not None and noise_signatures.has_signatures_near(freq_hz, juge)
     bloc_voix = []  # audio f32le accumule depuis le dernier (re)depart, pour l'ecremage
     voix_fenetres, voix_vue_a = 0, None
     voix_min = int(MIN_VOIX_OUVERTURE_SEC / PRELISTEN_WINDOW_SEC)
@@ -464,11 +477,11 @@ def _prelisten(packet_queue, freq_hz=None):
                     recent = audio_filters.VoiceBandpassFilter(AIRBAND_SAMPLE_RATE_HZ).process_f32le(
                         b"".join(bloc_voix))
                     is_parasite, psim = noise_signatures.matches_known_noise(
-                        freq_hz, recent, AIRBAND_SAMPLE_RATE_HZ, "f32le")
+                        freq_hz, recent, AIRBAND_SAMPLE_RATE_HZ, "f32le", juge)
                     if is_parasite:
                         print(f"[airband_bridge] pre-ecoute {freq_hz/1e6:.5f} MHz : rafale parasite connue "
                               f"ecremee (similarite {psim:.2f}), on continue d'ecouter")
-                        _au_rejet(freq_hz, "am", "airband", "airband", "ressemble a un parasite appris", b"".join(bloc_voix))
+                        _au_rejet(freq_hz, juge, "airband", "airband", "ressemble a un parasite appris", b"".join(bloc_voix))
                         packets.clear()      # ne pas rejouer la rafale
                         bloc_voix = []
                         voiced = consecutive = 0
@@ -533,7 +546,8 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         # le son que si ca vaut la peine -- voix reconnue (RNNoise) -- puis on
         # joue tout ce qui a ete mis en attente. Un bref parasite n'ouvre plus
         # rien : ni carillon, ni "crcrr", ni prise au journal.
-        prebuffer, worth = _prelisten(packet_queue, freq_hz)
+        fenetre = next((w for w in AIRBAND_WINDOWS if w["name"] == window_name), {})
+        prebuffer, worth = _prelisten(packet_queue, freq_hz, fenetre.get("mode", "am"))
         if not worth:
             print(f"[airband_bridge] pre-ecoute {freq_hz/1e6:.5f} MHz : pas de voix, son jamais ouvert")
             stop_event.set()
@@ -656,6 +670,7 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         path = log_session.finalize()
         if path and raw_chunks:
             _save_raw(path, b"".join(raw_chunks))
+            _vers_les_decodeurs(freq_hz, name_spoken, b"".join(raw_chunks))
         fp = (noise_signatures.fingerprint(b"".join(fingerprint_chunks), AIRBAND_SAMPLE_RATE_HZ, "f32le")
               if fingerprint_chunks else None)
         mode = window.get("mode", "am")  # le 446 est en FM etroite (etait note "am" a tort)

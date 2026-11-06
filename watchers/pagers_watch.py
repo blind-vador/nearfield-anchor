@@ -8,6 +8,8 @@ repetition), tout est archive.
 """
 import os
 import re
+import flux_tickets
+import messages_types
 import subprocess
 import threading
 import time
@@ -80,7 +82,8 @@ def _other_page(line, freq):
     else:
         text = dire("pager.appel_sans_texte", adresse=address, frequence=mhz)
     vd.announce(text, SOUND, "message_pager", "pagers_watch",
-                fiche={"protocole": "POCSAG", "frequence_hz": freq, "source": f"adresse {address}"})
+                fiche=messages_types.fiche("POCSAG", "POCSAG, appel sans texte" if not digits else "POCSAG, message numérique",
+                                           freq, decoupe=True, prive=True, source=f"adresse {address}"))
     return True
 
 
@@ -98,11 +101,11 @@ def scan_window(dwell_sec=30):
                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
         mm = subprocess.Popen(["multimon-ng", "-a", "POCSAG512", "-a", "POCSAG1200", "-a", "POCSAG2400",
                                "-a", "FLEX", "-u", "-t", "raw", "-"],
-                              stdin=rtl.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except FileNotFoundError as exc:
         print(f"[pagers_watch] outil manquant : {exc}")
         return False
-    rtl.stdout.close()
+    copie = flux_tickets.Copie(rtl.stdout, mm.stdin, SAMPLE_RATE)
     lines = []
     threading.Thread(target=_reader, args=(mm, lines), daemon=True).start()
     announced, count = False, 0
@@ -126,7 +129,8 @@ def scan_window(dwell_sec=30):
                         print(f"[pagers_watch] texte non lu pour les relais : {exc!r}")
                 if text and _memory.due(f"pager|{text[:80]}", REPEAT_SEC):
                     vd.announce(dire("pager.message_pager", text=text), SOUND, "message_pager", "pagers_watch",
-                                fiche={"protocole": "POCSAG ou FLEX", "frequence_hz": freq, "texte_original": text})
+                                fiche=dict(messages_types.fiche("POCSAG ou FLEX", "POCSAG ou FLEX, message texte", freq,
+                                                                decoupe=True, prive=True), texte_original=text))
                     announced = True
                 elif not text and _other_page(line, freq):  # appel sans texte ou numerique (2026-10-03)
                     announced = True
@@ -141,6 +145,7 @@ def scan_window(dwell_sec=30):
         except subprocess.TimeoutExpired:
             mm.kill()
         arreter(rtl, "rtl_fm (pagers)")
+        copie.deposer(freq, "pagers", "pagers")
         _memory.save()
     if count:
         print(f"[pagers_watch] {count} trame(s) sur {freq / 1e6:.5f} MHz")

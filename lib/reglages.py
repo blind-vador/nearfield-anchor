@@ -171,6 +171,10 @@ def save(name, data):
     seule reference."""
     text = json.dumps(data, ensure_ascii=False, indent=2) + "\n"
     try:
+        # Disque demonte : on ecrirait sous le point de montage, et le reglage disparaitrait
+        # au retour du disque en se croyant enregistre. Seul ce dossier peut etre cree.
+        if not os.path.isdir(os.path.dirname(SETTINGS_DIR)):
+            raise OSError("disque du NAS absent")
         os.makedirs(SETTINGS_DIR, exist_ok=True)
         _atomic_write(os.path.join(SETTINGS_DIR, f"{name}.json"), text)
     except OSError as exc:

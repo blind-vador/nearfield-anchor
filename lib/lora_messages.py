@@ -137,7 +137,8 @@ def handle(job, frames, by):
             text, info = _meshtastic(frame)
             if text:
                 vd.announce(text, SOUND, "message_meshtastic", "lora",
-                            fiche={"protocole": "Meshtastic", "frequence_hz": p.get("freq"), "source": (info or {}).get("de")})
+                            fiche={"protocole": "Meshtastic", "frequence_hz": p.get("freq"), "source": (info or {}).get("de"),
+                                   "type_message": "Meshtastic", "prive": True})
         else:
             _, info = _lora_aprs(frame)
         decoded.append(info)

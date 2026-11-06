@@ -187,6 +187,15 @@ _SELECTIF = re.compile(r"(ZVEI[123]|DZVEI|PZVEI|EEA|EIA|CCIR):\s*")
 SELECTIF_MIN_TONS = 4
 
 
+# Le decodeur dit lui-meme que sa trame ne tient pas (2026-11-05 : 55 FMS sur 63 lus a
+# voix haute portaient "CRC INCORRECT"). Pas lu ; garde au journal des rejets.
+_INTEGRITE_FAUSSE = re.compile(r"CRC INCORRECT|UNKNOWN Message type")
+
+
+def integrite_fausse(msg):
+    return bool(_INTEGRITE_FAUSSE.search(msg or ""))
+
+
 def meaningful(msg, min_chars=MIN_DECODED_MESSAGE_CHARS):
     """Faux positifs de multimon-ng : fragments morse non resolus ("<___.>")
     retires, puis assez de caracteres alphanumeriques reels. Octets non
@@ -195,6 +204,8 @@ def meaningful(msg, min_chars=MIN_DECODED_MESSAGE_CHARS):
     lues une a une, scanner bloque) -- ils ne comptent pas comme des
     caracteres, et un message qui en contient plus d'un pour quatre vrais
     caracteres est du bruit."""
+    if integrite_fausse(msg):
+        return False
     selectifs = _SELECTIF.findall(msg)
     if selectifs:
         tons = re.match(r"[0-9A-F]*", _SELECTIF.split(msg, maxsplit=1)[-1]).group(0)

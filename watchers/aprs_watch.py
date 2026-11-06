@@ -17,6 +17,7 @@ Les derniers releves meteo sont publies pour le flash et la console
 import json
 import os
 import re
+import flux_tickets
 import subprocess
 import threading
 import time
@@ -245,13 +246,13 @@ def scan_window(dwell_sec=30, freq_hz=APRS_FREQ_HZ, via=None):
         return False
     try:
         mm = subprocess.Popen(["multimon-ng", "-A", "-a", "AFSK1200", "-t", "raw", "-"],
-                              stdin=rtl.stdout, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                              stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
     except FileNotFoundError:
         print("[aprs_watch] multimon-ng introuvable")
         rtl.kill()
         rtl.wait()
         return False
-    rtl.stdout.close()
+    copie = flux_tickets.Copie(rtl.stdout, mm.stdin, SAMPLE_RATE)
     packets = []
     reader = threading.Thread(target=_reader, args=(mm, packets), daemon=True)
     reader.start()
@@ -279,6 +280,7 @@ def scan_window(dwell_sec=30, freq_hz=APRS_FREQ_HZ, via=None):
         except subprocess.TimeoutExpired:
             mm.kill()
         arreter(rtl, "rtl_fm (aprs)")
+        copie.deposer(freq_hz, "APRS", "aprs")
         while packets:  # recus pendant l'arret
             count += 1
             if _process(packets.pop(0)):

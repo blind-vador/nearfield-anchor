@@ -15,9 +15,10 @@ satellites -- "journal capteurs", "journal satellites"...
                            sur une prise deja notee, corrige seulement la fin
   fleche droite            garde : copie dans les extraits interessants
                            (storage/radio), nommee par sa date de capture
-  fleche gauche            rejette le rendu en cours. S'il reste d'autres
-                           juges, ce juge descend ici et le suivant est lu.
-                           Sinon : empreinte apprise, pour ce juge seul.
+  fleche gauche            rejette le rendu en cours : ce decodeur descend sur
+                           cette frequence et retient son empreinte de bruit,
+                           pour lui seul et cette frequence seule. S'il reste
+                           d'autres rendus, le suivant est lu.
                            Un message DAB+ rejete interdit sa station.
   J                        proposition suivante d'un autre juge, meme prise
   I                        informations : frequence, mode, et pour la CB et
@@ -47,6 +48,9 @@ import re
 import shutil
 import subprocess
 import sys
+import chemins
+import hashlib
+import tempfile
 import threading
 import time
 
@@ -169,12 +173,20 @@ class Player:
         if ticket is not None:
             audio_lock.release(ticket)
 
-    def play(self, path):
+    def play(self, path, avant=(), apres=()):
+        """avant, apres : sons joues autour de path, sans modifier le fichier."""
         self.stop()
         self._aplay_ok()
         self._hold()
+        fichiers = [*avant, path, *apres]
+        entrees = [x for f in fichiers for x in ("-i", f)]
+        filtre = []
+        if len(fichiers) > 1:
+            chaines = "".join(f"[{i}:a]aresample={RATE},aformat=channel_layouts=mono[s{i}];" for i in range(len(fichiers)))
+            suite = "".join(f"[s{i}]" for i in range(len(fichiers)))
+            filtre = ["-filter_complex", f"{chaines}{suite}concat=n={len(fichiers)}:v=0:a=1"]
         self._ffmpeg = subprocess.Popen(
-            ["ffmpeg", "-v", "quiet", "-nostdin", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(RATE), "-"],
+            ["ffmpeg", "-v", "quiet", "-nostdin", *entrees, *filtre, "-f", "s16le", "-ac", "1", "-ar", str(RATE), "-"],
             stdout=subprocess.PIPE)
         self._thread = threading.Thread(target=self._relay, args=(self._ffmpeg, self._generation), daemon=True)
         self._thread.start()
@@ -267,10 +279,17 @@ def info_text(path):
         fiche = _message_card(path)
         if fiche:
             parts = [dire("journal.info_protocole", protocole=fiche["protocole"])] if fiche.get("protocole") else []
+            if fiche.get("type_message") and fiche["type_message"] != fiche.get("protocole"):
+                parts.append(fiche["type_message"] + ".")
             if fiche.get("source"):
                 parts.append(dire("journal.info_source", source=fiche["source"]))
             if fiche.get("frequence_hz"):
                 parts.append(dire("journal.info_frequence", frequence=f"{fiche['frequence_hz'] / 1e6:.4f}".rstrip("0").replace(".", ",")))
+            if fiche.get("type_message"):
+                import messages_types
+                explication = fiche.get("explication") or messages_types.explication_connue(fiche["type_message"])
+                if explication:
+                    parts.append(explication)
             return " ".join(parts) or dire("journal.pas_info")
         return dire("journal.pas_info")
     mhz = f"{info['freq_hz'] / 1e6:.4f}".rstrip("0").replace(".", ",")
@@ -316,7 +335,27 @@ def _ban_dab_station(fiche):
     return dire("journal.dab_interdite", station=station)
 
 
-def _reject(path):
+def _annonce_gardee(ceremonie, phrase):
+    """Annonce d'un rendu annexe : calculee une fois (3 a 6 s), puis gardee sur disque."""
+    if not phrase:
+        return None
+    dossier = chemins.base("voix_cache/ceremonies_journal")
+    chemin = os.path.join(dossier, hashlib.sha1(phrase.encode("utf-8")).hexdigest() + ".wav")
+    if os.path.exists(chemin):
+        return chemin
+    faite = ceremonie._fichier_annonce(phrase)
+    if not faite:
+        return None
+    os.makedirs(dossier, exist_ok=True)
+    shutil.copyfile(faite, chemin)
+    if faite.startswith(tempfile.gettempdir()):
+        os.remove(faite)
+    return chemin
+
+
+def _reject(path, rendu=None):
+    """rendu : dernier rendu d'une fiche, deja note et appris par propositions.rejeter ;
+    l'empreinte de la capture est celle du premier juge, elle ne doit pas prendre sa place."""
     info = ns.capture_info(path)
     fiche = _message_card(path)
     os.remove(path)
@@ -329,6 +368,11 @@ def _reject(path):
             pass
         if fiche.get("protocole") == "DAB+":
             return _ban_dab_station(fiche)
+        import messages_types
+        type_appris = messages_types.rejeter(fiche)
+        if type_appris:
+            ns.forget_capture(path)
+            return dire("journal.rejete_type", type=type_appris)
     ns.forget_capture(path)
     last = ns.last_capture()
     if last and last.get("log_path") == path:
@@ -338,10 +382,14 @@ def _reject(path):
         attention.stimulate((info or {}).get("target"), attention.PARASITE_POINTS)
     except Exception:
         pass
+    if rendu is not None:
+        if rendu.get("empreinte"):
+            return dire("journal.rejete_appris", juge=propositions.nom(rendu.get("juge")))
+        return dire("journal.rejete_supprime")
     if info and info.get("fingerprint"):
-        metrics = info.get("metrics") or {}
-        ns.add_signature(dict(info, juge=metrics.get("juge") or metrics.get("modulation_banc") or info.get("mode")))
-        return dire("journal.rejete_appris")
+        juge = ns.juge_de(info)
+        ns.add_signature(dict(info, juge=juge))
+        return dire("journal.rejete_appris", juge=propositions.nom(juge))
     return dire("journal.rejete_supprime")
 
 
@@ -427,6 +475,23 @@ def run(key_source, say, out, category="radio"):
     _journal_opened(True)
     player = Player()
     seen_update = _update_stamp()
+    def habillage(path):
+        """Sons autour d'un rendu annexe : la meme ceremonie que les autres prises."""
+        rendu = propositions.habillage_courant(path)
+        if not rendu:
+            return (), ()
+        import ceremonie_radio as ceremonie
+        freq, bande, juge = rendu
+        try:
+            import sonneries
+            bande_id = sonneries.bande_pour(freq) if freq else None
+            arrivee, ouverture = ceremonie._fichiers(bande_id, None)
+            annonce = _annonce_gardee(ceremonie, ceremonie.texte(bande, ceremonie.modulation_dite(juge)))
+            milieu = [annonce] if annonce else []
+            return (arrivee, *milieu, ouverture), (ceremonie.son_fin(freq, bande_id),)
+        except Exception as exc:
+            print(f"[journal] ceremonie du rendu : {exc!r}", file=sys.stderr)
+            return (), ()
 
     def refresh():
         """Nouvelle captation enregistree pendant que le journal est ouvert :
@@ -456,7 +521,8 @@ def run(key_source, say, out, category="radio"):
             say(text)
             out(f"[{text}]\n")
         else:
-            player.play(propositions.fichier_courant(path))
+            avant, apres = habillage(path)
+            player.play(propositions.fichier_courant(path), avant, apres)
             out(f"[{os.path.basename(path)}]\n")
             try:
                 import journal_vus
@@ -573,6 +639,7 @@ def run(key_source, say, out, category="radio"):
                     text = _keep(stamp, path, spoken, category)
                 else:
                     fiche = propositions.a_fiche(path)
+                    rendu = propositions.rendu_courant(path)
                     suite = propositions.rejeter(path)
                     if suite:
                         # D'autres juges ont un rendu : on le lit, la prise reste.
@@ -582,7 +649,7 @@ def run(key_source, say, out, category="radio"):
                     else:
                         if not fiche:
                             propositions.noter_rejet_simple(path)
-                        text = _reject(path)
+                        text = _reject(path, rendu=rendu)
                         del recs[rec_i]
                         if not recs:
                             del days[order[day_i]]

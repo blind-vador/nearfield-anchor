@@ -47,7 +47,12 @@ SIGNATURE_LOW_HZ = 300.0
 SIGNATURE_HIGH_HZ = 3000.0
 MIN_AUDIO_SEC = 0.5
 MAX_AUDIO_SEC = 10.0
-FREQ_TOLERANCE_HZ = 12_500   # un parasite "revient" s'il retombe a +/- 12,5 kHz
+FREQ_TOLERANCE_HZ = 12_500   # canal : ne sert plus qu'a ranger les filtres par groupe
+# Une empreinte dit "ce decodeur, sur cette frequence, ca sonne comme ce parasite"
+# (2026-11-05). Elle ne parle ni des autres decodeurs ni du canal voisin. 2,5 kHz :
+# le pic mesure bouge de 1 a 2 kHz d'un balayage a l'autre, et le canal voisin le
+# plus proche est a 6,25 kHz. L'avis sur le juge est ailleurs (lib/propositions).
+FREQ_PRECISE_HZ = 2_500
 MATCH_SIMILARITY = 0.92
 PRECHECK_SEC = 1.5           # audio ecoute (sans rien annoncer) avant de decider
 # Canaux a silencieux (RTLSDR-Airband) : l'audio arrive par morceaux ; on
@@ -129,9 +134,21 @@ def load_signatures():
     return _cache["entries"]
 
 
-def has_signatures_near(freq_hz):
-    return any(e.get("actif", True) and abs(e["freq_hz"] - freq_hz) <= FREQ_TOLERANCE_HZ
-               for e in load_signatures())
+def _concerne(entree, freq_hz, juge):
+    """Cette empreinte parle-t-elle de ce decodeur sur cette frequence ?"""
+    if not entree.get("actif", True) or abs(entree["freq_hz"] - freq_hz) > FREQ_PRECISE_HZ:
+        return False
+    return not entree.get("juge") or entree["juge"] == juge
+
+
+def has_signatures_near(freq_hz, juge=None):
+    return any(_concerne(e, freq_hz, juge) for e in load_signatures())
+
+
+def juge_de(capture):
+    """Le decodeur qui a rendu cette capture."""
+    metrics = (capture or {}).get("metrics") or {}
+    return metrics.get("juge") or metrics.get("modulation_banc") or (capture or {}).get("mode")
 
 
 def matches_wav(freq_hz, chemin, juge=None):
@@ -149,22 +166,16 @@ def matches_wav(freq_hz, chemin, juge=None):
 
 
 def matches_known_noise(freq_hz, pcm_bytes, sample_rate, sample_format, juge=None):
-    """(True, similarite) si l'audio ressemble a un parasite connu proche
-    en frequence ; sinon (False, meilleure similarite ou None).
+    """(True, similarite) si l'audio ressemble a un parasite appris par CE decodeur
+    sur CETTE frequence ; sinon (False, meilleure similarite ou None).
     Les filtres desactives (actif=False, commande console "filtres") sont
-    ignores : le parasite est garde mais ne bloque plus rien. Une empreinte
-    rejetee sur le rendu d'un juge ne vaut que pour ce juge : le rejet peut dire
-    "mauvais decodeur", pas "ce son n'est jamais rien" (2026-11-05)."""
+    ignores : le parasite est garde mais ne bloque plus rien."""
     fp = fingerprint(pcm_bytes, sample_rate, sample_format)
     if fp is None:
         return False, None
     best = None
     for entry in load_signatures():
-        if not entry.get("actif", True):
-            continue
-        if abs(entry["freq_hz"] - freq_hz) > FREQ_TOLERANCE_HZ:
-            continue
-        if juge and entry.get("juge") and entry["juge"] != juge:
+        if not _concerne(entry, freq_hz, juge):
             continue
         sim = similarity(fp, entry["fingerprint"])
         best = sim if best is None else max(best, sim)
@@ -174,13 +185,15 @@ def matches_known_noise(freq_hz, pcm_bytes, sample_rate, sample_format, juge=Non
 
 
 def add_signature(capture):
-    """Ajoute l'empreinte aux parasites connus, sauf quasi-doublon (meme
-    frequence, similarite >= DUPLICATE_SIMILARITY : 7 paires de ce genre
+    """Ajoute l'empreinte aux parasites de ce decodeur sur cette frequence, sauf
+    quasi-doublon (similarite >= DUPLICATE_SIMILARITY : 7 paires de ce genre
     trouvees parmi les 172 premieres). Rend le nombre total."""
     path = _signatures_path()
     entries = _read_json(path, [])
+    juge = capture.get("juge") or juge_de(capture)
     for e in entries:
-        if (abs(e["freq_hz"] - capture["freq_hz"]) <= FREQ_TOLERANCE_HZ
+        if (abs(e["freq_hz"] - capture["freq_hz"]) <= FREQ_PRECISE_HZ
+                and e.get("juge") == juge
                 and similarity(e["fingerprint"], capture["fingerprint"]) >= DUPLICATE_SIMILARITY):
             return len(entries)
     entries.append({
@@ -188,18 +201,29 @@ def add_signature(capture):
         "label": capture["label"],
         "fingerprint": capture["fingerprint"],
         "ajoute_le": time.strftime("%Y-%m-%d %H:%M"),
-        **({"juge": capture["juge"]} if capture.get("juge") else {}),
+        **({"juge": juge} if juge else {}),
     })
     os.makedirs(os.path.dirname(path), exist_ok=True)
     _atomic_write_json(path, entries)
     return len(entries)
 
 
-def oublier_ressemblantes(freq_hz, fp):
-    """Un son repeche des rejets : l'empreinte qui l'avait ecarte etait fausse."""
+def add_message_parasite(freq_hz, label, type_message):
+    """Un message n'a pas de son a comparer : son type, sur cette frequence (lib/messages_types)."""
     path = _signatures_path()
     entries = _read_json(path, [])
-    gardees = [e for e in entries if not (abs(e["freq_hz"] - freq_hz) <= FREQ_TOLERANCE_HZ
+    entries.append({"freq_hz": int(freq_hz), "label": label, "fingerprint": [], "juge": type_message,
+                    "type_message": True, "ajoute_le": time.strftime("%Y-%m-%d %H:%M")})
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    _atomic_write_json(path, entries)
+
+
+def oublier_ressemblantes(freq_hz, fp, juge=None):
+    """Un son repeche des rejets : l'empreinte de ce decodeur qui l'avait ecarte
+    etait fausse. Celles des autres decodeurs n'ont rien a voir."""
+    path = _signatures_path()
+    entries = _read_json(path, [])
+    gardees = [e for e in entries if not (_concerne(dict(e, actif=True), freq_hz, juge)
                                           and similarity(e["fingerprint"], fp) >= MATCH_SIMILARITY)]
     if len(gardees) != len(entries):
         _atomic_write_json(path, gardees)
@@ -218,8 +242,8 @@ def _bucket(freq_hz):
     return round(freq_hz / FREQ_TOLERANCE_HZ)
 
 
-def _in_group(entry, label, bucket):
-    return entry.get("label", "") == label and _bucket(entry["freq_hz"]) == bucket
+def _in_group(entry, label, bucket, juge=None):
+    return entry.get("label", "") == label and _bucket(entry["freq_hz"]) == bucket and entry.get("juge") == juge
 
 
 def filtres():
@@ -227,14 +251,14 @@ def filtres():
     {cle, freq_hz, label, nb, actif}. actif = au moins une empreinte active."""
     groups = {}
     for e in load_signatures():
-        key = (e.get("label", ""), _bucket(e["freq_hz"]))
+        key = (e.get("label", ""), _bucket(e["freq_hz"]), e.get("juge"))
         g = groups.setdefault(key, {"freqs": [], "nb": 0, "actifs": 0})
         g["freqs"].append(e["freq_hz"])
         g["nb"] += 1
         g["actifs"] += 1 if e.get("actif", True) else 0
-    out = [{"cle": [label, bucket], "freq_hz": sum(g["freqs"]) / len(g["freqs"]),
-            "label": label, "nb": g["nb"], "actif": g["actifs"] > 0}
-           for (label, bucket), g in groups.items()]
+    out = [{"cle": [label, bucket, juge], "freq_hz": sum(g["freqs"]) / len(g["freqs"]),
+            "label": label, "juge": juge, "nb": g["nb"], "actif": g["actifs"] > 0}
+           for (label, bucket, juge), g in groups.items()]
     return sorted(out, key=lambda x: x["freq_hz"])
 
 
@@ -247,11 +271,11 @@ def _rewrite_signatures(entries):
 def set_group_active(cle, actif):
     """Active ou desactive toutes les empreintes du groupe (cle = [label, bucket]).
     Retourne True si le fichier a change."""
-    label, bucket = cle[0], cle[1]
+    label, bucket, juge = cle[0], cle[1], (cle[2] if len(cle) > 2 else None)
     entries = _read_json(_signatures_path(), [])
     changed = False
     for e in entries:
-        if _in_group(e, label, bucket) and e.get("actif", True) != actif:
+        if _in_group(e, label, bucket, juge) and e.get("actif", True) != actif:
             e["actif"] = actif
             changed = True
     if changed:
@@ -262,11 +286,11 @@ def set_group_active(cle, actif):
 def delete_group(cle):
     """Supprime toutes les empreintes du groupe. Retourne les entrees retirees
     (pour restore_entries)."""
-    label, bucket = cle[0], cle[1]
+    label, bucket, juge = cle[0], cle[1], (cle[2] if len(cle) > 2 else None)
     entries = _read_json(_signatures_path(), [])
-    removed = [e for e in entries if _in_group(e, label, bucket)]
+    removed = [e for e in entries if _in_group(e, label, bucket, juge)]
     if removed:
-        _rewrite_signatures([e for e in entries if not _in_group(e, label, bucket)])
+        _rewrite_signatures([e for e in entries if not _in_group(e, label, bucket, juge)])
     return removed
 
 
@@ -339,7 +363,7 @@ def record_capture(source, freq_hz, mode, label, target, log_path, fp, metrics=N
                                          "metrics": metrics})
         except OSError as exc:
             print(f"[noise_signatures] empreinte non rangee pres de l'enregistrement : {exc}")
-    _consommer_parasite_en_attente(freq_hz, target, log_path, fp)
+    _consommer_parasite_en_attente(freq_hz, target, log_path, fp, metrics.get("juge") or mode)
     try:  # toute ecoute, de tous les chemins, nourrit ce qu'on sait de la frequence
         import frequences_actives
         frequences_actives.depuis_capture(freq_hz, mode, label, target, metrics)
@@ -465,7 +489,7 @@ def _parasite_en_attente():
     return p
 
 
-def _consommer_parasite_en_attente(freq_hz, target, log_path, fp):
+def _consommer_parasite_en_attente(freq_hz, target, log_path, fp, juge=None):
     """Si "parasite" a ete demande pendant cette ecoute, l'appliquer a sa fin :
     effacer l'enregistrement, apprendre l'empreinte, marquer la capture bruit."""
     p = _parasite_en_attente()
@@ -489,7 +513,7 @@ def _consommer_parasite_en_attente(freq_hz, target, log_path, fp):
         forget_capture(log_path)
     if fp:
         try:
-            add_signature({"freq_hz": freq_hz, "label": p.get("label") or "", "fingerprint": fp})
+            add_signature({"freq_hz": freq_hz, "label": p.get("label") or "", "fingerprint": fp, "juge": juge})
         except (OSError, KeyError, TypeError):
             pass
     mark_last_capture_noise()

@@ -173,7 +173,9 @@ def _journaliser_brut(freq_hz, texte):
         nom = "%d_%s.log" % (int(freq_hz), time.strftime("%Y%m%d_%H%M%S"))
         with open(os.path.join(d, nom), "w", encoding="utf-8", errors="replace") as fh:
             fh.write(texte)
-        for vieux in sorted(glob.glob(os.path.join(d, "*.log")))[:-50]:
+        # Les plus vieux, pas les premiers par nom : le nom commence par la frequence,
+        # et tout ce qui etait sous 200 MHz ou en UHF disparaissait aussitot ecrit.
+        for vieux in sorted(glob.glob(os.path.join(d, "*.log")), key=os.path.getmtime)[:-50]:
             os.remove(vieux)
     except Exception:
         pass
@@ -190,13 +192,26 @@ CLEAN_RATIO_MIN = 0.25
 _ANSI = re.compile(r"\x1b\[[0-9;]*m")
 
 
-def _synchros_propres(texte):
-    """(propres, total) selon la regle commune au Pi et aux juges."""
+def _stats_synchro(texte):
     import juges_radio
     stats = {"clean": 0, "total": 0, "protocol": None}
     for ligne in _ANSI.sub("", texte).splitlines():
         juges_radio.compter_synchro(stats, ligne)
+    return stats
+
+
+def _synchros_propres(texte):
+    """(propres, total) selon la regle commune au Pi et aux juges."""
+    stats = _stats_synchro(texte)
     return stats["clean"], stats["total"]
+
+
+def _preuve(c):
+    """Ce que le gagnant a prouve, lu comme par les juges : le Pi le dit meme sans voix."""
+    stats = _stats_synchro(c["texte"])
+    vus = stats.get("vus") or {}
+    return {"juge": c["mode"], "protocole": max(vus, key=vus.get) if vus else None,
+            "propres": stats["clean"], "total": stats["total"]}
 
 
 def _confirme(r, rms, texte=""):
@@ -365,6 +380,8 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
     res["voix_rms"] = rms_g
     if gagnant:
         res["mode_gagnant"] = gagnant["mode"]
+        if gagnant["conf"]:
+            res["preuve"] = _preuve(gagnant)
     # dsd-neo ne synthetise que du clair : wav non silencieux = voix en clair.
     res["voix_wav"] = (gagnant["wav"] if (gagnant and res["numerique_confirme"]
                        and rms_g >= VOIX_RMS_MIN and not res.get("chiffre")) else None)
@@ -391,8 +408,13 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, mode="-
         plein and os.path.isfile(audio) and os.path.getsize(audio) >= 48000) else None
     if banc_obj.get("b"):
         res["banc"] = banc_obj["b"].ecrire(tmp)
+        # Le flux des juges sort du canal filtre du banc, pas des 48 kHz de dsd-neo.
+        flux_banc = os.path.join(tmp, "flux_canal.wav")
+        if banc_obj["b"].ecrire_flux(flux_banc):
+            res["flux_wav"] = flux_banc
         mods, raison, mesures, tranches = banc_obj["b"].preuve()
-        res["banc_preuve"] = {"modulations": mods, "raison": raison, "mesures": mesures, "tranches": tranches}
+        res["banc_preuve"] = {"modulations": mods, "raison": raison, "mesures": mesures, "tranches": tranches,
+                               "emission": banc_obj["b"].emission}
     res["duree"] = duree
     res["ok"] = True
     # Chaque juge qui a confirme, ou qui a sorti de la voix en clair.

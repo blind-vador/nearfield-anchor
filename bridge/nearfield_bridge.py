@@ -528,7 +528,7 @@ def numerique_to_pi(link, msg):
                    "digital_actif": bool(res.get("digital_actif")), "sync_hits": res.get("sync_hits"),
                    "voix_rms": res.get("voix_rms"), "audio_rms": res.get("audio_rms"),
                    "resume": numerique_neo.resume_fr(res), "duree": res.get("duree"),
-                   "banc": banc_envoye, "banc_preuve": res.get("banc_preuve"),
+                   "banc": banc_envoye, "banc_preuve": res.get("banc_preuve"), "preuve": res.get("preuve"),
                    "rendus": rendus_meta})
     finally:
         if tmp:

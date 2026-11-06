@@ -116,7 +116,7 @@ def play_lead_then(lead_path, then, label="sound_player", reverb=False, timeout_
 
 
 def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, volume=1.0, on_start=None,
-                      canal=None, contenu=False):
+                      canal=None, contenu=False, arreter=None):
     """Joue un court effet sonore (mp3) sur le peripherique audio partage,
     de maniere bloquante. Module commun a radio_watch.py, adsb_watch.py et
     meteo_watch.py -- une seule implementation, evite la divergence entre
@@ -133,7 +133,10 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
     machine compagne...), pas un habillage -- il compte comme contenu de la
     prise du journal (radio_log, exiger_contenu). Coupe a timeout_sec, il est
     quand meme garde au journal en entier (avant : la lecture coupee levait une
-    erreur et le flux manquait, prises "annonce + fin" sans rien entre)."""
+    erreur et le flux manquait, prises "annonce + fin" sans rien entre).
+
+    arreter (2026-11-06) : fonction relue pendant la lecture ; si elle rend vrai,
+    on s'arrete, ce son n'entre pas dans la prise et la fonction rend True."""
     try:  # evenement regle sur "rien" (commande "sons", lib/sons.py, 2026-10-23)
         import sons
         if sons.mode_chemin(path) == "rien":
@@ -159,6 +162,7 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
     to_play = reverb_tmp or path  # repli sur le son sec si la reverb a echoue
     decoder = player = None
     garder = False
+    interrompu = False
     try:
         decoder = subprocess.Popen(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", to_play,
@@ -172,6 +176,9 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
         if on_start is not None:
             on_start()  # le son commence vraiment maintenant (effet calcule, lecteur pret)
         while time.time() < deadline:
+            if arreter is not None and arreter():
+                interrompu = True
+                break
             data = decoder.stdout.read(chunk)
             if not data:
                 break
@@ -180,12 +187,14 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
                 data = audioop.mul(data, 2, volume)
             player.stdin.write(data)
         coupe = time.time() >= deadline
-        if coupe and decoder.poll() is None:
+        if (coupe or interrompu) and decoder.poll() is None:
             decoder.kill()          # lecture plafonnee : le decodeur attendait encore son lecteur
         player.stdin.close()
         player.wait(timeout=max(1.0, deadline - time.time() + 1))
         decoder.wait(timeout=2)
-        if decoder.returncode != 0 and not coupe:
+        if interrompu:
+            pass
+        elif decoder.returncode != 0 and not coupe:
             err = decoder.stderr.read().decode(errors="replace").strip()[-300:]
             print(f"[{label}] effet sonore echoue ({path}): {err}")
         else:
@@ -211,3 +220,4 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
         session = get_recording_session()
         if session is not None:
             session.add_audio_file(path, contenu=contenu)
+    return interrompu

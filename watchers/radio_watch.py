@@ -259,6 +259,8 @@ MULTIMON_ARGS = decodeurs.MULTIMON_ARGS  # regles communes (lib/decodeurs.py)
 from sound_player import AUDIO_DEVICE, play_sound_effect
 import frequences_actives
 import messages_dits
+import messages_types
+import veille_donnees as vd
 from sound_paths import RADIO_SCANER_DIR
 from phrases import dire
 
@@ -2026,7 +2028,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     # sur les autres frequences. L'audio pre-ecoute n'est pas perdu : il
     # est rejoue en tete de diffusion (prebuffer).
     prebuffer = []
-    if noise_signatures.has_signatures_near(freq_hz):
+    if noise_signatures.has_signatures_near(freq_hz, mode):
         precheck_end = time.time() + noise_signatures.PRECHECK_SEC
         while time.time() < precheck_end:
             try:
@@ -2040,7 +2042,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         if mode != "wfm":
             # Meme filtre que l'audio d'ou vient l'empreinte apprise (coherence).
             pre_pcm = audio_filters.VoiceBandpassFilter(sample_rate).process_s16le(pre_pcm)
-        is_noise, sim = noise_signatures.matches_known_noise(freq_hz, pre_pcm, sample_rate, "s16le")
+        is_noise, sim = noise_signatures.matches_known_noise(freq_hz, pre_pcm, sample_rate, "s16le", mode)
         if is_noise:
             # On n'ABANDONNE PLUS la frequence sur un parasite connu (demande
             # utilisateur 2026-10-27). Un parasite ne doit pas faire IGNORER un
@@ -2363,7 +2365,9 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
     for msg in meaningful_messages[:MESSAGES_DITS_MAX]:
         print(f"[radio_watch] decode numerique: {msg}")
         messages_dits.deja_dit(msg)   # les tickets ne le rediront pas
-        speak_with_lead_sound(DECODING_MORSE_SOUND, dire("radio.message_numerique_decode", msg=msg), label="radio_watch")
+        # Au journal, avec sa fiche (2026-11-05) : dit en direct, il n'y laissait rien, ni fleche ni V.
+        vd.announce(dire("radio.message_numerique_decode", msg=msg), DECODING_MORSE_SOUND, "message_donnees",
+                    "radio_watch", fiche=messages_types.fiche("multimon", msg, int(freq_hz)))
 
     return heard_signal or bool(meaningful_messages) or images_sstv
 
@@ -2433,10 +2437,10 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
                 # similarite conservateur (MATCH_SIMILARITY) : un faux ecremage
                 # jetterait de la vraie voix (litterature : seuil a regler par ROC,
                 # cote faux-rejet couteux ici).
-                if noise_signatures.has_signatures_near(freq_hz):
+                if noise_signatures.has_signatures_near(freq_hz, mode):
                     recent = b"".join(filtered_all)[-int(sample_rate * 2 * noise_signatures.MAX_AUDIO_SEC):]
                     is_parasite, psim = noise_signatures.matches_known_noise(
-                        freq_hz, recent, sample_rate, "s16le")
+                        freq_hz, recent, sample_rate, "s16le", mode)
                     if is_parasite:
                         print(f"[radio_watch] pre-ecoute {freq_hz / 1e6:.4f} MHz : rafale parasite connue "
                               f"ecremee (similarite {psim:.2f}), on continue d'ecouter")
@@ -2686,11 +2690,13 @@ def _annonce_tetra(freq_hz, res, news=None):
                         TETRA_PORTEUSE_SOUND, "message_tetra", "radio_watch")
         for m in news.get("textes") or []:  # message texte en clair : dit comme un message APRS
             vd.announce(dire("tetra.message_texte", src=m["src"], dst=m.get("dst") or "?", texte=m["texte"]),
-                        TETRA_MESSAGE_SOUND, f"message_tetra_{m['src']}", "radio_watch")
+                        TETRA_MESSAGE_SOUND, f"message_tetra_{m['src']}", "radio_watch",
+                        fiche=messages_types.fiche("TETRA", "TETRA, message texte", freq_hz, decoupe=True, prive=True))
         if news.get("nouveaux_postes"):
             vd.announce(dire("tetra.nouveaux_postes", nombre=nombre(len(news["nouveaux_postes"]), "nouveau poste",
                                                                    "nouveaux postes")),
-                        TETRA_PORTEUSE_SOUND, "message_tetra", "radio_watch")
+                        TETRA_PORTEUSE_SOUND, "message_tetra", "radio_watch",
+                        fiche=messages_types.fiche("TETRA", "TETRA, nouveau poste sur le réseau", freq_hz, decoupe=True))
         _tetra_dernier_reseau = identite
         # Cible "tetra" : la notation du journal (console) pique ou apaise la
         # fenetre TETRA, comme les autres cibles du scanner.
@@ -3232,7 +3238,7 @@ def _ecoute_prise(prise, freq, band_label, target, prelisten_max=None):
             messages_dits.deja_dit(texte)
             _noter_active(freq, "donnees", protocole=nom, label=band_label, texte=texte)
             vd.announce(dire("radio.message_donnees", nom=nom, msg=texte), DECODING_MORSE_SOUND,
-                        "message_donnees", "radio_watch")
+                        "message_donnees", "radio_watch", fiche=messages_types.fiche(nom, texte, int(freq)))
         if not protocol and not analogique:
             # Des donnees seulement : apprises et dites, rien a ouvrir au journal
             # audio (pas de ceremonie sans flux).
@@ -3362,8 +3368,10 @@ def _choisir_banc(res, target, freq, mode=None):
     La signature IQ ne retire plus personne. Elle propose seulement un ordre.
     Tant que la frequence n'a pas trois confirmations recentes, chaque
     demodulation du banc part au journal (les fleches, V et C apprennent).
-    Quand un demodulateur est assez confirme et qu'il confirme cette prise,
-    on s'en tient a lui. S'il ne confirme pas, on continue avec les autres.
+    Quand un demodulateur est assez confirme et qu'il confirme cette prise, on le
+    presente, les autres restent derriere J (2026-11-05 : ils disparaissaient, un
+    locuteur nouveau dans une autre modulation n'avait plus de rendu). S'il ne
+    confirme pas, son rendu reste aussi, parmi les autres.
     """
     banc = res.get("banc") or {}
     preuve = (res.get("banc_preuve") or {}).get("modulations") or []
@@ -3383,6 +3391,15 @@ def _choisir_banc(res, target, freq, mode=None):
               f"toutes les demodulations restent")
         sur = None
     _choisir_banc.parasite = False
+    _choisir_banc.sans_emission = False
+    emission = (res.get("banc_preuve") or {}).get("emission")
+    if emission is not None and not emission.get("secondes"):
+        # Aucun exces de puissance au canal sur toute la fenetre : RNNoise trouve
+        # de la "voix" dans le souffle (68 s sur 98 relevees le 2026-11-05). Les sons
+        # restent entiers aux rejets, et le flux part aux tickets.
+        print(f"[radio_watch] banc {freq / 1e6:.4f} MHz : aucune emission mesuree sur l'IQ, rien n'ouvre")
+        _choisir_banc.sans_emission = True
+        return None
 
     def juger(nom_mode):
         chemin = banc.get(nom_mode)
@@ -3396,13 +3413,17 @@ def _choisir_banc(res, target, freq, mode=None):
         if not vu:
             return {"juge": nom_mode, "wav": chemin, "voix": False, "detail": detail}
         try:
+            # L'empreinte a pu etre apprise sur le son nettoye (rendu joue) ou brut
+            # (rendu derriere J) : on regarde les deux.
             pareil, sim = noise_signatures.matches_known_noise(freq, propre, taux, "s16le", nom_mode)
+            if not pareil:
+                pareil, sim = noise_signatures.matches_wav(freq, chemin, nom_mode)
         except Exception:
             pareil, sim = False, None
         if pareil:
             # Elle reste derriere les fleches ou aux rejets : c'est l'humain qui dit.
             print(f"[radio_watch] banc {freq / 1e6:.4f} MHz, {nom_mode} : sortie trop proche "
-                  f"d'un rejet ({sim:.2f}), probablement pas le bon juge")
+                  f"d'un parasite qu'il a deja appris ici ({sim:.2f})")
             _choisir_banc.parasite = True
             return {"juge": nom_mode, "wav": chemin, "voix": False, "detail": detail}
         return {"juge": nom_mode, "pcm": propre, "taux": taux, "canaux": 1,
@@ -3413,12 +3434,13 @@ def _choisir_banc(res, target, freq, mode=None):
         if garde and garde.get("voix"):
             detail = garde["detail"]
             detail["preuve_modulation"] = raison or "demodulateur confirme sur cette frequence"
-            print(f"[radio_watch] banc {freq / 1e6:.4f} MHz : {sur} confirme, on s'en tient a lui")
-            return sur, garde["pcm"], garde["taux"], detail, []
+            print(f"[radio_watch] banc {freq / 1e6:.4f} MHz : {sur} confirme, presente d'abord")
+            return sur, garde["pcm"], garde["taux"], detail, [{"juge": m, "wav": c} for m, c in banc.items()
+                                                              if m != sur and c]
         print(f"[radio_watch] banc {freq / 1e6:.4f} MHz : {sur} ne confirme pas cette prise, "
               f"on continue avec les autres demodulateurs")
 
-    trouves = {}
+    trouves = {sur: garde} if sur and garde else {}
     for nom_mode in banc:
         if sur and nom_mode == sur:
             continue
@@ -3455,6 +3477,54 @@ def _choisir_banc(res, target, freq, mode=None):
     return meilleure, voix[meilleure]["pcm"], voix[meilleure]["taux"], detail, autres
 
 
+def _jouer_au_choix(freq, band_label, rendus):
+    """Joue rendus[0] ([(juge, wav)...]). "juge suivant" passe au rendu suivant de la
+    meme reception, "juge ok" confirme (2026-11-06 : ces lectures ne se declaraient
+    pas, la commande repondait qu'il n'y avait rien en cours). Rend l'indice retenu."""
+    import propositions
+
+    def jouer(i):
+        juge, wav = rendus[i]
+        nom = propositions.nom(juge)
+        reste = len(rendus) - i - 1
+        debut = time.time()
+        vu = [debut]
+        juge_live.debut(freq, band_label, juge, nom, suivants=reste)
+
+        def arreter():
+            now = time.time()
+            if now - vu[0] >= 5:  # juge_live.ETAT_FRAIS_SEC : la console voit que ca joue encore
+                vu[0] = now
+                juge_live.rafraichir(nom)
+            acte = juge_live.action_depuis(debut)
+            if acte == "ok" or (acte == "suivant" and reste):
+                try:
+                    propositions._noter(freq, juge, acte == "ok", band_label)
+                except Exception as exc:
+                    print(f"[radio_watch] note du juge {juge} : {exc!r}")
+            return acte == "suivant" and reste > 0
+
+        return play_sound_effect(wav, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch", contenu=True,
+                                 arreter=arreter)
+
+    i = 0
+    try:
+        while jouer(i):
+            print(f"[radio_watch] juge suivant : on quitte {rendus[i][0]} pour {rendus[i + 1][0]} a la demande")
+            i += 1
+            try:  # jouee et ecrite dans la prise : elle dit le decodeur finalement garde
+                annonce = ceremonie._fichier_annonce(ceremonie.modulation_dite(rendus[i][0]) + ".")
+                if annonce:
+                    play_sound_effect(annonce, timeout_sec=30, label="radio_watch")
+                    if annonce.startswith(tempfile.gettempdir()):
+                        os.remove(annonce)
+            except Exception as exc:
+                print(f"[radio_watch] annonce du juge suivant : {exc!r}")
+    finally:
+        juge_live.fin()
+    return i
+
+
 def _presenter_banc(freq, mode, band_label, target, level_db, log_session, res, machine):
     """Presentation d'une fenetre du banc : la modulation retenue sur preuve,
     meme ceremonie qu'une captation locale. Rend True / False (rejet garde)."""
@@ -3471,7 +3541,9 @@ def _presenter_banc(freq, mode, band_label, target, level_db, log_session, res, 
     choix = _choisir_banc(res, target, freq, mode)
     if not choix:
         _ecarte_a_distance(freq, mode, band_label, target, res, log_session,
-                           "ressemble a un parasite appris" if getattr(_choisir_banc, "parasite", False)
+                           "numerique prouve, pas de voix" if res.get("_numerique_prouve")
+                           else "aucune emission mesuree" if getattr(_choisir_banc, "sans_emission", False)
+                           else "ressemble a un parasite appris" if getattr(_choisir_banc, "parasite", False)
                            else "banc : aucune voix prouvee")
         return False
     modulation, propre, taux, detail, autres = choix
@@ -3484,21 +3556,42 @@ def _presenter_banc(freq, mode, band_label, target, level_db, log_session, res, 
         w.setsampwidth(2)
         w.setframerate(taux)
         w.writeframes(propre)
+    # "juge suivant" : les autres rendus, ceux ou une voix est prouvee d'abord.
+    suite = sorted(autres, key=lambda a: 0 if a.get("pcm") else 1)
+    rendus = [(modulation, propre_wav)]
+    for n, a in enumerate(suite):
+        wav = a.get("wav")
+        if a.get("pcm"):
+            wav = os.path.join(os.path.dirname(propre_wav), f"banc_suite_{n}.wav")
+            with _wave.open(wav, "wb") as w:
+                w.setnchannels(int(a.get("canaux") or 1))
+                w.setsampwidth(2)
+                w.setframerate(a["taux"])
+                w.writeframes(a["pcm"])
+        rendus.append((a.get("juge"), wav))
     ceremonie.ouvrir(band_label, ceremonie.modulation_dite(modulation), label="radio_watch", bande_id=target)
-    play_sound_effect(propre_wav, timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch", contenu=True)
+    retenu = _jouer_au_choix(freq, band_label, rendus)
     ceremonie.fermer(freq, label="radio_watch")
     path = log_session.finalize()
+    brut_wav = banc.get(modulation)
+    if retenu:  # le rendu ecoute en dernier devient celui de la prise, le premier passe derriere J
+        choisi = suite[retenu - 1]
+        autres = [{"juge": modulation, "pcm": propre, "taux": taux, "canaux": 1}] + [a for a in autres if a is not choisi]
+        modulation = choisi.get("juge")
+        brut_wav = banc.get(modulation) or rendus[retenu][1]
+        propre, taux = _lire_wav(rendus[retenu][1])
     empreinte = None
     try:
         empreinte = noise_signatures.fingerprint(propre, taux, "s16le")
     except Exception:
         pass
-    mesures = dict(detail, niveau_db=level_db, offload=machine, banc=True, modulation_banc=modulation, juge=modulation)
+    mesures = dict(detail, niveau_db=level_db, offload=machine, banc=True, modulation_banc=modulation, juge=modulation,
+                   emission=(res.get("banc_preuve") or {}).get("emission"))
     _noter_relais(freq, mesures, *(_lire_wav(banc["nfm"]) if banc.get("nfm") else (None, 0)))
     noise_signatures.record_capture("rtl_fm", freq, modulation, band_label, target, path, empreinte, mesures)
     # Son brut (touche B, passe IA du Mac : elle ne lit que *.brut.mp3 et les rejets)
     global _last_stream_raw
-    _last_stream_raw = _lire_wav(banc[modulation])
+    _last_stream_raw = _lire_wav(brut_wav)
     _save_raw(path)
     if path and autres:
         try:
@@ -3507,7 +3600,29 @@ def _presenter_banc(freq, mode, band_label, target, level_db, log_session, res, 
         except Exception as exc:
             print(f"[radio_watch] propositions du banc : {exc!r}")
     print(f"[radio_watch] banc {freq / 1e6:.4f} MHz : voix en {modulation} (via {machine}, {detail})")
+    if res.get("machine") == "le Pi":   # pas de compagne pour tourner les decodeurs numeriques pendant l'ecoute
+        _garder_flux(res, freq, mode, band_label)
     return True
+
+
+def _banc_seul(freq, mode, band_label, target, level_db, log_session, gain):
+    """Aucune compagne : le Pi fait le banc lui-meme. None si le dongle refuse."""
+    import banc_local
+    print(f"[radio_watch] {freq / 1e6:.4f} MHz : pas de compagne, banc AM/FM/BLU sur le Pi (gain {gain} dB)")
+    import tempo   # la vitesse choisie vaut aussi pour le banc ; une emission en cours prolonge l'ecoute
+    res = banc_local.ecouter(freq, gain, tempo.sonde(NUMERIQUE_SONDE_SEC, freq), NUMERIQUE_SUIVI_MAX_SEC)
+    try:
+        if not res.get("ok"):
+            print(f"[radio_watch] banc du Pi {freq / 1e6:.4f} MHz : {res.get('erreur')}")
+            return None
+        try:
+            return _presenter_distant(freq, mode, band_label, target, level_db, log_session, res)
+        except Exception as exc:
+            print(f"[radio_watch] presentation du banc du Pi : {exc!r}")
+            log_session.discard()
+            return False
+    finally:
+        shutil.rmtree(res.get("_tmp") or "", ignore_errors=True)
 
 
 def _banc_disponible():
@@ -3615,8 +3730,12 @@ def _presenter_voix_numeriques(freq, mode, band_label, target, level_db, log_ses
     premier = jouables[0]
     juge = premier.get("mode")
     ceremonie.ouvrir(band_label, ceremonie.modulation_dite(juge), label="radio_watch", bande_id=target)
-    play_sound_effect(premier["wav"], timeout_sec=NUMERIQUE_SUIVI_MAX_SEC, label="radio_watch", contenu=True)
+    retenu = _jouer_au_choix(freq, band_label, [(r.get("mode"), r["wav"]) for r in jouables])
     ceremonie.fermer(freq, label="radio_watch")
+    if retenu:  # "juge suivant" : la prise est au nom du dernier rendu ecoute
+        jouables = [jouables[retenu]] + jouables[:retenu] + jouables[retenu + 1:]
+        premier = jouables[0]
+        juge = premier.get("mode")
     path = log_session.finalize()
     noise_signatures.record_capture(
         "rtl_fm", freq, mode, band_label, target, path, None,
@@ -3741,9 +3860,23 @@ def _completer_juges_sync(freq, res, band_label=None):
             vd.archive(nom.lower(), {"freq_hz": int(freq), "mode": nom,
                                      "texte": texte, "modulation": modulation})
             vd.announce(dire("radio.message_donnees", nom=nom, msg=texte),
-                        DECODING_MORSE_SOUND, "message_donnees", "radio_watch")
+                        DECODING_MORSE_SOUND, "message_donnees", "radio_watch",
+                        fiche=messages_types.fiche(nom, texte, int(freq)))
             print(f"[radio_watch] {freq/1e6:.4f} MHz : {nom} decode en {modulation}",
                   flush=True)
+
+
+def _numerique_sans_voix(freq, res):
+    """Un mode prouve sans voix a jouer se dit au journal ; le banc continue, quelqu'un
+    peut aussi parler en analogique. Une voix trop courte pour s'ouvrir (0,7 s sur un
+    relais reel) ne change rien : personne n'a rien entendu."""
+    preuve = res.get("preuve") or {}
+    import numerique_vus
+    if numerique_vus.prouve(preuve.get("propres"), preuve.get("total")):
+        res["_numerique_prouve"] = True
+        numerique_vus.annoncer(freq + ((res.get("banc_preuve") or {}).get("emission") or {}).get("recentrage_hz", 0),
+                               preuve.get("protocole"), preuve.get("propres"), preuve.get("total"),
+                               res.get("meta"), bool(res.get("chiffre")))
 
 
 def _presenter_distant(freq, mode, band_label, target, level_db, log_session, res):
@@ -3765,6 +3898,7 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
         presente = _presenter_voix_numeriques(freq, mode, band_label, target, level_db, log_session, res, machine)
         if presente is not None:
             return presente
+    _numerique_sans_voix(freq, res)
     if res.get("numerique_confirme"):
         # Doctrine _reception_a_presenter : pas d'ouverture fantome ni
         # d'enregistrement vide. Clair capte -> ceremonie ; chiffre / repos /
@@ -3869,6 +4003,10 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session, banc=
         return None
     if not plan.get("deleguer") and not banc:   # le banc delegue meme Pi froid : c'est l'option la plus fiable
         return None
+    if banc and not _banc_disponible():
+        import gain_ecoute
+        return _banc_seul(freq, mode, band_label, target, level_db, log_session,
+                          gain_ecoute.choisir(freq, NUMERIQUE_GAIN))
     try:
         import compagnon
         host = compagnon._local_ip()
@@ -3894,6 +4032,10 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session, banc=
             freq_decode = best   # centre observe (pas de forcage de mode)
     except Exception:
         pass
+    gain_fenetre = NUMERIQUE_GAIN
+    if banc:
+        import gain_ecoute
+        gain_fenetre = gain_ecoute.choisir(freq_decode, NUMERIQUE_GAIN)
     cie = plan.get("compagne") or {}
     nom = cie.get("nom") or cie.get("id") or "compagne"
     print(f"[radio_watch] {freq / 1e6:.4f} MHz : Pi a {plan.get('temp_c')} C -> demod deleguee a {nom} ({mode_dsd}"
@@ -3913,7 +4055,8 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session, banc=
         # Tous les decodeurs a chaque fenetre, meme sur une frequence bien connue
         # (2026-11-05) : le souvenir classe les rendus, il n'empeche pas d'entendre
         # quelqu'un de nouveau dans un autre mode.
-        res = demod.distant(freq_decode, NUMERIQUE_GAIN, NUMERIQUE_SONDE_SEC, host=host,
+        import tempo   # la vitesse choisie vaut aussi pour le banc ; une emission en cours prolonge l'ecoute
+        res = demod.distant(freq_decode, gain_fenetre, tempo.sonde(NUMERIQUE_SONDE_SEC, freq_decode), host=host,
                             port=TETRA_RTL_TCP_PORT, max_secondes=NUMERIQUE_SUIVI_MAX_SEC, mode=mode_dsd,
                             banc=banc)
     finally:
@@ -3930,6 +4073,8 @@ def _demod_deleguee(freq, mode, band_label, target, level_db, log_session, banc=
         if not res or not res.get("ok"):
             if res and res.get("erreur"):
                 print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : {res['erreur']}, demod locale")
+            if banc:      # la compagne n'a pas repondu : le banc n'est pas perdu pour autant
+                return _banc_seul(freq, mode, band_label, target, level_db, log_session, gain_fenetre)
             return None   # echec distant -> repli local (le dongle est de nouveau libre)
         try:
             return _presenter_distant(freq, mode, band_label, target, level_db, log_session, res)
@@ -4119,11 +4264,12 @@ def _handle_candidate(freq, mode, band_label, target=None, level_db=None):
         import propositions
         print(f"[radio_watch] {freq / 1e6:.4f} MHz : {propositions.nom(retenu)} deja decode, "
               f"il passe devant ; l'analogique compare quand meme")
-    if mode != "wfm" and _banc_disponible():
-        # Option la plus fiable (2026-11-01) : la compagne demodule le meme IQ dans
-        # toutes les modulations et prouve la modulation pendant l'emission ; le Pi
-        # juge la voix. Repli sur le chemin local si elle ne repond pas. La FM large
-        # (200 kHz) ne tient pas dans le flux reduit : chemin local.
+    if mode != "wfm":
+        # Option la plus fiable (2026-11-01) : le meme IQ est demodule dans toutes
+        # les modulations et la modulation se prouve pendant l'emission ; le Pi juge
+        # la voix. Par la compagne si elle est la, sinon sur le Pi (2026-11-05). Repli
+        # sur le chemin local en cas d'echec. La FM large (200 kHz) ne tient pas dans
+        # le flux reduit : chemin local.
         r = _ecoute_candidat(freq, mode, band_label, target, level_db, dernier=True, banc=True)
         if r is not None:
             return r
@@ -4571,6 +4717,11 @@ def _speak_pause(message, sound=None):
 
 def main():
     print("[radio_watch] demarrage de la veille radio")
+    try:
+        import tempo
+        print(f"[radio_watch] vitesse de parcours reprise : {tempo.courant(fresh=True)}")
+    except Exception as exc:
+        print(f"[radio_watch] vitesse illisible : {exc!r}")
     threading.Thread(target=_window_watchdog, daemon=True).start()
     airband_bridge.SPEECH_DETECTOR_FACTORY = _speech_detector  # pre-ecoute du 446 et de l'aviation
     radio_log.start_purge_scheduler()

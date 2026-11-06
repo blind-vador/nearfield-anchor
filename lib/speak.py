@@ -219,7 +219,7 @@ def _echantillon(text, choix):
     piper = choix["moteur"] == "piper"
     ext = ".wav" if piper else ".mp3"
     pool = [n for n in names if n.startswith(PIPER_PREFIX) == piper and n.endswith(suf + ext)
-            and (suf or "@" not in n)]
+            and (suf or "@" not in n) and voix_sources.echantillon_permis(n, choix, suf)]
     return os.path.join(folder, random.choice(pool)) if pool else None
 
 

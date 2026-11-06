@@ -224,9 +224,10 @@ def secours(source):
     import piper_out
     r = reglage(source)
     voix = piper_out.canonical(r["secours"])
-    alea = voix == ALEATOIRE or not piper_out.resolve(voix)
+    # Un fournisseur desactive ne revient pas par le secours, meme choisi avant.
+    alea = voix == ALEATOIRE or not piper_out.resolve(voix) or not permise(voix)
     if alea:
-        ids = piper_out.announce_voice_ids()
+        ids = repli_local()
         if not ids:
             return {"moteur": ESPEAK, "voix": ESPEAK, "debit": r["secours_debit"], "hauteur": NEUTRE_HAUTEUR,
                     "aleatoire": False}
@@ -261,6 +262,7 @@ NIVEAUX = ("desactive", "faible", "normale", "appreciees")
 # Désactivé : ignoré. Faible, normale, appréciées : parts du tirage.
 POIDS = {"desactive": 0, "faible": 1, "normale": 3, "appreciees": 8}
 _PREFS = "_fournisseurs"
+_PREFS_MAC = "_voix_mac"   # niveau de chaque voix du Mac, a l'interieur du poids du fournisseur (2026-11-06)
 
 
 def fournisseur(voix):
@@ -311,6 +313,55 @@ def enregistrer_preferences(valeurs):
     return ok
 
 
+def niveaux_mac(noms=None):
+    """Niveau de chaque voix du Mac. Defaut : normale."""
+    data = _tout().get(_PREFS_MAC) or {}
+    if noms is None:
+        noms = list(data)
+    return {nom: data[nom] if data.get(nom) in NIVEAUX else "normale" for nom in noms}
+
+
+def enregistrer_niveaux_mac(valeurs):
+    import reglages
+    data = dict(reglages.get("voix_sources") or {})
+    data[_PREFS_MAC] = {nom: niveau for nom, niveau in valeurs.items() if niveau in NIVEAUX}
+    ok = reglages.save("voix_sources", data)
+    _cache["data"] = None
+    return ok
+
+
+def _poids_voix(voix):
+    """Part d'une voix dans son fournisseur : seul le Mac se regle voix par voix."""
+    if fournisseur(voix) != "mac":
+        return POIDS["normale"]
+    nom = voix.split("#", 1)[1]
+    return POIDS.get(niveaux_mac([nom])[nom], POIDS["normale"])
+
+
+def permise(voix):
+    """Faux si le fournisseur, ou cette voix du Mac, est desactive."""
+    if POIDS.get(preferences().get(fournisseur(voix), "normale"), POIDS["normale"]) <= 0:
+        return False
+    return _poids_voix(voix) > 0
+
+
+def repli_local():
+    """Voix locales permises pour un secours : Piper s'il est permis, sinon MBROLA."""
+    import piper_out
+    voix = [v for v in piper_out.voix_locales() if permise(v)]
+    return [v for v in voix if fournisseur(v) == "piper"] or voix
+
+
+def echantillon_permis(nom_fichier, choix, suffixe_nom=""):
+    """Un echantillon en cache peut-il remplacer ce choix aleatoire ? Seulement du
+    meme fournisseur et s'il est permis (2026-11-06 : tirer une voix du Mac pouvait
+    rejouer n'importe quel echantillon Piper, meme Piper desactive)."""
+    if choix.get("moteur") != "piper":
+        return True
+    voix = "piper:" + nom_fichier[len("piper-"):-len(suffixe_nom + ".wav")]
+    return fournisseur(voix) == fournisseur(choix.get("voix")) and permise(voix)
+
+
 def aleatoire_tout_actif():
     """Vrai si au moins une veille est sur « aléatoire, toutes les voix »."""
     return any(reglage(s).get("voix") == ALEATOIRE_TOUT for s in ANNONCES)
@@ -321,7 +372,8 @@ def peser(pool, prefs):
     dedans. None si tout ce qui reste est désactivé."""
     groupes = {}
     for voix in pool or ():
-        groupes.setdefault(fournisseur(voix), []).append(voix)
+        if _poids_voix(voix) > 0:
+            groupes.setdefault(fournisseur(voix), []).append(voix)
     poids = []
     for nom, voix in groupes.items():
         w = POIDS.get((prefs or {}).get(nom, "normale"), 3)
@@ -335,7 +387,7 @@ def peser(pool, prefs):
     for w, voix in poids:
         cumul += w
         if marque < cumul:
-            return random.choice(voix)
+            return random.choices(voix, weights=[_poids_voix(v) for v in voix])[0]
     return random.choice(poids[-1][1])
 
 
@@ -359,7 +411,7 @@ def a_preparer(mode):
     for v in tirage(mode, ms_ok=False):
         if not v.startswith("piper:") or v.startswith(("piper:google#", "piper:mbrola#")):
             continue
-        if POIDS.get(prefs.get(fournisseur(v), "normale"), 3) <= 0:
+        if POIDS.get(prefs.get(fournisseur(v), "normale"), 3) <= 0 or _poids_voix(v) <= 0:
             continue
         out.append(v)
     return out
@@ -434,8 +486,8 @@ def voix_piper_source(source):
     if voix == ESPEAK or microsoft_ok():
         return set()
     sec = piper_out.canonical(r["secours"])
-    if sec == ALEATOIRE or not piper_out.resolve(sec):
-        return {(v, r["secours_debit"]) for v in _pool()}
+    if sec == ALEATOIRE or not piper_out.resolve(sec) or not permise(sec):
+        return {(v, r["secours_debit"]) for v in _pool() if permise(v)}
     return {(sec, r["secours_debit"])}
 
 

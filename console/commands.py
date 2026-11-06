@@ -300,7 +300,7 @@ def parasite():
     else:
         parts.append(dire("commandes.elle_etait_plus_journal"))
     if capture.get("fingerprint"):
-        ns.add_signature(capture)
+        ns.add_signature(capture)   # pour le decodeur de cette capture, sur cette frequence
         parts.append(dire("commandes.ai_retenu_sa_forme"))
     else:
         parts.append(dire("commandes.empreinte_sonore_cette_reception"))

@@ -26,6 +26,7 @@ import chemins
 import glob
 import json
 import os
+import re
 import shutil
 import tempfile
 import threading
@@ -407,6 +408,7 @@ def _passer(wav):
         _ranger(wav)
         return
     etat = "CHIFFRE" if verdict["chiffre"] else "rien"
+    _preuve_sans_voix(fiche, {juge: verdict})
     print(f"[juges] {os.path.basename(wav)} [{band}] {juge} : {verdict['propres']}/{verdict['total']} propres, "
           f"voix {verdict['voix_s']} s -> {etat}")
     if voix and os.path.exists(voix):
@@ -523,6 +525,20 @@ def _journaliser_plusieurs(fiche, juges, verdicts, dossier):
     return True
 
 
+def _preuve_sans_voix(fiche, verdicts):
+    """Le flux prouve un mode numerique et personne n'a de voix a rendre : on le dit
+    (lib/numerique_vus). C'est ici que passe ce que le direct, moins sensible, a manque."""
+    import numerique_vus
+    prouves = [v for j, v in verdicts.items() if j in JUGES and v.get("protocole")
+               and numerique_vus.prouve(v.get("propres"), v.get("total"))]
+    if not prouves:
+        return None
+    v = max(prouves, key=lambda x: x.get("propres") or 0)
+    numerique_vus.annoncer((fiche or {}).get("freq_hz"), v["protocole"], v["propres"], v.get("total"),
+                           None, bool(v.get("chiffre")), "juges")
+    return v["protocole"]
+
+
 def _appliquer(wav, verdicts, dossier, machine):
     fiche_path = _fiche_de(wav)
     with _verrou:
@@ -557,8 +573,9 @@ def _appliquer(wav, verdicts, dossier, machine):
         _clore_renvoi(wav, fiche, verdicts, dossier)
         return
     props = [f"{j} {verdicts[j].get('protocole')}" for j in verdicts if verdicts[j].get("propose")]
+    sans_voix = None if props else _preuve_sans_voix(fiche, verdicts)
     print(f"[juges] {os.path.basename(wav)} [{band}] juge par {machine} : {len(verdicts)} juges -> "
-          + ("propositions " + ", ".join(props) if props else "rien"))
+          + ("propositions " + ", ".join(props) if props else f"{sans_voix} prouve, sans voix" if sans_voix else "rien"))
     proposes = [j for j in ordre(_scores(), band, [j for j in verdicts if j in JUGES], fiche.get("freq_hz"))
                 if verdicts[j].get("propose")]
     if len(proposes) >= 2 and _journaliser_plusieurs(fiche, proposes, verdicts, dossier):
@@ -705,15 +722,33 @@ def _noter_desaccords(tid, desaccords, avis):
     _ecrire(DESACCORDS_PATH, d)
 
 
-def _dire_message(mode, texte, dits):
+def _dire_message(mode, texte, dits, freq=None):
     """Lu comme en direct, sauf ce que le direct a deja lu ; rend le nouveau compte."""
     import messages_dits
+    import messages_types
     import veille_donnees as vd
     from phrases import dire
     if dits >= MESSAGES_DITS_MAX or messages_dits.deja_dit(texte):
         return dits
-    vd.announce(dire("radio.message_donnees", nom=mode, msg=texte), SON_MESSAGE, "message_donnees", "juges")
+    fiche = messages_types.fiche(mode, texte, freq, decoupe=mode == "ffsk", urgence="tresse" in texte)
+    nom = re.split("[,:]", fiche["type_message"])[0] if mode in ("multimon", "ffsk") else mode
+    vd.announce(dire("radio.message_donnees", nom=nom, msg=texte), SON_MESSAGE, "message_donnees", "juges", fiche=fiche)
     return dits + 1
+
+
+def _integrite_au_rejet(tid, freq, band, textes):
+    """Un message dont le decodeur dit lui-meme qu'il ne tient pas n'est pas lu : son flux
+    va au journal des rejets, comme tout ce qu'on ecarte. Rien n'est appris : l'humain dira."""
+    import decodeurs
+    faux = [t for t in textes if decodeurs.integrite_fausse(t)]
+    son = os.path.join(tickets_pi.RACINE, tickets.DOSSIER, tid, "son.wav")
+    if not faux or not os.path.exists(son):
+        return
+    try:
+        import rejets
+        rejets.garder(freq, "multimon", band, "integrite fausse", [{"juge": "multimon", "wav": son}], target=band)
+    except Exception as exc:
+        print(f"[juges] rejet d'integrite non garde : {exc!r}")
 
 
 def _donnees_du_ticket(tid, ticket, c, avis):
@@ -732,6 +767,7 @@ def _donnees_du_ticket(tid, ticket, c, avis):
         for texte in v.get("douteux") or []:   # filtre comme bruit : garde quand meme, pas lu
             vd.archive(DONNEES_DIR, {"freq_hz": freq, "bande": band, "epreuve": ep, "texte": texte, "ticket": tid,
                                      "filtre": True})
+        _integrite_au_rejet(tid, freq, band, v.get("douteux") or [])
     dits = 0
     for ep in c["etablies"] + c["seules"]:
         v = c["verdicts"].get(ep) or {}
@@ -741,7 +777,7 @@ def _donnees_du_ticket(tid, ticket, c, avis):
             print(f"[juges] ticket {tid} : {ep} {'confirme' if ep in c['etablies'] else 'seul'} : {texte}")
             frequences_actives.noter(freq, "donnees", protocole=ep, label=band, texte=texte)
             relais.depuis_texte(texte, freq, "ticket " + ep, label=band)
-            dits = _dire_message(ep.split("@")[0], texte, dits)
+            dits = _dire_message(ep.split("@")[0], texte, dits, freq)
         image = tickets.rendu_de(tickets_pi.RACINE, tid, avis, ep) if ep.startswith("sstv") else None
         if image:
             shutil.copy(image, os.path.join(vd.ARCHIVE_DIR, f"sstv_{tid}{os.path.splitext(image)[1]}"))
@@ -766,7 +802,7 @@ def _appliquer_blu(tid, ticket, c, avis):
         for ligne in v.get("messages") or []:
             mode, _, texte = ligne.partition(": ")
             vd.archive(mode.lower(), {"freq_hz": freq, "mode": mode, "texte": texte, "modulation": modulation})
-            dits = _dire_message(mode, texte, dits)
+            dits = _dire_message(mode, texte, dits, freq)
         chemin = tickets.rendu_de(tickets_pi.RACINE, tid, avis, ep) if nom.startswith("freedv-") else None
         if chemin and not voix_prise:
             voix.append((nom, v, chemin))

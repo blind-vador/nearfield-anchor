@@ -7,7 +7,8 @@ chacun (lib/rejets.py). On TRIE A L'OREILLE :
   j                    autre demodulation du meme candidat
   n                    c'etait un VRAI signal, ecarte a tort : il est repeche au
                        journal, avec sa ceremonie, et V, C et les fleches y apprennent
-  r                    c'etait bien du bruit / un parasite (rejet confirmé)
+  r                    c'etait bien du bruit : le decodeur ecoute retient son
+                       empreinte, sur cette frequence seulement
   i                    infos : frequence, bande, raison, verdict
   Entree               rejoue      Echap ferme. F1 : les touches.
 
@@ -35,6 +36,22 @@ def _freq(hz):
 def _position(items, i):
     return dire("rejets.position", index=i + 1, total=len(items),
                 etat=dire(_VERDICT.get(items[i].get("verdict"))))
+
+
+_RAISONS = {"aucune emission mesuree": "rejets.raison_sans_emission",
+            "banc : aucune voix prouvee": "rejets.raison_banc_sans_voix",
+            "aucune voix prouvee": "rejets.raison_sans_voix",
+            "ressemble a un parasite appris": "rejets.raison_parasite",
+            "eclat tres court": "rejets.raison_eclat",
+            "audio FM sans voix prouvee": "rejets.raison_fm_sans_voix",
+            "integrite fausse": "rejets.raison_integrite",
+            "numerique prouve, pas de voix": "rejets.raison_numerique_sans_voix",
+            "rien d'exploitable": "rejets.raison_rien"}
+
+
+def _raison(texte):
+    """Les raisons sont notees telles quelles par les ecoutes ; on les dit en francais."""
+    return dire(_RAISONS[texte]) if texte in _RAISONS else texte
 
 
 def run(line, key_source, say, out):
@@ -101,11 +118,12 @@ def run(line, key_source, say, out):
             elif key in ("r", "R"):
                 rejets.set_verdict(items[i]["fichier"], "bruit")
                 items[i]["verdict"] = "bruit"
-                text = dire("rejets.note_bruit")
+                juge = rejets.confirmer_bruit(items[i]["fichier"], rendu)
+                text = dire("rejets.note_bruit_appris", juge=propositions.nom(juge)) if juge else dire("rejets.note_bruit")
             elif key in ("i", "I"):
                 e = items[i]
                 text = dire("rejets.info", frequence=_freq(e.get("freq_hz")), bande=e.get("label", ""),
-                            raison=e.get("raison", ""), etat=dire(_VERDICT.get(e.get("verdict"))))
+                            raison=_raison(e.get("raison", "")), etat=dire(_VERDICT.get(e.get("verdict"))))
             else:
                 text = dire("rejets.touches")
             if text:

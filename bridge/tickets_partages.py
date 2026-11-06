@@ -524,18 +524,10 @@ def conclure(ticket, avis, contre_possible=None, forcer=False):
 
 
 def freedv_retenues(epreuves):
-    """Une seule voix FreeDV par modulation, la premiere de MODES_FREEDV (comme
-    juges_sync.voix_freedv) : un 700D lu en 1600 accroche aussi, 0,1 s de rien."""
-    vues, gardees = set(), []
-    for ep in sorted(epreuves, key=lambda e: tuple(MODES_FREEDV).index(e.split("@")[0][7:])
-                     if e.startswith("freedv-") else -1):
-        if ep.startswith("freedv-"):
-            modulation = ep.partition("@")[2]
-            if modulation in vues:
-                continue
-            vues.add(modulation)
-        gardees.append(ep)
-    return gardees
+    """Dans l'ordre de MODES_FREEDV. Toutes restent (2026-11-05) : chacune a prouve sa
+    synchro (juges_sync.freedv_mesure), l'humain departage derriere J."""
+    return sorted(epreuves, key=lambda e: tuple(MODES_FREEDV).index(e.split("@")[0][7:])
+                  if e.startswith("freedv-") else -1)
 
 
 def poser_marque(racine, tid, nom):

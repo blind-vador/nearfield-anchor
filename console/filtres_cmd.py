@@ -20,6 +20,7 @@ import sys
 
 import conseils  # noqa: E402
 import noise_signatures as ns  # noqa: E402
+import propositions  # noqa: E402
 import voix  # noqa: E402
 from phrases import dire, nombre  # noqa: E402
 
@@ -35,6 +36,7 @@ def _freq(hz):
 def _line(g):
     etat = dire("filtres.actif") if g["actif"] else dire("filtres.inactif")
     return dire("filtres.ligne", frequence=_freq(g["freq_hz"]), bande=g["label"],
+                juge=propositions.nom(g.get("juge")) if g.get("juge") else dire("filtres.tous_decodeurs"),
                 nombre=nombre(g["nb"], "empreinte", "empreintes"), etat=etat)
 
 

@@ -275,11 +275,34 @@ def _dire_en_flux(item, text):
         return False
 
 
+def _types_de_message(item, text):
+    """Un type rejete ici n'est plus lu ; un type jamais entendu est explique (lib/messages_types)."""
+    fiche = item.get("fiche")
+    if not (fiche or {}).get("type_message"):
+        return text
+    try:
+        import messages_types
+        from phrases import dire
+        if messages_types.ecarte(fiche):
+            print(f"[{item['tag']}] {fiche['type_message']} rejete sur cette frequence, pas lu : {text}")
+            return None
+        explication = messages_types.premiere_fois(fiche)
+        if explication:
+            fiche["explication"] = explication
+            return text + " " + dire("journal.type_nouveau", explication=explication)
+    except Exception as exc:
+        print(f"[prise_vocale] type de message : {exc!r}")
+    return text
+
+
 def _run():
     while True:
         item = _queue.get()
         try:
             text = item["texte"]() if callable(item["texte"]) else item["texte"]
+            if not text:
+                continue
+            text = _types_de_message(item, text)
             if not text:
                 continue
             print(f"[{item['tag']}] annonce : {text}")

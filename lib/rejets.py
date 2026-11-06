@@ -143,6 +143,14 @@ def _rendu_mp3(son, dest):
     return proc.returncode == 0 and os.path.isfile(dest) and os.path.getsize(dest) > 200
 
 
+def _empreinte(son):
+    import propositions
+    if son.get("wav"):
+        return propositions._empreinte_wav(son["wav"])
+    import noise_signatures as ns
+    return ns.fingerprint(son.get("pcm") or b"", son.get("taux") or 22050, son.get("format", "s16le"))
+
+
 def garder(freq_hz, mode, label, raison, sons, target=None, empreinte=None):
     """Range un candidat ecarte. sons : [{juge, wav}] ou [{juge, pcm, taux, format}],
     le plus probable d'abord ; les suivants restent derriere la touche J. Son brut
@@ -166,7 +174,7 @@ def garder(freq_hz, mode, label, raison, sons, target=None, empreinte=None):
         nom = f"{os.path.basename(chemin)[:-4]}.p{i}.mp3"
         try:
             if _rendu_mp3(son, os.path.join(REJETS_DIR, nom)):
-                rendus.append({"juge": son.get("juge"), "fichier": nom})
+                rendus.append({"juge": son.get("juge"), "fichier": nom, "empreinte": _empreinte(son)})
         except Exception as exc:
             print(f"[rejets] rendu {son.get('juge')} non garde : {exc!r}")
     record(chemin, freq_hz, label, raison, empreinte, mode=mode, target=target, juge=premier.get("juge"),
@@ -184,6 +192,23 @@ def garder_fond(*args, **kwargs):
         except Exception as exc:
             print(f"[rejets] extrait non garde : {exc!r}")
     threading.Thread(target=travail, daemon=True).start()
+
+
+def confirmer_bruit(fichier, rendu=0):
+    """R : ce rendu est du bruit. Le decodeur ecoute retient son empreinte, sur
+    cette frequence seulement. Rend son nom, ou None s'il n'y a rien a apprendre."""
+    import noise_signatures as ns
+    e = next((x for x in _read() if x.get("fichier") == fichier), None)
+    if not e:
+        return None
+    autres = e.get("rendus") or []
+    source = autres[rendu - 1] if 0 < rendu <= len(autres) else e
+    juge = source.get("juge") or e.get("mode")
+    if not source.get("empreinte") or not e.get("freq_hz"):
+        return None
+    ns.add_signature({"freq_hz": e["freq_hz"], "label": e.get("label") or "", "fingerprint": source["empreinte"],
+                      "juge": juge})
+    return juge
 
 
 def repecher(fichier):
@@ -211,7 +236,10 @@ def repecher(fichier):
               if os.path.isfile(path_of(r.get("fichier") or ""))]
     propositions.poser(chemin, e.get("freq_hz"), e.get("label"), juge, e.get("empreinte"), autres)
     if e.get("empreinte"):
-        ns.oublier_ressemblantes(e.get("freq_hz") or 0, e["empreinte"])
+        ns.oublier_ressemblantes(e.get("freq_hz") or 0, e["empreinte"], juge)
+    for r in e.get("rendus") or []:
+        if r.get("empreinte"):
+            ns.oublier_ressemblantes(e.get("freq_hz") or 0, r["empreinte"], r.get("juge"))
     set_verdict(fichier, "signal")
     for nom in [fichier] + [r.get("fichier") for r in e.get("rendus") or []]:
         try:

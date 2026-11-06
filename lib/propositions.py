@@ -2,18 +2,17 @@
 
 Quand plusieurs juges ont trouvé du clair, on garde chaque rendu à côté de
 l'enregistrement du journal. Flèche gauche rejette le rendu en cours et lance le
-suivant : tant qu'il reste d'autres rendus, c'est une erreur de juge, ce juge
-descend ici, sans apprendre d'empreinte (2026-11-05). J passe au rendu suivant
-sans le rejeter. V ou C sur le rendu entendu retient ce juge. Trois
+suivant. Deux choses distinctes en découlent (2026-11-05) : l'avis sur le juge,
+qui descend ici, et son empreinte sonore, retenue pour ce juge sur cette seule
+fréquence : ce qu'il sortira de ressemblant ne rouvrira plus, sans rien dire des
+autres juges. J passe au rendu suivant sans le rejeter. V ou C sur le rendu entendu retient ce juge. Trois
 confirmations recentes, sans rival serieux, suffisent : il passe devant, et s'il
 confirme on presente lui seul, sauf si la modulation mesuree sur l'IQ dit autre
 chose (un nouveau locuteur, une autre modulation). Tous les decodeurs tournent
 toujours. En dessous, ou si il ne confirme pas cette prise, toutes les
 demodulations restent au journal. Une confirmation vieille
 d'une semaine ne pese plus que la moitie, pour qu'un contexte change
-ne reste pas colle a d'anciennes prises. Si une sortie ressemble a une
-empreinte deja rejetee sur cette frequence, ce n'est probablement pas
-le bon juge.
+ne reste pas colle a d'anciennes prises.
 
 Aucune fréquence n'est devinée. Le souvenir est celui de l'antenne, ici,
 comme les empreintes de parasites déjà en place.
@@ -54,6 +53,7 @@ NOMS = {
     "-f1": "P25", "-f2": "P25 phase 2", "-fd": "D-Star", "-fy": "YSF",
     "-fx": "X2 TDMA", "-fp": "ProVoice", "-fh": "EDACS", "-fe": "EDACS EA",
     "analogique": "FM analogique",
+    "multimon": "décodeur de données",
     "freedv-700D": "FreeDV 700D",
     "freedv-700E": "FreeDV 700E",
     "freedv-1600": "FreeDV 1600",
@@ -368,13 +368,33 @@ def fichier_courant(journal):
     return chemin if os.path.exists(chemin) else journal
 
 
+def rendu_courant(journal):
+    """Rendu en cours d'une prise qui a une fiche : {juge, fichier, empreinte}, ou None."""
+    doc = _charger(journal)
+    if not doc:
+        return None
+    return doc["items"][min(doc.get("courante", 0), len(doc["items"]) - 1)]
+
+
+def habillage_courant(journal):
+    """(frequence, bande, juge) si le rendu en cours est un fichier annexe, sans
+    ceremonie enregistree ; None pour la prise elle-meme, qui a deja la sienne."""
+    doc = _charger(journal)
+    if not doc:
+        return None
+    item = doc["items"][min(doc.get("courante", 0), len(doc["items"]) - 1)]
+    if not item.get("fichier"):
+        return None
+    return doc.get("freq_hz"), doc.get("label") or "", item.get("juge")
+
+
 def annonce_courante(journal):
+    """La position seulement : la ceremonie du rendu dit la bande et la modulation."""
     doc = _charger(journal)
     if not doc or len(doc["items"]) < 2:
         return None
     i = min(doc.get("courante", 0), len(doc["items"]) - 1)
-    return dire("journal.proposition", indice=i + 1, total=len(doc["items"]),
-                juge=nom(doc["items"][i].get("juge")))
+    return dire("journal.proposition", indice=i + 1, total=len(doc["items"]))
 
 
 def avancer(journal):
@@ -418,9 +438,9 @@ def rejeter(journal):
     i = min(doc.get("courante", 0), len(doc["items"]) - 1)
     item = doc["items"][i]
     _noter(doc.get("freq_hz"), item.get("juge"), False, doc.get("label"))
+    appris = _apprendre(doc, item)
     if len(doc["items"]) == 1:
         if item.get("fichier"):
-            _apprendre(doc, item)
             _oter_fichier(journal, item)
         try:
             os.remove(_chemin(journal))
@@ -437,9 +457,10 @@ def rejeter(journal):
         return None
     doc["courante"] = min(i, len(doc["items"]) - 1)
     _sauver(journal, doc)
-    suivant = doc["items"][doc["courante"]]
-    reste = nombre(len(doc["items"]), "autre proposition", "autres propositions")
-    return dire("journal.rejet_suivant_sans_empreinte", reste=reste, juge=nom(suivant.get("juge")))
+    reste = nombre(len(doc["items"]), "autre rendu", "autres rendus")
+    if appris:
+        return dire("journal.rejet_suivant", rejete=nom(item.get("juge")), reste=reste)
+    return dire("journal.rejet_suivant_sans_empreinte", reste=reste)
 
 
 def a_fiche(journal):
@@ -458,18 +479,14 @@ def confirmer(journal):
         doc["confirmee"] = item.get("juge")
         _sauver(journal, doc)
         return
-    info = ns.capture_info(journal) or {}
-    metrics = info.get("metrics") or {}
-    juge = metrics.get("juge") or metrics.get("modulation_banc") or info.get("mode")
-    _noter(info.get("freq_hz"), juge, True, info.get("label"))
+    juge, freq, label = _juge_courant(journal)
+    _noter(freq, juge, True, label)
 
 
 def noter_rejet_simple(journal):
     """Rejet d'une prise qui n'a qu'un rendu : ce juge descend sur cette fréquence."""
-    info = ns.capture_info(journal) or {}
-    metrics = info.get("metrics") or {}
-    juge = metrics.get("juge") or metrics.get("modulation_banc") or info.get("mode")
-    _noter(info.get("freq_hz"), juge, False, info.get("label"))
+    juge, freq, label = _juge_courant(journal)
+    _noter(freq, juge, False, label)
 
 
 def _juge_courant(journal):
@@ -481,6 +498,13 @@ def _juge_courant(journal):
     info = ns.capture_info(journal) or {}
     metrics = info.get("metrics") or {}
     juge = metrics.get("juge") or metrics.get("modulation_banc") or info.get("mode")
+    if not info.get("freq_hz") and journal:   # prise vocale d'un message : sa fiche dit le type
+        try:
+            with open(journal[:-4] + ".json", encoding="utf-8") as f:
+                carte = json.load(f)
+            return carte.get("type_message"), carte.get("frequence_hz"), carte.get("protocole") or ""
+        except (OSError, ValueError):
+            pass
     return juge, info.get("freq_hz"), info.get("label") or ""
 
 

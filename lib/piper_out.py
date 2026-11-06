@@ -95,6 +95,18 @@ def _voix_mac():
     return _mac_cache["voix"]
 
 
+def voix_mac_connues():
+    """Noms des voix du Mac, connecte ou non (reglage voix par voix)."""
+    noms = {v.split("#", 1)[1] for v in _voix_mac()}
+    try:
+        import compagnon
+        for c in compagnon.trusted().values():
+            noms.update(c.get("voix_mac") or [])
+    except Exception:
+        pass
+    return sorted(noms)
+
+
 def _voix_mbrola():
     if not os.access(MBROLA_BIN, os.X_OK):
         return []
@@ -248,7 +260,8 @@ def length_scale(rate):
 
 def _pick(voice_id=None, scale_len=1.0):
     if not resolve(voice_id):
-        voice_id = random.choice(announce_voice_ids())
+        import voix_sources   # voix disparue (Mac deconnecte) : pas une voix desactivee
+        voice_id = random.choice(voix_sources.repli_local() or announce_voice_ids())
     if virtuelle(voice_id):
         args = [sys.executable, HELPER, "--voix", canonical(voice_id), "-q"]
         if scale_len != 1.0:

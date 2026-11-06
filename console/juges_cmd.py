@@ -23,6 +23,8 @@ def run(line, key_source=None, say=None, out=None):
     if etat is None:
         return "Rien n'est en cours de décodage en ce moment."
     ok = any(mot in low for mot in (" ok ", " oui ", " bon ", " garde ", " juste "))
+    if not ok and etat.get("suivants") == 0:
+        return "C'est le dernier rendu gardé pour cette réception."
     juge_live.demander("ok" if ok else "suivant")
     proto = etat.get("protocole") or "ce décodage"
     if ok:

@@ -57,9 +57,10 @@ def demander(action):
 
 # --- cote radio_watch ------------------------------------------------------------------
 
-def debut(freq_hz, band, mode, protocole=None):
+def debut(freq_hz, band, mode, protocole=None, suivants=None):
+    """suivants : rendus encore disponibles apres celui-ci (0 : le dernier), si on le sait."""
     _ecrire(ETAT_PATH, {"freq_hz": int(freq_hz), "band": band, "mode": mode,
-                        "protocole": protocole, "t": time.time()})
+                        "protocole": protocole, "suivants": suivants, "t": time.time()})
 
 
 def rafraichir(protocole):

@@ -856,7 +856,8 @@ def preview(text, voice, rate, pitch=None):
     stop()
     _canal = "reponses"
     if voice in voix_sources.MODES_MELANGES or voice == voix_sources.ALEATOIRE_PIPER:
-        voice = random.choice(voix_sources.tirage(voice, bool(cloud_ok() and edge_tts)) or [piper_out.DEFAULT_VOICE])
+        voice = (voix_sources.peser(voix_sources.tirage(voice, bool(cloud_ok() and edge_tts)), voix_sources.preferences())
+                 or piper_out.DEFAULT_VOICE)
     elif voice == voix_sources.ALEATOIRE and not (cloud_ok() and edge_tts):
         voice = random.choice(piper_out.announce_voice_ids() or [piper_out.DEFAULT_VOICE])
     elif voice == voix_sources.ALEATOIRE:

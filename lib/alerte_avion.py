@@ -218,8 +218,10 @@ def _relacher():
     try:
         r = avant.get("restreint") or {}
         restreint.save(bool(r.get("actif")), list(r.get("cibles") or []))
-        if avant.get("tempo"):
-            tempo.regler(avant["tempo"])
+        if avant.get("tempo") and not tempo.regler(avant["tempo"]):
+            # NAS absent : on garde "avant", on reessaiera au prochain tour au lieu de perdre la vitesse.
+            print("[alerte_avion] vitesse d'avant pas encore rendue, NAS inaccessible")
+            return None
     except Exception as exc:
         print(f"[alerte_avion] parcours d'avant non rendu : {exc}")
         return None

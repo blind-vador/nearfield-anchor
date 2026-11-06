@@ -65,8 +65,8 @@ def _cibles(source):
     if vs.microsoft_ok():
         return []
     sec = piper_out.canonical(r["secours"])
-    if sec == vs.ALEATOIRE or not piper_out.resolve(sec):
-        return [(v, r["secours_debit"]) for v in piper_out.announce_voice_ids()]
+    if sec == vs.ALEATOIRE or not piper_out.resolve(sec) or not vs.permise(sec):
+        return [(v, r["secours_debit"]) for v in piper_out.announce_voice_ids() if vs.permise(v)]
     return [(sec, r["secours_debit"])]
 
 
@@ -165,7 +165,7 @@ def presentation_jobs():
     for alea in (vs.ALEATOIRE, vs.ALEATOIRE_PIPER, vs.ALEATOIRE_TOUT, vs.ALEATOIRE_DISTANT):  # presente dans une voix du tirage
         text = voix_cmd._label(alea)
         for v in piper_out.announce_voice_ids():
-            if not voix._cached(text, v, "+0%"):
+            if vs.permise(v) and not voix._cached(text, v, "+0%"):
                 jobs.append((v, "+0%", text, voix._cache_path(text, v, "+0%")))
     return jobs
 

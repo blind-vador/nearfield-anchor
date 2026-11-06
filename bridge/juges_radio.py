@@ -17,8 +17,15 @@ import wave
 
 PROTOCOLES = {"DMR": "DMR", "P25p1": "P25", "P25p2": "P25", "YSF": "YSF", "DSTAR": "D-Star",
               "M17": "M17", "NXDN48": "NXDN", "NXDN96": "NXDN", "NXDN": "NXDN", "dPMR": "dPMR",
-              "X2-TDMA": "X2-TDMA", "EDACS": "EDACS", "PV": "ProVoice", "ProVoice": "ProVoice"}
-SYNC_RE = re.compile(r"Sync: [+-]([\w-]+)")
+              "X2-TDMA": "X2-TDMA", "EDACS": "EDACS", "PV": "ProVoice", "ProVoice": "ProVoice",
+              "IDAS": "IDAS", "JPN": "DCR"}
+# NXDN, IDAS et DCR s'affichent sans signe ("Sync: NXDN48  RTCH ...") : l'ancien motif ne
+# les voyait jamais, -fi et -fn n'ont fait aucune proposition depuis le debut (2026-11-05).
+SYNC_RE = re.compile(r"Sync: (?:[+-]([\w-]+)|(NXDN48|NXDN96|IDAS|JPN)\b)")
+# Sur du bruit, ces lignes defilent sans le mot ERR ("RTCH Data PF X/4", "RAN 07") : seul un
+# canal protege par CRC lu sans erreur, ou un numero de super-trame lu, prouve quelque chose.
+# IDAS n'affiche aucun verdict de CRC : il compte comme vu, jamais comme prouve.
+NXDN_PREUVE_RE = re.compile(r"\bPF [1-4]/|\b(?:FACCH\d?|SACCH|UDCH\d?|CAC)\b")
 ENC_RE = re.compile(r"\b(ENC|Encrypt\w*|ALG ID|Key ID|KID)\b", re.I)
 # Trame de VOIX DMR en clair : superframe VC1..VC6 ou en-tete voix VLC, apres
 # le dernier "|" de la ligne Sync. On EXCLUT la voix chiffree ("VC1*", le "*")
@@ -51,7 +58,8 @@ def compter_synchro(stats, text):
     une synchro M17 que si son en-tete (LSF) est lu sans erreur."""
     m = SYNC_RE.search(text)
     if m:
-        protocole = PROTOCOLES.get(m.group(1), m.group(1))
+        nom = m.group(1) or m.group(2)
+        protocole = PROTOCOLES.get(nom, nom)
         stats["total"] += 1
         stats["preuve"] = None
         if protocole == "dPMR":
@@ -59,7 +67,12 @@ def compter_synchro(stats, text):
         elif protocole == "M17":
             if "LSF" in text and "ERR" not in text:
                 _propre(stats, protocole)
-        elif "ERR" not in text:
+        elif protocole in ("NXDN", "DCR"):
+            if NXDN_PREUVE_RE.search(text) and "ERR" not in text:
+                _propre(stats, protocole)
+        elif protocole == "IDAS":
+            pass
+        elif "ERR" not in text and "FAIL" not in text:   # EDACS : "BCH FAIL" ne porte pas le mot ERR
             _propre(stats, protocole)
         if protocole == "DMR" and DMR_VOIX_RE.search(text):
             stats["voix"] = stats.get("voix", 0) + 1   # vraie voix en clair, pas IDLE/TLC

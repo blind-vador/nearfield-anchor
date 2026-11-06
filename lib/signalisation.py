@@ -8,6 +8,7 @@ rendu par une machine compagne (demodulation deleguee, radio_watch). Quelques
 dixiemes de seconde de calcul par ecoute ; jamais bloquant."""
 import asn_dsc
 import ffsk_pro
+import messages_types
 import veille_donnees as vd
 from phrases import dire
 
@@ -23,9 +24,9 @@ def apres_coup(pcm_s16, taux, nom, freq_hz, son, source):
                 vus.append(texte)
                 print(f"[{source}] {nom} : {texte}")
                 vd.archive("signalisation", {"freq_hz": freq_hz, "canal": nom, "texte": texte})
-                vd.announce(dire("radio.signalisation_asn", canal=nom, texte=texte), son,
-                            "message_signalisation", source, fiche={"protocole": texte.split(",")[0],
-                                                                     "frequence_hz": freq_hz})
+                vd.announce(dire("radio.signalisation_asn", canal=nom, texte=texte), son, "message_signalisation", source,
+                            fiche=messages_types.fiche(texte.split(",")[0], texte, freq_hz, decoupe=True,
+                                                       urgence="tresse" in texte))
     except Exception as exc:   # jamais bloquant pour l'ecoute
         print(f"[{source}] signalisation : {exc!r}")
     return vus

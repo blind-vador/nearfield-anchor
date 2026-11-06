@@ -384,6 +384,11 @@ def current_gain(ticket=None):
         if t.source != "console" and calibrage_actif():
             t.gain = 0.0
             return t.gain
+        if t.source in SILENT_WHEN_JOURNAL and journal_open():
+            # Ecoute commencee avant l'ouverture du journal (2026-11-06) : le
+            # controle d'acquire() ne la voyait pas. Le son reprend a la fermeture.
+            t.gain = 0.0
+            return t.gain
         entries = _read()
         me = next((e for e in entries if e.get("id") == t.id), None)
         above = me is not None and any(e.get("etat") == "joue" and e.get("rang", 99) < me["rang"]

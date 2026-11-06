@@ -14,6 +14,8 @@ fluvial (Rhone, Saone, Rhin...) emet sur les memes canaux."""
 import os
 import re
 import shutil
+import flux_tickets
+import messages_types
 import subprocess
 import sys
 import threading
@@ -42,8 +44,8 @@ def _ecouter(freq_hz, secondes, decodeur):
     commande) ; rend les lignes que le decodeur a ecrites."""
     fm = subprocess.Popen(["rtl_fm", "-f", str(freq_hz), "-M", "fm", "-s", str(TAUX), "-l", "0", "-E", "dc"],
                           stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-    dec = subprocess.Popen(decodeur, stdin=fm.stdout, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    fm.stdout.close()
+    dec = subprocess.Popen(decodeur, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    copie = flux_tickets.Copie(fm.stdout, dec.stdin, TAUX)
     lignes = []
 
     def lire():
@@ -66,6 +68,7 @@ def _ecouter(freq_hz, secondes, decodeur):
     except subprocess.TimeoutExpired:
         dec.kill()
     fil.join(timeout=2)
+    copie.deposer(freq_hz, "marine", "marine")
     return lignes
 
 
@@ -86,7 +89,7 @@ def _ais(freq_hz, secondes):
         if _memory.due(f"navire|{mmsi}", NAVIRE_REDIT_SEC):
             vd.announce(dire("marine.navire_ais", mmsi=" ".join(mmsi), details=ligne.split(":", 1)[1].strip()),
                         SOUND, f"message_ais_{mmsi}", "marine_watch",
-                        fiche={"protocole": "AIS", "frequence_hz": freq_hz, "source": mmsi})
+                        fiche=messages_types.fiche("AIS", "AIS, navire", freq_hz, decoupe=True, source=mmsi))
             annonce = True
     if lignes:
         print(f"[marine_watch] AIS {freq_hz / 1e6:.3f} MHz : {sum(bool(_AIS_LIGNE.match(l)) for l in lignes)} trame(s)")
@@ -103,7 +106,8 @@ def _asn(secondes):
         vd.archive("asn", {"freq_hz": ASN_HZ, "texte": texte})
         detresse = "DÉTRESSE" in texte or "détresse" in texte
         vd.announce(dire("marine.appel_asn", texte=texte), ALARME_SOUND if detresse else SOUND,
-                    "message_asn", "marine_watch", fiche={"protocole": "ASN", "frequence_hz": ASN_HZ})
+                    "message_asn", "marine_watch",
+                    fiche=messages_types.fiche("ASN", texte, ASN_HZ, decoupe=True, urgence=detresse))
         annonce = True
     return annonce
 
