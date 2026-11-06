@@ -12,6 +12,7 @@ import piper_out
 import voix_sources
 import tempfile
 import threading
+import time
 
 import edge_tts
 
@@ -86,13 +87,27 @@ def _speech_timeout(path):
 
 
 
+JOURNAL_NOTICE_EVERY_SEC = 60
+_journal_notice = {"t": 0.0}
+
+
 def journal_notice():
     """Previent qu'une captation a ete enregistree en silence pendant que le
     journal est ouvert (audio_lock.SILENT_WHEN_JOURNAL). Source console :
-    passe entre deux ecoutes du journal."""
+    passe entre deux ecoutes du journal. Rien si le journal est deja ferme, et
+    le scanner n'attend pas (il restait bloque jusqu'a 2 minutes, puis
+    annoncait une captation au journal ferme, 2026-11-06)."""
+    maintenant = time.time()
+    if not audio_lock.journal_open() or maintenant - _journal_notice["t"] < JOURNAL_NOTICE_EVERY_SEC:
+        return
+    _journal_notice["t"] = maintenant
+    threading.Thread(target=_dire_journal_notice, daemon=True).start()
+
+
+def _dire_journal_notice():
     lock = audio_lock.acquire("console", timeout=120)
     try:
-        if not lock.dropped:
+        if not lock.dropped and audio_lock.journal_open():
             speak_cloud(dire("annonce.journal_notice"), repetitive=True)
     finally:
         audio_lock.release(lock)

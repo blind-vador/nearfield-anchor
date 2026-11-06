@@ -838,13 +838,19 @@ def say_and_wait(text):
     _speak_locked(text, _generation)
 
 
-def say_blocking(text):
+def say_blocking(text, encore=None):
     """Parle et attend la fin, SANS le verrou audio : pour les dialogues qui
     le tiennent deja (journal, archives) et doivent enchainer une phrase
-    puis un enregistrement sans chevauchement."""
+    puis un enregistrement sans chevauchement. encore() faux : une touche a
+    change la suite pendant le calcul de la phrase, on ne la dit pas."""
     stop()
-    if text:
-        _spawn(text, echo=False).wait(timeout=espeak_out.duree_max(text))
+    if not text:
+        return
+    proc = _spawn(text, echo=False)
+    if encore is not None and not encore():
+        proc.kill()
+        return
+    proc.wait(timeout=espeak_out.duree_max(text))
 
 
 def preview(text, voice, rate, pitch=None):

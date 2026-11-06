@@ -13,8 +13,8 @@ satellites -- "journal capteurs", "journal satellites"...
   C                        bonne prise, mais coupee trop tot (comme V, fin
                            coupee : le bilan fera ecouter plus longtemps) ;
                            sur une prise deja notee, corrige seulement la fin
-  fleche droite            garde : copie dans les extraits interessants
-                           (storage/radio), nommee par sa date de capture
+  fleche droite            garde le rendu entendu : copie dans le dossier du
+                           jour des archives (lib/journaux.py)
   fleche gauche            rejette le rendu en cours : ce decodeur descend sur
                            cette frequence et retient son empreinte de bruit,
                            pour lui seul et cette frequence seule. S'il reste
@@ -35,8 +35,12 @@ Sources : server/radio_log/ (48 dernieres heures, date dans le nom) et
 ses dossiers d'archives par jour ("jeudi_3_septembre_2026/", heure seule
 dans le nom).
 
+Le clavier n'attend jamais (2026-11-06) : une phrase, l'annonce d'un rendu et
+le son suivant s'enchainent dans un fil a part, et toute touche de navigation
+annule ce qui etait en route. Avant, ignorer un rendu figeait tout jusqu'a 20 s.
+
 UNE seule sortie son pour tout le dialogue (aplay ouvert en continu,
-alimente par ffmpeg) : passer vite d'un enregistrement a l'autre ne
+alimente par lib/decodage.py) : passer vite d'un enregistrement a l'autre ne
 referme pas la carte son a chaque fois -- c'est ce qui faisait planter le
 pilote du jack du Pi (voir lib/manual_tuner.py).
 """
@@ -50,12 +54,13 @@ import subprocess
 import sys
 import chemins
 import hashlib
-import tempfile
 import threading
 import time
 
 
+import decodage  # noqa: E402
 import journaux  # noqa: E402
+import tmp_ram  # noqa: E402
 from phrases import Etiquettes, dire, nombre  # noqa: E402
 import keys  # noqa: E402
 import noise_signatures as ns  # noqa: E402
@@ -65,16 +70,12 @@ import conseils  # noqa: E402
 import voix  # noqa: E402
 
 LOG_DIR = "/media/nas/nd1/server/radio_log"
-KEEP_DIR = "/media/nas/nd2/storage/radio"
 UPDATE_FLAG = "/tmp/journal_maj"  # touche par radio_log a chaque captation enregistree
 LOCK_WAIT_SEC = 10
 RATE = 48000
+AVANCE_MAX_SEC = 0.35  # un stop s'entend tout de suite : pas de son d'avance dans le tuyau
 
-JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
-MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
-        "septembre", "octobre", "novembre", "décembre"]
-_MOIS_IDX = {m: i + 1 for i, m in enumerate(MOIS)}
-_MOIS_IDX.update({"fevrier": 2, "aout": 8, "decembre": 12})
+JOURS, MOIS = journaux.JOURS, journaux.MOIS
 _DAY = r"(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)_(\d{1,2})_([a-zéû]+)_(\d{4})"
 _TIME = r"(\d{2})h(\d{2})m(\d{2})s\.mp3$"
 RE_ROOT_FILE = re.compile("_" + _DAY + "_" + _TIME)
@@ -88,8 +89,7 @@ MODES = Etiquettes("mode", {"nfm": "FM étroite", "wfm": "FM large", "am": "AM",
 
 
 def _date(day, month_name, year):
-    month = _MOIS_IDX.get(month_name)
-    return datetime.date(int(year), month, int(day)) if month else None
+    return journaux.date_de(day, month_name, year)
 
 
 def scan_recordings(category="radio"):
@@ -128,35 +128,32 @@ def spoken_day(date):
     return f"{JOURS[date.weekday()]} {date.day} {MOIS[date.month - 1]}"
 
 
-def keep_name(stamp):
-    return (f"{JOURS[stamp.weekday()]} {stamp.day} {MOIS[stamp.month - 1]} {stamp.year} "
-            f"{stamp.hour:02d}h{stamp.minute:02d}m{stamp.second:02d}s.mp3")
-
-
 class Player:
-    """aplay ouvert en continu ; chaque lecture = un ffmpeg qui l'alimente."""
+    """aplay ouvert en continu ; chaque lecture = un decodeur qui l'alimente."""
 
     def __init__(self):
         self._aplay = self._open_aplay()
-        self._ffmpeg = None
+        self._flux = None
         self._thread = None
         self.gain = 1.0  # volume de lecture (dialogue "archives" : fleches gauche/droite)
         self._generation = 0
         self._guard = threading.Lock()
+        self._sortie = threading.Lock()
         self._ticket = None  # sortie son prise seulement pendant une ecoute
 
     @staticmethod
     def _open_aplay():
         return subprocess.Popen(
-            ["aplay", "-q", "-D", "default", "-r", str(RATE), "-f", "S16_LE", "-c", "1", "-B", "500000"],
+            ["aplay", "-q", "-D", "default", "-r", str(RATE), "-f", "S16_LE", "-c", "1", "-B", "300000"],
             stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
 
     def _aplay_ok(self):
         """Relance la sortie son si elle est tombee (2026-10-19 : un aplay mort
         rendait tout le journal muet, sans aucun message)."""
-        if self._aplay.poll() is not None:
-            print(f"[journal] sortie son tombee (code {self._aplay.returncode}) : relancee", file=sys.stderr)
-            self._aplay = self._open_aplay()
+        with self._sortie:
+            if self._aplay.poll() is not None:
+                print(f"[journal] sortie son tombee (code {self._aplay.returncode}) : relancee", file=sys.stderr)
+                self._aplay = self._open_aplay()
 
     def _hold(self):
         """Ecouter est une action directe : le son part tout de suite, sans
@@ -178,58 +175,72 @@ class Player:
         self.stop()
         self._aplay_ok()
         self._hold()
-        fichiers = [*avant, path, *apres]
-        entrees = [x for f in fichiers for x in ("-i", f)]
-        filtre = []
-        if len(fichiers) > 1:
-            chaines = "".join(f"[{i}:a]aresample={RATE},aformat=channel_layouts=mono[s{i}];" for i in range(len(fichiers)))
-            suite = "".join(f"[s{i}]" for i in range(len(fichiers)))
-            filtre = ["-filter_complex", f"{chaines}{suite}concat=n={len(fichiers)}:v=0:a=1"]
-        self._ffmpeg = subprocess.Popen(
-            ["ffmpeg", "-v", "quiet", "-nostdin", *entrees, *filtre, "-f", "s16le", "-ac", "1", "-ar", str(RATE), "-"],
-            stdout=subprocess.PIPE)
-        self._thread = threading.Thread(target=self._relay, args=(self._ffmpeg, self._generation), daemon=True)
+        self._thread = threading.Thread(target=self._relay, args=([*avant, path, *apres], self._generation),
+                                        daemon=True)
         self._thread.start()
 
     def playing(self):
         """Vrai tant que l'enregistrement est en cours de lecture."""
         return self._thread is not None and self._thread.is_alive()
 
-    def _relay(self, proc, generation):
-        while True:
-            data = proc.stdout.read(RATE // 5 * 2)  # 200 ms
-            if not data:
+    def _relay(self, fichiers, generation):
+        debut, envoye = time.time(), 0
+        for fichier in fichiers:
+            try:
+                flux = decodage.Flux(fichier, RATE)
+            except OSError as exc:
+                print(f"[journal] lecture impossible : {exc!r}", file=sys.stderr)
+                continue
+            try:
                 with self._guard:
-                    if generation == self._generation:
-                        self._let_go()  # fin de l'ecoute : les annonces peuvent passer
-                return
-            if self.gain != 1.0:
-                data = audioop.mul(data, 2, self.gain)  # ecretage automatique au-dela du maximum
-            with self._guard:
-                if generation != self._generation:
-                    return
-                for essai in (1, 2):
-                    try:
-                        self._aplay.stdin.write(data)
-                        self._aplay.stdin.flush()
+                    if generation != self._generation:
+                        return
+                    self._flux = flux
+                while True:
+                    data = flux.lire(RATE // 5 * 2)  # 200 ms
+                    if not data:
                         break
-                    except (BrokenPipeError, ValueError, OSError):
-                        if essai == 2:
-                            self._let_go()
+                    if self.gain != 1.0:
+                        data = audioop.mul(data, 2, self.gain)  # ecretage automatique au-dela du maximum
+                    with self._guard:
+                        if generation != self._generation:
                             return
-                        self._aplay_ok()  # sortie tombee en cours de lecture : relancee, on reprend
+                    # Hors du verrou : une carte son bloquee ne fige pas le clavier.
+                    if not self._ecrire(data):
+                        return
+                    envoye += len(data)
+                    avance = envoye / (2 * RATE) - (time.time() - debut)
+                    if avance > AVANCE_MAX_SEC:
+                        time.sleep(avance - AVANCE_MAX_SEC)
+            finally:
+                flux.fermer()
+        with self._guard:
+            if generation == self._generation:
+                self._flux = None
+                self._let_go()  # fin de l'ecoute : les annonces peuvent passer
+
+    def _ecrire(self, data):
+        for essai in (1, 2):
+            try:
+                self._aplay.stdin.write(data)
+                self._aplay.stdin.flush()
+                return True
+            except (BrokenPipeError, ValueError, OSError):
+                if essai == 2:
+                    with self._guard:
+                        self._let_go()
+                    return False
+                self._aplay_ok()  # sortie tombee en cours de lecture : relancee, on reprend
+        return False
 
     def stop(self):
         with self._guard:
             self._generation += 1
             self._let_go()
-        if self._ffmpeg is not None and self._ffmpeg.poll() is None:
-            self._ffmpeg.terminate()
-            try:
-                self._ffmpeg.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                self._ffmpeg.kill()
-        self._ffmpeg = None
+            flux, self._flux = self._flux, None
+            self._thread = None
+        if flux is not None:
+            flux.arreter()
 
     def close(self):
         self.stop()
@@ -255,20 +266,29 @@ def _update_stamp():
 
 
 def _keep(stamp, path, text, category):
-    """Copie dans les archives de ce journal ; un releve lu (capteurs) y est
-    garde en texte, relu par "archives capteurs"."""
-    folder = journaux.archive_dir(category)
+    """Copie le rendu entendu dans le dossier du jour de ce journal, cree au
+    premier archivage ; un releve lu (capteurs) y est garde en texte, relu par
+    "archives capteurs"."""
+    if not os.path.isdir(journaux.KEEP_DIR):
+        return dire("archives.disque_absent")
+    journaux.ranger_archives()
+    folder = journaux.dossier_du_jour(stamp.date())
     os.makedirs(folder, exist_ok=True)
-    dest = os.path.join(folder, keep_name(stamp))
-    if text is not None:
-        dest = dest[:-4] + ".txt"
+    detail = ""
+    source = path
+    if text is None:
+        source = propositions.fichier_courant(path)
+        if source != path:  # un autre juge que la prise : gardes l'un a cote de l'autre
+            detail = propositions.nom((propositions.rendu_courant(path) or {}).get("juge"))
+    nom = journaux.nom_garde(stamp, category, detail)
+    dest = os.path.join(folder, nom + (".txt" if text is not None else ".mp3"))
     if os.path.exists(dest):
         return dire("journal.deja_garde")
     if text is not None:
         with open(dest, "w", encoding="utf-8") as f:
             f.write(text)
     else:
-        shutil.copy2(path, dest)
+        shutil.copy2(source, dest)
     return dire("journal.garde")
 
 
@@ -337,19 +357,22 @@ def _ban_dab_station(fiche):
 
 def _annonce_gardee(ceremonie, phrase):
     """Annonce d'un rendu annexe : calculee une fois (3 a 6 s), puis gardee sur disque."""
+    import annonce_morceaux as morceaux
     if not phrase:
         return None
     dossier = chemins.base("voix_cache/ceremonies_journal")
     chemin = os.path.join(dossier, hashlib.sha1(phrase.encode("utf-8")).hexdigest() + ".wav")
     if os.path.exists(chemin):
         return chemin
-    faite = ceremonie._fichier_annonce(phrase)
+    # La voix des annonces du scanner : le rendu annexe sonne comme la prise.
+    faite = ceremonie._fichier_annonce(phrase, source="radio")
     if not faite:
         return None
+    if os.path.basename(faite).startswith(morceaux.PREFIXE_DIRECT):
+        return faite  # dernier recours : pour cette ecoute, jamais garde pour la suite
     os.makedirs(dossier, exist_ok=True)
     shutil.copyfile(faite, chemin)
-    if faite.startswith(tempfile.gettempdir()):
-        os.remove(faite)
+    ceremonie.jeter(faite)
     return chemin
 
 
@@ -358,14 +381,13 @@ def _reject(path, rendu=None):
     l'empreinte de la capture est celle du premier juge, elle ne doit pas prendre sa place."""
     info = ns.capture_info(path)
     fiche = _message_card(path)
-    os.remove(path)
-    if raw_path(path):
-        os.remove(raw_path(path))
-    if fiche is not None:
+    # Deja partie (purge, autre rejet) : le rejet continue, il ne doit pas fermer le journal.
+    for suffixe in (".mp3", ".brut.mp3", ".flux.wav") + ((".json",) if fiche is not None else ()):
         try:
-            os.remove(path[:-4] + ".json")
+            os.remove(path[:-4] + suffixe)
         except OSError:
             pass
+    if fiche is not None:
         if fiche.get("protocole") == "DAB+":
             return _ban_dab_station(fiche)
         import messages_types
@@ -513,22 +535,52 @@ def run(key_source, say, out, category="radio"):
         what = "élément" if category == "capteurs" else "enregistrement"
         return dire("nav.jour", jour=spoken_day(date), elements=nombre(n, what))
 
-    def play(i):
-        """Joue l'enregistrement, ou lit le releve (journal capteurs)."""
-        _, path, text = days[order[day_i]][i]
-        player.stop()
-        if text is not None:
-            say(text)
-            out(f"[{text}]\n")
-        else:
-            avant, apres = habillage(path)
-            player.play(propositions.fichier_courant(path), avant, apres)
+    suite_lock = threading.Lock()
+    suite = {"tour": 0, "fil": None}
+
+    def couper():
+        """Toute touche de navigation : le son, la phrase et ce qui etait en route."""
+        with suite_lock:
+            suite["tour"] += 1
+            player.stop()
+        voix.stop()
+
+    def en_route():
+        return player.playing() or (suite["fil"] is not None and suite["fil"].is_alive())
+
+    def enchainer(tour, phrase, path, brut):
+        """Dans son fil : la phrase, l'habillage du rendu, puis le son."""
+        def encore():
+            return suite["tour"] == tour
+        try:
+            if phrase:
+                voix.say_blocking(phrase, encore=encore)
+            if not encore():
+                return
+            avant, apres = ((), ()) if brut else habillage(path)
+            fichier = brut or propositions.fichier_courant(path)
+            with suite_lock:
+                if not encore():
+                    return
+                player.play(fichier, avant, apres)
             out(f"[{os.path.basename(path)}]\n")
-            try:
-                import journal_vus
-                journal_vus.mark(path)  # n'est plus nouveau (commande "notifications")
-            except Exception as exc:
-                print(f"[journal] ecoute non notee : {exc!r}")
+            import journal_vus
+            journal_vus.mark(path)  # n'est plus nouveau (commande "notifications")
+        except Exception as exc:
+            print(f"[journal] lecture : {exc!r}", file=sys.stderr)
+
+    def play(i, phrase=None, brut=None):
+        """Joue l'enregistrement, ou lit le releve (journal capteurs). Rend la
+        main tout de suite : phrase, annonce et son partent dans un fil."""
+        _, path, text = days[order[day_i]][i]
+        couper()
+        if text is not None:
+            say(" ".join(p for p in (phrase, text) if p))
+            out(f"[{text}]\n")
+            return
+        fil = threading.Thread(target=enchainer, args=(suite["tour"], phrase, path, brut), daemon=True)
+        suite["fil"] = fil
+        fil.start()
 
     def next_unrated(step):
         """(jour, rang) de la prochaine entree sans note dans le sens step, ou None."""
@@ -560,7 +612,7 @@ def run(key_source, say, out, category="radio"):
             recs = days[order[day_i]]
             text = None
             if key in ("\t", "\x1b[Z"):
-                player.stop()
+                couper()
                 day_i = (day_i + (1 if key == "\t" else -1)) % len(order)
                 rec_i = -1
                 text = announce_day()
@@ -570,16 +622,16 @@ def run(key_source, say, out, category="radio"):
                 if found is None:
                     text = dire("journal.plus_de_non_notee")
                 else:
+                    phrase = None
                     if found[0] != day_i:
                         day_i = found[0]
-                        voix.say_blocking(announce_day())
+                        phrase = announce_day()
                     rec_i = found[1]
-                    play(rec_i)
+                    play(rec_i, phrase)
             elif key in ("\x1b[A", "\x1b[B") and ctrl_held():
                 # Ctrl + fleche : premier ou dernier du jour, joue aussitot.
                 rec_i = 0 if key == "\x1b[A" else len(recs) - 1
-                voix.say_blocking(dire("nav.premier_jour" if key == "\x1b[A" else "nav.dernier_jour"))
-                play(rec_i)
+                play(rec_i, dire("nav.premier_jour" if key == "\x1b[A" else "nav.dernier_jour"))
             elif key in ("\x1b[A", "\x1b[B"):
                 new_i = rec_i + (1 if key == "\x1b[B" else -1)
                 if key == "\x1b[A" and rec_i < 0:
@@ -591,26 +643,21 @@ def run(key_source, say, out, category="radio"):
                     # Les fleches traversent les jours (2026-10-23) : au bout de la
                     # journee, on continue dans la precedente -- tout le journal se
                     # parcourt aux fleches, et ce qui est ecoute n'est plus "nouveau".
-                    player.stop()
                     day_i, rec_i = day_i + 1, 0
-                    voix.say_blocking(announce_day())
-                    play(rec_i)
+                    play(rec_i, announce_day())
                 elif key == "\x1b[A" and new_i < 0 and rec_i >= 0 and day_i > 0:
-                    player.stop()
                     day_i = day_i - 1
                     rec_i = len(days[order[day_i]]) - 1
-                    voix.say_blocking(announce_day())
-                    play(rec_i)
+                    play(rec_i, announce_day())
                 else:
                     bound = dire("nav.debut_journee" if new_i < 0 else "nav.fin_journee")
-                    if player.playing() or rec_i < 0 or recs[rec_i][2] is not None:
-                        player.stop()
+                    if en_route() or rec_i < 0 or recs[rec_i][2] is not None:
+                        couper()
                         text = bound
                     else:
                         # Rien en lecture contre la borne : on relance l'enregistrement
                         # selectionne (sinon on croit l'avoir ecoute alors que non).
-                        voix.say_blocking(bound)
-                        play(rec_i)
+                        play(rec_i, bound)
             elif rec_i < 0 and key in ("\r", "\n", "\x1b[C", "\x1b[D", "n", "N", "v", "V", "c", "C", "b", "B", "i", "I", "e", "E", "j", "J", "r", "R", "\x12"):
                 text = dire("journal.choisir")
             elif key in ("\r", "\n"):
@@ -619,33 +666,24 @@ def run(key_source, say, out, category="radio"):
                 text = info_text(recs[rec_i][1]) if recs[rec_i][1] else dire("journal.releve")
             elif key in ("b", "B"):
                 brut = raw_path(recs[rec_i][1])
-                if brut:
-                    player.stop()
-                    voix.say_blocking(dire("journal.son_brut"))
-                    player.play(brut)
-                    try:  # le son brut ecoute compte aussi (commande "notifications")
-                        import journal_vus
-                        journal_vus.mark(recs[rec_i][1])
-                    except Exception as exc:
-                        print(f"[journal] ecoute non notee : {exc!r}")
+                if brut:  # le son brut ecoute compte aussi (commande "notifications")
+                    play(rec_i, dire("journal.son_brut"), brut=brut)
                 else:
                     text = dire("journal.pas_son_brut")
             elif recs[rec_i][2] is not None and key in ("\x1b[D", "n", "N", "v", "V", "c", "C"):
                 text = dire("journal.releve_non_notable")
             elif key in ("\x1b[C", "\x1b[D"):
-                player.stop()
+                couper()  # le son s'arrete d'abord : la touche s'entend tout de suite
                 stamp, path, spoken = recs[rec_i]
                 if key == "\x1b[C":
                     text = _keep(stamp, path, spoken, category)
                 else:
                     fiche = propositions.a_fiche(path)
                     rendu = propositions.rendu_courant(path)
-                    suite = propositions.rejeter(path)
-                    if suite:
+                    reste = propositions.rejeter(path)
+                    if reste:
                         # D'autres juges ont un rendu : on le lit, la prise reste.
-                        voix.say_blocking(suite)
-                        text = None
-                        play(rec_i)
+                        play(rec_i, reste)
                     else:
                         if not fiche:
                             propositions.noter_rejet_simple(path)
@@ -665,24 +703,21 @@ def run(key_source, say, out, category="radio"):
                             # Le suivant prend la place du rejete : on le joue tout de
                             # suite, sinon fleche bas le sauterait.
                             rec_i = min(rec_i, len(recs) - 1)
-                            voix.say_blocking(text)
+                            play(rec_i, text)
                             text = None
-                            play(rec_i)
             elif key in ("j", "J"):
                 annonce = propositions.avancer(recs[rec_i][1])
                 if not annonce:
                     text = dire("journal.une_seule")
                 else:
-                    player.stop()
-                    voix.say_blocking(annonce)
-                    play(rec_i)
+                    play(rec_i, annonce)
             elif key in ("v", "V", "c", "C"):
                 # La lecture continue : on valide sans interrompre l'ecoute ;
                 # C : bonne prise mais coupee trop tot (2026-10-14).
                 stamp, path, _ = recs[rec_i]
                 text = notation.validate(path, stamp, cut=key in ("c", "C"))
             elif key in ("n", "N"):
-                player.stop()
+                couper()
                 stamp, path, _ = recs[rec_i]
                 text = notation.rate(key_source, say, out, path, stamp)
             elif key == "\x12" or (key in ("r", "R") and ctrl_held()):
@@ -704,6 +739,7 @@ def run(key_source, say, out, category="radio"):
                 out(f"[{text}]\n")
                 say(text)
     finally:
+        couper()
         player.close()
         _journal_opened(False)
     return dire("journal.ferme", nom=name)

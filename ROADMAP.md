@@ -6994,3 +6994,19 @@ Réserve notée : si un jour le Pi n'est pas installé dans la ville choisie dan
 les réglages, les impacts d'un capteur local restent relatifs à l'emplacement
 physique du Pi, pas à la ville de référence. Cas de bord (le Pi est au domicile
 = ville de référence) ; à garder en tête si la config diverge.
+
+## 2026-11-07 : journal fluide, annonces garanties, archives par jour
+
+- Annonce d'une prise : si Microsoft lâche et que le secours est espeak, le calcul
+  ne rendait rien (4 prises sur 23 mesurées n'avaient que les carillons). Il y a
+  maintenant un dernier recours (`annonce_morceaux.Prepared`).
+- Journal : phrase, annonce du rendu et son partent dans un fil, toute touche de
+  navigation les annule. Ignorer un rendu ne fige plus le clavier.
+- `lib/decodage.py` : mpg123 puis sox au lieu de ffmpeg (0,01 s contre 0,45 s et
+  plus avant le premier son) ; ffmpeg reste en secours. Sortie du journal cadencée.
+- « Captation ajoutée au journal » : rien si le journal est fermé, une fois par
+  minute au plus, le scanner n'attend plus.
+- Archives : un seul dossier par jour, tous journaux confondus
+  (`storage/radio/<jour>`, `<mois>/<jour>`, `<année>/<mois>/<jour>`), remis à leur
+  place par `journaux.ranger_archives()` au premier archivage ou à l'ouverture des
+  archives. Flèche droite garde le rendu entendu.

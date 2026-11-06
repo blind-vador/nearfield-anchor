@@ -79,7 +79,7 @@ touche tapee est dite a voix haute (espeak), et chaque reponse aussi.
 | `veilles.py` | Arrêt / reprise / relance des veilles, aiguillé avant la reconnaissance normale |
 | `notation.py` | Touche N du journal : grille de 11 critères (SINPO, P.835, NISQA, erreurs de VAD) |
 | `bilan.py` | Confronte notes et mesures du système, propose des réglages par bande |
-| `archives.py` | Écoute des extraits gardés (storage/radio), lecture seule, volume réglable |
+| `archives.py` | Écoute des extraits gardés (storage/radio, un dossier par jour, puis par mois et par année), lecture seule, volume réglable |
 | `journal.py` | Dialogue d'écoute et de tri des enregistrements, sortie son unique |
 | `keys.py` | Noms parles des touches ; mode reperage (evdev pour Maj/Ctrl/Alt...) |
 | `voix.py` | espeak interruptible ; reponses sous le verrou audio partage |
@@ -92,7 +92,7 @@ photo de la webcam de l'imprimante décrite par Gemini, rien n'est gardé),
 par étapes ; retaper la commande donne l'avancement), `bilan` (notes radio par bande, propositions de réglages sans rien appliquer),
 `archives` (extraits gardés : Tab = jour, haut/bas = écouter, gauche/droite = volume
 temporaire, rien n'est supprimé), `journal` (enregistrements radio : Tab/Maj+Tab = jour, haut/bas = écouter,
-droite = garder dans storage/radio sous sa date, gauche = rejeter comme
+droite = garder le rendu entendu dans le dossier du jour de storage/radio, gauche = rejeter comme
 parasite, N = noter), `veilles` / `arrête` / `reprends` / `redémarre` + nom de veille ("arrête radio",
 "reprends toutes les veilles" : arrêt persistant après redémarrage, reprise,
 relance ; "veilles" ou "arrête" seul = liste avec l'état), `manuel` (balayage suspendu, radio en direct : flèches haut/bas = plage,

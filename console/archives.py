@@ -1,6 +1,7 @@
 """Ecoute des extraits gardes (dialogue "archives"), une archive par journal
-(lib/journaux.py) : "archives" (radio, storage/radio/), "archives
-capteurs", "archives satellites", "archives donnees".
+(lib/journaux.py) : "archives" (radio), "archives capteurs", "archives
+satellites", "archives donnees". Sur le disque, un seul dossier par jour pour
+tous les journaux : voir lib/journaux.py.
 
 Meme navigation que le journal, mais en lecture seule :
   Tab / Maj+Tab            jour suivant / precedent
@@ -12,10 +13,10 @@ Meme navigation que le journal, mais en lecture seule :
   Entree                   rejoue          Echap : ferme
 Rien n'est jamais supprime ni deplace.
 
-Date d'un extrait : celle de son nom quand il a ete garde depuis le journal
-("mardi 29 septembre 2026 06h59m56s.mp3") ; sinon (extraits nommes a la
-main, "belfort en approche.mp3") la date du fichier -- et dans ce cas le
-titre est lu avant l'ecoute, puisque c'est lui qui dit de quoi il s'agit.
+Date d'un extrait : son dossier de jour, et l'heure de son nom quand il a ete
+garde depuis le journal ("06h59m56s.mp3"). Un extrait nomme a la main ("belfort
+en approche.mp3") : la date de son dossier, l'heure du fichier -- et son titre
+est lu avant l'ecoute, puisque c'est lui qui dit de quoi il s'agit.
 """
 import datetime
 import os
@@ -29,28 +30,26 @@ import espeak_out  # noqa: E402  (chemin ajoute par journal)
 import conseils  # noqa: E402
 import voix  # noqa: E402
 
-ARCHIVE_DIR = journal.KEEP_DIR
-AUDIO_EXT = (".mp3", ".wav", ".ogg", ".m4a", ".flac", ".txt")
-RE_DATED = re.compile(r"^(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche) (\d{1,2}) ([a-zéû]+) "
-                      r"(\d{4}) (\d{2})h(\d{2})m(\d{2})s\.")
+AUDIO_EXT = journaux.EXT_GARDEES
+RE_HEURE = re.compile(r"^(\d{2})h(\d{2})m(\d{2})s(?:[ .])")
 VOLUME_STEP = 0.2
 VOLUME_MIN, VOLUME_MAX = 0.2, 3.0
 
-def scan_archives(folder=ARCHIVE_DIR):
-    """{date: [(datetime, chemin, titre ou None), ...] tries}."""
+def scan_archives(category="radio"):
+    """{date: [(datetime, chemin, titre ou None), ...] tries} pour ce journal."""
     days = {}
-    for entry in os.scandir(folder):
-        if not entry.is_file() or not entry.name.lower().endswith(AUDIO_EXT):
-            continue
-        m = RE_DATED.match(entry.name)
-        date = journal._date(m[2], m[3], m[4]) if m else None
-        if date:
-            stamp = datetime.datetime.combine(date, datetime.time(int(m[5]), int(m[6]), int(m[7])))
-            title = None
-        else:
-            stamp = datetime.datetime.fromtimestamp(entry.stat().st_mtime)
-            title = os.path.splitext(entry.name)[0]
-        days.setdefault(stamp.date(), []).append((stamp, entry.path, title))
+    for date, dossier in journaux.jours_ranges():
+        for entry in os.scandir(dossier):
+            if (not entry.is_file() or not entry.name.lower().endswith(AUDIO_EXT)
+                    or journaux.journal_du_nom(entry.name) != category):
+                continue
+            h = RE_HEURE.match(entry.name)
+            if h:
+                heure, title = datetime.time(int(h[1]), int(h[2]), int(h[3])), None
+            else:
+                heure = datetime.datetime.fromtimestamp(entry.stat().st_mtime).time()
+                title = os.path.splitext(entry.name)[0]
+            days.setdefault(date, []).append((datetime.datetime.combine(date, heure), entry.path, title))
     for recs in days.values():
         recs.sort()
     return days
@@ -66,10 +65,10 @@ def _read_text(path):
 
 def run(key_source, say, out, category="radio"):
     name = journaux.NAMES[category]
-    folder = journaux.archive_dir(category)
     if not os.path.ismount("/media/nas/nd2"):
         return dire("archives.disque_absent")
-    days = scan_archives(folder) if os.path.isdir(folder) else {}
+    journaux.ranger_archives()
+    days = scan_archives(category)
     if not days:
         return dire("archives.vide", nom=name)
     title_ = dire("archives.titre", nom=name)

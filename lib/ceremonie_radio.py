@@ -6,8 +6,8 @@ cérémonie parlait : on le lit ensuite, rien n'est perdu.
 """
 
 import os
-import tempfile
 
+import tmp_ram
 from sound_paths import RADIO_SCANER_DIR
 
 INCOMING = os.path.join(RADIO_SCANER_DIR, "incoming.mp3")
@@ -80,10 +80,19 @@ def son_fin(freq_hz, bande_id=None, appel=None):
     return sonneries.resoudre(bande_id, "freq_over", appel) or FREQ_OVER
 
 
-def _fichier_annonce(phrase):
+def jeter(path):
+    """Efface une annonce de passage, jamais un fichier gardé."""
+    if tmp_ram.est_temporaire(path):
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _fichier_annonce(phrase, source=None):
     """Fichier WAV de l'annonce, pour une prise écrite sans être jouée."""
     import annonce_morceaux as morceaux
-    path = morceaux.prepare(morceaux.whole(phrase)).wait()
+    path = morceaux.prepare(morceaux.whole(phrase), source).wait()
     if path and os.path.exists(path) and os.path.getsize(path) > 0:
         return path
     print(f"[ceremonie] annonce sans fichier : {phrase}")
@@ -104,11 +113,8 @@ def poser_ouverture(session, bande, modulation, bande_id=None, appel=None, group
         if annonce:
             session.add_audio_file(annonce)
         session.add_audio_file(ouverture)
-    if annonce and annonce.startswith(tempfile.gettempdir()) and not garder_annonce:
-        try:
-            os.remove(annonce)
-        except OSError:
-            pass
+    if annonce and not garder_annonce:
+        jeter(annonce)
         annonce = None
     return annonce
 
@@ -163,11 +169,7 @@ def ouvrir(bande, modulation, label="radio_watch", jouer=True, bande_id=None, ap
         play_sound_effect(ouverture, label=label)
     finally:
         sound_player.enregistrer_journal = True
-        if annonce and annonce.startswith(tempfile.gettempdir()):
-            try:
-                os.remove(annonce)
-            except OSError:
-                pass
+        jeter(annonce)
 
 
 def fermer(freq_hz=None, label="radio_watch", bande_id=None, appel=None):

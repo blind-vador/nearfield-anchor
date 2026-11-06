@@ -2,6 +2,7 @@
 SD (2026-11-06). Ce qu'un programme oublie est efface au bout de 6 heures."""
 import os
 import shutil
+import tempfile
 import time
 
 DOSSIER = "/dev/shm/nearfield_tmp"
@@ -38,3 +39,8 @@ def dossier():
         return DOSSIER
     except OSError:
         return None
+
+
+def est_temporaire(chemin):
+    """Vrai pour un fichier de passage : en memoire ou dans le dossier temporaire."""
+    return bool(chemin) and chemin.startswith((DOSSIER + os.sep, tempfile.gettempdir() + os.sep))

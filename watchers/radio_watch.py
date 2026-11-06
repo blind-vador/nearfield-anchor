@@ -3516,8 +3516,7 @@ def _jouer_au_choix(freq, band_label, rendus):
                 annonce = ceremonie._fichier_annonce(ceremonie.modulation_dite(rendus[i][0]) + ".")
                 if annonce:
                     play_sound_effect(annonce, timeout_sec=30, label="radio_watch")
-                    if annonce.startswith(tempfile.gettempdir()):
-                        os.remove(annonce)
+                    ceremonie.jeter(annonce)
             except Exception as exc:
                 print(f"[radio_watch] annonce du juge suivant : {exc!r}")
     finally:

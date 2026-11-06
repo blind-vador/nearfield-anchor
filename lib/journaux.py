@@ -1,8 +1,16 @@
 """Journaux separes (demande utilisateur 2026-10-02 : "quand 40 voitures
 passent, on evite d'avoir plein d'enregistrements a parcourir pour trouver
 la radio") : chaque enregistrement du journal (server/radio_log/) est range
-dans un journal d'apres l'etiquette au debut de son nom, et chaque journal a
-ses propres archives (extraits gardes, fleche droite).
+dans un journal d'apres l'etiquette au debut de son nom.
+
+Archives (extraits gardes, fleche droite ; 2026-11-06) : un seul dossier par jour,
+tous journaux confondus, on archive assez peu pour ne pas compliquer.
+  storage/radio/lundi_6_octobre/                 mois en cours
+  storage/radio/septembre/lundi_11_septembre/    autre mois de l'annee
+  storage/radio/2025/septembre/lundi_11_septembre/  autre annee
+Dans le dossier : <heure>.mp3, suivi du decodeur pour un rendu annexe et du
+journal s'il n'est pas radio ("20h57m44s messages.mp3"). Un titre choisi a la main
+garde son nom. Les dossiers suivent le calendrier au prochain rangement.
 
   radio       voix captees par le scanner (bandes, canaux, aviation,
               numerique) : tout ce qui n'est pas dans les autres
@@ -26,9 +34,22 @@ ses propres archives (extraits gardes, fleche droite).
 La veille terrain (sites militants, Mastodon, Telegram) va dans "donnees"
 (2026-10-19 : elle s'entassait dans le journal radio).
 """
+import datetime
 import os
+import re
 
 KEEP_DIR = "/media/nas/nd2/storage/radio"
+JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
+MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+        "septembre", "octobre", "novembre", "décembre"]
+_MOIS_IDX = {m: i + 1 for i, m in enumerate(MOIS)}
+_MOIS_IDX.update({"fevrier": 2, "aout": 8, "decembre": 12})
+_NOM_JOUR = "(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)"
+RE_DOSSIER_JOUR = re.compile("^" + _NOM_JOUR + r"_(\d{1,2})_([a-zéû]+)$")
+RE_ANCIEN_NOM = re.compile("^" + _NOM_JOUR + r" (\d{1,2}) ([a-zéû]+) (\d{4}) (\d{2}h\d{2}m\d{2}s)(\..+)$")
+RE_ANNEE = re.compile(r"^\d{4}$")
+ANNEES_MAX = 15   # un jour sans annee : on remonte jusqu'a son nom de jour exact
+EXT_GARDEES = (".mp3", ".wav", ".ogg", ".m4a", ".flac", ".txt")
 ORDER = ["alarmes", "radio", "messages", "donnees", "meteo", "capteurs", "satellites", "plantes", "transports"]
 NAMES = {"alarmes": "alarmes", "radio": "radio", "messages": "messages", "donnees": "données", "meteo": "météo", "capteurs": "capteurs",
          "satellites": "satellites", "plantes": "plantes", "transports": "transports"}
@@ -76,7 +97,177 @@ def from_words(normalized_text):
     return "radio"
 
 
-def archive_dir(category):
-    """Extraits gardes : la radio garde son dossier d'origine, les autres
-    journaux ont chacun le leur."""
-    return KEEP_DIR if category == "radio" else os.path.join(KEEP_DIR, "archives", category)
+def date_de(jour, mois, annee):
+    numero = _MOIS_IDX.get(mois)
+    try:
+        return datetime.date(int(annee), numero, int(jour)) if numero else None
+    except ValueError:
+        return None
+
+
+def nom_jour(date):
+    return f"{JOURS[date.weekday()]}_{date.day}_{MOIS[date.month - 1]}"
+
+
+def nom_heure(stamp):
+    return f"{stamp.hour:02d}h{stamp.minute:02d}m{stamp.second:02d}s"
+
+
+def nom_garde(stamp, category, detail=""):
+    """Nom sans extension dans le dossier du jour."""
+    parties = [nom_heure(stamp), detail.replace("/", "-")]
+    if category != "radio":
+        parties.append(category)
+    return " ".join(p for p in parties if p)
+
+
+def journal_du_nom(nom):
+    """Journal d'un extrait range : le dernier mot de son nom, radio sinon."""
+    mots = os.path.splitext(nom)[0].split()
+    return mots[-1] if len(mots) >= 2 and mots[-1] in NAMES else "radio"
+
+
+def dossier_du_jour(date, ref=None):
+    """Ou range ce jour, vu d'aujourd'hui."""
+    ref = ref or datetime.date.today()
+    jour = nom_jour(date)
+    if date.year != ref.year:
+        return os.path.join(KEEP_DIR, str(date.year), MOIS[date.month - 1], jour)
+    if date.month != ref.month:
+        return os.path.join(KEEP_DIR, MOIS[date.month - 1], jour)
+    return os.path.join(KEEP_DIR, jour)
+
+
+def date_du_dossier(nom, annee=None, ref=None):
+    """Date d'un dossier de jour. Hors d'un dossier d'annee : la plus recente
+    qui tombe bien ce jour de la semaine, sans depasser aujourd'hui."""
+    m = RE_DOSSIER_JOUR.match(nom)
+    if not m:
+        return None
+    if annee is not None:
+        return date_de(m[2], m[3], annee)
+    ref = ref or datetime.date.today()
+    for an in range(ref.year, ref.year - ANNEES_MAX, -1):
+        date = date_de(m[2], m[3], an)
+        if date and date <= ref and JOURS[date.weekday()] == m[1]:
+            return date
+    return date_de(m[2], m[3], ref.year)
+
+
+def _sous_dossiers(chemin):
+    try:
+        return [e for e in os.scandir(chemin) if e.is_dir()]
+    except OSError:
+        return []
+
+
+def jours_ranges(ref=None):
+    """[(date, chemin)] de tous les dossiers de jour, quel que soit leur niveau.
+    Seuls les noms de jour, de mois et d'annee comptent : lora, satellites... restent a part."""
+    jours = []
+
+    def mois_de(chemin, annee):
+        for jour in _sous_dossiers(chemin):
+            date = date_du_dossier(jour.name, annee, ref)
+            if date:
+                jours.append((date, jour.path))
+
+    for e in _sous_dossiers(KEEP_DIR):
+        date = date_du_dossier(e.name, None, ref)
+        if date:
+            jours.append((date, e.path))
+        elif e.name in MOIS:
+            mois_de(e.path, None)
+        elif RE_ANNEE.match(e.name):
+            for m in _sous_dossiers(e.path):
+                if m.name in MOIS:
+                    mois_de(m.path, int(e.name))
+    return jours
+
+
+def _libre(chemin):
+    """Ne remplace jamais un fichier deja range."""
+    if not os.path.exists(chemin):
+        return chemin
+    base, ext = os.path.splitext(chemin)
+    n = 2
+    while os.path.exists(f"{base} ({n}){ext}"):
+        n += 1
+    return f"{base} ({n}){ext}"
+
+
+def _ranger_vrac(entree, category, ref):
+    """Fichier pose directement a la racine, ou ancien archives/<journal>/."""
+    m = RE_ANCIEN_NOM.match(entree.name)
+    date = date_de(m[2], m[3], m[4]) if m else None
+    if date:
+        nom = m[5] if category == "radio" else f"{m[5]} {category}"
+        nom += m[6]
+    else:  # titre choisi a la main : il reste, la date du fichier donne le jour
+        date = datetime.date.fromtimestamp(entree.stat().st_mtime)
+        nom = entree.name
+    dossier = dossier_du_jour(date, ref)
+    os.makedirs(dossier, exist_ok=True)
+    os.rename(entree.path, _libre(os.path.join(dossier, nom)))
+
+
+def _deplacer_jour(source, dest):
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    if not os.path.exists(dest):
+        os.rename(source, dest)
+        return
+    for e in os.scandir(source):
+        os.rename(e.path, _libre(os.path.join(dest, e.name)))
+    os.rmdir(source)
+
+
+def _oter_si_vide(chemin):
+    try:
+        os.rmdir(chemin)
+    except OSError:
+        pass
+
+
+def ranger_archives(ref=None):
+    """Remet chaque jour a sa place selon le calendrier et range ce qui traine en
+    vrac. Sans effet si tout est deja en place, ne remplace ni n'efface aucun
+    fichier. Rend le nombre d'elements deplaces."""
+    ref = ref or datetime.date.today()
+    deplaces = 0
+    anciens = os.path.join(KEEP_DIR, "archives")
+    lieux = [(KEEP_DIR, "radio")] + [(os.path.join(anciens, c), c) for c in ORDER]
+    for dossier, category in lieux:
+        try:
+            entrees = list(os.scandir(dossier))
+        except OSError:
+            continue
+        for entree in entrees:
+            try:
+                if (entree.is_file() and not entree.name.startswith(".")
+                        and entree.name.lower().endswith(EXT_GARDEES)):
+                    _ranger_vrac(entree, category, ref)
+                    deplaces += 1
+            except OSError as exc:
+                print(f"[journaux] {entree.name} non range : {exc}")
+    for date, chemin in jours_ranges(ref):
+        dest = dossier_du_jour(date, ref)
+        if os.path.normpath(chemin) == os.path.normpath(dest):
+            continue
+        try:
+            _deplacer_jour(chemin, dest)
+            deplaces += 1
+        except OSError as exc:
+            print(f"[journaux] {chemin} non range : {exc}")
+    for e in _sous_dossiers(KEEP_DIR):   # mois et annees restes vides
+        if RE_ANNEE.match(e.name):
+            for m in _sous_dossiers(e.path):
+                if m.name in MOIS:
+                    _oter_si_vide(m.path)
+        if RE_ANNEE.match(e.name) or e.name in MOIS:
+            _oter_si_vide(e.path)
+    for c in ORDER:
+        _oter_si_vide(os.path.join(anciens, c))
+    _oter_si_vide(anciens)
+    if deplaces:
+        print(f"[journaux] archives : {deplaces} elements ranges")
+    return deplaces

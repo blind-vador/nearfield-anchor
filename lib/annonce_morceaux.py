@@ -37,6 +37,7 @@ from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 
 import atomes_parole
+import decodage
 import piper_out
 import speak
 from phrases import texte
@@ -52,6 +53,7 @@ _SERRE = {atomes_parole.COLLE_NOMBRE, atomes_parole.COLLE_SUITE, atomes_parole.C
 PAUSE_MOT = 0.02
 MOT_COURT = 3   # "Le", "et", "de" : jamais seuls
 PROSE_CACHE_MAX = 48   # au-dela, un bout de phrase unique n'est pas garde
+PREFIXE_DIRECT = "direct_"   # voix de dernier recours : jamais gardee
 _edge_down_until = [0.0]
 _lock = threading.Lock()
 
@@ -371,12 +373,7 @@ def ensure(parts, voice):
 
 
 def _lire_pcm(path):
-    try:
-        raw = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", path, "-f", "s16le",
-                              "-ac", "1", "-ar", str(RATE), "-"], capture_output=True, timeout=30).stdout
-    except (OSError, subprocess.TimeoutExpired):
-        return np.zeros(0, dtype=np.int16)
-    return np.frombuffer(raw, dtype=np.int16)
+    return np.frombuffer(decodage.pcm(path, RATE), dtype=np.int16)
 
 
 def rogner_pcm(audio, rate=RATE):
@@ -781,7 +778,7 @@ def _phrase_directe(parts, voice):
     text = spoken(parts)
     if not text:
         return None
-    fd, path = tempfile.mkstemp(suffix=".wav", prefix="direct_")
+    fd, path = tempfile.mkstemp(suffix=".wav", prefix=PREFIXE_DIRECT, dir=tmp_ram.dossier())
     os.close(fd)
     ok = False
     voix = (voice or {}).get("voix") or ""
@@ -841,6 +838,15 @@ class Prepared:
                     self.path = assemble(self.parts, self.voice)
         except Exception as exc:
             print(f"[morceaux] preparation : {exc!r}")
+        try:
+            # Microsoft lache et le secours n'est pas Piper : ce cas ne rendait
+            # rien, et la prise n'avait que ses carillons (mesure du 2026-11-06).
+            if self.path is None:
+                self.path = _phrase_directe(self.parts, self.voice)
+                if self.path:
+                    print(f"[morceaux] annonce en voix de dernier recours : {spoken(self.parts)}")
+        except Exception as exc:
+            print(f"[morceaux] dernier recours : {exc!r}")
         finally:
             self._done.set()
 
