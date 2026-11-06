@@ -130,6 +130,106 @@ HALL_CHAIN = [
 ]
 
 
+# --- Rendu en memoire (2026-11-06) --------------------------------------------------
+# Decodage, sox et salle passent par des tuyaux et des tableaux : plus aucun
+# fichier pour un son de gare (19 Mo a chaque annonce sur la carte SD). La chaine
+# par fichiers (reverb_gare) ne sert plus que de secours.
+
+def _decoder_pcm(src):
+    return subprocess.run(
+        ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", src,
+         "-f", "s16le", "-ar", str(RATE), "-ac", "2", "-"],
+        stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, check=True).stdout
+
+
+def _wav_pcm(octets):
+    """(canaux, taux, donnees) d'un wav recu par un tuyau : sox n'a pas pu y ecrire
+    la vraie longueur, les donnees vont donc jusqu'a la fin si elle est fausse."""
+    pos, canaux, taux = 12, None, None
+    while pos + 8 <= len(octets):
+        nom, taille = octets[pos:pos + 4], int.from_bytes(octets[pos + 4:pos + 8], "little")
+        if nom == b"fmt ":
+            canaux = int.from_bytes(octets[pos + 10:pos + 12], "little")
+            taux = int.from_bytes(octets[pos + 12:pos + 16], "little")
+        elif nom == b"data":
+            debut = pos + 8
+            fin = debut + taille if 0 < taille and debut + taille <= len(octets) else len(octets)
+            return canaux, taux, octets[debut:fin]
+        pos += 8 + taille + (taille & 1)
+    raise RuntimeError("wav sans donnees")
+
+
+def _sox_pcm(pcm, effets, taux=None):
+    """PCM stereo -> sox -> (canaux, taux, donnees), sans fichier sauf le tampon
+    interne de sox pour "gain -n", en memoire vive."""
+    import tmp_ram
+    r = subprocess.run(
+        ["sox", "--temp", tmp_ram.dossier() or tempfile.gettempdir(),
+         "-t", "raw", "-r", str(RATE), "-e", "signed", "-b", "16", "-c", "2", "-",
+         "-t", "wav"] + (["-r", str(taux)] if taux else []) + ["-"] + effets,
+        input=pcm, capture_output=True)
+    if r.returncode != 0:
+        raise RuntimeError("sox: " + r.stderr.decode(errors="replace").strip()[-200:])
+    return _wav_pcm(r.stdout)
+
+
+def _rendu_pcm(src, profile):
+    dec = _decoder_pcm(src)
+    if profile == "hall":
+        canaux, taux, sortie = _sox_pcm(dec, HALL_CHAIN)
+    else:
+        import numpy as np
+        import reverb_quai
+        couleur = _JINGLE_DRY if profile == "pa_jingle" else _PA_DRY
+        if couleur[-3:] == ["pad", "0", PAD_SEC]:
+            couleur = couleur[:-3]
+        if profile == "pa_voix":
+            couleur = couleur + _FINAL["pa_voix"][:6]
+        ch, fs, brut = _sox_pcm(dec, couleur, reverb_quai.FS)
+        if fs != reverb_quai.FS:
+            raise RuntimeError(f"taux {fs} inattendu")
+        sec = np.frombuffer(brut[: len(brut) - len(brut) % 2], dtype=np.int16).astype(np.float32) / 32768
+        sec = sec[: len(sec) - len(sec) % ch].reshape(-1, ch).mean(axis=1)
+        canaux, taux, sortie = 2, reverb_quai.FS, reverb_quai.pcm_stereo(reverb_quai.traiter(sec, profile))
+    if canaux != 2 or taux != RATE or not sortie:
+        raise RuntimeError(f"sortie inattendue ({canaux} canaux, {taux} Hz, {len(sortie)} octets)")
+    return sortie
+
+
+def _jingle_pcm(src):
+    """Le jingle traite reste garde dans CACHE_DIR : calcule une fois, puis relu."""
+    import hashlib
+    import wave
+    cle = hashlib.md5(f"{src}|{os.path.getmtime(src)}|pa_jingle".encode()).hexdigest()
+    garde = os.path.join(CACHE_DIR, cle + ".wav")
+    try:
+        with wave.open(garde) as w:
+            if w.getnchannels() == 2 and w.getframerate() == RATE and w.getsampwidth() == 2:
+                return w.readframes(w.getnframes())
+    except (OSError, EOFError, wave.Error):
+        pass
+    pcm = _rendu_pcm(src, "pa_jingle")
+    os.makedirs(CACHE_DIR, exist_ok=True)
+    tmp = f"{garde}.{os.getpid()}.tmp"
+    with wave.open(tmp, "wb") as w:
+        w.setnchannels(2)
+        w.setsampwidth(2)
+        w.setframerate(RATE)
+        w.writeframes(pcm)
+    os.replace(tmp, garde)
+    return pcm
+
+
+def pcm_gare(src, profile="pa"):
+    """Le son traite facon gare, en octets (stereo, 16 bits, RATE) ; None si l'effet
+    echoue : l'appelant reprend reverb_gare, puis le son sec."""
+    try:
+        return _jingle_pcm(src) if profile == "pa_jingle" else _rendu_pcm(src, profile)
+    except Exception as exc:
+        print(f"[audio_effets] rendu en memoire indisponible ({os.path.basename(src)}): {exc}")
+        return None
+
+
 def _decode_to_wav(src):
     """Decode src (tout format) en wav stereo via ffmpeg -- sox 14.4.2 ne lit
     pas le mp3 sans libsox-fmt-mp3, ffmpeg si. Retourne le chemin du wav."""

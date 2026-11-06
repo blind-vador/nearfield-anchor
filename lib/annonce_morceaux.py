@@ -28,6 +28,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import tmp_ram
 import threading
 import time
 import wave
@@ -282,7 +283,7 @@ class Chantier:
 
     def __init__(self, parts, voice):
         self.voice = voice
-        self.tmpdir = tempfile.mkdtemp(prefix="morceaux_")
+        self.tmpdir = tempfile.mkdtemp(prefix="morceaux_", dir=tmp_ram.dossier())
         self._files, self._events = {}, {}
         self._lock = threading.Lock()
         jobs = []
@@ -484,7 +485,7 @@ def assemble(parts, voice):
 
 
 def _ecrire_wav(audio):
-    fd, out = tempfile.mkstemp(suffix=".wav", prefix="annonce_")
+    fd, out = tempfile.mkstemp(suffix=".wav", prefix="annonce_", dir=tmp_ram.dossier())
     os.close(fd)
     with wave.open(out, "wb") as w:
         w.setnchannels(1)
@@ -756,7 +757,7 @@ def _demande_en_cache(parts, demande):
 
 
 def _copie_temp(chemin):
-    fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="phrase_")
+    fd, tmp = tempfile.mkstemp(suffix=".wav", prefix="phrase_", dir=tmp_ram.dossier())
     os.close(fd)
     shutil.copyfile(chemin, tmp)
     return tmp
@@ -876,17 +877,19 @@ def say(lead_sound, parts, label="annonce", reverb=False, prepared=None, source=
         return
     print(text)
     import sound_player
-    voix = path
+    voix, pcm = path, None
     if reverb:
         # Effet de quai calcule AVANT le jingle (2026-10-22) : avant, il l'etait
         # apres sa derniere note (trois passes de sox), d'ou un long blanc. Voix
         # compressee et normalisee ("pa_voix"), jingle plus "sono" ("pa_jingle").
         import audio_effets
-        voix = audio_effets.reverb_gare(path, "pa_voix") or path
+        pcm = audio_effets.pcm_gare(path, "pa_voix")
+        if pcm is None:
+            voix = audio_effets.reverb_gare(path, "pa_voix") or path
     try:
         # La voix part juste apres la derniere note du jingle, sur sa traine (2026-10-19).
         sound_player.play_lead_then(lead_sound, lambda: play_sound_effect(voix, timeout_sec=120, label=label,
-                                                                          reverb=False),
+                                                                          reverb=False, pcm=pcm),
                                     label=label, reverb="pa_jingle" if reverb else False)
     finally:
         for p in {path, voix}:

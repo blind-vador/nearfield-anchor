@@ -7,6 +7,7 @@ par "usb camera on".
 import chemins
 import json
 import os
+import subprocess
 import time
 
 FICHIER = chemins.base("usb_eteints.json")
@@ -38,3 +39,21 @@ def marquer(role, eteint):
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(data, f)
     os.replace(tmp, FICHIER)
+    if role == "camera":
+        _webcamd(eteint)
+
+
+def _webcamd(eteint):
+    """Camera eteinte : webcamd arrete et desactive, sinon il la cherche toutes les
+    deux minutes, redemarrage compris. Rallumee : il repart."""
+    try:
+        subprocess.run(["sudo", "-n", "systemctl", "disable" if eteint else "enable", "--now", "webcamd"],
+                       capture_output=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        print(f"[usb_eteints] webcamd : {exc!r}")
+
+
+def appliquer():
+    """Au demarrage de la veille USB : une camera deja marquee eteinte."""
+    if "camera" in lire():
+        _webcamd(True)

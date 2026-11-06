@@ -257,7 +257,12 @@ def tirage(mode, ms_ok=None):
     return []
 
 
-FOURNISSEURS = ("microsoft", "mac", "google", "piper", "mbrola")
+# Le Mac compte plusieurs familles de voix, chacune avec son score (2026-11-06).
+MAC_FAMILLES = ("mac_eloquence", "mac_nuance", "mac_premium")
+FOURNISSEURS = ("microsoft",) + MAC_FAMILLES + ("google", "piper", "mbrola")
+# Le Mac ne donne que des noms (say -v ?). Liste verifiee sur les identifiants
+# com.apple.eloquence.* ; le reste vient de com.apple.voice.compact ou .enhanced.
+_MAC_ELOQUENCE = {"Eddy", "Flo", "Grandma", "Grandpa", "Jacques", "Reed", "Rocko", "Sandy", "Shelley"}
 NIVEAUX = ("desactive", "faible", "normale", "appreciees")
 # Désactivé : ignoré. Faible, normale, appréciées : parts du tirage.
 POIDS = {"desactive": 0, "faible": 1, "normale": 3, "appreciees": 8}
@@ -265,14 +270,21 @@ _PREFS = "_fournisseurs"
 _PREFS_MAC = "_voix_mac"   # niveau de chaque voix du Mac, a l'interieur du poids du fournisseur (2026-11-06)
 
 
+def famille_mac(nom):
+    """Famille d'une voix du Mac, d'apres son nom."""
+    if nom.split(" (", 1)[0] in _MAC_ELOQUENCE:
+        return "mac_eloquence"
+    return "mac_premium" if "(Premium)" in nom else "mac_nuance"
+
+
 def fournisseur(voix):
-    """Famille d'une voix tirée : microsoft, mac, google, piper ou mbrola."""
+    """Famille d'une voix tirée : microsoft, une famille du Mac, google, piper ou mbrola."""
     if (voix or "").startswith("piper:mbrola#"):
         return "mbrola"
     if (voix or "").startswith("piper:google#"):
         return "google"
     if (voix or "").startswith("piper:mac#"):
-        return "mac"
+        return famille_mac(voix.split("#", 1)[1])
     if (voix or "").startswith("piper:"):
         return "piper"
     if voix == ESPEAK:
@@ -298,9 +310,12 @@ def phrase_entiere(choix):
 
 
 def preferences():
-    """Niveau de chaque fournisseur. Défaut : normale."""
+    """Niveau de chaque fournisseur. Défaut : normale. Une famille du Mac sans
+    réglage reprend l'ancien niveau unique du Mac."""
     data = _tout().get(_PREFS) or {}
-    return {nom: data[nom] if data.get(nom) in NIVEAUX else "normale" for nom in FOURNISSEURS}
+    ancien_mac = data.get("mac") if data.get("mac") in NIVEAUX else "normale"
+    return {nom: data[nom] if data.get(nom) in NIVEAUX else (ancien_mac if nom in MAC_FAMILLES else "normale")
+            for nom in FOURNISSEURS}
 
 
 def enregistrer_preferences(valeurs):
@@ -324,7 +339,9 @@ def niveaux_mac(noms=None):
 def enregistrer_niveaux_mac(valeurs):
     import reglages
     data = dict(reglages.get("voix_sources") or {})
-    data[_PREFS_MAC] = {nom: niveau for nom, niveau in valeurs.items() if niveau in NIVEAUX}
+    # Le menu ne montre qu'une famille a la fois : les autres voix gardent leur niveau.
+    data[_PREFS_MAC] = {**(data.get(_PREFS_MAC) or {}),
+                        **{nom: niveau for nom, niveau in valeurs.items() if niveau in NIVEAUX}}
     ok = reglages.save("voix_sources", data)
     _cache["data"] = None
     return ok
@@ -332,7 +349,7 @@ def enregistrer_niveaux_mac(valeurs):
 
 def _poids_voix(voix):
     """Part d'une voix dans son fournisseur : seul le Mac se regle voix par voix."""
-    if fournisseur(voix) != "mac":
+    if fournisseur(voix) not in MAC_FAMILLES:
         return POIDS["normale"]
     nom = voix.split("#", 1)[1]
     return POIDS.get(niveaux_mac([nom])[nom], POIDS["normale"])

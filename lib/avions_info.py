@@ -29,6 +29,8 @@ TIMEOUT = 8
 GEMINI_PER_DAY = 40
 
 _cache = None
+SAUVEGARDE_SEC = 900  # 1,3 Mo reecrits a chaque nouvel avion : au plus tous les quarts d'heure
+_sauve_a = 0.0
 
 
 def _load():
@@ -43,6 +45,10 @@ def _load():
 
 
 def _save():
+    global _sauve_a
+    if time.time() - _sauve_a < SAUVEGARDE_SEC:
+        return
+    _sauve_a = time.time()
     try:
         tmp = CACHE_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:

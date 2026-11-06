@@ -196,11 +196,11 @@ def _regler(source, key_source, say, out):
     return dire("voix.source_enregistree", source=nom, resume=voix_sources.resume(source))
 
 
-def _voix_du_mac(key_source, say, out):
-    """Niveau de chaque voix du Mac. Haut et bas parcourent, gauche et droite
-    changent le niveau, Entree fait entendre la voix, Echap enregistre."""
+def _voix_du_mac(famille, key_source, say, out):
+    """Niveau de chaque voix d'une famille du Mac. Haut et bas parcourent, gauche
+    et droite changent le niveau, Entree fait entendre la voix, Echap enregistre."""
     import piper_out
-    noms = piper_out.voix_mac_connues()
+    noms = [n for n in piper_out.voix_mac_connues() if voix_sources.famille_mac(n) == famille]
     if not noms:
         return dire("voix.mac_aucune")
     niveaux = voix_sources.NIVEAUX
@@ -214,7 +214,7 @@ def _voix_du_mac(key_source, say, out):
         return dire("voix.preferences_ligne", fournisseur=nom(n), niveau=dire(f"voix.niveau.{valeurs[noms[n]]}"))
 
     consigne = dire("voix.mac_consigne")
-    intro = conseils.intro("voix_du_mac", dire("voix.mac_titre"), consigne)
+    intro = conseils.intro("voix_du_mac", dire("voix.mac_titre", famille=dire(f"voix.fournisseur.{famille}")), consigne)
     out(intro + "\n")
     say(f"{intro} {ligne(0)}")
     for key in key_source:
@@ -245,7 +245,9 @@ def _voix_du_mac(key_source, say, out):
 def _preferences(key_source, say, out):
     """Fournisseurs du tirage aléatoire. Haut et bas parcourent, gauche et
     droite changent le niveau. Échap enregistre."""
-    noms = list(voix_sources.FOURNISSEURS)
+    import piper_out
+    presentes = {voix_sources.famille_mac(n) for n in piper_out.voix_mac_connues()}
+    noms = [n for n in voix_sources.FOURNISSEURS if n not in voix_sources.MAC_FAMILLES or n in presentes]
     niveaux = voix_sources.NIVEAUX
     valeurs = voix_sources.preferences()
     i = 0
@@ -254,11 +256,12 @@ def _preferences(key_source, say, out):
         texte = dire("voix.preferences_ligne",
                      fournisseur=dire(f"voix.fournisseur.{noms[n]}"),
                      niveau=dire(f"voix.niveau.{valeurs[noms[n]]}"))
-        return f"{texte} {dire('voix.mac_entree')}" if noms[n] == "mac" else texte
+        return f"{texte} {dire('voix.mac_entree')}" if noms[n] in voix_sources.MAC_FAMILLES else texte
 
     consigne = dire("voix.preferences_consigne")
     intro = conseils.intro("voix_preferences", dire("voix.preferences_aleatoires"), consigne)
-    textes = [intro, consigne, dire("voix.niveau.deja"), ligne(noms.index("mac"))]
+    textes = [intro, consigne, dire("voix.niveau.deja")]
+    textes += [ligne(n) for n in range(len(noms)) if noms[n] in voix_sources.MAC_FAMILLES]
     for n, nom in enumerate(noms):
         for niveau in niveaux:
             valeurs_ligne = dict(valeurs)
@@ -274,8 +277,8 @@ def _preferences(key_source, say, out):
             if not voix_sources.enregistrer_preferences(valeurs):
                 return dire("voix.disque_nas_inaccessible_voix")
             return dire("voix.preferences_fermees")
-        if key in ENTER and noms[i] == "mac":
-            text = f"{_voix_du_mac(key_source, say, out)} {ligne(i)}"
+        if key in ENTER and noms[i] in voix_sources.MAC_FAMILLES:
+            text = f"{_voix_du_mac(noms[i], key_source, say, out)} {ligne(i)}"
         elif key in (UP, DOWN):
             i = (i + (-1 if key == UP else 1)) % len(noms)
             text = ligne(i)

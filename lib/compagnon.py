@@ -233,6 +233,29 @@ def note_power(cid, power):
         update_card(cid, puissance=dict(power, recu=time.time()))
 
 
+ECRITURE_BATTEMENT_SEC = 60  # moins que PUISSANCE_FRAICHE_SEC, battement compris
+_battement_ecrit = {}
+
+
+def note_battement(cid, capacites, voix_mac, etat, puissance):
+    """Un battement : une seule ecriture, et au plus une par minute sauf changement
+    utile (2026-11-06 : trois ecritures synchrones par battement sur la carte SD)."""
+    now = time.time()
+    card = trusted().get(cid) or {}
+    fields = {"vu": now, "capacites": capacites, "voix_mac": voix_mac}
+    change = capacites != card.get("capacites") or voix_mac != card.get("voix_mac")
+    if isinstance(etat, dict) and "verrouille" in etat:
+        fields["etat"] = dict(etat, t=now)
+        if (card.get("etat") or {}).get("verrouille") != etat["verrouille"]:
+            fields["verrou_depuis"] = now
+            change = True
+    if isinstance(puissance, dict) and puissance.get("puissance"):
+        fields["puissance"] = dict(puissance, recu=now)
+    if change or now - _battement_ecrit.get(cid, 0) >= ECRITURE_BATTEMENT_SEC:
+        _battement_ecrit[cid] = now
+        update_card(cid, **fields)
+
+
 def free_share(c):
     """Part libre de la machine (0..1) d'apres sa derniere mesure ; None sans mesure."""
     p = c.get("puissance") or {}

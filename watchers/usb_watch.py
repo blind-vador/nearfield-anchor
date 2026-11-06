@@ -564,6 +564,7 @@ class Watch:
 
 def main():
     print("[usb_watch] demarrage de l'entretien des peripheriques USB")
+    usb_eteints.appliquer()
     watch = Watch()
     while True:
         try:

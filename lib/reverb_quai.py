@@ -123,7 +123,7 @@ def _lire(chemin):
 
 
 def _ecrire(chemin, stereo):
-    data = (np.clip(stereo.T, -1, 1) * 32767).astype(np.int16).tobytes()
+    data = pcm_stereo(stereo)
     with wave.open(chemin, "wb") as w:
         w.setnchannels(2)
         w.setsampwidth(2)
@@ -134,8 +134,17 @@ def _ecrire(chemin, stereo):
 def appliquer(direct_wav, sortie_wav, profil="pa"):
     """direct_wav : le son deja colore "haut-parleur" (sox, sans reverb), 44,1 kHz.
     Ecrit le direct + la salle dans sortie_wav (stereo 16 bits)."""
+    _ecrire(sortie_wav, traiter(_lire(direct_wav), profil))
+
+
+def pcm_stereo(stereo):
+    """Tableau (2, N) -> octets 16 bits entrelaces."""
+    return (np.clip(stereo.T, -1, 1) * 32767).astype(np.int16).tobytes()
+
+
+def traiter(sec, profil="pa"):
+    """sec : son mono deja colore, flottant, 44,1 kHz. Rend le direct + la salle (2, N)."""
     reglage = PROFILS.get(profil, PROFILS["pa"])
-    sec = _lire(direct_wav)
     ri = reponse_impulsionnelle()
     total = len(sec) + ri.shape[1]
     n = 1 << (total - 1).bit_length()
@@ -157,4 +166,4 @@ def appliquer(direct_wav, sortie_wav, profil="pa"):
     sortie *= gain
     fondu = int(0.05 * FS)
     sortie[:, -fondu:] *= np.linspace(1, 0, fondu)
-    _ecrire(sortie_wav, sortie)
+    return sortie

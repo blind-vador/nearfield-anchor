@@ -189,6 +189,11 @@ class _Bed:
                 ap.stdin.close()
             except OSError:
                 pass
+            for p in (ap, ff):  # sinon ils restent zombies jusqu'au segment suivant
+                try:
+                    p.wait(timeout=30)
+                except Exception:
+                    pass
 
     def _prune(self):
         """Recupere les segments termines (evite les zombies), garde les vivants."""

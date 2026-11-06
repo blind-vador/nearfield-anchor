@@ -261,9 +261,26 @@ def _mettre_a_revoir(wav, scores):
                 pass
 
 
+_revoir_vu = None  # etat des fichiers au dernier examen d'a_revoir qui n'a rien repris
+
+
+def _mtime(chemin):
+    try:
+        return os.path.getmtime(chemin)
+    except OSError:
+        return 0
+
+
 def _reprendre_a_revoir(scores):
     """Repasse en file un son d'a_revoir si la bande a appris, depuis, un meilleur
-    mode en tete : une vraie chance neuve de le decoder."""
+    mode en tete : une vraie chance neuve de le decoder. Rien de neuf dans les
+    scores ni dans le dossier : rien a examiner (2026-11-06 : 120 sons reexamines
+    toutes les 10 s, soit 17 % d'un coeur pour rien)."""
+    global _revoir_vu
+    import propositions
+    cle = (_mtime(SCORES_PATH), _mtime(propositions.SCORES), _mtime(A_REVOIR_DIR))
+    if cle == _revoir_vu:
+        return False
     for fiche_path in sorted(glob.glob(os.path.join(A_REVOIR_DIR, "*.json")), key=os.path.getmtime):
         wav = fiche_path[:-5] + ".wav"
         if not os.path.exists(wav):
@@ -283,6 +300,7 @@ def _reprendre_a_revoir(scores):
                     pass
             print(f"[juges] {os.path.basename(wav)} repris d'a_revoir (bande {fiche.get('band')} : {tops[0]} en tete)")
             return True
+    _revoir_vu = cle
     return False
 
 

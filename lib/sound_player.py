@@ -1,4 +1,5 @@
 import audioop
+import io
 import os
 import subprocess
 import threading
@@ -115,8 +116,25 @@ def play_lead_then(lead_path, then, label="sound_player", reverb=False, timeout_
         t.join(timeout_sec + 5)
 
 
+class _PcmMemoire:
+    """Remplace le decodeur quand le son est deja en memoire (effets de gare)."""
+    returncode = 0
+
+    def __init__(self, pcm):
+        self.stdout, self.stderr = io.BytesIO(pcm), io.BytesIO()
+
+    def poll(self):
+        return 0
+
+    def wait(self, timeout=None):
+        return 0
+
+    def kill(self):
+        pass
+
+
 def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, volume=1.0, on_start=None,
-                      canal=None, contenu=False, arreter=None):
+                      canal=None, contenu=False, arreter=None, pcm=None):
     """Joue un court effet sonore (mp3) sur le peripherique audio partage,
     de maniere bloquante. Module commun a radio_watch.py, adsb_watch.py et
     meteo_watch.py -- une seule implementation, evite la divergence entre
@@ -136,7 +154,10 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
     erreur et le flux manquait, prises "annonce + fin" sans rien entre).
 
     arreter (2026-11-06) : fonction relue pendant la lecture ; si elle rend vrai,
-    on s'arrete, ce son n'entre pas dans la prise et la fonction rend True."""
+    on s'arrete, ce son n'entre pas dans la prise et la fonction rend True.
+
+    pcm (2026-11-06) : le son deja traite, en memoire (audio_effets.pcm_gare), a
+    jouer a la place de path ; path reste la source gardee au journal."""
     try:  # evenement regle sur "rien" (commande "sons", lib/sons.py, 2026-10-23)
         import sons
         if sons.mode_chemin(path) == "rien":
@@ -155,16 +176,18 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
             session.add_audio_file(path, contenu=contenu)
         return
     reverb_tmp = None
-    if reverb:
+    if reverb and pcm is None:
         import audio_effets
         profile = "pa" if reverb is True else reverb
-        reverb_tmp = audio_effets.reverb_gare(path, profile)
+        pcm = audio_effets.pcm_gare(path, profile)
+        if pcm is None:
+            reverb_tmp = audio_effets.reverb_gare(path, profile)
     to_play = reverb_tmp or path  # repli sur le son sec si la reverb a echoue
     decoder = player = None
     garder = False
     interrompu = False
     try:
-        decoder = subprocess.Popen(
+        decoder = _PcmMemoire(pcm) if pcm is not None else subprocess.Popen(
             ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", to_play,
              "-f", "s16le", "-ac", str(EFFECT_CHANNELS), "-ar", str(EFFECT_RATE), "-"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)

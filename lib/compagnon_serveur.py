@@ -147,10 +147,8 @@ class _Handler(socketserver.StreamRequestHandler):
                     _save_presence()
                 kind = msg.get("type")
                 if kind == "battement":
-                    compagnon.update_card(cid, vu=time.time(), capacites=msg.get("capacites", []),
-                                          voix_mac=msg.get("voix_mac") or [])
-                    compagnon.note_state(cid, msg.get("etat"))
-                    compagnon.note_power(cid, msg.get("puissance"))
+                    compagnon.note_battement(cid, msg.get("capacites", []), msg.get("voix_mac") or [],
+                                             msg.get("etat"), msg.get("puissance"))
                 elif kind in ("son", "son_fin"):
                     file = _demandes_voix.get(msg.get("reponse_a"))
                     if file is not None:
