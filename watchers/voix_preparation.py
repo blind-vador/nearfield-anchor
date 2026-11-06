@@ -41,6 +41,7 @@ PAUSE_BETWEEN_SEC = 5
 KICK_FLAG = "/tmp/voix_preparation_maintenant"
 COMPAGNON_ATTENTE_SEC = 45 * 60   # au-dela, un travail confie sans resultat est repris par le Pi
 COMPAGNON_PAUSE_SEC = 60
+EXTERNES_MAX_SEC = 300   # voix d'ailleurs : la liste est refaite au plus toutes les 5 minutes
 MODELES_PARTAGES = "voix_piper"   # dans le dossier du pont, sur le NAS
 
 
@@ -305,12 +306,19 @@ def run_once():
     jobs = [j for j in jobs if not piper_out.virtuelle(j[0])]
     if externes:
         voice, rate = externes[0][0], externes[0][1]
-        lot = [(t, p) for v, r, t, p in externes if (v, r) == (voice, rate)][:LOT]
-        done = piper_out.batch(voice, lot, piper_out.length_scale(rate))
-        print(f"[voix_preparation] {done}/{len(lot)} sons {voice} ({rate}), voix d'ailleurs")
-        for t, chemin in lot:
-            if not os.path.exists(chemin):
-                _ECHECS_EXTERNES.add((voice, rate, t))
+        tous = [(t, p) for v, r, t, p in externes if (v, r) == (voice, rate)]
+        # Lots a la suite (2026-11-06) : refaire la liste apres chaque lot, c'est
+        # 57 000 fichiers verifies et 6 s de processeur tous les 25 sons.
+        debut = time.time()
+        for i in range(0, len(tous), LOT):
+            lot = tous[i:i + LOT]
+            done = piper_out.batch(voice, lot, piper_out.length_scale(rate))
+            print(f"[voix_preparation] {done}/{len(lot)} sons {voice} ({rate}), voix d'ailleurs")
+            for t, chemin in lot:
+                if not os.path.exists(chemin):
+                    _ECHECS_EXTERNES.add((voice, rate, t))
+            if not done or time.time() - debut > EXTERNES_MAX_SEC or os.path.exists(KICK_FLAG):
+                break
         return len(externes) + len(jobs)
     if not jobs:
         return 0
