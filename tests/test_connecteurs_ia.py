@@ -177,6 +177,33 @@ with mock.patch.object(gemini, "_demander_gemini", return_value=("vu", None)):
     assert gemini.ask("q", audio=b"x") == ("vu", None)
 assert not RECUS
 
+# Gemini : un modele muet ou epuise n'arrete pas les suivants, et se repose
+remise()
+CLES["gemini"] = "g"
+quota = mock.Mock(ok=False, status_code=429)
+quota.json.return_value = {"error": {"details": [{"retryDelay": "300s"}]}}
+appels = []
+def poste(url, **k):
+    appels.append(url)
+    if gemini.MODELS[0] in url:
+        return quota
+    if gemini.MODELS[1] in url:
+        raise gemini.requests.Timeout()
+    return rendu_google("lite")
+with mock.patch.object(gemini.requests, "post", side_effect=poste):
+    assert gemini.ask("q") == ("lite", None)
+    assert len(appels) == 3
+    assert gemini.ask("q") == ("lite", None)
+    assert len(appels) == 4, appels   # seul celui qui repond est rappele
+repos = json.load(open(ia.ETAT))["repos"]
+assert 290 < repos[f"gemini:{gemini.MODELS[0]}"] - time.time() <= 300
+assert repos[f"gemini:{gemini.MODELS[1]}"] - time.time() > 1000
+# tous en repos : aucune requete, la raison du quota
+with mock.patch.object(ia, "_en_repos", return_value=True), \
+        mock.patch.object(gemini.requests, "post") as p:
+    assert gemini.ask("q") == (None, gemini.dire("gemini.quota_gemini_epuise"))
+    assert not p.called
+
 # etat illisible : aucune question perdue
 remise()
 CLES["groq"] = "a"

@@ -12,6 +12,18 @@ from phrases import dire
 URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"]
 TIMEOUT = 30
+REPOS_MODELE_SEC = 1800
+
+
+def _attente_quota(resp):
+    """Google dit quand le quota revient ("31380s") ; le quota gratuit est par modele."""
+    try:
+        for detail in resp.json()["error"]["details"]:
+            if str(detail.get("retryDelay", "")).endswith("s"):
+                return min(float(detail["retryDelay"][:-1]), connecteurs_ia.REPOS_MAX_SEC)
+    except (KeyError, TypeError, ValueError, AttributeError):
+        pass
+    return connecteurs_ia.REPOS_QUOTA_SEC
 
 
 def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT, mime="image/jpeg", audio=None, audio_mime="audio/ogg"):
@@ -50,15 +62,26 @@ def _demander_gemini(prompt, temperature, jpeg, json_mode, timeout, mime, audio,
     body = {"contents": [{"parts": parts}], "generationConfig": config}
     reason = dire("gemini.gemini_repond")
     for model in MODELS:
+        repos = f"gemini:{model}"
+        if connecteurs_ia._en_repos(repos):   # epuise ou muet : ni attente ni requete pour rien
+            reason = dire("gemini.quota_gemini_epuise")
+            continue
         try:
             resp = requests.post(URL.format(model=model), json=body, timeout=timeout,
                                  headers={"x-goog-api-key": key})
-        except requests.RequestException:
-            return None, dire("gemini.acces_gemini")
+        except requests.RequestException as exc:
+            # Un modele muet n'empeche pas les suivants (2026-11-07 : le dernier repondait,
+            # et on disait "pas d'acces a Gemini").
+            connecteurs_ia._reposer(repos, REPOS_MODELE_SEC, type(exc).__name__)
+            reason = dire("gemini.acces_gemini")
+            continue
         if resp.status_code in (401, 403):
             return None, dire("gemini.google_refuse_cle_gemini")
+        if resp.status_code == 429:
+            connecteurs_ia._reposer(repos, _attente_quota(resp), "quota")
+            reason = dire("gemini.quota_gemini_epuise")
+            continue
         if not resp.ok:
-            reason = dire("gemini.quota_gemini_epuise") if resp.status_code == 429 else reason
             continue
         try:
             # La reponse peut venir en plusieurs morceaux : n'en lire qu'un la coupait net.

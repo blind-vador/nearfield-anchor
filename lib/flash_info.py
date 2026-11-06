@@ -48,8 +48,6 @@ FRANCE3_URL = "https://france3-regions.francetvinfo.fr/{region}/{departement}/rs
 DEPARTEMENT_URL = "https://geo.api.gouv.fr/departements/{code}"
 OPEN_METEO_URL = "https://api.open-meteo.com/v1/forecast"
 NAVITIA_URL = "https://api.sncf.com/v1/coverage/sncf/stop_areas/stop_area:SNCF:{uic}/departures"
-GEMINI_URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
-GEMINI_MODELS = ["gemini-2.5-flash", "gemini-flash-latest", "gemini-flash-lite-latest"]
 
 APRS_WX_PATH = "/tmp/meteo_stations_aprs.json"
 APRS_WX_MAX_KM = 20
@@ -308,40 +306,18 @@ def cluster(articles):
 # --- Redaction ------------------------------------------------------------
 
 def _gemini(prompt):
-    """(dict JSON, None) ou (None, raison). Les autres services d'abord, s'il y en a."""
-    import connecteurs_ia
-    texte = connecteurs_ia.demander(prompt, 0.3, True, 60)
-    if texte:
+    """(dict JSON, None) ou (None, raison)."""
+    import gemini
+    texte, raison = gemini.ask(prompt, temperature=0.3, json_mode=True, timeout=60)
+    if not texte:
+        return None, raison
+    try:
         data = json.loads(texte)
-        if isinstance(data, dict) and isinstance(data.get("flash"), str) and data["flash"].strip():
+        if isinstance(data.get("flash"), str) and data["flash"].strip():
             return data, None
-    key = reglages.cle("gemini")
-    if not key:
-        return None, dire("flash.cle_gemini")
-    body = {"contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {"responseMimeType": "application/json", "temperature": 0.3}}
-    reason = dire("flash.gemini_repond")
-    for model in GEMINI_MODELS:
-        try:
-            resp = requests.post(GEMINI_URL.format(model=model), json=body, timeout=60,
-                                 headers={"x-goog-api-key": key})
-        except requests.RequestException:
-            return None, dire("flash.acces_gemini")
-        if resp.status_code in (401, 403):
-            return None, dire("flash.google_refuse_cle_gemini")
-        if not resp.ok:
-            print(f"[flash_info] Gemini {model} : HTTP {resp.status_code}")
-            reason = dire("flash.quota_gemini_epuise") if resp.status_code == 429 else reason
-            continue
-        try:
-            text = resp.json()["candidates"][0]["content"]["parts"][0]["text"]
-            data = json.loads(text)
-            if isinstance(data.get("flash"), str) and data["flash"].strip():
-                return data, None
-        except (KeyError, IndexError, ValueError, AttributeError):
-            pass
-        reason = dire("flash.reponse_gemini_inutilisable")
-    return None, reason
+    except (ValueError, AttributeError):
+        pass
+    return None, dire("flash.reponse_gemini_inutilisable")
 
 
 def _hours_ago(ts):

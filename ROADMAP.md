@@ -7022,3 +7022,8 @@ les veilles (état en mémoire, `/dev/shm/nearfield_tmp/connecteurs_ia.json`, av
 compte des réponses du jour). L'API de Grok n'a ni accès sans clé ni offre gratuite
 d'après les sources consultées le 2026-11-07. Les alias Mistral n'ont pas pu être
 vérifiés dans sa documentation.
+
+Même jour : `gemini.ask` ne s'arrêtait plus au premier modèle muet. Mesuré : quota
+gratuit de 20 requêtes par jour sur gemini-2.5-flash, gemini-flash-latest muet 30 s,
+gemini-flash-lite-latest disponible, et on disait « pas d'accès à Gemini ». Un modèle
+épuisé ou muet se repose désormais, pour le délai annoncé par Google s'il y en a un.

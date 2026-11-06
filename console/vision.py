@@ -92,7 +92,8 @@ def _ask_gemini(jpeg, question):
                 last_problem = dire("vision.quota_gratuit_gemini_epuise")
             continue  # 429, 5xx, modele retire : modele suivant
         except (urllib.error.URLError, TimeoutError, OSError):
-            return None, dire("vision.acces_internet_google_repond")
+            last_problem = dire("vision.acces_internet_google_repond")  # un modele muet n'arrete pas les suivants
+            continue
         except (KeyError, IndexError, ValueError):
             # Reponse sans texte (ex. bloquee par les filtres de securite).
             last_problem = dire("vision.gemini_renvoye_description")
