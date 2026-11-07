@@ -25,7 +25,6 @@ import piper_voix  # noqa: E402
 from phrases import dire  # noqa: E402
 
 QUALITIES = {"x_low": "très basse", "low": "basse", "medium": "moyenne", "high": "haute"}
-HELLO = "Bonjour, voici ma voix. Je peux lire les annonces et les réponses de la console."
 
 
 def _action(label, **item):
@@ -116,7 +115,7 @@ def _speak_here(key):
     lock = audio_lock.acquire("console", timeout=10)
     try:
         for voice in ids:
-            piper_out.Speech(f"{piper_out.label(voice)}. {HELLO}", voice_id=voice).wait()
+            piper_out.Speech(f"{piper_out.label(voice)}. {dire('voix_locales.essai')}", voice_id=voice).wait()
     finally:
         audio_lock.release(lock)
     return dire("voix_locales.extrait_fini")
@@ -131,7 +130,7 @@ def run(key_source, say, out):
         build_roots, index = make_tree(cat)
         nav = arbre.Navigator(build_roots, index, select=lambda node: node.item)
         item = arbre.run(nav, key_source, say, out, dire("voix_locales.titre"), consigne if first else "",
-                         feature="voix_locales")
+                         feature="voix_locales", aide=consigne)
         first = False
         if item is None:
             return dire("voix_locales.ferme")

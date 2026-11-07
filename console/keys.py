@@ -220,7 +220,7 @@ def sequence_name(seq):
         return dire("touches.controle_plus", chr=chr(ord(seq) + 96))
     if len(seq) == 1:
         return char_name(seq)
-    return "touche inconnue"
+    return dire("touches.inconnue")
 
 
 def _keyboard_devices():

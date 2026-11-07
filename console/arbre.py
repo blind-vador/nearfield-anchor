@@ -119,7 +119,7 @@ class Navigator:
         wanted = position + delta
         position = min(max(wanted, 0), len(siblings) - 1)
         self.node = siblings[position]
-        edge = "" if wanted == position else ("Début, " if delta < 0 else "Fin, ")
+        edge = "" if wanted == position else ((dire("arbre.debut_liste") if delta < 0 else dire("commun.fin_liste")) + " ")
         return edge + self.current()
 
     def expand(self):
@@ -204,15 +204,17 @@ def _prechauffer_niveau(nav, intro, consigne):
               dire("arbre.replie", current="")]
     textes.extend(labels)
     if labels:
-        textes.append("Début, " + labels[0])
-        textes.append("Fin, " + labels[-1])
+        textes.append(dire("arbre.debut_liste") + " " + labels[0])
+        textes.append(dire("commun.fin_liste") + " " + labels[-1])
     voix.prechauffer(textes)
 
 
-def run(nav, key_source, say, out, title, consigne="", feature=None):
+def run(nav, key_source, say, out, title, consigne="", feature=None, aide=None):
     """Boucle du dialogue. Rend ce que select() a rendu, ou None (Echap).
     consigne : touches du dialogue, dite selon le niveau d'aide (conseils.py)
-    et a la demande par F1."""
+    et a la demande par F1.
+    aide : ce que dit F1 quand la consigne n'est pas redite a l'ouverture
+    (dialogue rouvert apres un choix) ; par defaut, la consigne."""
     intro = conseils.intro(feature, title, consigne)
     niveau = None
 
@@ -247,7 +249,7 @@ def run(nav, key_source, say, out, title, consigne="", feature=None):
                 step = PAGE if key in (PAGE_UP, PAGE_DOWN) else 1
                 text = nav.move(-step if key in (UP, PAGE_UP) else step)
         elif conseils.is_help(key):
-            text = consigne or dire("arbre.consigne_dialogue")
+            text = aide or consigne or dire("arbre.consigne_dialogue")
         elif key in BACKSPACE:
             text = nav.erase()
         elif key == FAVORITE:

@@ -122,7 +122,7 @@ def run(key_source, say, out, read_line):
     while True:
         nav = arbre.Navigator(build_roots, [], select=lambda node: node.item)
         item = arbre.run(nav, key_source, say, out, dire("telegram.titre"), consigne if first else "",
-                         feature="telegram")
+                         feature="telegram", aide=consigne)
         first = False
         if item is None:
             return dire("telegram.ferme")

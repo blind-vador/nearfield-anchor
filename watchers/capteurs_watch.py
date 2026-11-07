@@ -404,7 +404,7 @@ def _fun_again(event, what):
                                                                     "freq1", "freq2", "mod")},
                           ensure_ascii=False)
         text, problem = gemini.ask(FUN_AGAIN_PROMPT.format(what=what, model=_name(event), data=data,
-                                                           heure=datetime.now().strftime("%H:%M")))
+                                                           heure=datetime.now().strftime("%H:%M")), scanneur=True)
     except Exception as exc:
         text, problem = None, repr(exc)
     if problem:
@@ -420,7 +420,7 @@ def _fun_explanation(event, what, freq_txt):
         data = json.dumps({k: v for k, v in event.items() if k not in ("time", "rssi", "snr", "noise", "freq",
                                                                     "freq1", "freq2", "mod")},
                           ensure_ascii=False)
-        text, problem = gemini.ask(FUN_PROMPT.format(what=what, freq=freq_txt, data=data))
+        text, problem = gemini.ask(FUN_PROMPT.format(what=what, freq=freq_txt, data=data), scanneur=True)
     except Exception as exc:
         text, problem = None, repr(exc)
     if problem:
@@ -462,7 +462,7 @@ def _alarm_explanation(event):
         return hit["texte"]
     try:
         import gemini
-        text, problem = gemini.ask(ALARM_PROMPT.format(data=json.dumps(fields, ensure_ascii=False)))
+        text, problem = gemini.ask(ALARM_PROMPT.format(data=json.dumps(fields, ensure_ascii=False)), scanneur=True)
     except Exception as exc:
         text, problem = None, repr(exc)
     if problem or not text:

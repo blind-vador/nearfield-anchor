@@ -14,9 +14,9 @@ FICHE_MAX = 6000      # caracteres de fiche envoyes : un resume horaire peut etr
 TIMEOUT = 45
 CATEGORIES = ("messages", "donnees")
 
-CONSIGNE = """Tu aides un radioamateur aveugle qui écoute un scanner radio. Son journal \
+CONSIGNE = """Tu aides un radioamateur aveugle qui écoute ce scanneur. Son journal \
 « {journal} » contient l'entrée ci-dessous : le texte qui lui a été lu et les données brutes \
-reçues. Explique-lui en français clair, comme à quelqu'un de curieux mais pas spécialiste :
+reçues, en clair. Explique-lui en {langue} clair, comme à quelqu'un de curieux mais pas spécialiste :
 - ce qu'est ce message : quel système l'a émis, qui l'envoie d'habitude et à quoi il sert ;
 - ce qu'il veut dire : les champs déjà nommés dans la fiche, les codes et abréviations \
 documentés publiquement (label ACARS, symbole APRS, type de balise...), les nombres dont \
@@ -54,7 +54,8 @@ def question(category, path, fiche):
     texte = json.dumps(contenu, ensure_ascii=False, indent=1)
     if len(texte) > FICHE_MAX:
         texte = texte[:FICHE_MAX] + "\n[... fiche coupée]"
-    return CONSIGNE.format(journal=journaux.NAMES.get(category, category),
+    import avions_info
+    return CONSIGNE.format(journal=journaux.NAMES.get(category, category), langue=avions_info._langue(),
                            nom=os.path.basename(path), fiche=texte)
 
 
@@ -94,7 +95,7 @@ def expliquer(category, path):
     if deja(fiche):
         return fiche[CHAMP], None
     import gemini
-    texte, raison = gemini.ask(question(category, path, fiche), temperature=0.3, timeout=TIMEOUT)
+    texte, raison = gemini.ask(question(category, path, fiche), temperature=0.3, timeout=TIMEOUT, scanneur=True)
     texte = nettoyer(texte or "")
     if not texte:
         return None, raison or "ia"

@@ -159,7 +159,7 @@ def _say_slide(channel, ensemble, service, sid):
     def text():  # dans la file d'annonces : Gemini sans bloquer l'ecoute
         try:
             import gemini
-            described, problem = gemini.ask(dire("dab.consigne_image", station=service), temperature=0.3, jpeg=image)
+            described, problem = gemini.ask(dire("dab.consigne_image", station=service), temperature=0.3, jpeg=image, scanneur=True)
         except Exception as exc:
             described, problem = None, repr(exc)
         if problem or not described:

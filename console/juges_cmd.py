@@ -11,6 +11,7 @@ import sys
 
 
 import juge_live  # noqa: E402
+from phrases import dire  # noqa: E402
 
 
 def _mhz(etat):
@@ -21,12 +22,12 @@ def run(line, key_source=None, say=None, out=None):
     low = " " + re.sub(r"[^\w ]", " ", line.lower()) + " "
     etat = juge_live.courant()
     if etat is None:
-        return "Rien n'est en cours de décodage en ce moment."
+        return dire("juges.rien_en_cours")
     ok = any(mot in low for mot in (" ok ", " oui ", " bon ", " garde ", " juste "))
     if not ok and etat.get("suivants") == 0:
-        return "C'est le dernier rendu gardé pour cette réception."
+        return dire("juges.dernier_rendu")
     juge_live.demander("ok" if ok else "suivant")
-    proto = etat.get("protocole") or "ce décodage"
+    proto = etat.get("protocole") or dire("juges.ce_decodage")
     if ok:
-        return f"Noté : {proto} sur {_mhz(etat)} mégahertz est le bon décodeur."
-    return f"Je passe au décodeur suivant sur {_mhz(etat)} mégahertz."
+        return dire("juges.bon", decodeur=proto, mhz=_mhz(etat))
+    return dire("juges.suivant", decodeur=proto, mhz=_mhz(etat))

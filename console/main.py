@@ -165,16 +165,16 @@ def read_line(key_source):
             if line:
                 removed, line = line[-1], line[:-1]
                 out("\b \b")
-                voix.say(f"efface {keys.char_name(removed)}")
+                voix.say(dire("console.efface", touche=keys.char_name(removed)))
             else:
-                voix.say("ligne vide")
+                voix.say(dire("console.ligne_vide"))
         elif key == "\x1b":
             if line:
                 out("\r\x1b[K> ")
                 line = ""
             voix.say(dire("console.ligne_effacee"))
         elif key in ("\t", "\x1b[A"):
-            voix.say(line if line.strip() else "ligne vide")
+            voix.say(line if line.strip() else dire("console.ligne_vide"))
         elif len(key) == 1 and key.isprintable():
             line += key
             out(key)
@@ -575,7 +575,7 @@ def main():
         while True:
             line = read_line(key_source)
             if not line.strip():
-                voix.say("ligne vide")
+                voix.say(dire("console.ligne_vide"))
                 out("> ")
                 continue
             response = run_command(line, key_source, last_response)

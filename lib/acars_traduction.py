@@ -70,7 +70,7 @@ fiche ci-dessous, rends un objet JSON avec trois champs, en {langue} :
   livrée, phase de vol, trajet, seulement ce que la fiche donne
   (exemple : "biréacteur moyen-courrier de Transavia, blanc et vert, en croisière à 10 500 mètres
   vers Nice") ;
-- "donnees" : les données techniques du message, en français, lues simplement, sans les expliquer
+- "donnees" : les données techniques du message, lues simplement, sans les expliquer
   (exemple : "réponse de passage de relais vers une station au sol, destination LFMN") ;
 - "sens" : ce que l'appareil a voulu dire, en clair, en une phrase commençant par un sujet
   (exemple : "il transfère sa liaison de données vers une nouvelle station, en route vers Nice").
@@ -239,7 +239,7 @@ def explain(card, messages, protocole):
             import gemini
             answer, problem = gemini.ask(PROMPT.format(langue=avions_info._langue(),
                                                        fiche=json.dumps(fiche, ensure_ascii=False, default=str)[:3500]),
-                                         temperature=0.4, json_mode=True)
+                                         temperature=0.4, json_mode=True, scanneur=True)
             if isinstance(answer, str):
                 answer = json.loads(answer)
             if isinstance(answer, dict) and not problem and answer.get("donnees"):

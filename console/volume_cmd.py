@@ -21,7 +21,7 @@ import conseils  # noqa: E402
 import keys  # noqa: E402
 import voix  # noqa: E402
 import volumes  # noqa: E402
-from phrases import dire  # noqa: E402
+from phrases import dire, etiquette  # noqa: E402
 
 UP, DOWN, LEFT, RIGHT = "\x1b[A", "\x1b[B", "\x1b[D", "\x1b[C"
 PGUP, PGDN = "\x1b[5~", "\x1b[6~"
@@ -37,9 +37,12 @@ def _curseurs():
     """[(source, canal, nom de la veille, nom du curseur)] dans l'ordre parcouru."""
     items = [(None, None, None, dire("volume.general"))]
     for source, nom, canaux in volumes.VEILLES:
+        # Noms dits : sections [volume.veille.*] et [volume.canal.*] de la langue (2026-11-08)
+        nom = etiquette(f"volume.veille.{source}", nom)
         items.append((source, volumes.VEILLE, nom, dire("volume.de_la_veille")))
         if len(canaux) > 1:
-            items += [(source, canal, nom, libelle) for canal, libelle in canaux]
+            items += [(source, canal, nom, etiquette(f"volume.canal.{source}.{canal}", libelle))
+                      for canal, libelle in canaux]
     return items
 
 

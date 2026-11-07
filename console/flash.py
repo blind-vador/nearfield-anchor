@@ -39,7 +39,7 @@ def _details(built, key_source, say, out):
         groups.setdefault(story["rubrique"], []).append(node)
         index.append((matcher.normalize(story["titre"]), node))
     order = sorted(groups, key=lambda r: RUBRIQUE_ORDER.index(r) if r in RUBRIQUE_ORDER else len(RUBRIQUE_ORDER))
-    roots = [arbre.Node(f"{r}, {len(groups[r])} sujet{'s' if len(groups[r]) > 1 else ''}",
+    roots = [arbre.Node(dire("flash.rubrique", rubrique=r, sujets=nombre(len(groups[r]), "sujet")),
                         children=groups[r], unit=("sujet", "sujets")) for r in order]
     index.sort(key=lambda p: p[0])
     nav = arbre.Navigator(lambda: roots, index)

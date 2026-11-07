@@ -117,7 +117,7 @@ def nom_propose(texte, label="", mode=""):
     import gemini
     from phrases import dire
     reponse, probleme = gemini.ask(dire("whisper.consigne_nom", bande=label or "inconnue", modulation=mode or "inconnue",
-                                        texte=texte[:2000]), temperature=0.2, json_mode=True)
+                                        texte=texte[:2000]), temperature=0.2, json_mode=True, scanneur=True)
     if not reponse:
         print("[whisper] pas de nom, Gemini : %s" % (probleme,))
         return None

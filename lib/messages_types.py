@@ -38,8 +38,9 @@ Protocole ou décodeur : {protocole}
 Type : {type}
 {exemple}
 Explique en {langue}, en deux ou trois phrases à lire à voix haute : à quoi sert ce type de message, qui s'en sert, et s'il est
-normal de le capter ici. S'il n'a pas de raison d'exister dans ce pays, ou si ce décodeur est connu pour sortir de fausses
-trames du bruit, dis-le simplement. Si tu ne connais pas ce format, dis que tu ne le connais pas, n'invente rien. Les chiffres
+normal de le capter ici. S'il n'a pas de raison d'exister dans ce pays, dis-le simplement. Ne parle de fausse trame sortie
+du bruit que si l'exemple lui-même est incohérent (pas de structure, valeurs impossibles) : un réseau professionnel qui
+émet en clair, c'est normal. Si tu ne connais pas ce format, dis que tu ne le connais pas, n'invente rien. Les chiffres
 masqués par # ne comptent pas. Pas de markdown, pas de liste, ne répète pas l'exemple."""
 
 
@@ -108,7 +109,7 @@ def _demander(cle, fiche_):
     exemple = "" if fiche_.get("prive") else "Exemple, chiffres masqués : " + _masquer(fiche_.get("texte_original"))
     pays = (reglages.get("lieu") or {}).get("pays") or "France"
     texte, probleme = gemini.ask(PROMPT.format(pays=pays, protocole=fiche_.get("protocole") or cle, type=cle,
-                                               exemple=exemple, langue=avions_info._langue()), temperature=0.2)
+                                               exemple=exemple, langue=avions_info._langue()), temperature=0.2, scanneur=True)
     if probleme or not (texte or "").strip():
         print(f"[messages_types] {cle} : pas d'explication ({probleme})")
         return None

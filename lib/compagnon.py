@@ -548,13 +548,13 @@ def _session_text(c):
     if c.get("directe") and "verrouille" in etat:
         if etat["verrouille"]:
             since = c.get("verrou_depuis")
-            return dire_ou("compagnon.ecran_verrouille", "écran verrouillé" + (f" depuis {_hm(since)}" if since else ""))
+            return (dire("compagnon.ecran_verrouille_depuis", heure=_hm(since)) if since else dire("compagnon.ecran_verrouille"))
         idle = etat.get("inactif_s")
         if idle is not None and idle >= 120:
-            return dire_ou("compagnon.ecran_libre_inactif", f"écran déverrouillé, personne au clavier depuis {idle // 60} minutes")
-        return dire_ou("compagnon.ecran_libre", "écran déverrouillé, quelqu'un s'en sert")
+            return dire("compagnon.ecran_libre_inactif", minutes=nombre(idle // 60, "minute"))
+        return dire("compagnon.ecran_libre")
     if not c.get("presente") and c.get("vu"):
-        return dire_ou("compagnon.silencieuse", f"silencieuse depuis {_hm(c['vu'])}, sans doute en veille")
+        return dire("compagnon.silencieuse", heure=_hm(c["vu"]))
     return ""
 
 
@@ -575,7 +575,7 @@ def status():
             text += ", " + session
         share = free_share(c) if c.get("presente") else None
         if share is not None:
-            text += ", " + dire_ou("compagnon.part_libre", f"libre à {round(share * 100)} %", pourcent=round(share * 100))
+            text += ", " + dire("compagnon.part_libre", pourcent=round(share * 100))
         done, failed = stats.get("faits", 0), stats.get("echecs", 0)
         if done or failed:
             text += ", " + dire("compagnon.bilan_travaux", reussis=nombre(done, "travail réussi", "travaux réussis"),

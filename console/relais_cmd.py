@@ -57,8 +57,8 @@ def texte():
     if loin:
         proches = sorted(loin.values(), key=lambda r: r.get("km", 9999))[:3]
         texte_ += " " + dire("relais.lointains", nombre=nombre(len(loin), "relais", "relais"),
-                             exemples=", ".join(f"{r.get('lieu') or r.get('nom')} à {round(r.get('km', 0))} kilomètres"
-                                                for r in proches))
+                             exemples=", ".join(dire("relais.lointain", lieu=r.get("lieu") or r.get("nom"),
+                                                     km=round(r.get("km", 0))) for r in proches))
     try:
         import frequences_actives
         actives, possibles, sans_voix = frequences_actives.resume()

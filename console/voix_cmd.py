@@ -50,9 +50,10 @@ def echo_texts():
     """Tout ce que l'echo de frappe peut dire : prepare en tache de fond."""
     chars = list("abcdefghijklmnopqrstuvwxyz0123456789") + list(keys.CHAR_NAMES)
     names = [keys.char_name(c) for c in chars] + [keys.char_name(c.upper()) for c in "abcdefghijklmnopqrstuvwxyz"]
-    texts = names + [f"efface {keys.char_name(c)}" for c in chars]
+    texts = names + [dire("console.efface", touche=keys.char_name(c)) for c in chars]
     texts += list(keys.ESCAPE_NAMES.values()) + list(keys.CONTROL_NAMES.values())
-    texts += ["ligne vide", "ligne effacée", "Recherche effacée.", "Pas de recherche en cours."]
+    texts += [dire(k) for k in ("console.ligne_vide", "console.ligne_effacee", "arbre.recherche_effacee",
+                                "arbre.recherche_cours")]
     return texts
 
 
@@ -87,7 +88,8 @@ def _choose(labels, start, speak, key_source, out, title, feature, consigne=None
 
 
 PITCHES = Etiquettes("hauteur", {"-20Hz": "plus grave", "-10Hz": "un peu plus grave", "+0Hz": "normale",
-                                 "+10Hz": "un peu plus aiguë", "+20Hz": "plus aiguë"}, "hauteur de la voix")
+                                 "+10Hz": "un peu plus aiguë", "+20Hz": "plus aiguë"}, "hauteur de la voix",
+                     par_libelle=True)  # par le libelle : "-10Hz" et "+10Hz" donnaient la meme cle
 
 
 def _label(voice):

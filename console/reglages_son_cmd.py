@@ -27,7 +27,7 @@ import conseils  # noqa: E402
 import keys  # noqa: E402
 import reglages_audio as ra  # noqa: E402
 import voix  # noqa: E402
-from phrases import dire_ou, nombre  # noqa: E402
+from phrases import dire, nombre  # noqa: E402
 
 UP, DOWN, LEFT, RIGHT = "\x1b[A", "\x1b[B", "\x1b[D", "\x1b[C"
 TAB, SHIFT_TAB = "\t", "\x1b[Z"
@@ -89,11 +89,11 @@ def bands():
 
 def _value_text(param, value):
     if param in ("reduction_bruit_db", "anti_crachotements") and not value:
-        return dire_ou("reglages_son.coupe", "coupé")
+        return dire("reglages_son.coupe")
     if isinstance(value, bool):
-        return dire_ou("reglages_son.allume", "allumé") if value else dire_ou("reglages_son.coupe", "coupé")
+        return dire("reglages_son.allume") if value else dire("reglages_son.coupe")
     if param == "anti_crachotements":
-        return f"{value:g}, " + dire_ou("reglages_son.plus_bas_plus_fort", "plus bas, plus fort")
+        return f"{value:g}, " + dire("reglages_son.plus_bas_plus_fort")
     return ra.spoken_value(param, value)
 
 
@@ -111,14 +111,14 @@ def _layers(mode, target=None):
 def _line(target, mode, param):
     m = ra.manual(target)
     if param == "contenu":
-        return dire_ou("reglages_son.ligne_contenu", "Type de contenu : " + ra.CONTENT_NAMES.get(m["contenu"], m["contenu"]) + ".")
+        return dire("reglages_son.ligne_contenu", contenu=ra.CONTENT_NAMES.get(m["contenu"], m["contenu"]))
     value = ra.get(target)[param]
     if param in m["couches"]:
-        origin = dire_ou("reglages_son.a_la_main", "réglé à la main")
+        origin = dire("reglages_son.a_la_main")
     elif m["contenu"] != "auto" and param in ra.CONTENTS.get(m["contenu"], {}):
-        origin = dire_ou("reglages_son.par_contenu", "posé par le type de contenu")
+        origin = dire("reglages_son.par_contenu")
     else:
-        origin = dire_ou("reglages_son.automatique", "automatique")
+        origin = dire("reglages_son.automatique")
     return f"{ra.NAMES.get(param, param)} : {_value_text(param, value)}, {origin}."
 
 
@@ -165,13 +165,13 @@ class Preview:
     def play(self, target, filtered):
         found = _last_capture(target)
         if not found:
-            return dire_ou("reglages_son.pas_de_capture", "Aucune capture récente de cette bande à réécouter.")
+            return dire("reglages_son.pas_de_capture")
         path, info = found
         rate = 48000 if info.get("mode") == "wfm" else 22050
         raw = subprocess.run(["ffmpeg", "-v", "error", "-i", path, "-t", str(PREVIEW_SEC), "-f", "s16le", "-ac", "1",
                               "-ar", str(rate), "-"], capture_output=True, timeout=60).stdout
         if not raw:
-            return dire_ou("reglages_son.lecture_impossible", "Impossible de lire cette capture.")
+            return dire("reglages_son.lecture_impossible")
         if filtered and target == "dmr":
             import audioop  # voix numerique : aucun filtre, seulement son volume
             gain = 10 ** ((ra.get(target).get("gain_numerique_db") or 0.0) / 20)
@@ -208,16 +208,12 @@ def _set_journal_open(is_open):
 def run(line, key_source, say, out):
     items = bands()
     if not items:
-        return dire_ou("reglages_son.aucune_bande", "Aucune bande connue : le scanner n'a pas encore démarré.")
+        return dire("reglages_son.aucune_bande")
     b, i = 0, 0
     undo = []
     preview = Preview()
-    consigne = dire_ou("reglages_son.consigne",
-                       "Tab change de bande ; flèches haut et bas, les couches ; Espace allume ou coupe ; "
-                       "flèches gauche et droite règlent ; Retour arrière rend à l'automatique ; "
-                       "F réécoute la dernière capture avec ces réglages, B la même en brut ; Contrôle Z annule ; "
-                       "Échap ferme.")
-    title = dire_ou("reglages_son.titre", "Réglages du son, bande par bande.")
+    consigne = dire("reglages_son.consigne")
+    title = dire("reglages_son.titre")
     intro = conseils.intro("reglages_son", title, consigne)
     out(intro + "\n")
     say(f"{intro} {_band_text(items[0])}")
@@ -246,8 +242,8 @@ def run(line, key_source, say, out):
                     i = j
                     text = _line(target, mode, layers[i])
                 else:
-                    edge = dire_ou("commun.debut_liste", "Début de la liste.") if j < 0 \
-                        else dire_ou("commun.fin_liste", "Fin de la liste.")
+                    edge = dire("commun.debut_liste") if j < 0 \
+                        else dire("commun.fin_liste")
                     text = edge + " " + _line(target, mode, param)
             elif key in (SPACE, LEFT, RIGHT) or key in BACKSPACE:
                 m = ra.manual(target)
@@ -283,17 +279,17 @@ def run(line, key_source, say, out):
                 text = preview.play(target, filtered=key in ("f", "F"))
             elif key == CTRL_Z:
                 if not undo:
-                    text = dire_ou("reglages_son.rien_a_annuler", "Rien à annuler.")
+                    text = dire("reglages_son.rien_a_annuler")
                 else:
                     t, m = undo.pop()
                     ra.set_manual(t, m["contenu"], m["couches"])
-                    text = dire_ou("reglages_son.annule", "Annulé.") + " " + _line(target, mode, param)
+                    text = dire("reglages_son.annule") + " " + _line(target, mode, param)
             else:
-                text = dire_ou("reglages_son.touches", "F1 pour les touches.")
+                text = dire("reglages_son.touches")
             if text:
                 out(f"[{text}]\n")
                 say(text)
     finally:
         preview.stop()
         _set_journal_open(False)
-    return dire_ou("reglages_son.ferme", "Réglages du son fermés. Ils valent dès la prochaine capture.")
+    return dire("reglages_son.ferme")

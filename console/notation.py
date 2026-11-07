@@ -32,7 +32,7 @@ import time
 
 import noise_signatures as ns  # noqa: E402
 import conseils  # noqa: E402
-from phrases import dire, dire_ou, nombre  # noqa: E402
+from phrases import dire, etiquette, nombre  # noqa: E402
 
 NOTES_PATH = "/media/nas/nd1/server/radio_notes.json"  # jamais purge (le journal, lui, l'est a 48 h)
 
@@ -169,18 +169,31 @@ def _set(d, tab, code, value):
 
 def _value_text(scale, value):
     low, _, _, names = SCALES[scale]
-    return f"{value} pour cent" if names is None else names[value - low]
+    if names is None:
+        return dire("notation.pour_cent", valeur=value)
+    return etiquette(f"notation.echelle.{scale}.{value - low}", names[value - low])
+
+
+def _nom_onglet(t):
+    """Noms dits des onglets et des champs : sections [notation.onglet_nom.*] et
+    [notation.champ.*] de la langue (2026-11-08)."""
+    code, name, _ = TABS[t]
+    return etiquette(f"notation.onglet_nom.{code}", name)
+
+
+def _nom_champ(code, name):
+    return etiquette(f"notation.champ.{code}", name)
 
 
 def _item_text(d, t, i):
     tab, _, items = TABS[t]
     code, name, scale = items[i]
-    return f"{name} : {_value_text(scale, _get(d, tab, code))}."
+    return dire("notation.champ_valeur", champ=_nom_champ(code, name), valeur=_value_text(scale, _get(d, tab, code)))
 
 
 def _tab_text(d, t, i):
-    _, name, items = TABS[t]
-    return dire_ou("notation.onglet", f"Onglet {name}, {nombre(len(items), 'réglage')}.") + " " + _item_text(d, t, i)
+    _, _, items = TABS[t]
+    return dire("notation.onglet", onglet=_nom_onglet(t), reglages=nombre(len(items), "réglage")) + " " + _item_text(d, t, i)
 
 
 def _example_name(tab, code, value):
@@ -207,6 +220,7 @@ def play_example(d, t, i):
     """Touche E / F2 : exemple sonore fixe de la valeur sous le curseur."""
     tab, _, items = TABS[t]
     code, name, scale = items[i]
+    name = _nom_champ(code, name)
     value = _get(d, tab, code)
     example = _example_name(tab, code, value)
     if example is None:
@@ -217,7 +231,7 @@ def play_example(d, t, i):
     import audio_lock
     import sound_player
     import voix
-    voix.say_blocking(dire_ou("notation.exemple_de", f"Exemple : {name.lower()}."))
+    voix.say_blocking(dire("notation.exemple_de", champ=name.lower()))
     ticket = audio_lock.acquire("console", timeout=10)
     try:
         sound_player.play_sound_effect(path, timeout_sec=20, label="notation")
@@ -308,14 +322,14 @@ def validate(path, stamp, cut=False):
     info = ns.capture_info(path) or {}
     if cut and previous:
         if previous.get("validation_coupee") or previous.get("reponses", {}).get("fin") == "coupee":
-            return dire_ou("notation.deja_coupee", "Déjà noté comme coupé trop tôt.")
+            return dire("notation.deja_coupee")
         degres = previous.get("degres") or degrees_from_legacy(previous.get("reponses", {}))
         degres["fin"] = -2
         reponses = dict(previous.get("reponses", {}), fin="coupee")
         total, station, auto = _record(info or {k: previous.get(k) for k in ("freq_hz", "label", "source", "mode")}
                                        | {"target": previous.get("bande")}, path, stamp, reponses,
                                        rapide=previous.get("validation_rapide", False), degres=degres, coupee=True)
-        return dire_ou("notation.fin_corrigee", "Fin notée coupée trop tôt.") + auto
+        return dire("notation.fin_corrigee") + auto
     if previous and previous.get("validation_rapide"):
         return dire("notation.deja_valide")
     if previous:
@@ -323,7 +337,7 @@ def validate(path, stamp, cut=False):
     reponses = dict(GOOD_TAKE, fin="coupee") if cut else dict(GOOD_TAKE)
     total, station, auto = _record(info, path, stamp, reponses, rapide=True, degres=_good_degrees(cut), coupee=cut)
     if cut:
-        return dire_ou("notation.valide_coupee", f"Bonne prise, coupée trop tôt : {nombre(total, 'note')}.") \
+        return dire("notation.valide_coupee", total=nombre(total, "note")) \
             + _station_text(station) + auto
     return dire("notation.valide", total=nombre(total, "note")) + _station_text(station) + auto
 
@@ -340,10 +354,7 @@ def rate(key_source, say, out, path, stamp):
         d.update({k: v for k, v in old.items() if k != "contenu"})
         d["contenu"].update(old.get("contenu") or {})
     t, i = 0, 0
-    consigne = dire_ou("notation.consigne_onglets",
-                       "Tab change d'onglet : contenu, perturbations, son, qualité, avis. Flèches haut et bas dans "
-                       "l'onglet, gauche et droite pour la valeur, tout part de zéro. E fait entendre un exemple. "
-                       "Entrée enregistre, Échap annule.")
+    consigne = dire("notation.consigne_onglets")
     intro = conseils.intro("notation", dire("notation.titre"), consigne)
     out(intro + "\n")
     say(intro + (" " + dire("notation.deja_note_modif") + " " if previous else " ") + _tab_text(d, t, i))

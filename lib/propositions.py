@@ -460,7 +460,7 @@ def rejeter(journal):
     reste = nombre(len(doc["items"]), "autre rendu", "autres rendus")
     if appris:
         return dire("journal.rejet_suivant", rejete=nom(item.get("juge")), reste=reste)
-    return dire("journal.rejet_suivant_sans_empreinte", reste=reste)
+    return dire("journal.rejet_suivant_sans_empreinte", rejete=nom(item.get("juge")), reste=reste)
 
 
 def a_fiche(journal):
@@ -484,9 +484,11 @@ def confirmer(journal):
 
 
 def noter_rejet_simple(journal):
-    """Rejet d'une prise qui n'a qu'un rendu : ce juge descend sur cette fréquence."""
+    """Rejet d'une prise qui n'a qu'un rendu : ce juge descend sur cette fréquence.
+    Rend le juge noté (None : pas de juge ou pas de fréquence, rien n'a baissé)."""
     juge, freq, label = _juge_courant(journal)
     _noter(freq, juge, False, label)
+    return juge if juge and _cle(freq) else None
 
 
 def _juge_courant(journal):

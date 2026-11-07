@@ -51,6 +51,7 @@ ARS_STANDARD_SERVER = "16448250"   # identifiant du serveur ARS Motorola par def
 SUMMARY_STATE = chemins.base("dmr_resume.json")
 SUMMARY_AT = (23, 50)
 import sons
+from phrases import Etiquettes
 SUMMARY_SOUND = sons.chemin("dmr_vocal", "/media/nas/nd1/server/radio_scaner/decoding_numeric.mp3")  # son propre (2026-10-23, sons.py)
 
 CC_RE = re.compile(r"Color Code=(\d{1,2})")
@@ -269,9 +270,11 @@ def ars_rows(day):
         return
 
 
-_JOURS = ["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche"]
-_MOIS = ["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août", "septembre", "octobre",
-         "novembre", "décembre"]
+# Memes tableaux que la console (console/commands.py) : sections [jour.N] et [mois.N] de la langue.
+_JOURS = Etiquettes("jour", dict(enumerate(["lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi",
+                                            "dimanche"])), "jour de la semaine, 0 = lundi")
+_MOIS = Etiquettes("mois", dict(enumerate(["janvier", "février", "mars", "avril", "mai", "juin", "juillet", "août",
+                                           "septembre", "octobre", "novembre", "décembre"], 1)), "nom du mois")
 
 
 def _hm(t):
@@ -285,7 +288,7 @@ def _liste(items):
 
 def daily_summary(day):
     """Resume parle des connexions ARS d'un jour (datetime.date) ; None si aucune."""
-    from phrases import dire_ou
+    from phrases import dire
     rows = [r for r in ars_rows(day) if r.get("poste")]
     if not rows:
         return None
@@ -293,8 +296,8 @@ def daily_summary(day):
     by_freq = {}
     for r in rows:
         by_freq.setdefault(key(r["freq_hz"]) if r.get("freq_hz") else "?", []).append(r)
-    jour = f"{_JOURS[day.weekday()]} {day.day} {_MOIS[day.month - 1]}"
-    texts = [dire_ou("dmr.ars_titre", f"Connexions DMR du {jour}.")]
+    jour = f"{_JOURS[day.weekday()]} {day.day} {_MOIS[day.month]}"
+    texts = [dire("dmr.ars_titre", jour=jour)]
     all_servers, listen, relays = set(), [], []
     for k, rs in sorted(by_freq.items(), key=lambda kv: -len(kv[1])):
         e = reg.get(k, {})
@@ -305,51 +308,41 @@ def daily_summary(day):
             posts[r["poste"]] = posts.get(r["poste"], 0) + 1
         ts = [r["t"] for r in rs]
         refus = sum(1 for r in rs if r.get("refus"))
-        texts.append(dire_ou("dmr.ars_reseau",
-                             f"Relais {mhz} mégahertz : {nombre_fr(len(posts), 'poste')} se sont annoncés au serveur "
-                             f"de dispatch, {nombre_fr(len(rs), 'connexion')} entre {_hm(min(ts))} et {_hm(max(ts))}."))
+        texts.append(dire("dmr.ars_reseau", mhz=mhz, postes=nombre_fr(len(posts), "poste"),
+                          connexions=nombre_fr(len(rs), "connexion"), debut=_hm(min(ts)), fin=_hm(max(ts))))
         top = sorted(posts.items(), key=lambda kv: -kv[1])[:6]
-        texts.append(dire_ou("dmr.ars_postes", "Les plus présents : " + _liste(
-            f"le {p}, {nombre_fr(n, 'fois', 'fois')}" for p, n in top) + "."))
+        texts.append(dire("dmr.ars_postes", liste=_liste(
+            dire("dmr.ars_poste_fois", poste=p, fois=nombre_fr(n, "fois", "fois")) for p, n in top)))
         if refus:
-            texts.append(dire_ou("dmr.ars_refus",
-                                 f"{nombre_fr(refus, 'connexion refusée', 'connexions refusées')} : le serveur de "
-                                 "dispatch était injoignable, les postes réessaient alors en boucle."
-                                 if refus < len(rs) else
-                                 "Le serveur de dispatch n'a répondu à aucune : il semble éteint ou débranché, "
-                                 "les postes réessaient alors en boucle."))
+            texts.append(dire("dmr.ars_refus", refus=nombre_fr(refus, "connexion refusée", "connexions refusées"))
+                         if refus < len(rs) else dire("dmr.ars_refus_tous"))
         all_servers |= {r.get("serveur") for r in rs} - {None}
         speakers = []
         for p in posts:
             info = (e.get("emetteurs") or {}).get(p)
             if info and info.get("groupes"):
                 g = info["groupes"][:2]
-                speakers.append(f"le {p} dans le groupe {g[0]}" if len(g) == 1
-                                else f"le {p} dans les groupes {_liste(g)}")
+                speakers.append(dire("dmr.ars_poste_groupe", poste=p, groupe=g[0]) if len(g) == 1
+                                else dire("dmr.ars_poste_groupes", poste=p, groupes=_liste(g)))
         if speakers:
-            texts.append(dire_ou("dmr.ars_parlent", f"Parmi eux, déjà entendus parler : {_liste(speakers[:5])}."))
+            texts.append(dire("dmr.ars_parlent", liste=_liste(speakers[:5])))
         groups = sorted((e.get("groupes") or {}).items(), key=lambda kv: -kv[1].get("n", 0))[:3]
         if groups:
             cc = main_cc(e)
-            listen.append(f"{mhz}" + (f" code couleur {int(cc)}" if cc else "")
-                          + f", groupes {_liste([g for g, _ in groups])}")
+            listen.append(dire("dmr.ars_ecoute_cc", mhz=mhz, cc=int(cc), groupes=_liste([g for g, _ in groups])) if cc
+                          else dire("dmr.ars_ecoute", mhz=mhz, groupes=_liste([g for g, _ in groups])))
         relays.append((hz, set(posts), set((e.get("groupes") or {}))))
     for i, (fa, pa, ga) in enumerate(relays):   # meme reseau : postes ET groupes en commun
         for fb, pb, gb in relays[i + 1:]:
             if fa and fb and len(pa & pb) >= 2 and ga & gb:
-                texts.append(dire_ou("dmr.ars_meme_reseau",
-                                     f"Les relais {fr_mhz(fa)} et {fr_mhz(fb)} appartiennent au même réseau : "
-                                     f"{nombre_fr(len(pa & pb), 'poste')} en commun, mêmes groupes d'appel."))
+                texts.append(dire("dmr.ars_meme_reseau", mhz_a=fr_mhz(fa), mhz_b=fr_mhz(fb),
+                                  postes=nombre_fr(len(pa & pb), "poste")))
     if all_servers == {ARS_STANDARD_SERVER}:
-        texts.append(dire_ou("dmr.ars_serveur",
-                             "À qui ils se connectent : au service de présence Motorola standard, numéro 16448250, "
-                             "un poste de dispatch relié au relais qui suit quelles radios sont allumées. Le nom de "
-                             "son propriétaire n'est jamais transmis par la radio."))
+        texts.append(dire("dmr.ars_serveur"))
     elif all_servers:
-        texts.append(dire_ou("dmr.ars_serveurs", "Serveurs joints : " + _liste(sorted(all_servers)) + "."))
+        texts.append(dire("dmr.ars_serveurs", liste=_liste(sorted(all_servers))))
     if listen:
-        texts.append(dire_ou("dmr.ars_ecouter", "Pour écouter leurs conversations : " + " ; ".join(listen)
-                             + ". La veille DMR y revient d'elle-même, plus souvent juste après des connexions."))
+        texts.append(dire("dmr.ars_ecouter", liste=" ; ".join(listen)))
     return " ".join(texts)
 
 

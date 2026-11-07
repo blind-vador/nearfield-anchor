@@ -26,10 +26,24 @@ def _attente_quota(resp):
     return connecteurs_ia.REPOS_QUOTA_SEC
 
 
-def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT, mime="image/jpeg", audio=None, audio_mime="audio/ogg"):
+def contexte_scanneur():
+    """Ce qu'une IA doit savoir avant de parler d'une reception (2026-11-07) :
+    scanneur agnostique, radioamateurs aveugles, veille citoyenne, en clair
+    seulement. Sans lui, une IA a pris du TETRA recu en clair pour un piratage
+    ou un faux decodage."""
+    import avions_info
+    return dire("ia.contexte_scanneur", langue=avions_info._langue())
+
+
+def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT, mime="image/jpeg", audio=None,
+        audio_mime="audio/ogg", scanneur=False):
     """jpeg : image (octets ; type mime, JPEG par defaut) jointe a la question.
     audio : son (octets, type audio_mime) joint, pour transcrire une voix captee
-    (ATIS...). json_mode : Gemini rend du JSON strict (responseMimeType)."""
+    (ATIS...). json_mode : Gemini rend du JSON strict (responseMimeType).
+    scanneur : la question porte sur ce que le scanner a capte ; le contexte
+    (contexte_scanneur) passe devant."""
+    if scanneur:
+        prompt = contexte_scanneur() + "\n\n" + prompt
     texte_seul = jpeg is None and audio is None
     if texte_seul:
         texte = connecteurs_ia.demander(prompt, temperature, json_mode, timeout)

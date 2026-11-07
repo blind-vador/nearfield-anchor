@@ -1868,7 +1868,7 @@ def _annoncer_image_sstv(ligne, band_label):
             tampon = io.BytesIO()
             Image.open(chemin).convert("RGB").save(tampon, "JPEG", quality=90)
             description, probleme = gemini.ask(dire("radio.consigne_image_sstv"), temperature=0.3,
-                                               jpeg=tampon.getvalue())
+                                               jpeg=tampon.getvalue(), scanneur=True)
             if probleme:
                 print(f"[radio_watch] image SSTV : {probleme}")
         except Exception as exc:

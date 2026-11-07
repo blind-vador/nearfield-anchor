@@ -203,7 +203,7 @@ def _explain(name, packet, raw_comment):
         import gemini
         text, problem = gemini.ask(EXPLAIN_PROMPT.format(
             raw=packet.get("raw", ""), fmt=packet.get("format", ""), table=packet.get("symbol_table", ""),
-            symbol=packet.get("symbol", ""), comment=raw_comment))
+            symbol=packet.get("symbol", ""), comment=raw_comment), scanneur=True)
     except Exception as exc:
         text, problem = None, repr(exc)
     if problem:

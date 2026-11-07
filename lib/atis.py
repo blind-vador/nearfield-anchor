@@ -121,7 +121,7 @@ def refresh_one(oaci, force=False):
     if not audio:
         return prev or None
     answer, reason = gemini.ask(PROMPT.format(aeroport=name), temperature=0.1, json_mode=True,
-                                audio=audio, audio_mime="audio/ogg", timeout=90)
+                                audio=audio, audio_mime="audio/ogg", timeout=90, scanneur=True)
     try:
         result = json.loads(answer) if answer else None
     except ValueError:

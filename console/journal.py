@@ -376,9 +376,12 @@ def _annonce_gardee(ceremonie, phrase):
     return chemin
 
 
-def _reject(path, rendu=None):
+def _reject(path, rendu=None, juge_note=None):
     """rendu : dernier rendu d'une fiche, deja note et appris par propositions.rejeter ;
-    l'empreinte de la capture est celle du premier juge, elle ne doit pas prendre sa place."""
+    l'empreinte de la capture est celle du premier juge, elle ne doit pas prendre sa place.
+    juge_note : juge deja baisse sur cette frequence (propositions.noter_rejet_simple).
+    La phrase dit toujours ce qui a change (2026-11-08) : le juge perd en confiance
+    meme quand il n'y a pas d'empreinte de bruit a retenir."""
     info = ns.capture_info(path)
     fiche = _message_card(path)
     # Deja partie (purge, autre rejet) : le rejet continue, il ne doit pas fermer le journal.
@@ -407,11 +410,13 @@ def _reject(path, rendu=None):
     if rendu is not None:
         if rendu.get("empreinte"):
             return dire("journal.rejete_appris", juge=propositions.nom(rendu.get("juge")))
-        return dire("journal.rejete_supprime")
-    if info and info.get("fingerprint"):
+        juge_note = rendu.get("juge")
+    elif info and info.get("fingerprint"):
         juge = ns.juge_de(info)
         ns.add_signature(dict(info, juge=juge))
         return dire("journal.rejete_appris", juge=propositions.nom(juge))
+    if juge_note:
+        return dire("journal.rejete_baisse", juge=propositions.nom(juge_note))
     return dire("journal.rejete_supprime")
 
 
@@ -738,9 +743,8 @@ def run(key_source, say, out, category="radio"):
                         # D'autres juges ont un rendu : on le lit, la prise reste.
                         play(rec_i, reste)
                     else:
-                        if not fiche:
-                            propositions.noter_rejet_simple(path)
-                        text = _reject(path, rendu=rendu)
+                        juge_note = None if fiche else propositions.noter_rejet_simple(path)
+                        text = _reject(path, rendu=rendu, juge_note=juge_note)
                         del recs[rec_i]
                         if not recs:
                             del days[order[day_i]]

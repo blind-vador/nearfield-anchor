@@ -262,7 +262,7 @@ def texte(donnees, debut, fin):
         reponse, probleme = gemini.ask(PROMPT.format(commune=lieu.get("commune", ""), debut=_heure(debut),
                                                      fin=_heure(fin), donnees=json.dumps(donnees, ensure_ascii=False,
                                                                                          default=str)[:9000]),
-                                       temperature=0.9, timeout=90)
+                                       temperature=0.9, timeout=90, scanneur=True)
         if reponse and reponse.strip():
             return " ".join(reponse.split()), "gemini"
         print(f"[trafic_heure] Gemini : {probleme}")

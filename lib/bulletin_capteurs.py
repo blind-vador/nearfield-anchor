@@ -187,7 +187,7 @@ def texte(r):
         import reglages
         lieu = reglages.get("lieu")
         text, problem = gemini.ask(PROMPT.format(commune=lieu.get("commune", ""), heure=r["heure"],
-                                                 donnees=json.dumps(r, ensure_ascii=False)), temperature=0.4, timeout=40)
+                                                 donnees=json.dumps(r, ensure_ascii=False)), temperature=0.4, timeout=40, scanneur=True)
         if text and text.strip():
             return " ".join(text.replace("*", "").split()), "gemini"
         print(f"[bulletin_capteurs] Gemini : {problem}")

@@ -9,7 +9,7 @@ import time
 
 import dmr_registre  # noqa: E402
 import matcher  # noqa: E402
-from phrases import dire, dire_ou, nombre  # noqa: E402
+from phrases import dire, nombre  # noqa: E402
 
 MAX_FREQS = 5
 MAX_GROUPS = 4
@@ -88,7 +88,7 @@ def run(line):
     if words & DAY_WORDS:
         # Connexions des postes au serveur de dispatch (lib/dmr_registre.py, ARS)
         day = datetime.date.today() - datetime.timedelta(days=1 if "hier" in words else 0)
-        return dmr_registre.daily_summary(day) or dire_ou("dmr.ars_rien", "Aucune connexion DMR notée ce jour-là.")
+        return dmr_registre.daily_summary(day) or dire("dmr.ars_rien")
     known = dmr_registre.targets()
     if not known:
         return dire("dmr.rien")

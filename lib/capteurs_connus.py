@@ -125,27 +125,25 @@ def _label(key, e):
 
 def summary(top=5):
     """Ce que le Pi sait des capteurs deja entendus (commande "capteurs connus")."""
-    from phrases import dire_ou, nombre
+    from phrases import dire, dire_ou, nombre
     data = load()
     if not data:
-        return dire_ou("capteurs_connus.vide", "Aucun capteur sans fil mémorisé pour l'instant.")
+        return dire("capteurs_connus.vide")
     now = time.time()
     today = datetime.date.today().isoformat()
     mine = [e for e in data.values() if e.get("mien")]
     heard_today = sum(1 for e in data.values() if e.get("dernier_jour") == today)
     week_new = [e for e in data.values() if now - e["premier"] < 7 * 86400]
-    texts = [dire_ou("capteurs_connus.titre",
-                     f"Je connais {nombre(len(data), 'capteur')} sans fil"
-                     + (f", dont {len(mine)} à toi" if mine else ", aucun appairé comme étant à toi")
-                     + f". Entendus aujourd'hui : {heard_today}.")]
+    texts = [dire("capteurs_connus.titre_miens" if mine else "capteurs_connus.titre",
+                  capteurs=nombre(len(data), "capteur"), miens=len(mine), aujourdhui=heard_today)]
     regular = sorted(((k, e) for k, e in data.items() if not e.get("mien")), key=lambda kv: -kv[1]["n"])[:top]
     if regular:
-        texts.append("Les plus fidèles : " + " ; ".join(
-            f"{_label(k, e)}, {nombre(e['n'], 'fois', 'fois')} sur {nombre(e['jours'], 'jour')}, "
-            f"depuis le {_date(e['premier'])}" for k, e in regular) + ".")
+        texts.append(dire("capteurs_connus.fideles", liste=" ; ".join(
+            dire("capteurs_connus.fidele", nom=_label(k, e), fois=nombre(e["n"], "fois", "fois"),
+                 jours=nombre(e["jours"], "jour"), depuis=_date(e["premier"])) for k, e in regular)))
     for e in mine:
-        texts.append(f"{e['nom']} : {nombre(e['n'], 'fois', 'fois')}, dernière fois le {_date(e['dernier'])} "
-                     f"à {time.strftime('%H h %M', time.localtime(e['dernier']))}.")
+        texts.append(dire("capteurs_connus.mien", nom=e["nom"], fois=nombre(e["n"], "fois", "fois"),
+                          jour=_date(e["dernier"]), heure=time.strftime("%H h %M", time.localtime(e["dernier"]))))
     if week_new:
-        texts.append(f"Nouveaux cette semaine : {nombre(len(week_new), 'capteur')}.")
+        texts.append(dire("capteurs_connus.nouveaux", capteurs=nombre(len(week_new), "capteur")))
     return " ".join(texts)
