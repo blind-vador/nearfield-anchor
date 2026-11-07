@@ -7035,3 +7035,8 @@ haut et bas écoutent, Espace coche, Entrée télécharge dans `sonneries/depot`
 ligne de crédit par son dans `sonneries/credits_sons_telecharges.txt`. Openverse sans
 clé, Freesound en direct avec `cles/freesound.txt`. Wikimedia écarté : son serveur de
 fichiers répond 429 à ce client (Retry-After 600 s le 2026-11-07), limite respectée.
+
+## 2026-11-07 : journal lu, explication des messages
+- `journal messages lu` (ou radio, données... ; lu, lue, lus, lues) : toutes les entrées de ce journal déclarées écoutées, ses notifications se taisent ; rien n'est supprimé ni noté (`journal.marquer_lu`, `journal_vus.mark_many`).
+- Journaux messages et données, touche E : la fiche entière part à l'IA du cloud (connecteurs puis Gemini), qui explique en clair ce qu'est le message et ce qu'il veut dire, sans interpréter les blocs de chiffres au format privé. La réponse est dite si l'on n'a pas bougé, gardée dans la fiche (`explication_ia`) : E la redit sans nouvelle requête. Ailleurs, E garde l'examen du Mac (`lib/explication_messages.py`).
+- Incident du jour : carte son USB figée sans erreur (le son ne sortait plus, les lectures se terminaient normalement) ; rebranchement par l'utilisateur. Pi à 80 °C.

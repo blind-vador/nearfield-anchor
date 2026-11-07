@@ -38,12 +38,19 @@ def mark(path):
     """Enregistrement joue dans un journal, ou dit a voix haute par une veille
     (lib/prise_vocale.py) : il n'est plus nouveau. Plusieurs processus marquent
     (console, veilles) : lire-modifier-ecrire sous verrou (2026-10-23)."""
+    mark_many([path])
+
+
+def mark_many(paths):
+    """Tout un journal declare lu (commande "journal messages lu", 2026-11-07) :
+    une seule ecriture pour toutes les entrees."""
     import fcntl
     with open(PATH + ".verrou", "a") as verrou:
         fcntl.flock(verrou, fcntl.LOCK_EX)
         data = _load()
         now = time.time()
-        data["ecoutes"][os.path.basename(path)] = now
+        for path in paths:
+            data["ecoutes"][os.path.basename(path)] = now
         data["ecoutes"] = {k: t for k, t in data["ecoutes"].items() if now - t < KEEP_SEC}
         _save(data)
 

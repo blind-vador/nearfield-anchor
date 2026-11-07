@@ -435,6 +435,22 @@ def unheard_counts():
     return counts
 
 
+def marquer_lu(category):
+    """"journal messages lu" (2026-11-07) : tout ce journal est declare ecoute,
+    ses notifications se taisent ; rien n'est supprime ni note."""
+    import journal_vus
+    name = journaux.NAMES[category]
+    if not os.path.ismount("/media/nas/nd1"):
+        return dire("journal.disque_absent", nom=name)
+    nouveaux = [path for recs in scan_recordings(category).values() for _, path, text in recs
+                if path and text is None and journal_vus.is_new(path)]
+    if not nouveaux:
+        return dire("journal.lu_rien", nom=name)
+    journal_vus.mark_many(nouveaux)
+    return dire("journal.lu_fait", nom=name,
+                entrees=nombre(len(nouveaux), "entrée", "entrées"))
+
+
 def notifications():
     if not os.path.ismount("/media/nas/nd1"):
         return dire("notifications.disque_absent")
@@ -537,6 +553,43 @@ def run(key_source, say, out, category="radio"):
 
     suite_lock = threading.Lock()
     suite = {"tour": 0, "fil": None}
+    explications = {"en_cours": set()}
+
+    def expliquer(path):
+        """Touche E des journaux messages et donnees : l'IA explique le message.
+        Rend la main tout de suite ; la reponse est dite si l'on n'a pas
+        bouge depuis (elle coupe alors la lecture du message), sinon E la
+        redit aussitot."""
+        import explication_messages as em
+        fiche = em.fiche_de(path)
+        if not fiche:
+            return dire("journal.explication_sans_fiche")
+        if em.deja(fiche):
+            return em.deja(fiche)
+        if path in explications["en_cours"]:
+            return dire("journal.explication_en_cours")
+        explications["en_cours"].add(path)
+        tour = suite["tour"]
+
+        def fil():
+            try:
+                texte, raison = em.expliquer(category, path)
+            except Exception as exc:
+                print(f"[journal] explication : {exc!r}", file=sys.stderr)
+                texte, raison = None, None
+            finally:
+                explications["en_cours"].discard(path)
+            phrase = texte or (raison if raison and raison not in ("ia", "fiche") else dire("journal.explication_echec"))
+            with suite_lock:
+                ici = (suite["tour"] == tour and order and 0 <= rec_i < len(days.get(order[day_i], ()))
+                       and days[order[day_i]][rec_i][1] == path)
+                if ici:
+                    player.stop()
+            if ici:
+                out(f"[{phrase}]\n")
+                say(phrase)
+        threading.Thread(target=fil, daemon=True).start()
+        return dire("journal.explication_demandee")
 
     def couper():
         """Toute touche de navigation : le son, la phrase et ce qui etait en route."""
@@ -724,6 +777,8 @@ def run(key_source, say, out, category="radio"):
                 text = _envoyer_decodeur(recs[rec_i][1], key_source)
             elif key in ("r", "R"):
                 text = propositions.renvoyer_flux(recs[rec_i][1])
+            elif key in ("e", "E") and category in ("messages", "donnees"):
+                text = expliquer(recs[rec_i][1])
             elif key in ("e", "E"):
                 # Envoi a l'examen IA du Mac mini (en differe) : il reprendra le
                 # brut, tentera plusieurs nettoyages, et deposera une proposition.

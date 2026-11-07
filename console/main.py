@@ -374,6 +374,9 @@ def run_command(line, key_source, last_response):
         return bilan.reset_all()
     if cmd.name == "archives":
         return archives.run(key_source, voix.say, out, journaux.from_words(matcher.normalize(line)))
+    if cmd.name == "journal" and {"lu", "lus", "lue", "lues"} & set(matcher.normalize(line).split()):
+        # "journal messages lu" : tout ce journal est declare ecoute (2026-11-07).
+        return journal.marquer_lu(journaux.from_words(matcher.normalize(line)))
     if cmd.name == "journal":
         return journal.run(key_source, voix.say, out, journaux.from_words(matcher.normalize(line)))
     if cmd.name == "mode":

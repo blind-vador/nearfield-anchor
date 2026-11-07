@@ -93,7 +93,8 @@ par étapes ; retaper la commande donne l'avancement), `cherche des sons` (fourn
 `archives` (extraits gardés : Tab = jour, haut/bas = écouter, gauche/droite = volume
 temporaire, rien n'est supprimé), `journal` (enregistrements radio : Tab/Maj+Tab = jour, haut/bas = écouter,
 droite = garder le rendu entendu dans le dossier du jour de storage/radio, gauche = rejeter comme
-parasite, N = noter), `veilles` / `arrête` / `reprends` / `redémarre` + nom de veille ("arrête radio",
+parasite, N = noter ; journaux messages et données : E = l'IA explique le message en clair, réponse gardée dans sa fiche ;
+`journal messages lu` = tout ce journal déclaré lu, ses notifications se taisent), `veilles` / `arrête` / `reprends` / `redémarre` + nom de veille ("arrête radio",
 "reprends toutes les veilles" : arrêt persistant après redémarrage, reprise,
 relance ; "veilles" ou "arrête" seul = liste avec l'état), `manuel` (balayage suspendu, radio en direct : flèches haut/bas = plage,
 gauche/droite = pas de fréquence, page haut/bas = dix pas, Entrée = relire,

@@ -838,10 +838,12 @@ COMMANDS = [
             keywords=["archives", "archive", "extraits", "extraits interessants", "mes extraits"],
             examples=["écouter les archives", "les extraits gardés", "ce que j'ai gardé"]),
     Command("journal", "écouter et trier les enregistrements radio : garder ou rejeter ; journal alarmes, messages, "
-            "capteurs, satellites ou données pour les autres", None,
+            "capteurs, satellites ou données pour les autres ; ajouter « lu » (journal messages lu) déclare tout le "
+            "journal comme lu et fait taire ses notifications", None,
             keywords=["journal", "journal radio", "journal alarmes", "journal des alarmes", "enregistrements", "enregistrement", "captures",
                       "log", "logs radio"],
-            examples=["écouter les enregistrements", "ce que la radio a capté", "les réceptions de la nuit"]),
+            examples=["écouter les enregistrements", "ce que la radio a capté", "les réceptions de la nuit",
+                      "journal messages lu"]),
     Command("compris", "arrête les alarmes qui sonnent en boucle, et fait taire les alertes en cours pour tes "
             "plantes (gel, vent, chaleur, soif)", None,
             keywords=["compris", "ok", "okay", "bien recu", "bien pris", "c est note", "d accord", "j ai compris"],
