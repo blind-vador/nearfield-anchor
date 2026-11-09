@@ -339,6 +339,7 @@ def _multimon(wav, outils, priorite):
     # Une trame porte le nom de son demodulateur ("POCSAG1200: ..."). Le reste, ce sont
     # des octets du FSK dans le bruit ("xrMN") : gardes a l'archive, pas lus a voix haute.
     bons = [l for l in lignes if _TRAME_MULTIMON.match(l) and decodeurs.meaningful(l)]
+    bons, _ = decodeurs.fms_tenus(bons)
     return bons, [l for l in lignes if l not in bons]
 
 
@@ -408,7 +409,8 @@ def passer(ep, wav, outils, tmp, priorite=("nice", "-n", "19"), garder=False):
         verdict = {"propose": bool(rendu), "protocole": "FreeDV " + mode if rendu else None,
                    "voix_s": round(juges_radio.duree_wav(rendu), 1) if rendu else 0.0, "t": time.time()}
         if m:
-            verdict.update(synchro=m["synchro"], trames=m["trames"], synchro_part=round(m["synchro"] / max(1, m["trames"]), 2))
+            verdict.update(synchro=m["synchro"], trames=m["trames"], synchro_part=round(m["synchro"] / max(1, m["trames"]), 2),
+                           suite_s=m.get("suite_s"))
         return verdict, rendu
     if nom in ("ft8", "ft4"):
         messages = _ft(nom, wav, outils)

@@ -750,7 +750,9 @@ def _dire_message(mode, texte, dits, freq=None):
         return dits
     fiche = messages_types.fiche(mode, texte, freq, decoupe=mode == "ffsk", urgence="tresse" in texte)
     nom = re.split("[,:]", fiche["type_message"])[0] if mode in ("multimon", "ffsk") else mode
-    vd.announce(dire("radio.message_donnees", nom=nom, msg=texte), SON_MESSAGE, "message_donnees", "juges", fiche=fiche)
+    import journaux
+    vd.announce(dire("radio.message_donnees", nom=nom, msg=texte), SON_MESSAGE, journaux.etiquette_decodage(texte),
+                "juges", fiche=fiche)
     return dits + 1
 
 

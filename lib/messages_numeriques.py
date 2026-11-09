@@ -65,4 +65,6 @@ def found(kind, value, stats):
             said += " " + dire("numerique.frequence", frequence=mhz)
         return said
 
-    vd.announce(text, SOUND, f"message_numerique_{protocol}", "decodeurs", fiche=fiche)
+    # Un SMS est un message ; un alias ou une position, une donnee lue (2026-11-08).
+    etiquette = "message_numerique_" if kind == "texte" else "donnees_numerique_"
+    vd.announce(text, SOUND, etiquette + protocol, "decodeurs", fiche=fiche)

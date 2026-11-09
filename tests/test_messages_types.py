@@ -99,3 +99,21 @@ assert compte("08:38 Sync: -EDACS  BCH FAIL ") == (1, 0), "EDACS : BCH faux"
 assert compte("08:38 Sync: no sync") == (0, 0)
 assert compte("08:38 Sync: +DMR  slot1 | Color Code=01 | IDLE") == (1, 1)
 print("test_messages_types : tout est bon")
+
+# 2026-11-09 : faux decodages du terrain, gardes au journal des rejets, pas lus
+assert not decodeurs.meaningful("FMS: 05528db4ece4 (4=KatS e=Sachsen-Anhalt Ort 0xce=206 FZG 4bd8) CRC correct AFTER SWAPPING ONE BIT")
+assert not decodeurs.meaningful("CLIPFSK: RVD len=5 broken packet len=14")
+assert not decodeurs.meaningful("FSK9600: fm ? to M?>ULK-6 QSO Nr 10249 I61^ pid=05")
+assert not decodeurs.meaningful("AFSK2400: fm kKd\\-6 to -YMG.(-7 UA+ pid=6D")
+assert not decodeurs.meaningful("HAPN4800: fm X3^9<-10 to q3]")
+assert decodeurs.meaningful("AFSK1200: fm F1ZCK-3 to APRS-0 UI  pid=F0")
+assert decodeurs.meaningful("AFSK1200: fm HB9TJR-3 to APCHVD-0 via F5ZCV-4,WIDE1-0 UI  pid=F0")
+assert not decodeurs.meaningful("POCSAG1200: Address:       8  Function: 0")
+assert not decodeurs.meaningful("POCSAG1200: Address:  730464  Function: 2  Alpha:   D{")
+assert decodeurs.meaningful("POCSAG1200: Address:  730464  Function: 2  Alpha:   Intervention rue Victor Hugo")
+assert decodeurs.meaningful("POCSAG512: Address: 1234  Function: 0  Numeric:  0612 3345")
+_t, _d = decodeurs.fms_tenus(["FMS: 59e67a3f0000 (c=DLRG) CRC correct", "AFSK1200: fm F1ZCK-3 to APRS-0 UI"])
+assert _t == ["AFSK1200: fm F1ZCK-3 to APRS-0 UI"] and len(_d) == 1
+_t, _d = decodeurs.fms_tenus(["FMS: 59e67a3f0000 (c=DLRG) CRC correct"] * 2)
+assert len(_t) == 2 and not _d
+print("messages_types : faux decodages du 2026-11-09 ecartes")

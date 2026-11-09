@@ -125,5 +125,5 @@ def process(msg):
         fiche["source"] = " ".join(x for x in (card.get("modele"), card.get("immatriculation")) if x) or d["icao"]
         return tr.sentence(card, tr._plain_description(card), _data(d), _sentence(d))
 
-    vd.announce(text, SOUND, f"message_avion_modes_{d['icao']}", "modes_meteo", fiche=fiche)
+    vd.announce(text, SOUND, f"donnees_avion_modes_{d['icao']}", "modes_meteo", fiche=fiche)
     return True

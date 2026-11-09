@@ -61,7 +61,8 @@ PREFIXES = {
     "capteurs": ("voiture", "capteur_", "capteurs_", "sonde_"),
     # anciens noms (avant le 2026-10-03) : ACARS, vdl2, pager, meshtastic -> messages
     "messages": ("message_", "ACARS", "vdl2", "pager", "meshtastic"),
-    "donnees": ("APRS", "OGN_", "balise_", "lora", "terrain_", "trafic_", "securite_"),  # trafic_ : resume horaire (2026-10-23)
+    # donnees_ (2026-11-08) : ce qui est detecte, deduit ou simplement lu, sans etre un vrai message
+    "donnees": ("donnees_", "APRS", "OGN_", "balise_", "lora", "terrain_", "trafic_", "securite_"),  # trafic_ : resume horaire (2026-10-23)
     "meteo": ("meteo_",),   # "meteor" (satellites) a deja ete pris plus haut
 }
 # Mots qui designent un journal dans une commande ("journal capteurs",
@@ -78,6 +79,28 @@ WORDS = {
     "transports": ("transport", "transports", "bus", "tram", "metro", "perturbation", "perturbations"),
     "meteo": ("meteo", "bulletin", "bulletins", "temperature", "temperatures", "releve", "releves"),
 }
+
+
+# Messages ou donnees (demande utilisateur 2026-11-08) : un vrai message est ecrit par
+# quelqu'un pour etre lu (bipeur avec texte, SMS, APRS, ACARS, SDS, FT8, ASN). Le reste
+# -- detection d'un protocole, porteuse ou poste nouveau, identite, etat, signalisation,
+# alias, resume -- est une donnee lue ou deduite : journal "donnees".
+TYPES_DONNEES = ("FMS", "FMSFSK", "DTMF", "ZVEI1", "ZVEI2", "ZVEI3", "DZVEI", "PZVEI", "EEA", "EIA", "CCIR",
+                 "FLEETSYNC", "MPT1327", "MDC1200", "X10", "CLIPFSK", "UFSK1200",
+                 "AFSK1200", "AFSK2400", "AFSK2400_2", "AFSK2400_3", "HAPN4800", "FSK9600")
+_TEXTE_PAGER = re.compile(r"(Alpha|Numeric|Skyper|ALN|NUM|TON)\b[:|]?\s*\S")
+
+
+def etiquette_decodage(texte):
+    """Etiquette de journal d'un texte decode par multimon-ng ou les decodeurs FFSK :
+    "message_donnees" s'il porte un vrai message, "donnees_decodees" sinon."""
+    texte = (texte or "").strip()
+    nom = re.split(r"[:,|\s]", texte, 1)[0].upper()
+    if nom in TYPES_DONNEES:
+        return "donnees_decodees"
+    if nom.startswith(("POCSAG", "FLEX")):
+        return "message_donnees" if _TEXTE_PAGER.search(texte) else "donnees_decodees"
+    return "message_donnees"
 
 
 def category_of(filename):

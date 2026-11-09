@@ -221,8 +221,9 @@ def play(path, label):
         audio_lock.release(lock)
     if getattr(lock, "silent", False):
         # journal ouvert : enregistree sans bruit, un mot pour prevenir (pas a chaque releve)
+        import journaux
         import speak
-        speak.journal_notice()
+        speak.journal_notice(journaux.category_of(path or ""))
 
 
 # --- file au fil de l'eau --------------------------------------------------------------

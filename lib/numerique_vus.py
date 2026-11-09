@@ -106,7 +106,7 @@ def annoncer(freq_hz, protocole, propres, total, meta=None, chiffre=False, tag="
         texte = dire("numerique.prouve_sans_voix", protocole=protocole,
                      frequence=("%.4f" % (freq_hz / 1e6)).replace(".", ","), propres=propres) + _details(meta, chiffre)
         fiche = dict(messages_types.fiche(protocole, texte, int(freq_hz)), type_message="%s sans voix" % protocole)
-        vd.announce(texte, sons.chemin("dmr_nouveau"), "message_dmr", tag, fiche=fiche)
+        vd.announce(texte, sons.chemin("dmr_nouveau"), "donnees_dmr", tag, fiche=fiche)
         print("[%s] %.4f MHz : %s prouve sans voix (%s/%s synchros propres)" % (
             tag, freq_hz / 1e6, protocole, propres, total))
         return True

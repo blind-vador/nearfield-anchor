@@ -29,8 +29,8 @@ messages d'etat et SDS (expediteur, taille ; pas le contenu, que dsd-neo
 n'affiche pas), appels (clair/chiffre/prive), porteuses de trafic attribuees.
 
 Aucune tentative de dechiffrement : jamais --tetra-key (ecoute passive de
-bonne foi -- voir la memoire nearfield-tetra et ROADMAP). Le Pi ne decode
-jamais le TETRA lui-meme (chaleur).
+bonne foi -- voir la memoire nearfield-tetra et ROADMAP). Le Pi le decode
+lui-meme seulement sans machine compagne (2026-11-08) : il chauffe.
 
 Format de sortie de dsd-neo observe (reseau francais, 2026-10-26/27) :
   Sync: +TETRA SB [TETRA BSCH] MCC=208 MNC=29 CC=0x15 TN=4 FN=9 MN=40
@@ -50,7 +50,11 @@ import time
 import wave
 
 HOME = os.path.expanduser("~/.nearfield-bridge")
-DSD_NEO = os.path.join(HOME, "radio", "bin", "dsd-neo")
+# Le Mac compagnon (construire_dsd_neo.sh), puis le Pi lui-meme (construire_dsd_neo_pi.sh,
+# 2026-11-08 : le Pi decode le TETRA seul quand aucune machine compagne n'est la).
+_DSD_NEO_POSSIBLES = (os.path.join(HOME, "radio", "bin", "dsd-neo"),
+                      os.path.expanduser("~/autopilot/dsd-neo/bin/dsd-neo"))
+DSD_NEO = next((c for c in _DSD_NEO_POSSIBLES if os.access(c, os.X_OK)), _DSD_NEO_POSSIBLES[0])
 BW_KHZ = 72                      # largeur DSP imposee par le TETRA (dsd-neo -fT)
 VOIX_RMS_MIN = 120               # au-dela : la voix de synthese n'est pas du silence
 FIN_APPEL_SEC = 3.0              # apres le retour au controle : la fin de phrase arrive
@@ -157,10 +161,20 @@ def lisible(txt):
     t = (txt or "").strip()
     if len(t) < 3:
         return False
-    utiles = sum(1 for c in t if c.isalnum() or c in " .,;:!?'-/()@%+")
+    utiles = sum(1 for c in t if _lettre(c) or c.isdigit() or c in " .,;:!?'-/()@%+")
     serre = t.replace(" ", "")
-    return (sum(1 for c in serre if c.isalnum()) >= 0.7 * len(serre)
-            and utiles >= 0.9 * len(t) and re.search(r"[^\W\d_]{3,}", t) is not None)
+    return (sum(1 for c in serre if _lettre(c) or c.isdigit()) >= 0.7 * len(serre)
+            and utiles >= 0.9 * len(t) and re.search(r"[A-Za-z]{3,}", t) is not None)
+
+
+# 2026-11-09 : isalnum() accepte tout le Latin-1, et des octets binaires lus en Latin-1
+# ("ÿûÿöÿúÿÿøÿ ÿòÿïÿÿâÿí") passaient pour du texte : quatre "messages" du poste 30000
+# lus a voix haute. Une lettre, c'est l'alphabet latin de base et les accents du francais.
+_ACCENTS_FR = set("àâäçéèêëîïôöùûüœæÀÂÄÇÉÈÊËÎÏÔÖÙÛÜŒÆ")
+
+
+def _lettre(c):
+    return (c.isascii() and c.isalpha()) or c in _ACCENTS_FR
 
 
 def lisible_brut(txt):
@@ -168,7 +182,7 @@ def lisible_brut(txt):
     fois les espaces retires) ? Ecarte les donnees binaires ou seuls quelques
     octets tombent par hasard sur des lettres."""
     serre = re.sub(r"\s+", "", txt or "")
-    return len(serre) >= 8 and sum(1 for c in serre if c.isalpha()) >= 0.6 * len(serre)
+    return len(serre) >= 8 and sum(1 for c in serre if _lettre(c)) >= 0.6 * len(serre)
 
 
 # Debut des donnees d'application dans le contenu (en caracteres hex) : apres
@@ -318,7 +332,7 @@ def _journaliser_brut(freq_hz, texte):
     de format...). Dossier plafonne a 50 fichiers. Jamais bloquant."""
     try:
         import glob
-        d = os.path.join(HOME, "tetra_brut")
+        d = os.path.join(HOME if os.path.isdir(HOME) else os.path.expanduser("~/autopilot"), "tetra_brut")
         os.makedirs(d, exist_ok=True)
         nom = "%d_%s.log" % (int(freq_hz), time.strftime("%Y%m%d_%H%M%S"))
         with open(os.path.join(d, nom), "w", encoding="utf-8", errors="replace") as fh:
@@ -344,10 +358,11 @@ def _rms_wav(path):
         return 0
 
 
-def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
+def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None, relais=True):
     """Connecte dsd-neo au rtl_tcp du Pi (host:port), decode `seconds` s sur
     freq_hz au gain donne -- prolonge jusqu'a max_seconds tant qu'un appel est
     suivi -- et rend les metadonnees + un chemin de voix en clair (ou None).
+    relais=False : sur le Pi lui-meme, rtl_tcp est local, pas de reduction IQ.
     Ne leve pas : en cas d'echec, {"ok": False, "erreur": ...}."""
     if not disponible():
         return {"ok": False, "erreur": "dsd-neo absent"}
@@ -357,10 +372,12 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
     voix = os.path.join(tmp, "voix.wav")
     # Par le relais iq_fanout (2026-11-01) : IQ reduit cote Pi, 4 fois moins de
     # Wi-Fi (sa puce calait sous le flux brut a 1,152 MS/s).
+    fo = None
     try:
-        import iq_fanout
-        fo = iq_fanout.FanOut(host, int(port))
-        host, port = "127.0.0.1", fo.start()
+        if relais:
+            import iq_fanout
+            fo = iq_fanout.FanOut(host, int(port))
+            host, port = "127.0.0.1", fo.start()
     except Exception as exc:
         import shutil
         shutil.rmtree(tmp, ignore_errors=True)
@@ -371,7 +388,8 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                                 text=True, start_new_session=True)
     except Exception as exc:
-        fo.stop()
+        if fo:
+            fo.stop()
         return {"ok": False, "erreur": "lancement dsd-neo : %r" % exc}
     sortie = []
     etat = {"suivi": False, "retour": 0.0}
@@ -423,7 +441,8 @@ def decoder(host, port, freq_hz, gain, seconds, ppm=0, max_seconds=None):
         except subprocess.TimeoutExpired:
             continue
     fil.join(timeout=2)
-    fo.stop()
+    if fo:
+        fo.stop()
     texte = "".join(sortie)
     _journaliser_brut(freq_hz, texte)
     res = parser(texte)

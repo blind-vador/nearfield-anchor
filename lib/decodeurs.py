@@ -189,11 +189,40 @@ SELECTIF_MIN_TONS = 4
 
 # Le decodeur dit lui-meme que sa trame ne tient pas (2026-11-05 : 55 FMS sur 63 lus a
 # voix haute portaient "CRC INCORRECT"). Pas lu ; garde au journal des rejets.
-_INTEGRITE_FAUSSE = re.compile(r"CRC INCORRECT|UNKNOWN Message type")
+_INTEGRITE_FAUSSE = re.compile(r"CRC INCORRECT|UNKNOWN Message type|AFTER SWAPPING|broken packet")
+# 2026-11-09 : apres ce filtre, 25 FMS sur 25 lus en quatre jours etaient encore faux
+# (polices allemandes, Sachsen, "000000000000"), 23 avec "CRC correct AFTER SWAPPING
+# ONE BIT". Le CRC du FMS fait 7 bits : en corrigeant un bit sur 48, une trame de
+# bruit sur trois passe. Corrige d'un bit, c'est douteux ; CLIPFSK "broken packet" aussi.
+
+# AX.25 (AFSK1200/2400, FSK9600, HAPN4800) : un indicatif, c'est 1 a 6 lettres ou
+# chiffres et un SSID de 0 a 15. Sur quatre jours, 14 trames sur 15 en dehors de
+# l'APRS 1200 portaient "fm kKd\-6 to -YMG.(-7" : le CRC 16 bits finit par passer
+# quand le bruit a 9600 bauds en propose des milliers.
+_AX25 = re.compile(r"^(?:AFSK\d+(?:_\d)?|FSK9600|HAPN4800): fm (\S+) to (\S+)")
+_INDICATIF = re.compile(r"^[A-Z0-9]{1,6}(?:-(?:[0-9]|1[0-5]))?$")
+# POCSAG : l'etiquette ("Address", "Function") faisait a elle seule les 4 caracteres
+# de meaningful(). Le contenu seul compte.
+_POCSAG = re.compile(r"^POCSAG\d+:.*?Function:\s*\d+\s*(?:(?:Alpha|Numeric|Skyper):\s*(.*))?$")
 
 
 def integrite_fausse(msg):
-    return bool(_INTEGRITE_FAUSSE.search(msg or ""))
+    msg = msg or ""
+    if _INTEGRITE_FAUSSE.search(msg):
+        return True
+    ax = _AX25.match(msg)
+    return bool(ax) and not (_INDICATIF.match(ax.group(1)) and _INDICATIF.match(ax.group(2)))
+
+
+def fms_tenus(lignes):
+    """Un FMS de bruit passe le CRC de 7 bits une fois sur 128 : il n'est tenu que
+    repete a l'identique dans la meme prise. Rend (tenues, douteuses)."""
+    codes = [re.match(r"FMS: ([0-9a-f]{12})", l or "") for l in lignes]
+    vus = [c.group(1) for c in codes if c]
+    tenues, douteuses = [], []
+    for ligne, c in zip(lignes, codes):
+        (douteuses if c and vus.count(c.group(1)) < 2 else tenues).append(ligne)
+    return tenues, douteuses
 
 
 def meaningful(msg, min_chars=MIN_DECODED_MESSAGE_CHARS):
@@ -211,6 +240,9 @@ def meaningful(msg, min_chars=MIN_DECODED_MESSAGE_CHARS):
         tons = re.match(r"[0-9A-F]*", _SELECTIF.split(msg, maxsplit=1)[-1]).group(0)
         if len(selectifs) > 1 or len(tons) < SELECTIF_MIN_TONS:
             return False
+    pocsag = _POCSAG.match(msg)
+    if pocsag:
+        msg = pocsag.group(1) or ""
     octets = len(_OCTET.findall(msg))
     cleaned = _OCTET.sub("", re.sub(r"<[^>]*>", "", msg))
     reels = sum(1 for c in cleaned if c.isalnum())

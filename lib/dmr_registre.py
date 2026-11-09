@@ -378,7 +378,7 @@ def daily_tick(now=None):
             text = daily_summary(now.date())
             if text:
                 import prise_vocale
-                prise_vocale.record(text, SUMMARY_SOUND, "message_DMR_resume",
+                prise_vocale.record(text, SUMMARY_SOUND, "donnees_DMR_resume",
                                     meta={"protocole": "DMR", "genre": "resume", "jour": day})
         except Exception as exc:
             print(f"[dmr_registre] resume du jour : {exc!r}")

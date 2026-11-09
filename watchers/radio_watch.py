@@ -47,8 +47,9 @@ import donnees_prise  # AIS, EAS : Dire Wolf sur la prise unique (2026-11-01)
 import preuve_voix  # rythme syllabique, deuxieme preuve de voix (2026-11-01)
 import maintien  # tenir une ecoute selon l'interet ; "zapper" (2026-10-22)
 import ctcss  # tonalite d'acces des relais, retrouvee dans le son capte (2026-10-23)
+import journaux
 import prise_unique  # un seul rtl_fm, tous les decodeurs en meme temps (2026-10-25)
-import tetra  # TETRA confie a la machine compagne (2026-10-26) ; le Pi ne decode pas
+import tetra  # TETRA par la machine compagne (2026-10-26), ou par le Pi seul sans elle (2026-11-08)
 import adsb_local_watch
 import aprs_watch
 import balises_watch
@@ -1002,10 +1003,10 @@ def _dmr_learn(stats):
         news = dmr_registre.record(stats)
         mhz = vd.fr_number(stats["freq_hz"] / 1e6, 4)
         if news["nouvelle_frequence"]:
-            vd.announce(dire("dmr.nouvelle_frequence", frequence=mhz), DMR_NOUVEAU_SOUND, "message_dmr", "radio_watch")
+            vd.announce(dire("dmr.nouvelle_frequence", frequence=mhz), DMR_NOUVEAU_SOUND, "donnees_dmr", "radio_watch")
         elif news["nouveaux_groupes"]:
             vd.announce(dire("dmr.nouveaux_groupes", frequence=mhz, groupes=", ".join(news["nouveaux_groupes"])),
-                        DMR_NOUVEAU_SOUND, "message_dmr", "radio_watch")
+                        DMR_NOUVEAU_SOUND, "donnees_dmr", "radio_watch")
     except Exception as exc:  # le registre ne doit jamais casser une ecoute
         print(f"[radio_watch] registre DMR : {exc!r}")
 
@@ -2366,8 +2367,8 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
         print(f"[radio_watch] decode numerique: {msg}")
         messages_dits.deja_dit(msg)   # les tickets ne le rediront pas
         # Au journal, avec sa fiche (2026-11-05) : dit en direct, il n'y laissait rien, ni fleche ni V.
-        vd.announce(dire("radio.message_numerique_decode", msg=msg), DECODING_MORSE_SOUND, "message_donnees",
-                    "radio_watch", fiche=messages_types.fiche("multimon", msg, int(freq_hz)))
+        vd.announce(dire("radio.message_numerique_decode", msg=msg), DECODING_MORSE_SOUND,
+                    journaux.etiquette_decodage(msg), "radio_watch", fiche=messages_types.fiche("multimon", msg, int(freq_hz)))
 
     return heard_signal or bool(meaningful_messages) or images_sstv
 
@@ -2598,6 +2599,12 @@ TETRA_SUIVI_MAX_SEC = 90
 TETRA_EXPLORATION_SEC = 8    # une piste inconnue : assez pour une synchro de controle
 
 
+def _tetra_local():
+    """Pas de machine compagne pour le TETRA, mais le Pi sait decoder seul : True.
+    La machine compagne garde la priorite (le Pi chauffe) ; le Pi prend le relais."""
+    return not _tetra_compagnon_present() and tetra.local_disponible()
+
+
 def _tetra_compagnon_present():
     try:
         import compagnon
@@ -2687,7 +2694,7 @@ def _annonce_tetra(freq_hz, res, news=None):
             path = None
         for f in news.get("nouvelles_porteuses") or []:
             vd.announce(dire("tetra.nouvelle_porteuse", frequence=format(f / 1e6, ".4f").replace(".", ",")),
-                        TETRA_PORTEUSE_SOUND, "message_tetra", "radio_watch")
+                        TETRA_PORTEUSE_SOUND, "donnees_tetra", "radio_watch")
         for m in news.get("textes") or []:  # message texte en clair : dit comme un message APRS
             vd.announce(dire("tetra.message_texte", src=m["src"], dst=m.get("dst") or "?", texte=m["texte"]),
                         TETRA_MESSAGE_SOUND, f"message_tetra_{m['src']}", "radio_watch",
@@ -2695,7 +2702,7 @@ def _annonce_tetra(freq_hz, res, news=None):
         if news.get("nouveaux_postes"):
             vd.announce(dire("tetra.nouveaux_postes", nombre=nombre(len(news["nouveaux_postes"]), "nouveau poste",
                                                                    "nouveaux postes")),
-                        TETRA_PORTEUSE_SOUND, "message_tetra", "radio_watch",
+                        TETRA_PORTEUSE_SOUND, "donnees_tetra", "radio_watch",
                         fiche=messages_types.fiche("TETRA", "TETRA, nouveau poste sur le réseau", freq_hz, decoupe=True))
         _tetra_dernier_reseau = identite
         # Cible "tetra" : la notation du journal (console) pique ou apaise la
@@ -2741,7 +2748,8 @@ def _tetra_manuel(manual):
     if _tetra_manuel_etat["freq"] == freq and time.time() - _tetra_manuel_etat["quand"] < 30:
         return True
     _tetra_manuel_etat.update(freq=freq, quand=time.time())
-    if not _tetra_compagnon_present():
+    local = _tetra_local()
+    if not local and not _tetra_compagnon_present():
         manual_tuner.event(dire("tetra.pas_de_machine"))
         return True
     manual_tuner.event(dire("tetra.ecoute", mhz=format(freq / 1e6, ".4f").replace(".", ",")))
@@ -2763,7 +2771,7 @@ def _tetra_manuel(manual):
             return True
         ecoute = tetra.centre(freq)   # alias recentre : on ecoute le vrai centre
         res = tetra.decoder(ecoute, _tetra_gain_de(freq), TETRA_SECONDES, host=host, port=TETRA_RTL_TCP_PORT,
-                            max_secondes=TETRA_SUIVI_MAX_SEC)
+                            max_secondes=TETRA_SUIVI_MAX_SEC, local=local)
         tmp = res.pop("_tmp", None)
         try:
             tetra.noter(ecoute, res)
@@ -2876,9 +2884,12 @@ def _tetra_window(dwell_sec=TETRA_SECONDES * 2):
     pas sur la simple synchro permanente du controle."""
     if not tetra.active():
         return False
-    if not _tetra_compagnon_present():
-        print("[radio_watch] fenetre TETRA sautee : aucune machine compagne connectee pour le TETRA")
+    local = _tetra_local()
+    if not local and not _tetra_compagnon_present():
+        print("[radio_watch] fenetre TETRA sautee : ni machine compagne ni dsd-neo sur le Pi")
         return False
+    if local:
+        print("[radio_watch] fenetre TETRA : decodee par le Pi lui-meme (pas de machine compagne)")
     # Autodecouverte d'abord (dongle libre, avant rtl_tcp) : le scanner cherche
     # ses propres porteuses TETRA au lieu d'etre cable sur une seule.
     _tetra_autodecouverte_si_due(_meteo_temp_limit()[0])
@@ -2916,7 +2927,7 @@ def _tetra_window(dwell_sec=TETRA_SECONDES * 2):
                 plafond = max(sec, TETRA_SUIVI_MAX_SEC)
             if sec < 6:
                 break
-            res = tetra.decoder(freq, gain, sec, host=host, port=TETRA_RTL_TCP_PORT, max_secondes=plafond)
+            res = tetra.decoder(freq, gain, sec, host=host, port=TETRA_RTL_TCP_PORT, max_secondes=plafond, local=local)
             reste -= (res.get("duree") or sec) + 2
             tmp = res.pop("_tmp", None)
             try:
@@ -3238,7 +3249,7 @@ def _ecoute_prise(prise, freq, band_label, target, prelisten_max=None):
             messages_dits.deja_dit(texte)
             _noter_active(freq, "donnees", protocole=nom, label=band_label, texte=texte)
             vd.announce(dire("radio.message_donnees", nom=nom, msg=texte), DECODING_MORSE_SOUND,
-                        "message_donnees", "radio_watch", fiche=messages_types.fiche(nom, texte, int(freq)))
+                        journaux.etiquette_decodage(texte), "radio_watch", fiche=messages_types.fiche(nom, texte, int(freq)))
         if not protocol and not analogique:
             # Des donnees seulement : apprises et dites, rien a ouvrir au journal
             # audio (pas de ceremonie sans flux).

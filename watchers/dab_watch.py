@@ -130,7 +130,7 @@ def _say_text(channel, ensemble, service, text):
     if not _memory.due(key, TEXT_REPEAT_SEC):
         return False
     fiche = {"protocole": "DAB+", "source": f"{service}, {ensemble}", "station": service, "canal": channel, "texte_original": text}
-    vd.announce(dire("dab.texte", station=service, texte=text), SOUND, "message_dab", "dab_watch", fiche=fiche)
+    vd.announce(dire("dab.texte", station=service, texte=text), SOUND, "donnees_dab", "dab_watch", fiche=fiche)
     return True
 
 
@@ -167,7 +167,7 @@ def _say_slide(channel, ensemble, service, sid):
             return None  # pas de description : rien a dire (souvent de la publicite)
         return dire("dab.image", station=service, description=" ".join(described.split()))
 
-    vd.announce(text, SOUND, "message_dab_image", "dab_watch", fiche=fiche)
+    vd.announce(text, SOUND, "donnees_dab_image", "dab_watch", fiche=fiche)
     return True
 
 

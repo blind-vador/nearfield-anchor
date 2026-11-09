@@ -62,7 +62,7 @@ apt-get install -y \
     zlib1g-dev libxml2-dev libliquid-dev meson ninja-build nlohmann-json3-dev \
     libopenblas0 samba \
     python3-evdev python3-fuzzywuzzy python3-levenshtein python3-pil \
-    python3-cryptography python3-serial
+    python3-cryptography python3-serial libssl-dev
 
 echo "=== 2/6 : compilation des bibliotheques externes (idempotent) ==="
 mkdir -p "$BUILD_DIR"
@@ -106,6 +106,16 @@ if [ ! -x /usr/local/bin/dsd-fme ]; then
     (cd "$BUILD_DIR/dsd-fme/build" && cmake .. && make -j4 && make install)
 else
     echo "-- dsd-fme deja installe, saute --"
+fi
+
+# dsd-neo (TETRA natif sur le Pi, 2026-11-08) : sans machine compagne, le Pi decode
+# lui-meme le TETRA (lib/tetra.py, bridge/tetra_neo.py). Compile pour l'utilisateur
+# du service dans ~/autopilot/dsd-neo ; lent (nice, 2 coeurs), ne refait rien s'il existe.
+if [ ! -x "$RUNTIME_BASE/dsd-neo/bin/dsd-neo" ]; then
+    sudo -u "$RUN_USER" HOME="$RUN_HOME" bash "$REPO_DIR/bridge/construire_dsd_neo_pi.sh" \
+        || echo "!! dsd-neo non compile : le TETRA attendra une machine compagne"
+else
+    echo "-- dsd-neo deja compile, saute --"
 fi
 
 if [ ! -x /usr/local/bin/acarsdec ]; then

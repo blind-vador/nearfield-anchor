@@ -160,7 +160,7 @@ def _annoncer(freq, r):
         a_dire.append(dire("rds.texte", nom=nom or _mhz(freq), texte=texte))
     if not a_dire:
         return False
-    vd.announce(" ".join(a_dire), SOUND, f"message_rds_{cle}", "rds_watch", fiche=fiche)
+    vd.announce(" ".join(a_dire), SOUND, f"donnees_rds_{cle}", "rds_watch", fiche=fiche)
     return True
 
 

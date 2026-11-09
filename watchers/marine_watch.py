@@ -88,7 +88,7 @@ def _ais(freq_hz, secondes):
         vd.archive("ais", {"freq_hz": freq_hz, "mmsi": mmsi, "texte": ligne})
         if _memory.due(f"navire|{mmsi}", NAVIRE_REDIT_SEC):
             vd.announce(dire("marine.navire_ais", mmsi=" ".join(mmsi), details=ligne.split(":", 1)[1].strip()),
-                        SOUND, f"message_ais_{mmsi}", "marine_watch",
+                        SOUND, f"donnees_ais_{mmsi}", "marine_watch",
                         fiche=messages_types.fiche("AIS", "AIS, navire", freq_hz, decoupe=True, source=mmsi))
             annonce = True
     if lignes:

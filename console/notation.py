@@ -304,7 +304,35 @@ def _record(info, path, stamp, reponses, rapide=False, degres=None, coupee=False
             propositions.confirmer(path)
         except Exception as exc:
             print(f"[notation] juge non retenu : {exc!r}")
+    auto += _examen_contenu(path, note)
     return total, station, auto
+
+
+# 2026-11-10 (demande utilisateur) : "j'ai entendu clairement des suites repetitives de
+# tonalites, parfois du morse, parfois des bips que je ne connais pas". Une prise notee
+# tonalites ou donnees repart a TOUS les juges (morse, DTMF, appels selectifs ZVEI/CCIR/
+# EEA, FFSK, POCSAG, AX.25, numeriques), et la frequence est notee comme portant des
+# donnees : elle sera reecoutee avec eux.
+EXAMEN_CONTENU = ("tonalites", "donnees")
+
+
+def _examen_contenu(path, note):
+    contenu = (note.get("degres") or {}).get("contenu") or {}
+    if not any(contenu.get(c) for c in EXAMEN_CONTENU):
+        return ""
+    try:
+        import frequences_actives
+        if note.get("freq_hz"):
+            frequences_actives.noter(note["freq_hz"], "donnees", protocole="note par l'utilisateur",
+                                     label=note.get("label"))
+    except Exception as exc:
+        print(f"[notation] frequence non notee : {exc!r}")
+    try:
+        import propositions
+        return " " + propositions.renvoyer_flux(path, depuis_prise=True)
+    except Exception as exc:
+        print(f"[notation] examen des juges impossible : {exc!r}")
+        return ""
 
 
 def _station_text(station):

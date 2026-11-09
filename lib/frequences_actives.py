@@ -170,7 +170,7 @@ def _relais_trouve(e, raisons):
         from phrases import dire
         vd.announce(dire("relais.detecte", mhz=f"{e['freq_hz'] / 1e6:.4f}".rstrip("0").replace(".", ","),
                          raisons=", ".join(raisons)),
-                    sons.chemin("nouvel_emetteur"), "message_relais", "frequences")
+                    sons.chemin("nouvel_emetteur"), "donnees_relais", "frequences")
     except Exception as exc:
         print(f"[frequences] relais possible non signale : {exc!r}")
 

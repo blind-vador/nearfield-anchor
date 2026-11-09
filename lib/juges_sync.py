@@ -20,10 +20,14 @@ _PAROLE_MIN = 1600          # 0,1 s de parole à 8 kHz : en dessous, pas de sync
 # présence de son ne prouvait rien : 38 « accroche » en un jour, sur du DMR, en USB
 # et en LSB à la fois, et deux machines le confirmaient, c'est déterministe.
 _SYNCHRO_MIN = 5
-# Mesure du 2026-11-05 : vrai 700D, 63 trames sur 65 ; un signal qui n'en est pas,
-# 9 sur 1236 et 0,2 s de son. Moins de 5 % de trames et moins d'1 s : rien a ecouter.
-_SYNCHRO_PART_MIN = 0.05
-_PAROLE_COURTE = 16000
+# 2026-11-09 : la part de trames ne suffisait pas. 40 fausses ouvertures en un jour et
+# demi (GSM 900, LTE, TETRA, DMR, 1,7 GHz) : le modem attrape une trame ici et la, 6 %
+# des trames sur un bruit numerique suffisaient. Ce qui separe vraiment, c'est une
+# synchro TENUE : sur les rendus BLU du terrain la plus longue suite de trames
+# synchronisees ne depasse pas 0,6 s (1,0 s pour un FreeDV 1600 lu par le juge 700E) ;
+# un vrai FreeDV la tient des le debut, 2,8 s pour une salve de 2 s, et a -2 dB, en
+# fading, a 3 dB. 1,5 s laisse de la marge des deux cotes.
+_SUITE_MIN_S = 1.5
 
 
 def _binaire(*noms):
@@ -81,7 +85,7 @@ def _recaler_freedv(pcm, taux=8000):
 
 
 def freedv_mesure(binaire, mode, pcm):
-    """{wav, synchro, trames} si ce mode a vraiment sa synchro, sinon None."""
+    """{wav, synchro, trames, suite_s} si ce mode tient vraiment sa synchro, sinon None."""
     pcm = _recaler_freedv(pcm)
     dossier = tempfile.mkdtemp(prefix="freedv_")
     src = os.path.join(dossier, "in.raw")
@@ -92,11 +96,16 @@ def freedv_mesure(binaire, mode, pcm):
         proc = subprocess.run([binaire, "-v", "--squelch", "0", mode, src, dst],
                               capture_output=True, timeout=20)
         journal = (proc.stdout + proc.stderr).decode(errors="replace")
-        synchro = len(re.findall(r"\bsync: 1\b", journal))
-        trames = len(re.findall(r"\bsync: [01]\b", journal))
+        etats = re.findall(r"\bsync: ([01])\b", journal)
+        synchro, trames = etats.count("1"), len(etats)
+        suite = cours = 0
+        for e in etats:
+            cours = cours + 1 if e == "1" else 0
+            suite = max(suite, cours)
+        # duree d'une trame mesuree sur la prise elle-meme : vaut pour tous les modes
+        suite_s = suite * (len(pcm) / 2 / 8000) / max(1, trames)
         taille = os.path.getsize(dst) if os.path.isfile(dst) else 0
-        if synchro < _SYNCHRO_MIN or taille < _PAROLE_MIN or (
-                synchro < _SYNCHRO_PART_MIN * trames and taille < _PAROLE_COURTE):
+        if synchro < _SYNCHRO_MIN or taille < _PAROLE_MIN or suite_s < _SUITE_MIN_S:
             shutil.rmtree(dossier, ignore_errors=True)
             return None
         parole = open(dst, "rb").read()
@@ -109,7 +118,7 @@ def freedv_mesure(binaire, mode, pcm):
             w.setsampwidth(2)
             w.setframerate(8000)
             w.writeframes(parole)
-        return {"wav": wav, "synchro": synchro, "trames": trames}
+        return {"wav": wav, "synchro": synchro, "trames": trames, "suite_s": round(suite_s, 1)}
     except (OSError, subprocess.SubprocessError):
         shutil.rmtree(dossier, ignore_errors=True)
         return None

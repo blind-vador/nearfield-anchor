@@ -66,6 +66,13 @@ sudo make install
 Binaire attendu : `/usr/local/bin/dsd-fme` (voir `try_digital_voice_decode`
 dans `watchers/radio_watch.py`).
 
+### dsd-neo (TETRA natif sur le Pi, 2026-11-08)
+
+`bash bridge/construire_dsd_neo_pi.sh` (lance par `install.sh`) : mbelib-neo puis
+dsd-neo eb1a3409 + `bridge/dsd-neo-nearfield-sds.patch`, dans `~/autopilot/dsd-neo`,
+sans sudo. Paquets : `cmake`, `libsndfile1-dev`, `librtlsdr-dev`, `libssl-dev`,
+`libncurses-dev`. Sans lui, le TETRA attend une machine compagne.
+
 ### libacars + acarsdec (décodage ACARS)
 
 ```bash

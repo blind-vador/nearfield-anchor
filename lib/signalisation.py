@@ -7,6 +7,7 @@ multimon-ng : audio relaye par RTLSDR-Airband (airband_bridge) et audio FM
 rendu par une machine compagne (demodulation deleguee, radio_watch). Quelques
 dixiemes de seconde de calcul par ecoute ; jamais bloquant."""
 import asn_dsc
+import journaux
 import ffsk_pro
 import messages_types
 import veille_donnees as vd
@@ -24,7 +25,10 @@ def apres_coup(pcm_s16, taux, nom, freq_hz, son, source):
                 vus.append(texte)
                 print(f"[{source}] {nom} : {texte}")
                 vd.archive("signalisation", {"freq_hz": freq_hz, "canal": nom, "texte": texte})
-                vd.announce(dire("radio.signalisation_asn", canal=nom, texte=texte), son, "message_signalisation", source,
+                # identifiants FleetSync / MPT1327 / MDC1200 : donnees (2026-11-10) ; l'ASN reste un message
+                etiquette = ("donnees_signalisation" if journaux.etiquette_decodage(texte) == "donnees_decodees"
+                             else "message_signalisation")
+                vd.announce(dire("radio.signalisation_asn", canal=nom, texte=texte), son, etiquette, source,
                             fiche=messages_types.fiche(texte.split(",")[0], texte, freq_hz, decoupe=True,
                                                        urgence="tresse" in texte))
     except Exception as exc:   # jamais bloquant pour l'ecoute

@@ -88,27 +88,32 @@ def _speech_timeout(path):
 
 
 JOURNAL_NOTICE_EVERY_SEC = 60
-_journal_notice = {"t": 0.0}
+_journal_notice = {}
 
 
-def journal_notice():
+def journal_notice(journal=None):
     """Previent qu'une captation a ete enregistree en silence pendant que le
     journal est ouvert (audio_lock.SILENT_WHEN_JOURNAL). Source console :
     passe entre deux ecoutes du journal. Rien si le journal est deja ferme, et
     le scanner n'attend pas (il restait bloque jusqu'a 2 minutes, puis
-    annoncait une captation au journal ferme, 2026-11-06)."""
+    annoncait une captation au journal ferme, 2026-11-06).
+    journal (2026-11-10) : la categorie (lib/journaux.py). Sans son nom, une donnee
+    FleetSync annoncee pendant qu'on parcourait le journal radio semblait y arriver."""
     maintenant = time.time()
-    if not audio_lock.journal_open() or maintenant - _journal_notice["t"] < JOURNAL_NOTICE_EVERY_SEC:
+    cle = journal or "radio"
+    if not audio_lock.journal_open() or maintenant - _journal_notice.get(cle, 0) < JOURNAL_NOTICE_EVERY_SEC:
         return
-    _journal_notice["t"] = maintenant
-    threading.Thread(target=_dire_journal_notice, daemon=True).start()
+    _journal_notice[cle] = maintenant
+    threading.Thread(target=_dire_journal_notice, args=(cle,), daemon=True).start()
 
 
-def _dire_journal_notice():
+def _dire_journal_notice(journal="radio"):
+    import journaux
     lock = audio_lock.acquire("console", timeout=120)
     try:
         if not lock.dropped and audio_lock.journal_open():
-            speak_cloud(dire("annonce.journal_notice"), repetitive=True)
+            speak_cloud(dire("annonce.journal_notice", journal=journaux.NAMES.get(journal, journal)),
+                        repetitive=True)
     finally:
         audio_lock.release(lock)
 

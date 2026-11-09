@@ -148,7 +148,8 @@ class Empreintes(unittest.TestCase):
             ns.add_signature({"freq_hz": 100_000_000, "label": "x", "fingerprint": fp, "juge": "am"})
             self.assertTrue(ns.matches_known_noise(100_000_000, pcm, 16000, "s16le", "am")[0])
             self.assertFalse(ns.matches_known_noise(100_000_000, pcm, 16000, "s16le", "nfm")[0])
-            self.assertEqual(ns.oublier_ressemblantes(100_000_000, fp), 1)
+            self.assertEqual(ns.oublier_ressemblantes(100_000_000, fp, "nfm"), 0)
+            self.assertEqual(ns.oublier_ressemblantes(100_000_000, fp, "am"), 1)
         finally:
             ns.SIGNATURES_NAS, ns.SIGNATURES_LOCAL = ancien
             shutil.rmtree(tmp)

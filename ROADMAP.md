@@ -7048,3 +7048,27 @@ fichiers répond 429 à ce client (Retry-After 600 s le 2026-11-07), limite resp
 - IA : `gemini.ask(..., scanneur=True)` met devant la question le contexte `ia.contexte_scanneur` (scanneur agnostique, radioamateurs aveugles, veille citoyenne, en clair seulement, rien de déchiffré) et la langue de la console. Posé sur les 13 questions qui portent sur une réception. Cause : une IA avait pris du TETRA reçu en clair pour un piratage ou un faux décodage. Le prompt des nouveaux types de messages ne parle plus de fausse trame que si l'exemple est incohérent.
 - `tools/phrases_verifier.py` relancé (il ne trouvait plus `chemins`) et étendu : `dire_ou` sans section, sections en double, consignes sans F1. 54 problèmes avant, 0 après ; `tests/test_phrases_revue.py` le lance.
 - Laissés tels quels : les textes produits par les décodeurs (ASN, FFSK, MPT1327, APRS...), qui sont des données enregistrées et servent de clé aux types de messages appris ; le programme du Mac (`bridge/`) ; les annonces de `console/simulation.py`.
+
+## 2026-11-08 : TETRA natif sur le Pi ; journal donnees pour ce qui n'est pas un message
+
+- TETRA : le Pi ne dependait que d'une machine compagne (dsd-neo absent du Pi).
+  `bridge/construire_dsd_neo_pi.sh` compile la meme version de dsd-neo (eb1a3409 +
+  correctif SDS) dans `~/autopilot/dsd-neo`. Sans machine compagne presente pour le
+  TETRA, la fenetre du scanner et le mode manuel decodent sur le Pi lui-meme
+  (`tetra.decoder(..., local=True)` -> `tetra_neo.decoder` sur le rtl_tcp local, sans
+  reduction IQ). Une machine compagne garde la priorite : le Pi chauffe.
+- Journaux : un vrai message (ecrit par quelqu'un pour etre lu : bipeur avec texte,
+  SMS, APRS, ACARS, SDS, FT8, ASN) reste au journal messages. Ce qui est detecte, deduit
+  ou seulement lu part au journal donnees (etiquettes `donnees_*`) : nouvelle frequence,
+  groupe ou "sans voix" DMR, resume DMR, nouvel emetteur, porteuse et poste TETRA,
+  alias et position DMR, AIS, RDS, DAB, Mode S meteo, et pour multimon/FFSK la
+  signalisation et les etats (FMS, selectifs, FleetSync, MPT1327, MDC1200, trames
+  paquet, bipeur sans texte) via `journaux.etiquette_decodage`.
+
+## 2026-11-09 : passe de verification des decodeurs
+
+- FreeDV : 40 fausses ouvertures en un jour et demi (GSM, LTE, TETRA, DMR, 1,7 GHz). Le juge acceptait 5 % de trames "sync: 1". Critere remplace par une synchro TENUE d au moins 1,5 s (lib/juges_sync._SUITE_MIN_S). Corpus de 78 rendus BLU du terrain : 16 faux avant, 0 apres ; vrais FreeDV (salve de 2 s, fading, -2 dB) tous gardes. tests/test_freedv_synchro_tenue.py.
+- multimon (lib/decodeurs) : FMS "AFTER SWAPPING ONE BIT" (CRC 7 bits, 1 bruit sur 3 passe), CLIPFSK "broken packet", AX.25 aux indicatifs impossibles, POCSAG sans contenu : douteux (rejets, pas lus). FMS seul : tenu s il est repete a l identique (fms_tenus, tickets_partages._multimon).
+- TETRA SDS : lisible() acceptait tout le Latin-1 (isalnum) ; des octets binaires etaient lus comme message. Lettres = latin de base + accents du francais. tests/test_tetra_sds_lisible.py.
+- tests/test_frequences_actives.py aligne sur oublier_ressemblantes par juge (le test etait perime).
+- Reste ouvert : MPT1327 et FleetSync (session dediee, durcissement a decider).

@@ -510,13 +510,17 @@ def _juge_courant(journal):
     return juge, info.get("freq_hz"), info.get("label") or ""
 
 
-def renvoyer_flux(journal):
+def renvoyer_flux(journal, depuis_prise=False):
     """Touche R : le flux non décodé repart aux juges, sauf celui en cours.
 
     Le wav reste sur le NAS, à côté du journal. On en dépose une copie dans
-    la file des juges. Rend la phrase à dire."""
+    la file des juges. Rend la phrase à dire.
+    depuis_prise (2026-11-10, notation "tonalités" ou "données") : sans flux 48 kHz
+    (seules les écoutes récentes en ont un), la prise elle-même part aux juges.
+    Morse, DTMF, appels sélectifs et FFSK se lisent sur l'audio démodulé."""
     flux = journal[:-4] + ".flux.wav" if journal and journal.endswith(".mp3") else ""
-    if not flux or not os.path.isfile(flux) or os.path.getsize(flux) < 48_000:
+    sans_flux = not flux or not os.path.isfile(flux) or os.path.getsize(flux) < 48_000
+    if sans_flux and not (depuis_prise and journal and os.path.isfile(journal)):
         return dire("journal.pas_flux")
     juge, freq, label = _juge_courant(journal)
     if not freq:
@@ -528,7 +532,13 @@ def renvoyer_flux(journal):
     fiche_path = dest[:-4] + ".json"
     if os.path.isfile(dest) and os.path.isfile(fiche_path):
         return dire("journal.flux_deja")
-    shutil.copyfile(flux, dest)
+    if sans_flux:
+        r = subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-i", journal,
+                            "-ac", "1", "-ar", "48000", "-sample_fmt", "s16", dest], capture_output=True, timeout=60)
+        if r.returncode or not os.path.isfile(dest):
+            return dire("journal.pas_flux")
+    else:
+        shutil.copyfile(flux, dest)
     fiche = {
         "freq_hz": int(freq),
         "mode": "renvoi",

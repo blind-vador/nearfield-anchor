@@ -1,9 +1,10 @@
 """TETRA dans le scanner (cote Pi), 2026-10-26.
 
-Le Pi ne decode JAMAIS le TETRA lui-meme (chaleur, CPU) : pendant une fenetre
-du scanner il sert son dongle par rtl_tcp et confie le decodage a la machine
-compagne la plus libre (bridge/tetra_neo.py via la prise TETRA_SOCKET tenue par
-compagnon_serveur). Ce module tient :
+Pendant une fenetre du scanner, le Pi sert son dongle par rtl_tcp et confie le
+decodage a la machine compagne la plus libre (bridge/tetra_neo.py via la prise
+TETRA_SOCKET tenue par compagnon_serveur) : elle garde la priorite, le Pi chauffe.
+Sans machine compagne, le Pi decode lui-meme (2026-11-08, dsd-neo compile sur
+place par bridge/construire_dsd_neo_pi.sh, meme code tetra_neo). Ce module tient :
   - le MAGASIN des porteuses TETRA (graines connues + celles decouvertes au
     balayage), avec pour chacune son gain appris et son historique de verrous ;
   - le GAIN ADAPTATIF par porteuse (meme principe que airband_bridge : on part
@@ -489,12 +490,30 @@ def elaguer(now=None):
     return oubliees
 
 
-def decoder(freq_hz, gain, secondes, host=None, port=1234, ppm=0, delai=None, max_secondes=None):
+def local_disponible():
+    """Le Pi sait-il decoder le TETRA lui-meme (dsd-neo compile sur place) ?"""
+    try:
+        import tetra_neo
+        return tetra_neo.disponible()
+    except Exception:
+        return False
+
+
+def decoder(freq_hz, gain, secondes, host=None, port=1234, ppm=0, delai=None, max_secondes=None, local=False):
     """Demande a compagnon_serveur (prise locale) un decodage TETRA en direct de
     freq_hz. Le Pi doit DEJA servir rtl_tcp sur host:port. Rend le dict resultat
     (voir bridge/tetra_neo), ou {"ok": False, "erreur": ...} si pas de machine
-    compagne / pas de reponse. Ne leve pas."""
+    compagne / pas de reponse. Ne leve pas.
+    local=True (2026-11-08) : pas de machine compagne, le Pi decode lui-meme sur
+    son propre rtl_tcp ; meme resultat, meme parseur."""
     max_secondes = max(int(secondes), int(max_secondes or secondes))   # prolonge pendant un appel suivi
+    if local:
+        try:
+            import tetra_neo
+            return tetra_neo.decoder("127.0.0.1", port, freq_hz, gain, secondes, ppm=ppm,
+                                     max_seconds=max_secondes, relais=False)
+        except Exception as exc:
+            return {"ok": False, "erreur": "decodage TETRA local : %r" % exc}
     req = {"freq_hz": int(freq_hz), "gain": gain, "secondes": int(secondes), "max_secondes": max_secondes,
            "port": int(port), "ppm": ppm}
     if host:

@@ -97,15 +97,24 @@ with mock.patch.object(speak, "speak_cloud", side_effect=lambda *a, **k: dits.ap
             break
         time.sleep(0.1)
     assert len(dits) == 1, dits
+    # le journal est nomme (2026-11-10), et chaque journal a sa propre minute
+    assert "radio" in dits[0][0], dits
+    speak.journal_notice("donnees")
+    for _ in range(50):
+        if len(dits) == 2:
+            break
+        time.sleep(0.1)
+    assert len(dits) == 2 and "données" in dits[1][0], dits
     # ferme pendant l'attente du tour : rien non plus
-    speak._journal_notice["t"] = 0.0
+    speak._journal_notice.clear()
+    dits.clear()
     def ferme_puis_prend(*a, **k):
         audio_lock.set_journal_open(False)
         return ticket
     with mock.patch.object(audio_lock, "acquire", side_effect=ferme_puis_prend):
         speak.journal_notice()
         time.sleep(0.5)
-    assert len(dits) == 1, dits
+    assert not dits, dits
     audio_lock.set_journal_open(False)
 
 # --- archives : jour, mois, annee ; rien de perdu, rien d'ecrase, le reste intact
