@@ -14,6 +14,11 @@ L'arborescence est celle du dossier `server` du NAS (`config/sound_paths.py`) :
 - `printer/` : imprimante 3D (`lib/sons_imprimante.py`), sons et boucles de mouvement.
 - `camera/` : caméra.
 - `plantes/plante_alert1.mp3` : alertes des plantes.
+- `sonneries/default_ringtone/` : sonneries d origine du scanner (`lib/sonneries.py`, commande
+  "sonneries") ; `radio_scaner/` en porte les copies actives. Credits des sons telecharges :
+  `sonneries/credits_sons_telecharges.txt`. Le dossier `sonneries/depot` (sons deposes par
+  l utilisateur) reste personnel : jamais ici.
+- `jingles/` : jingles des bulletins (flash info, meteo, sport, transports).
 
 Jamais ici : caches de voix (`tts_cache`, `voix_cache`), journaux, données.
 
