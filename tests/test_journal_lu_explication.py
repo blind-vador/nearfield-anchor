@@ -138,9 +138,9 @@ assert dit[i + 1:].count(reponse) == 1, dit  # pas dite pendant qu'on etait sur 
 # --- E garde son sens ailleurs : l'examen du Mac dans le journal radio
 appels = []
 import examen
-examen.demander = lambda nom: appels.append(nom) or True
+examen.demander = lambda chemin: appels.append(chemin) or "demande"   # 2026-11-11 : chemin complet, etat rendu
 journal.run(iter([DOWN, "e", "\x1b"]), lambda t: None, lambda t: None, "radio")
-assert appels == [os.path.basename(RADIO)], appels
+assert [os.path.basename(a) for a in appels] == [os.path.basename(RADIO)], appels
 
 shutil.rmtree(TMP)
 print("ok")

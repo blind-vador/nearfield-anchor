@@ -101,8 +101,8 @@ def raisons_relais(data, e, maintenant=None):
     tons = [t for t, n in (e.get("tonalites") or {}).items() if n >= TONALITE_MIN]
     if tons:
         out.append(f"tonalité {tons[0]} hertz")
-    if e.get("indicatif_relais"):
-        out.append(f"indicatif {e['indicatif_relais']}")
+    if e.get("indicatif_relais") and not any(abs(e["freq_hz"] - f) <= t for f, t in ((144_800_000, 6_250),)):
+        out.append(f"indicatif {e['indicatif_relais']}")   # pas un digipeater sur la frequence APRS
     if e.get("annoncee"):
         out.append("annoncée dans un texte")
     autre = _paire(data, e, maintenant)

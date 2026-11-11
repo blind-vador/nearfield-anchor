@@ -57,7 +57,25 @@ NOMS = {
     "freedv-700D": "FreeDV 700D",
     "freedv-700E": "FreeDV 700E",
     "freedv-1600": "FreeDV 1600",
+    "donnees": "décodeurs de données",
 }
+
+# Protocole annonce (dsd, relais APRS, texte) -> juge (2026-11-11, audit E2/E5).
+JUGE_DU_PROTOCOLE = {
+    "dmr": "-fs", "nxdn": "-fi", "nxdn48": "-fi", "nxdn96": "-fn", "dpmr": "-fm", "m17": "-fz",
+    "p25": "-f1", "p25p1": "-f1", "p25p2": "-f2", "d-star": "-fd", "dstar": "-fd",
+    "ysf": "-fy", "c4fm": "-fy", "x2-tdma": "-fx", "provoice": "-fp", "pv": "-fp", "edacs": "-fh",
+}
+
+
+def juge_du_protocole(protocole):
+    """Le juge dsd qui reconnait ce protocole ("DMR" -> "-fs"), ou None."""
+    if not protocole:
+        return None
+    p = str(protocole).strip()
+    if p.startswith("-f"):
+        return p
+    return JUGE_DU_PROTOCOLE.get(p.lower().split()[0] if p.split() else "")
 
 
 def nom(juge):
@@ -122,12 +140,26 @@ def _migrer(data):
     return change
 
 
+def _a_priori(st, maintenant=None):
+    """Pseudo-confirmations venues d'indices (relais annonce D-Star, synchro de
+    relais DMR vue sur l'air...), jamais de l'utilisateur. Elles s'effacent avec la
+    meme demi-vie : un indice qui ne se renouvelle pas et ne donne rien s'oublie,
+    un indice qui revient (l'APRS repete) reste frais."""
+    maintenant = maintenant or time.time()
+    total = 0.0
+    for ap in (st.get("a_priori") or {}).values():
+        age = max(0.0, maintenant - float(ap.get("t") or maintenant))
+        total += float(ap.get("poids") or 0) * math.exp(-age / TAU_S)
+    return total
+
+
 def _rang_de(st):
     faits = st.get("faits")
     if faits:
         oui, non = _poids(faits, True), _poids(faits, False)
     else:
         oui, non = st.get("oui", 0), st.get("non", 0)
+    oui += _a_priori(st)
     return (oui + 1) / (oui + non + 2)
 
 
@@ -216,6 +248,23 @@ def noter_vu(freq_hz, juge):
         data = _lire_scores()
         st = data["frequences"].setdefault(cle, {}).setdefault(juge, {"oui": 0, "non": 0})
         st["vu"] = int(st.get("vu") or 0) + 1
+        _ecrire_scores(data)
+
+
+def a_priori(freq_hz, juge, poids, source):
+    """Indice (pas un avis de l'utilisateur) qu'un juge convient a cette frequence.
+    Une meme source se renouvelle (date remise a jour, poids garde au plus fort) ;
+    les avis oui/non et "suffisant" n'en tiennent pas compte."""
+    cle = _cle(freq_hz)
+    juge = juge_du_protocole(juge) or juge
+    if not cle or not juge or not poids:
+        return
+    with _verrou:
+        data = _lire_scores()
+        st = data["frequences"].setdefault(cle, {}).setdefault(juge, {"oui": 0, "non": 0})
+        ap = st.setdefault("a_priori", {}).setdefault(str(source), {"poids": 0.0})
+        ap["poids"] = max(float(ap.get("poids") or 0), float(poids))
+        ap["t"] = time.time()
         _ecrire_scores(data)
 
 
@@ -499,7 +548,13 @@ def _juge_courant(journal):
         return doc["items"][i].get("juge"), doc.get("freq_hz"), doc.get("label") or ""
     info = ns.capture_info(journal) or {}
     metrics = info.get("metrics") or {}
-    juge = metrics.get("juge") or metrics.get("modulation_banc") or info.get("mode")
+    juge = metrics.get("juge") or metrics.get("modulation_banc")
+    if not juge and metrics.get("numerique"):
+        # Prise numerique sans juge note (avant 2026-11-11 : 348 des 438 prises numeriques
+        # notees creditaient la FM). Le protocole dit le juge ; sinon on ne credite personne.
+        juge = juge_du_protocole(metrics.get("protocole") or metrics.get("mode_numerique"))
+    elif not juge:
+        juge = info.get("mode")
     if not info.get("freq_hz") and journal:   # prise vocale d'un message : sa fiche dit le type
         try:
             with open(journal[:-4] + ".json", encoding="utf-8") as f:

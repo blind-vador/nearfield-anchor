@@ -520,7 +520,8 @@ def _journaliser_plusieurs(fiche, juges, verdicts, dossier):
     import ceremonie_radio as ceremonie
     session = radio_log.RadioLogSession(
         f"decodage differe {verd0.get('protocole') or j0}", exiger_contenu=True)
-    ceremonie.habiller(session, fiche.get("band"), verd0.get("protocole") or j0, v0, fiche.get("freq_hz"))
+    ceremonie.habiller(session, fiche.get("band"), verd0.get("protocole") or ceremonie.modulation_dite(j0), v0,
+                       fiche.get("freq_hz"))
     chemin = session.finalize()
     if not chemin:
         return False

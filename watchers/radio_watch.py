@@ -997,6 +997,16 @@ def _dmr_learn(stats):
     frequence ou d'un groupe d'appel nouveaux (journal messages)."""
     if not stats.get("dmr") or "DMR" not in str(stats.get("protocol") or ""):
         return
+    if stats["dmr"].get("relais") and stats.get("freq_hz"):
+        # Synchro de relais (IDLE, SLCO...) : la frequence est suivie comme relais et
+        # le juge DMR y passe devant (audit E4 : ce drapeau n'atteignait ni la memoire
+        # des frequences ni les juges, 0 relais note contre 10 au registre).
+        try:
+            import propositions
+            propositions.a_priori(stats["freq_hz"], "-fs", 2.0, "synchro relais DMR")
+        except Exception as exc:
+            print(f"[radio_watch] juge du relais DMR : {exc!r}")
+        _noter_active(stats["freq_hz"], "numerique", protocole="DMR", relais_dmr=True)
     try:
         import dmr_registre
         import veille_donnees as vd
@@ -1150,7 +1160,7 @@ def _dmr_ecoute(freq, dwell_sec=20):
         ceremonie.fermer(freq, label="radio_watch")
         path = log_session.finalize()
         noise_signatures.record_capture("dmr", freq, "nfm", label, "dmr", path, None,
-                                        {"numerique": True, "veille_dmr": True,
+                                        {"numerique": True, "veille_dmr": True, "juge": "-fs", "protocole": protocol,
                                          "dmr": getattr(try_digital_voice_decode, "last_dmr", {})})
         saved = True
         return True
@@ -1756,6 +1766,21 @@ try_digital_voice_decode._rendus_verrou = threading.Lock()
 MIN_DECODED_MESSAGE_CHARS = 4
 
 
+MIN_CHARS_DONNEES_RETENUES = 2   # frequence notee "tonalites/donnees" : un DTMF de 2-3 chiffres compte
+
+
+def _min_chars(freq_hz):
+    """Seuil des messages decodes sur cette frequence : assoupli quand tes notes
+    "tonalites ou donnees" y ont retenu les decodeurs de donnees (audit E3)."""
+    try:
+        import propositions
+        if propositions.rang(freq_hz, "donnees") >= propositions.SEUIL_RETENU:
+            return MIN_CHARS_DONNEES_RETENUES
+    except Exception:
+        pass
+    return MIN_DECODED_MESSAGE_CHARS
+
+
 def _is_meaningful_decoded_message(msg, min_chars=MIN_DECODED_MESSAGE_CHARS):
     """Filtre les faux positifs des decodeurs multimon-ng : regle commune
     (lib/decodeurs.meaningful : fragments morse, octets non imprimables)."""
@@ -2347,7 +2372,14 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
             _annoncer_image_sstv(m, band_label)
     images_sstv = any(m.startswith("SSTV: image") for m in decoded_messages)
     decoded_messages = [m for m in decoded_messages if not m.startswith("SSTV:")]
-    meaningful_messages = [m for m in decoded_messages if _is_meaningful_decoded_message(m)]
+    seuil = _min_chars(freq_hz)
+    meaningful_messages = [m for m in decoded_messages if _is_meaningful_decoded_message(m, seuil)]
+    if meaningful_messages:
+        try:  # des donnees lues ici : leurs decodeurs passent devant la prochaine fois
+            import propositions
+            propositions.noter_vu(freq_hz, "donnees")
+        except Exception:
+            pass
     ignored_count = len(decoded_messages) - len(meaningful_messages)
     if ignored_count:
         print(f"[radio_watch] {ignored_count} message(s) decode(s) ignore(s) (trop court/bruit)")
@@ -2470,7 +2502,7 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
                           f"syllabique {mesure:.2f} (< {preuve_voix.SEUIL}) : pas de la parole, on n'ouvre pas")
                 if verdict is False and (len(filtered_all) - debut_voix) * ANALYSIS_WINDOW_MS >= preuve_voix.DUREE_REFUS_SEC * 1000:
                     break   # assez de son pour trancher : pas de la parole
-            if any(_is_meaningful_decoded_message(m) for m in decoded):
+            if any(_is_meaningful_decoded_message(m, _min_chars(freq_hz)) for m in decoded):
                 return True, decoded, b"".join(filtered_all)
     finally:
         _rnnoise_destroy(rnnoise_state)
@@ -2708,7 +2740,7 @@ def _annonce_tetra(freq_hz, res, news=None):
         # Cible "tetra" : la notation du journal (console) pique ou apaise la
         # fenetre TETRA, comme les autres cibles du scanner.
         noise_signatures.record_capture("tetra", freq_hz, "tetra", "TETRA", "tetra", path, None,
-                                        {"numerique": True,
+                                        {"numerique": True, "juge": "tetra",
                                          "tetra": {"reseau": res.get("reseau"), "enc": res.get("enc"),
                                                    "clair": res.get("clair"), "bsch": res.get("bsch"),
                                                    "voix": a_voix, "machine": res.get("machine"),
@@ -3187,7 +3219,9 @@ def _ecoute_prise(prise, freq, band_label, target, prelisten_max=None):
         tete = propositions.en_tete(freq)
 
         def _cle_juge(m):
-            return (0 if m == tete else 1, -propositions.vu(freq, m), -propositions.rang(freq, m))
+            # Tes avis (et les indices de relais) avant le simple compte des decodages :
+            # un juge souvent "vu" mais souvent rejete ne passe plus devant (audit E6).
+            return (0 if m == tete else 1, -propositions.rang(freq, m), -propositions.vu(freq, m))
 
         modes.sort(key=_cle_juge)
         if modes and (modes[0] == tete or propositions.rang(freq, modes[0]) >= propositions.SEUIL_RETENU):
@@ -3929,7 +3963,8 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
             path = log_session.finalize()
             noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
                                             {"niveau_db": level_db, "numerique": True, "offload": machine,
-                                             "protocole": proto, "dmr": meta})
+                                             "protocole": proto, "dmr": meta,
+                                             "juge": res.get("juge") or propositions_juge(proto)})
             print(f"[radio_watch] demod deleguee {freq / 1e6:.4f} MHz : {res.get('resume')} + voix (via {machine})")
             return True
         # Pas de voix numerique en clair : l'analogique leve encore le doute.
@@ -4168,6 +4203,15 @@ def _numerique_retenu(freq):
 _sons_ecartes = []     # ce que chaque modulation a entendu de ce candidat, avant de l'ecarter
 
 
+def propositions_juge(protocole):
+    """Juge dsd d'un protocole ("DMR" -> "-fs") : la note de la prise ira a lui (audit E2)."""
+    try:
+        import propositions
+        return propositions.juge_du_protocole(protocole)
+    except Exception:
+        return None
+
+
 def _noter_active(freq, nature, **quoi):
     try:
         import frequences_actives
@@ -4316,6 +4360,7 @@ def _ecoute_candidat(freq, mode, band_label, target=None, level_db=None, dernier
     global _bruts_candidat, _last_stream_raw
     _bruts_candidat = []
     _last_stream_raw = (b"", 22050)   # pas le son du candidat d'avant
+    try_digital_voice_decode.juge_entendu = None   # ni son juge (prise unique coupee : heritage, audit E6)
     try:
         # Intermediaire offload (2c-final) : si le Pi chauffe et qu'une compagne
         # est libre, TOUTE la demod de la fenetre part a distance (numerique + FM
@@ -4416,7 +4461,8 @@ def _ecoute_candidat(freq, mode, band_label, target=None, level_db=None, dernier
                 ceremonie.fermer(freq, label="radio_watch")
                 path = log_session.finalize()
                 noise_signatures.record_capture("rtl_fm", freq, mode, band_label, target, path, None,
-                                                {"niveau_db": level_db, "numerique": True, "mode_numerique": extra[1]})
+                                                {"niveau_db": level_db, "numerique": True, "mode_numerique": extra[1],
+                                                 "juge": extra[0]})
                 saved = True
                 return True
             log_session.discard()

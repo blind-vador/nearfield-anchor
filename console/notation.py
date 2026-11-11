@@ -299,13 +299,41 @@ def _record(info, path, stamp, reponses, rapide=False, degres=None, coupee=False
     except Exception as exc:
         print(f"[notation] reglage automatique : {exc!r}")
     if nouvelle:
-        try:  # le juge entendu sur cette frequence passe devant la prochaine fois
+        try:  # le juge entendu ici monte ou descend selon ce que la note dit (audit E1)
             import propositions
-            propositions.confirmer(path)
+            avis = avis_juge(note, rapide)
+            if avis == "oui":
+                propositions.confirmer(path)
+            elif avis == "non":
+                propositions.noter_rejet_simple(path)
         except Exception as exc:
             print(f"[notation] juge non retenu : {exc!r}")
     auto += _examen_contenu(path, note)
     return total, station, auto
+
+
+# Avis sur le juge de la prise (2026-11-11, audit E1) : jusque-la toute premiere
+# note donnait un "oui", meme "rien d'identifiable" ou "tonalites" (72,797 MHz
+# note tonalites 100 % avait fait monter la FM).
+VOIX_MIN = 50          # part de voix pour que la note confirme le juge vocal
+LISIBLE_MIN = 3        # lisibilite (0 = non notee) en dessous de laquelle on ne confirme pas
+REJET_RIEN_MIN = 50    # "rien d'identifiable" au-dela : le juge descend
+
+
+def avis_juge(note, rapide=False):
+    """"oui", "non" ou None pour le juge de la prise, d'apres la note.
+    V et C (validation rapide) : oui. Tonalites ou donnees dominantes : rien pour
+    le juge vocal, ce sont les juges de donnees qui apprennent (_examen_contenu)."""
+    if rapide:
+        return "oui"
+    d = note.get("degres") or {}
+    contenu = d.get("contenu") or {}
+    lisible = int(d.get("lisibilite") or 0)
+    if contenu.get("rien", 0) >= REJET_RIEN_MIN or lisible == 1:
+        return "non"
+    if contenu.get("voix", 0) >= VOIX_MIN and (lisible == 0 or lisible >= LISIBLE_MIN):
+        return "oui"
+    return None
 
 
 # 2026-11-10 (demande utilisateur) : "j'ai entendu clairement des suites repetitives de
@@ -327,6 +355,12 @@ def _examen_contenu(path, note):
                                      label=note.get("label"))
     except Exception as exc:
         print(f"[notation] frequence non notee : {exc!r}")
+    try:  # les decodeurs de donnees passent devant ici, et leurs seuils s'assouplissent (audit E3)
+        import propositions
+        if note.get("freq_hz"):
+            propositions._noter(note["freq_hz"], "donnees", True, note.get("label"))
+    except Exception as exc:
+        print(f"[notation] juge de donnees non note : {exc!r}")
     try:
         import propositions
         return " " + propositions.renvoyer_flux(path, depuis_prise=True)

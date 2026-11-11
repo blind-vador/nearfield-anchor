@@ -42,6 +42,27 @@ FREQ_NUE = re.compile(r"(?<![\d.])((?:5[0-3]|14[4-6]|4[34]\d)\.\d{2,5})(?![\d])"
 DECALAGE = re.compile(r"(?<![\d.])([+-]\d{1,2}\.\d{1,4})\s?(?:MHz)?(?![\d])|(?<![\w.])([+-]\d{3})(?![\d.])")
 REPEATER_HINTS = re.compile(r"\b(T\d{3}|R\d+k|tone|CTCSS|Voice|MMDVM|relais|repeater|RPT)\b|<=>", re.IGNORECASE)
 MODES = {"D-Star": "dstar", "DMR": "dmr", "C4FM": "c4fm"}
+# Mode annonce -> juge dsd qui passe devant sur la frequence (2026-11-11, audit E5).
+JUGE_DU_MODE = {"dstar": "-fd", "dmr": "-fs", "c4fm": "-fy"}
+POIDS_ANNONCE = 1.0          # un oui fictif, renouvele tant que l'annonce revient
+# Frequences de donnees partagees, jamais des relais vocaux (digipeaters APRS).
+PAS_RELAIS = [(144_800_000, 6_250)]
+
+
+def _pas_relais(freq_hz):
+    return any(abs(int(freq_hz) - f) <= tol for f, tol in PAS_RELAIS)
+
+
+def _annonce_mode(freq_hz, mode, source):
+    """Le mode d'un relais (APRS, texte, air) devient un a priori du juge."""
+    juge = JUGE_DU_MODE.get(mode)
+    if not juge:
+        return
+    try:
+        import propositions
+        propositions.a_priori(freq_hz, juge, POIDS_ANNONCE, f"relais {source}")
+    except Exception as exc:
+        print(f"[relais] juge {juge} non note sur {freq_hz} : {exc!r}")
 _jetons = re.compile(FREQ.pattern + "|" + FREQ_NUE.pattern + r"|<=>|\bT\d{3}\b|\bR\d+k\b|[+-]\d{1,2}\.\d{1,4}\s?(MHz)?"
                      r"|(?<![\w.])[+-]\d{3}(?![\d.])|\b(tone|CTCSS)\s*\d+(\s*Hz)?", re.IGNORECASE)
 
@@ -132,6 +153,7 @@ def learn(name, comment, symbol, km, lat=None, lon=None):
     data = load()
     nouveau = None
     for f in freqs:
+        _annonce_mode(f, mode, "aprs")
         known = data.get(str(f))
         data[str(f)] = dict(fiche, appris=(known or {}).get("appris", time.time()))
         if not known and nouveau is None:
@@ -152,12 +174,13 @@ def detecte(freq_hz, raisons, nom=None, protocole=None):
     une fiche APRS deja la n'est pas ecrasee. Hors bande radioamateur : rien ici,
     la frequence reste suivie comme frequence active."""
     f = int(freq_hz)
-    if not any(low <= f <= high for _, _, low, high in GROUPS):
+    if not any(low <= f <= high for _, _, low, high in GROUPS) or _pas_relais(f):
         return False
     data = load()
     if relais_proche(f)[0] is not None:
         return False
     mode = next((code for word, code in MODES.items() if word == protocole), "fm")
+    _annonce_mode(f, mode, "air")
     data[str(f)] = {"nom": nom or "relais possible", "mode": mode, "km": None, "tonalite": None,
                     "decalage_hz": None, "lieu": None, "lien": None, "lat": None, "lon": None,
                     "commentaire": ", ".join(raisons)[:120], "source": "air", "vu": time.time(), "appris": time.time()}
@@ -188,6 +211,9 @@ def depuis_texte(texte, freq_source=None, source="texte", mode=None, label=None,
     if radioamateur:
         data = load()
         for f in radioamateur:
+            _annonce_mode(f, next((c for w, c in MODES.items() if w in propre), "fm"), source)
+            if _pas_relais(f):
+                continue
             if not relais_proche(f)[1]:
                 ton = re.search(r"\bT(\d{3})\b|tone\s*(\d+)|CTCSS\s*(\d+)", propre, re.IGNORECASE)
                 data[str(f)] = {"nom": "relais annoncé", "mode": next((c for w, c in MODES.items() if w in propre), "fm"),
