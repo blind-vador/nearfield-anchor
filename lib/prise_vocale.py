@@ -293,6 +293,17 @@ def _types_de_message(item, text):
     return text
 
 
+def _dire_seulement(item, text):
+    """Dit l'annonce une fois, sans prise au journal ; muette si la place est prise."""
+    import speak
+    lock = audio_lock.acquire("donnees")
+    try:
+        if not lock.dropped:
+            speak.speak_with_lead_sound(item["son"], text, label=item["tag"], source=item.get("source"))
+    finally:
+        audio_lock.release(lock)
+
+
 def _run():
     while True:
         item = _queue.get()
@@ -304,6 +315,9 @@ def _run():
             if not text:
                 continue
             print(f"[{item['tag']}] annonce : {text}")
+            if not item.get("journal", True):
+                _dire_seulement(item, text)
+                continue
             if _dire_en_flux(item, text):
                 continue
             path = record(text, item["son"], item["etiquette"], item["fiche"], item.get("source"))
@@ -328,10 +342,12 @@ def _run():
                 item["fait"].set()
 
 
-def announce(text, sound, label, tag, fiche=None, wait=False):
+def announce(text, sound, label, tag, fiche=None, wait=False, journal=True):
     """Met une annonce en file (texte, ou fonction qui le rend). wait=True :
     rend la main quand elle a ete dite (annonce d'un passage de satellite
-    juste avant l'ecoute, par exemple)."""
+    juste avant l'ecoute, par exemple). journal=False : dite une fois, rien
+    n'est range au journal (resultat d'examen : il vit dans le journal
+    proposition et la commande "notifications", 2026-11-11)."""
     global _worker
     with _worker_lock:
         if _worker is None or not _worker.is_alive():
@@ -340,6 +356,6 @@ def announce(text, sound, label, tag, fiche=None, wait=False):
     done = threading.Event() if wait else None
     import voix_sources  # la source se decide ici, dans le service qui annonce
     _queue.put({"texte": text, "son": sound, "etiquette": label, "tag": tag, "fiche": fiche, "fait": done,
-                "source": voix_sources.source_pour(tag)})
+                "source": voix_sources.source_pour(tag), "journal": journal})
     if done:
         done.wait(timeout=600)

@@ -92,6 +92,11 @@ def ajouter(prop):
         data.append(prop)
         del data[:-MAX_ENTRIES]
     _with_lock(put)
+    try:   # fiche vocale du journal proposition (lib/revue_propositions)
+        import revue_propositions
+        revue_propositions.preparer("nettoyage", prop)
+    except Exception as exc:
+        print(f"[propositions] fiche vocale : {exc!r}")
     return prop["id"]
 
 

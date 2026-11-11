@@ -158,7 +158,8 @@ def noter(freq_hz, nature, protocole=None, modulation=None, target=None, label=N
             if raisons and not e.get("relais_possible"):
                 e["relais_possible"] = raisons
                 nouveau = dict(e)
-            for cle in [c for c, x in data.items() if maintenant - x.get("dernier", 0) > OUBLI_SEC
+            for cle in [c for c, x in data.items() if (maintenant - x.get("dernier", 0) > OUBLI_SEC
+                                                       and not x.get("gardee"))
                         or (x.get("expire") and x["expire"] < maintenant)]:
                 del data[cle]
     except OSError as exc:
@@ -166,6 +167,29 @@ def noter(freq_hz, nature, protocole=None, modulation=None, target=None, label=N
         return
     if nouveau:
         _relais_trouve(nouveau, raisons)
+
+
+def garder(freq_hz):
+    """Frequence en surveillance acceptee par l'utilisateur : elle reste."""
+    try:
+        with _Verrou() as data:
+            e = data.get(_cle(freq_hz))
+            if e:
+                e.pop("expire", None)
+                e["gardee"] = True
+    except OSError as exc:
+        print(f"[frequences] non gardee : {exc}")
+
+
+def oublier_surveillance(freq_hz):
+    """Frequence en surveillance refusee : retiree si rien d'autre n'y a ete capte."""
+    try:
+        with _Verrou() as data:
+            e = data.get(_cle(freq_hz))
+            if e and e.get("expire"):
+                del data[_cle(freq_hz)]
+    except OSError as exc:
+        print(f"[frequences] non oubliee : {exc}")
 
 
 def _relais_trouve(e, raisons):
@@ -199,7 +223,7 @@ def _majeur(compteur):
 
 def _utile(e):
     natures = e.get("natures") or {}
-    if e.get("annoncee") or e.get("relais_possible") or e.get("expire"):
+    if e.get("annoncee") or e.get("relais_possible") or e.get("expire") or e.get("gardee"):
         return True      # expire : en surveillance (frequence citee, lib/frequences_ia)
     seul_signal = set(natures) <= {"signal"}
     return e.get("vus", 0) >= (VUS_MIN["signal"] if seul_signal else VUS_MIN_DEFAUT)

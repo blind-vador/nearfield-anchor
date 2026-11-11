@@ -429,7 +429,9 @@ def alt_held():
 
 
 def unheard_counts():
-    """{journal: entrees pas encore ecoutees} (commande "notifications")."""
+    """{journal: entrees pas encore ecoutees} (commande "notifications"). Le journal
+    proposition compte ses entrees dont la fiche vocale n'a pas ete ecoutee
+    (2026-11-11 : un resultat d'examen est dit une fois, puis attend ici)."""
     import journal_vus
     counts = {}
     for category in journaux.ORDER:
@@ -437,6 +439,13 @@ def unheard_counts():
                 if path and text is None and journal_vus.is_new(path))
         if n:
             counts[category] = n
+    try:
+        import revue_propositions
+        n = revue_propositions.nouvelles()
+        if n:
+            counts["proposition"] = n
+    except Exception as exc:
+        print(f"[journal] propositions : {exc!r}", file=sys.stderr)
     return counts
 
 
@@ -462,7 +471,9 @@ def notifications():
     counts = unheard_counts()
     if not counts:
         return dire("notifications.rien")
-    parts = [dire("notifications.journal", entrees=nombre(n, "nouvelle entrée", "nouvelles entrées"),
+    parts = [dire("notifications.propositions", nombre=nombre(n, "nouvelle proposition", "nouvelles propositions"))
+             if c == "proposition" else
+             dire("notifications.journal", entrees=nombre(n, "nouvelle entrée", "nouvelles entrées"),
                   nom=journaux.NAMES[c]) for c, n in counts.items()]
     return dire("notifications.liste", liste=" ; ".join(parts))
 

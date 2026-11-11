@@ -114,6 +114,11 @@ def deposer(freq_hz, mode, bande, label, nom, contexte, machine, fichier="", pou
     })
     _ecrire(data)
     print(f"[nommage] {nom} en attente sur {cle}")
+    try:   # fiche vocale du journal proposition (lib/revue_propositions)
+        import revue_propositions
+        revue_propositions.preparer("nommage", data["attente"][-1])
+    except Exception as exc:
+        print(f"[nommage] fiche vocale : {exc!r}")
     return True
 
 

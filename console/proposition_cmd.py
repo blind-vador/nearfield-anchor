@@ -1,24 +1,31 @@
-"""Commande "journal proposition" (2026-10-09) : revue du matin des reglages
-proposes par la passe d'analyse du Mac mini (lib/propositions.py). L'IA a le
-droit de creuser fort (debruitage agressif) ; l'utilisateur tranche a l'oreille.
+"""Commande "journal proposition" (2026-10-09) : revue de ce que les machines
+proposent ; l'utilisateur tranche a l'oreille.
 
-  fleches haut / bas   proposition precedente / suivante (dit le resume)
-  Entree               ecoute l'extrait AVANT
-  p                    ecoute l'extrait APRES (nettoye par l'IA), si present
-  c                    confirme : le reglage est applique au Pi
-  r                    refuse : la proposition est ecartee (et sert de retour)
+2026-11-11 : trois sortes d'entrees, chacune acceptee ou refusee pour elle-meme
+(lib/revue_propositions) : nettoyage audio, nom de station, frequence trouvee par
+l'IA. Chaque entree a sa fiche vocale (voix de la veille radio) : ce qui est
+propose et pourquoi. Elle est lue quand on arrive sur l'entree, et retiree quand
+l'entree est acceptee ou refusee.
+
+  fleches haut / bas   entree precedente / suivante : sa fiche est lue
+  Entree, b            ecoute le son brut (nettoyage, nom de station)
+  t                    niveau de nettoyage suivant (le joue)
+  e                    ce que l'IA a compris (nom de station)
+  i                    relit la fiche
+  c                    accepte (le niveau en cours pour un nettoyage)
+  r                    refuse (pour un nettoyage : le niveau en cours ; tous
+                       refuses, la proposition est ecartee)
   Echap ferme. F1 : les touches.
 """
 import os
-import sys
+import threading
 
-
-import conseils  # noqa: E402
-import propositions_reglages as propositions  # noqa: E402
-import voix  # noqa: E402
-from journal import Player  # noqa: E402
-from phrases import dire, nombre  # noqa: E402
-from sound_paths import RADIO_LOG_DIR  # noqa: E402
+import conseils
+import revue_propositions as revue
+import voix
+from journal import Player
+from phrases import dire, nombre
+from sound_paths import RADIO_LOG_DIR
 
 UP, DOWN, ESC = "\x1b[A", "\x1b[B", "\x1b"
 
@@ -32,41 +39,58 @@ def _clip(path):
     return candidate if os.path.isfile(candidate) else None
 
 
-def _traitements(p):
-    return p.get("traitements") or []
+def _traitements(e):
+    return (e["item"].get("traitements") or []) if e["genre"] == "nettoyage" else []
 
 
-def _line(items, i):
-    p = items[i]
-    n = len(_traitements(p))
-    base = dire("proposition.ligne", index=i + 1, total=len(items), resume=p.get("resume", ""))
-    if n:
-        base += " " + dire("proposition.niveaux", nombre=nombre(n, "niveau", "niveaux"))
-    return base
+def _brut(e):
+    """Le son a ecouter avec Entree : l'extrait avant nettoyage, ou la prise qui a
+    donne le nom (son brut s'il est garde)."""
+    p = e["item"]
+    if e["genre"] == "nettoyage":
+        return _clip(p.get("brut"))
+    if e["genre"] == "nommage" and p.get("fichier"):
+        prise = _clip(p["fichier"])
+        if prise and prise.endswith(".mp3"):
+            return _clip(prise[:-4] + ".brut.mp3") or prise
+        return prise
+    return None
 
 
 def run(line, key_source, say, out):
-    items = propositions.entries()
+    items = revue.entrees()
+    revue.menage(items)
     i = 0
-    lvl, refused = 0, set()   # niveau courant + niveaux refuses de la proposition i
+    lvl, refused = 0, set()   # niveau courant + niveaux refuses (nettoyage)
     player = Player()
+    tour = [0]                # change a chaque deplacement : une fiche en retard ne joue pas
     title = dire("proposition.titre", nombre=nombre(len(items), "proposition", "propositions"))
     intro = conseils.intro("proposition", title, dire("proposition.consigne"))
     out(intro + "\n")
 
-    def play_brut():
-        """Joue l'extrait BRUT de la proposition courante tout de suite (comme
-        le journal : la fleche joue, pas d'annonce verbeuse). i donne le detail."""
-        clip = _clip(items[i].get("brut")) if items else None
-        if clip:
-            player.play(clip)
-        elif items:
-            say(dire("proposition.pas_d_extrait"))
+    def lire_fiche(avant=None):
+        """Joue la fiche vocale de l'entree courante (fabriquee si besoin, dans un fil).
+        avant : verdict de l'entree precedente, dit en entier avant la fiche."""
+        tour[0] += 1
+        mon_tour, e = tour[0], items[i]
 
-    def goto(new_i):
+        def travail():
+            if avant:
+                voix.say_blocking(avant, encore=lambda: tour[0] == mon_tour)
+            path = revue.fiche(e)
+            if tour[0] != mon_tour:
+                return
+            if path:
+                player.play(path)
+            else:
+                say(dire("revue.sans_fiche", texte=revue.texte(e)))
+            revue.marquer_entendue(e)
+        threading.Thread(target=travail, daemon=True).start()
+
+    def goto(new_i, avant=None):
         nonlocal i, lvl, refused
         i, lvl, refused = new_i, 0, set()
-        play_brut()
+        lire_fiche(avant)
 
     def advance():
         """Niveau de traitement suivant non refuse (cycle) ; joue et annonce."""
@@ -81,6 +105,15 @@ def run(line, key_source, say, out):
             player.play(clip)
         return dire("proposition.niveau_courant", index=lvl + 1, total=len(traits), nom=traits[lvl].get("niveau", ""))
 
+    def retirer(verdict):
+        """L'entree courante est tranchee : le verdict, puis la fiche suivante."""
+        items.pop(i)
+        if items:
+            out(f"[{verdict}]\n")
+            goto(min(i, len(items) - 1), verdict)
+            return None
+        return verdict + " " + dire("proposition.plus_rien")
+
     try:
         if not items:
             say(f"{intro} {dire('proposition.vide')}")
@@ -90,11 +123,12 @@ def run(line, key_source, say, out):
                 say(dire("proposition.consigne"))
             return dire("proposition.fermee")
         say(intro)
-        play_brut()  # le 1er brut joue d'emblee, sans attendre Entree
+        lire_fiche()  # la 1re fiche d'emblee
 
         for key in key_source:
             voix.stop()
             text = None
+            e = items[i]
             if conseils.is_help(key):
                 text = dire("proposition.consigne")
             elif key == ESC:
@@ -102,45 +136,34 @@ def run(line, key_source, say, out):
             elif key in (UP, DOWN):
                 j = i + (-1 if key == UP else 1)
                 if 0 <= j < len(items):
-                    goto(j)  # navigue ET joue le brut aussitot, aucune annonce
+                    goto(j)
                 else:
                     text = dire("commun.debut_liste") if j < 0 else dire("commun.fin_liste")
             elif key in ("\r", "\n", "b", "B"):
-                play_brut()  # rejoue le brut
+                tour[0] += 1
+                clip = _brut(e)
+                if clip:
+                    player.play(clip)
+                else:
+                    text = dire("proposition.pas_d_extrait")
             elif key in ("t", "T"):
+                tour[0] += 1
                 text = advance()
             elif key in ("i", "I"):
-                text = _line(items, i)  # details a la demande (bande, proba, niveaux)
+                lire_fiche()
+            elif key in ("e", "E"):
+                p = e["item"]
+                text = (" ".join(x for x in (p.get("mise_a_jour"), p.get("explication")) if x)
+                        or dire("nommage.sans_explication"))
             elif key in ("c", "C"):
-                traits = _traitements(items[i])
-                action = traits[lvl]["action"] if (traits and lvl < len(traits)) else items[i].get("action")
-                ok, detail = propositions.apply(action)
-                propositions.set_etat(items[i]["id"], "confirme")
-                brut = items[i].get("brut") or ""
-                if brut.startswith("rejets" + os.sep):   # l'IA a entendu une voix dans un rejet : repeche
-                    try:
-                        import rejets
-                        rejets.repecher(os.path.basename(brut))
-                    except Exception as exc:
-                        print(f"[proposition] repechage : {exc!r}")
-                items.pop(i)
-                say(dire("proposition.confirmee", detail=detail) if ok
-                    else dire("proposition.confirmee_manuelle", detail=detail))
-                if items:
-                    goto(min(i, len(items) - 1))
-                else:
-                    text = dire("proposition.plus_rien")
+                player.stop()
+                text = retirer(revue.accepter(e, lvl if _traitements(e) else None))
             elif key in ("r", "R"):
-                traits = _traitements(items[i])
+                player.stop()
+                traits = _traitements(e)
                 refused.add(lvl)
-                if not traits or len(refused) >= len(traits):   # tous les niveaux refuses
-                    propositions.set_etat(items[i]["id"], "refuse")
-                    items.pop(i)
-                    say(dire("proposition.refusee"))
-                    if items:
-                        goto(min(i, len(items) - 1))
-                    else:
-                        text = dire("proposition.plus_rien")
+                if not traits or len(refused) >= len(traits):   # tout est refuse
+                    text = retirer(revue.refuser(e))
                 else:
                     text = dire("proposition.niveau_refuse") + " " + advance()
             else:

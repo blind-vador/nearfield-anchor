@@ -57,13 +57,18 @@ def _chemin_journal(fichier):
 
 
 def source_brute(chemin):
-    """Le son a examiner : le brut capte (sans carillon ni annonce de synthese,
-    que la passe prendrait pour de la voix), sinon la prise elle-meme."""
+    """Le son a examiner : le brut capte, sans carillon, annonce ni shim (la passe
+    les nettoierait avec la voix et les prendrait pour de la parole). Un rejet est
+    deja son brut seul. Sinon None : on n'envoie JAMAIS la prise habillee."""
+    if chemin.endswith(".brut.mp3"):
+        return chemin
     if chemin.endswith(".mp3"):
         brut = chemin[:-4] + ".brut.mp3"
         if os.path.isfile(brut):
             return brut
-    return chemin
+    if os.path.basename(os.path.dirname(chemin)) == "rejets":
+        return chemin
+    return None
 
 
 def _relatif(chemin):
@@ -88,11 +93,15 @@ def _infos_prise(chemin):
 
 def demander(fichier, soir=False, infos=None):
     """Touche E du journal radio (soir : choisie par watchers/whisper_soir, rien n'est
-    dit). Rend "demande", "deja", "sans_machine" ou "absent"."""
+    dit). Rend "demande", "deja", "sans_machine", "sans_brut" ou "absent"."""
     chemin = _chemin_journal(fichier)
     if not chemin:
         return "absent"
     nom = os.path.basename(chemin)
+    src = source_brute(chemin)
+    if not src:
+        print(f"[examen] {nom} : pas de son brut, la prise habillee n'est pas envoyee")
+        return "sans_brut"
     import compagnon
     try:
         os.makedirs(os.path.dirname(DEMANDES), exist_ok=True)
@@ -104,7 +113,6 @@ def demander(fichier, soir=False, infos=None):
                 return "deja"
             if not any("examen" in (c.get("capacites") or []) for c in compagnon.companions()):
                 return "sans_machine"
-            src = source_brute(chemin)
             ext = os.path.splitext(src)[1] or ".mp3"
             params = {"mode": "clip", "fichier": "son" + ext, "origine": nom, "brut": _relatif(src),
                       "soir": bool(soir), **{k: v for k, v in (infos or _infos_prise(chemin)).items() if v}}
@@ -233,5 +241,7 @@ def _suite(params, transcription, resume, machine):
         morceaux.append(dire("examen.rien_compris"))
     import veille_donnees as vd
     from sound_paths import RADIO_SCANER_DIR
+    # Dit une fois, sans prise au journal radio : les propositions attendent au journal
+    # proposition (fiche vocale chacune) et comptent dans la commande "notifications".
     vd.announce(" ".join(m for m in morceaux if m), os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3"),
-                "examen", "compagnon")
+                "examen", "compagnon", journal=False)

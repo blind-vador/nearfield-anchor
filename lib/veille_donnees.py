@@ -27,12 +27,12 @@ DIRECTION_VERS = Etiquettes("direction.vers", {d: (f"à l'{d}" if d[0] in "eo" e
 SPELL = Etiquettes("epeler", {"-": "tiret", "/": "barre"}, "signe lu dans un indicatif épelé")
 
 
-def announce(text, sound, label_for_log, tag, fiche=None, wait=False):
+def announce(text, sound, label_for_log, tag, fiche=None, wait=False, journal=True):
     """Annonce au fil de l'eau (2026-10-03) : le texte (ou la fonction qui le
     rend) devient une prise vocale au journal (lib/prise_vocale.py), diffusee
     depuis une file -- l'ecoute continue pendant qu'on parle."""
     import prise_vocale
-    prise_vocale.announce(text, sound, label_for_log, tag, fiche=fiche, wait=wait)
+    prise_vocale.announce(text, sound, label_for_log, tag, fiche=fiche, wait=wait, journal=journal)
 
 
 def archive(kind, record):

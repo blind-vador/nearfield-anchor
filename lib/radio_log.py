@@ -78,6 +78,7 @@ class RadioLogSession:
         # journal, meme si un chemin oublie de la jeter.
         self.exiger_contenu = exiger_contenu
         self.contenu = False
+        self.contenus = []      # segments de son capte seul (sans habillage) : le .brut.mp3
         self.flux = None
         self._tmpdir = tempfile.mkdtemp(prefix="radio_log_")
 
@@ -101,6 +102,8 @@ class RadioLogSession:
             if result.returncode == 0 and os.path.getsize(out_path) > 0:
                 self.segments.append(out_path)
                 self.contenu = self.contenu or contenu
+                if contenu:
+                    self.contenus.append(out_path)
         except Exception as exc:
             print(f"[radio_log] segment ignore ({path}) : {exc}")
 
@@ -125,6 +128,7 @@ class RadioLogSession:
             if result.returncode == 0 and os.path.getsize(out_path) > 0:
                 self.segments.append(out_path)
                 self.contenu = True
+                self.contenus.append(out_path)
         except Exception as exc:
             print(f"[radio_log] segment PCM ignore : {exc}")
         finally:
@@ -163,6 +167,8 @@ class RadioLogSession:
             if result.returncode == 0 and os.path.exists(out_path) and os.path.getsize(out_path) > 0:
                 print(f"[radio_log] capture enregistree : {out_path}")
                 _poser_flux(self.flux, out_path)
+                if subdir != "rejets":      # un rejet est deja son brut seul
+                    self._poser_brut(out_path)
                 _touch(JOURNAL_UPDATE_FLAG)  # le journal ouvert se met a jour
                 return out_path
             print(f"[radio_log] assemblage echoue : {result.stderr.decode(errors='replace')[-300:]}")
@@ -172,6 +178,25 @@ class RadioLogSession:
             return None
         finally:
             shutil.rmtree(self._tmpdir, ignore_errors=True)
+
+    def _poser_brut(self, journal):
+        """Le son capte seul, sans carillon, annonce ni shim (2026-11-11) : l'examen
+        du Mac et la passe de la nuit ne doivent nettoyer et transcrire que lui,
+        jamais notre habillage. Un chemin qui garde deja son brut (banc, flux
+        rtl_fm : _save_raw) le remplace ensuite par le sien, pris avant filtrage."""
+        dest = journal[:-4] + ".brut.mp3"
+        if not self.contenus or os.path.exists(dest):
+            return
+        liste = os.path.join(self._tmpdir, "contenu.txt")
+        try:
+            with open(liste, "w", encoding="utf-8") as f:
+                for seg in self.contenus:
+                    f.write(f"file '{seg}'\n")
+            subprocess.run(["ffmpeg", "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0",
+                            "-i", liste, "-ar", str(LOG_SAMPLE_RATE), "-ac", "1", dest],
+                           capture_output=True, timeout=30)
+        except Exception as exc:
+            print(f"[radio_log] son brut non garde : {exc}")
 
     def discard(self):
         shutil.rmtree(self._tmpdir, ignore_errors=True)

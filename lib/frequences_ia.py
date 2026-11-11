@@ -13,13 +13,92 @@ On verifie chacune, puis :
     autres ; sinon elle s'efface d'elle-meme ;
   - modulation annoncee : a priori du juge correspondant (propositions.a_priori,
     qui s'efface aussi s'il ne se confirme pas).
+Chaque frequence mise en surveillance devient aussi une entree du journal
+proposition (lib/revue_propositions, avec sa fiche vocale) : C la garde pour de
+bon, R l'oublie et elle ne sera plus mise en surveillance (2026-11-11).
 """
+import json
+import os
 import re
+import time
+
+import chemins
 
 CERTITUDE_MIN = 0.5
 MHZ_MIN, MHZ_MAX = 1.0, 1800.0      # ce que le dongle couvre
 SURVEILLANCE_SEC = 14 * 86400       # valide par l'utilisateur le 2026-11-11
 POIDS_IA = 1.0
+TROUVEES = chemins.base("frequences_trouvees.json")    # {"attente": [...], "refusees": [cle]}
+
+
+def _lire():
+    try:
+        with open(TROUVEES, encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            data.setdefault("attente", [])
+            data.setdefault("refusees", [])
+            return data
+    except (OSError, ValueError):
+        pass
+    return {"attente": [], "refusees": []}
+
+
+def _ecrire(data):
+    tmp = TROUVEES + f".{os.getpid()}.tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, TROUVEES)
+
+
+def _a_relire(freq, mhz, modulation, role, phrase, source, freq_source):
+    """Entree du journal proposition (une par frequence, la plus recente garde la place)."""
+    import frequences_actives as fa
+    cle = fa._cle(freq)
+    data = _lire()
+    data["attente"] = [a for a in data["attente"] if a.get("cle") != cle]
+    item = {"id": f"{int(time.time() * 1000)}", "cle": cle, "freq_hz": freq, "mhz": mhz,
+            "modulation": modulation, "role": role, "phrase": phrase, "source": source,
+            "freq_source": int(freq_source) if freq_source else None,
+            "le": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    data["attente"].append(item)
+    _ecrire(data)
+    try:
+        import revue_propositions
+        revue_propositions.preparer("frequence", item)
+    except Exception as exc:
+        print(f"[frequences_ia] fiche vocale : {exc!r}")
+
+
+def a_revoir():
+    """Frequences en surveillance a accepter ou refuser. Une frequence devenue
+    permanente (on y a capte quelque chose) ou effacee (14 jours sans rien)
+    quitte la revue d'elle-meme."""
+    import frequences_actives as fa
+    actives = fa.load()
+    return [a for a in _lire()["attente"] if (actives.get(a.get("cle")) or {}).get("expire")]
+
+
+def _retirer(item, refuser=False):
+    data = _lire()
+    data["attente"] = [a for a in data["attente"] if a.get("id") != item.get("id")]
+    if refuser and item.get("cle") not in data["refusees"]:
+        data["refusees"].append(item.get("cle"))
+    _ecrire(data)
+
+
+def garder(item):
+    """C : la frequence reste suivie, sans limite de temps."""
+    import frequences_actives as fa
+    fa.garder(item.get("freq_hz"))
+    _retirer(item)
+
+
+def oublier(item):
+    """R : la surveillance s'arrete et cette frequence ne sera plus surveillee sur un texte."""
+    import frequences_actives as fa
+    fa.oublier_surveillance(item.get("freq_hz"))
+    _retirer(item, refuser=True)
 
 
 def _mhz(valeur):
@@ -65,6 +144,9 @@ def ranger(trouvees, source, freq_source=None):
         phrase = re.sub(r"\s+", " ", str(item.get("phrase") or ""))[:160]
         modulation = str(item.get("modulation") or "").strip()
         connue = _connue(freq)
+        if not connue and fa._cle(freq) in _lire()["refusees"]:
+            out["ecartees"] += 1     # oubliee par l'utilisateur (R au journal proposition)
+            continue
         # « annoncee » est un indice de RELAIS (frequences_actives.raisons_relais) : seulement
         # pour une sortie ou une entree de relais, pas pour toute frequence citee
         # (133,760 dans un echange de controle aerien etait annonce « relais possible »).
@@ -82,6 +164,8 @@ def ranger(trouvees, source, freq_source=None):
         except Exception as exc:
             print(f"[frequences_ia] juge non note : {exc!r}")
         (out["connues"] if connue else out["surveillees"]).append(freq)
+        if not connue:
+            _a_relire(freq, mhz, modulation, role, phrase, source, freq_source)
         print(f"[frequences_ia] {source} : {mhz} MHz {modulation or ''} -> "
               + (f"connue ({connue})" if connue else "surveillance 14 jours"))
     return out

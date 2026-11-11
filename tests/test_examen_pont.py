@@ -44,7 +44,8 @@ class Examen(unittest.TestCase):
                         mock.patch.object(compagnon, "submit", side_effect=self.jobs.append),
                         mock.patch.object(compagnon, "open_jobs", side_effect=lambda: list(self.jobs)),
                         mock.patch.object(compagnon, "companions",
-                                          return_value=[{"capacites": ["examen", "examen_lot"]}])]
+                                          return_value=[{"capacites": ["examen", "examen_lot"]}]),
+                        mock.patch("revue_propositions.preparer")]
         for p in self.patches:
             p.start()
 
@@ -77,6 +78,9 @@ class Examen(unittest.TestCase):
         self.assertEqual(examen.demander("canal_x.mp3"), "demande")
         self.assertEqual(self.jobs[0]["params"]["brut"], os.path.join("rejets", "canal_x.mp3"))
         self.assertEqual(examen.demander("introuvable.mp3"), "absent")
+        # une prise du journal sans son brut n'est jamais envoyee habillee
+        self.assertEqual(examen.demander(self.prise("habillee.mp3", brut=False)), "sans_brut")
+        self.assertEqual(len(self.jobs), 1)
 
     def test_sans_machine(self):
         with mock.patch.object(compagnon, "companions", return_value=[{"capacites": ["whisper"]}]):
@@ -100,7 +104,9 @@ class Examen(unittest.TestCase):
             def start(self):
                 self.target(*self.args)
 
-        with mock.patch("veille_donnees.announce", side_effect=lambda t, *a, **k: dits.append(t)), \
+        annonces = []
+        with mock.patch("veille_donnees.announce",
+                        side_effect=lambda t, *a, **k: dits.append(t) or annonces.append(k)), \
                 mock.patch("threading.Thread", Direct):
             n = examen.ranger(job, {"etat": "fait"}, dossier)
             examen.ranger(job, {"etat": "fait"}, dossier)   # relu deux fois : une seule proposition
@@ -112,6 +118,7 @@ class Examen(unittest.TestCase):
         self.assertEqual(audio, os.path.join("propositions_audio", "17_léger.wav"))
         self.assertTrue(os.path.isfile(os.path.join(self.log, audio)))
         self.assertTrue(dits and "446 civil" in dits[0])
+        self.assertIs(annonces[0].get("journal"), False)   # dit une fois, pas de prise au journal radio
 
     def test_nuit_et_ancienne_file(self):
         self.prise("vieux.mp3")
