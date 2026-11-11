@@ -1,5 +1,11 @@
 """Le soir, les prises validees dans la journee partent sur le Mac pour Whisper.
-Le texte revient par le pont. On ne transcrit pas une prise chiffree, ni une
+Le texte revient par le pont.
+
+2026-11-11 (plan phase 4) : par l'examen du Mac quand il sait le faire (travail
+"examen", lib/examen.py) : Whisper sur le son BRUT (pas la prise habillee de son
+carillon et de son annonce), nettoyage si la parole est peu comprise, puis analyse
+de la station (lib/analyse_station.py : nom, pourquoi, mise a jour). Sinon, comme
+avant, travail "whisper" sur la prise. On ne transcrit pas une prise chiffree, ni une
 prise deja envoyee. Huit au plus, pour ne pas occuper la machine toute la nuit.
 """
 import json
@@ -59,6 +65,16 @@ def main():
         return
     import compagnon
     import noms_whisper
+    if compagnon.rank("examen", 1):
+        import examen
+        for note, chemin in choix:
+            infos = {"freq_hz": note.get("freq_hz"), "mode": note.get("mode"), "label": note.get("label") or "",
+                     "juge": (note.get("mesures") or {}).get("juge")}
+            etat = examen.demander(chemin, soir=True, infos={k: v for k, v in infos.items() if v})
+            if etat == "demande":
+                noms_whisper.marquer_envoye(os.path.basename(note["fichier"]))
+            print(f"[whisper] {os.path.basename(chemin)} : examen {etat}")
+        return
     if not compagnon.rank("whisper", 1):
         print("[whisper] aucune machine compagne ne transcrit ce soir")
         return

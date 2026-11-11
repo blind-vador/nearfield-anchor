@@ -2,6 +2,12 @@
 
 Le journal « nommage » les dit, avec un shim. C pose le nom. R le refuse :
 le meme nom ne sera plus propose pour cette frequence.
+
+2026-11-11 (plan phase 5) : une seule proposition en attente par frequence, la
+plus recente remplace la precedente (18 noms s'empilaient sur 438,525, un par
+indicatif entendu) ; chaque proposition garde son « pourquoi » (deux mots), ce que
+l'IA a compris (E dans le journal des noms) et, pour une station deja nommee, la
+mise a jour proposee (C renomme alors la station).
 """
 import json
 import os
@@ -66,8 +72,11 @@ def deja_refuse(freq_hz, nom):
     return _refus(freq_hz, nom) in (_lire().get("rejets") or [])
 
 
-def deposer(freq_hz, mode, bande, label, nom, contexte, machine, fichier=""):
-    """Range une proposition. N'ecrase pas un nom deja pose, ni un refus."""
+def deposer(freq_hz, mode, bande, label, nom, contexte, machine, fichier="", pourquoi=None, explication=None,
+            mise_a_jour=None, ancien_nom=None):
+    """Range une proposition, a la place de celle qui attendait deja pour cette
+    frequence. Un refus n'est jamais repropose ; un nom deja pose n'est change
+    que par une mise a jour (ancien_nom)."""
     if not freq_hz or not nom:
         return False
     if deja_refuse(freq_hz, nom):
@@ -75,16 +84,17 @@ def deposer(freq_hz, mode, bande, label, nom, contexte, machine, fichier=""):
         return False
     try:
         import stations
-        if mode and stations.name_near(freq_hz, mode):
+        pose = stations.name_near(freq_hz, mode) if mode else None
+        if pose and not ancien_nom:
             print(f"[nommage] {freq_hz} a deja un nom")
+            return False
+        if pose and " ".join(pose.casefold().split()) == " ".join(nom.casefold().split()):
             return False
     except Exception as exc:
         print(f"[nommage] station illisible : {exc!r}")
     data = _lire()
     cle = _cle(freq_hz)
-    for item in data["attente"]:
-        if item.get("cle") == cle and " ".join((item.get("nom") or "").casefold().split()) == " ".join(nom.casefold().split()):
-            return False
+    data["attente"] = [a for a in data["attente"] if a.get("cle") != cle]
     data["attente"].append({
         "id": f"{int(time.time())}-{len(data['attente'])}",
         "cle": cle,
@@ -97,6 +107,10 @@ def deposer(freq_hz, mode, bande, label, nom, contexte, machine, fichier=""):
         "machine": machine or "compagne",
         "fichier": fichier or "",
         "le": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "pourquoi": pourquoi or "",
+        "explication": (explication or "")[:600],
+        "mise_a_jour": (mise_a_jour or "")[:400],
+        "ancien_nom": ancien_nom or "",
     })
     _ecrire(data)
     print(f"[nommage] {nom} en attente sur {cle}")
@@ -108,9 +122,12 @@ def _poser(item):
     freq, mode, nom = item.get("freq_hz"), item.get("mode"), item.get("nom")
     try:
         import stations
-        if mode and stations.name_near(freq, mode):
+        pose = stations.name_near(freq, mode) if mode else None
+        if pose and not item.get("ancien_nom"):
             return False
-        if mode:
+        if pose:
+            stations.rename(freq, mode, nom)     # mise a jour acceptee
+        elif mode:
             stations.proposer_nom(freq, mode, nom, item.get("contexte") or "")
     except Exception as exc:
         print(f"[nommage] pose : {exc!r}")
@@ -118,8 +135,9 @@ def _poser(item):
         import noms_whisper
         canaux = noms_whisper._lire(noms_whisper.NOMS)
         entree = dict(canaux.get(item.get("cle")) or {})
-        if not entree.get("nom"):
+        if not entree.get("nom") or item.get("ancien_nom"):
             entree["nom"] = nom
+            entree["pourquoi"] = item.get("pourquoi") or entree.get("pourquoi") or ""
         if item.get("contexte"):
             entree["contexte"] = item["contexte"]
         entree["le"] = time.strftime("%Y-%m-%d")

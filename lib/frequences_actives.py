@@ -112,8 +112,11 @@ def raisons_relais(data, e, maintenant=None):
 
 
 def noter(freq_hz, nature, protocole=None, modulation=None, target=None, label=None, tonalite=None,
-          relais_dmr=False, indicatif=None, indicatif_relais=None, annoncee=False, texte=None):
-    """nature : voix, numerique, chiffre, donnees, signal (inconnu), texte, annoncee."""
+          relais_dmr=False, indicatif=None, indicatif_relais=None, annoncee=False, texte=None,
+          surveillance_sec=None):
+    """nature : voix, numerique, chiffre, donnees, signal (inconnu), texte, annoncee.
+    surveillance_sec (2026-11-11, lib/frequences_ia) : frequence seulement annoncee
+    (par une IA) ; elle s'efface apres ce delai si rien d'autre n'y a ete entendu."""
     if not freq_hz:
         return
     maintenant = time.time()
@@ -125,6 +128,10 @@ def noter(freq_hz, nature, protocole=None, modulation=None, target=None, label=N
                                                 "heures": [0] * 24})
             e["vus"] += 1
             e["dernier"] = maintenant
+            if nature == "annoncee" and surveillance_sec and set(e.get("natures") or {}) <= {"annoncee"}:
+                e["expire"] = max(e.get("expire", 0), maintenant + surveillance_sec)
+            elif nature in ("voix", "numerique", "chiffre", "donnees"):
+                e.pop("expire", None)    # elle a donne quelque chose : elle reste
             _plus(e["natures"], nature)
             e["heures"][datetime.datetime.fromtimestamp(maintenant).hour] += 1
             if protocole:
@@ -151,7 +158,8 @@ def noter(freq_hz, nature, protocole=None, modulation=None, target=None, label=N
             if raisons and not e.get("relais_possible"):
                 e["relais_possible"] = raisons
                 nouveau = dict(e)
-            for cle in [c for c, x in data.items() if maintenant - x.get("dernier", 0) > OUBLI_SEC]:
+            for cle in [c for c, x in data.items() if maintenant - x.get("dernier", 0) > OUBLI_SEC
+                        or (x.get("expire") and x["expire"] < maintenant)]:
                 del data[cle]
     except OSError as exc:
         print(f"[frequences] non notee : {exc}")

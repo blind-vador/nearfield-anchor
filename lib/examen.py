@@ -74,8 +74,21 @@ def _relatif(chemin):
     return os.path.basename(chemin) if rel.startswith("..") else rel
 
 
-def demander(fichier):
-    """Touche E du journal radio. Rend "demande", "deja", "sans_machine" ou "absent"."""
+def _infos_prise(chemin):
+    """Frequence, modulation, bande et juge de la prise (pour l'analyse de station)."""
+    try:
+        import noise_signatures as ns
+        info = ns.capture_info(chemin) or {}
+    except Exception:
+        info = {}
+    m = info.get("metrics") or {}
+    return {"freq_hz": info.get("freq_hz"), "mode": m.get("modulation_banc") or info.get("mode"),
+            "label": info.get("label") or "", "juge": m.get("juge")}
+
+
+def demander(fichier, soir=False, infos=None):
+    """Touche E du journal radio (soir : choisie par watchers/whisper_soir, rien n'est
+    dit). Rend "demande", "deja", "sans_machine" ou "absent"."""
     chemin = _chemin_journal(fichier)
     if not chemin:
         return "absent"
@@ -93,7 +106,8 @@ def demander(fichier):
                 return "sans_machine"
             src = source_brute(chemin)
             ext = os.path.splitext(src)[1] or ".mp3"
-            params = {"mode": "clip", "fichier": "son" + ext, "origine": nom, "brut": _relatif(src)}
+            params = {"mode": "clip", "fichier": "son" + ext, "origine": nom, "brut": _relatif(src),
+                      "soir": bool(soir), **{k: v for k, v in (infos or _infos_prise(chemin)).items() if v}}
             job_id, dossier, job = compagnon.new_job("examen", params)
             shutil.copyfile(src, os.path.join(dossier, "son" + ext))
             compagnon.submit(job)
@@ -168,12 +182,56 @@ def ranger(job, result, folder):
         pr.ajouter(prop)
         n += 1
     print(f"[examen] {job.get('id')} : {n} proposition(s) rangee(s)")
-    if origine and job.get("type") == "examen":
-        import veille_donnees as vd
-        from phrases import dire
-        from sound_paths import RADIO_SCANER_DIR
-        son = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
-        resume = props[0].get("resume") if n else None
-        vd.announce(dire("examen.pret", resume=resume) if resume else dire("examen.rien"),
-                    son, "examen", "compagnon")
+    transcription = _lire(os.path.join(folder, "transcription.json"), {})
+    if job.get("type") != "examen" or not origine:
+        return n
+    resume = props[0].get("resume") if n else None
+    machine = ""
+    try:
+        import compagnon
+        machine = (compagnon.trusted().get(result.get("compagnon"), {}) or {}).get("nom") or ""
+    except Exception:
+        pass
+    import threading
+    threading.Thread(target=_suite, args=(params, transcription, resume, machine), daemon=True).start()
     return n
+
+
+def _suite(params, transcription, resume, machine):
+    """Apres l'examen : analyse de la station si Whisper a compris quelque chose,
+    puis une seule annonce (examen demande) ; le soir, rien n'est dit."""
+    from phrases import dire
+    origine = params.get("origine")
+    texte = (transcription or {}).get("texte") or ""
+    res = None
+    if texte and params.get("freq_hz"):
+        try:
+            import noms_whisper
+            propre = noms_whisper.texte_utile(texte, params.get("label") or "")
+            if propre:
+                import analyse_station
+                res = analyse_station.analyser(params["freq_hz"], params.get("mode"), params.get("label"),
+                                               params.get("juge"), propre, origine, machine,
+                                               journal=_chemin_journal(origine))
+        except Exception as exc:
+            print(f"[examen] analyse de station : {exc!r}")
+    if params.get("soir"):
+        try:
+            import noms_whisper
+            noms_whisper.marquer_fait(origine)
+        except Exception:
+            pass
+        return
+    morceaux = [dire("examen.pret", resume=resume) if resume else dire("examen.rien")]
+    statut = (transcription or {}).get("statut")
+    if statut == "inaudible":
+        morceaux.append(dire("examen.inaudible"))
+    elif res:
+        import analyse_station
+        morceaux.append(analyse_station.phrase(res))
+    elif texte:
+        morceaux.append(dire("examen.rien_compris"))
+    import veille_donnees as vd
+    from sound_paths import RADIO_SCANER_DIR
+    vd.announce(" ".join(m for m in morceaux if m), os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3"),
+                "examen", "compagnon")

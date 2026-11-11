@@ -324,16 +324,160 @@ def _ecrire(path, data):
     os.replace(tmp, path)
 
 
-def run_clip(src, sortie, nom):
-    """Clip demande a l'examen (touche E) : proposition forcee, meme si deja clair."""
+# --- Examen d'un clip : Whisper d'abord (2026-11-11, plan phase 4) ------------
+# Whisper sur le brut decide de la suite. Bon et propre : on ne cherche pas a
+# ameliorer ce qui est deja bien. Inaudible : toute l'echelle de nettoyage, chaque
+# niveau repasse par Whisper. Entre les deux : leger et neuronal seulement. Un
+# niveau n'est retenu que s'il ameliore nettement la comprehension de Whisper.
+WHISPER_BON = 0.70          # confiance moyenne des mots au-dessus : rien a ameliorer
+WHISPER_INAUDIBLE = 0.40    # en dessous : inaudible, toute l'echelle
+WHISPER_INTELLIGIBLE = 0.50  # texte rendu au Pi (nommage) seulement au-dessus
+WHISPER_GAIN = 0.08         # gain minimal pour retenir un niveau de nettoyage
+WHISPER_SEC = 120
+
+
+def transcrire(chemin, whisper, tmpdir, nom):
+    """{"texte", "confiance"} (confiance = probabilite moyenne des mots) ou None."""
+    if not whisper:
+        return None
+    cli, modele, prompt = whisper
+    wav16 = os.path.join(tmpdir, nom + ".16k.wav")
+    base = os.path.join(tmpdir, nom + ".whisper")
+    try:
+        subprocess.run(["/usr/bin/afconvert", "-f", "WAVE", "-d", "LEI16@16000", "-c", "1", chemin, wav16],
+                       check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        subprocess.run([cli, "-m", modele, "-l", "fr", "-t", "4", "-nt", "-np", "-f", wav16, "-of", base, "-ojf",
+                        "--prompt", prompt], capture_output=True, timeout=WHISPER_SEC, check=True)
+        with open(base + ".json", encoding="utf-8") as f:
+            segs = json.load(f).get("transcription") or []
+    except (OSError, ValueError, subprocess.SubprocessError) as exc:
+        print(f"  [whisper] {nom} : {exc}")
+        return None
+    probas = [t.get("p", 0.0) for seg in segs for t in seg.get("tokens") or []
+              if not str(t.get("text", "")).startswith("[_")]
+    texte = " ".join(" ".join((seg.get("text") or "").split()) for seg in segs).strip()
+    raison = hallucination(texte, prompt)
+    if raison:
+        print(f"  [whisper] {nom} : texte invente ({raison}) : {texte[:80]!r}")
+        return {"texte": "", "confiance": 0.0, "invente": raison}
+    return {"texte": texte, "confiance": round(float(np.mean(probas)), 3) if probas and texte else 0.0}
+
+
+HALLUCINATIONS = ("sous-titre", "sous titre", "amara.org", "merci d'avoir regard", "abonnez-vous", "abonne-toi",
+                  "thanks for watching", "générique", "generique", "musique")
+
+
+def _mots(texte):
+    return re.findall(r"[0-9a-zà-ÿ']+", (texte or "").lower())
+
+
+def hallucination(texte, prompt=""):
+    """Raison pour laquelle ce texte est invente par Whisper sur du bruit, ou None
+    (calibre le 2026-11-11 : l'invite recitee a 0,97, « *Générique* » a 0,72)."""
+    propre = re.sub(r"\*[^*]*\*|\[[^\]]*\]|\([^)]*\)", " ", texte or "")
+    mots = _mots(propre)
+    if not mots:
+        return "aucun mot" if texte else None
+    bas = propre.lower()
+    if any(h in bas for h in HALLUCINATIONS):
+        return "formule connue"
+    vocab = set(_mots(prompt))
+    if vocab and sum(m in vocab for m in mots) >= 0.5 * len(mots):
+        return "consigne recitee"
+    if len(mots) >= 8 and len(set(mots)) < 0.3 * len(mots):
+        return "repetition"
+    return None
+
+
+def examiner_clip(src, sortie, tmpdir, nom, whisper, origine):
+    """(proposition ou None, transcription) d'un clip demande."""
+    name = nom or os.path.basename(src)
+    wav = os.path.join(tmpdir, "brut.wav")
+    decode_wav(src, wav)
+    y, sr = sf.read(wav)
+    if y.ndim > 1:
+        y = y.mean(axis=1)
+    y = y[: int(sr * MAX_CLIP_SEC)]
+    v0, m0 = classify(y, sr)
+    if m0 >= MUSIC_HIGH and m0 >= v0:   # musique : nettoyage doux, pas de parole a comprendre
+        prop = process_clip(src, sortie, tmpdir, "propositions_audio", False, force=True, origine=origine, nom=nom)
+        return prop, {"statut": "musique", "confiance": 0.0, "musique": round(m0, 2), "voix": round(v0, 2)}
+    t0 = transcrire(wav, whisper, tmpdir, "brut") or {"texte": "", "confiance": 0.0}
+    p0 = t0["confiance"]
+    hiss = _hf_hiss(y, sr)
+    if whisper is None:
+        niveaux = NIVEAUX_VOIX
+    elif p0 >= WHISPER_BON:
+        niveaux = [n for n in NIVEAUX_VOIX if n[0] == "léger"] if hiss >= HISS_MIN else []
+    elif p0 < WHISPER_INAUDIBLE:
+        niveaux = NIVEAUX_VOIX
+    else:
+        niveaux = [n for n in NIVEAUX_VOIX if n[0] in ("léger", "neuronal")]
+    essais = [{"niveau": "brut", "confiance": p0}]
+    meilleur = {"niveau": "brut", "confiance": p0, "texte": t0["texte"]}
+    pid = f"{int(time.time()*1000)}_{abs(hash(name)) % 10000}"
+    traitements = []
+    for niveau, method, param in niveaux:
+        yc, sc = clean(y, sr, method, param)
+        ascii_niveau = unicodedata.normalize("NFKD", niveau).encode("ascii", "ignore").decode()
+        rel = os.path.join("propositions_audio", f"{pid}_{ascii_niveau}.wav")
+        out = os.path.join(sortie, rel)
+        os.makedirs(os.path.dirname(out), exist_ok=True)
+        sf.write(out, np.clip(yc, -1, 1).astype(np.float32), sc)
+        t = transcrire(out, whisper, tmpdir, ascii_niveau) or {"texte": "", "confiance": 0.0}
+        essais.append({"niveau": niveau, "confiance": t["confiance"]})
+        params = {"methode": method, "musique": False}
+        if method == "nr":
+            params["prop_decrease"] = param
+        traitements.append({"niveau": niveau, "audio": rel, "whisper": t["confiance"],
+                            "action": {"kind": "filtre", "target": band_from_name(name), "params": params}})
+        if t["confiance"] >= meilleur["confiance"] + WHISPER_GAIN:
+            meilleur = {"niveau": niveau, "confiance": t["confiance"], "texte": t["texte"]}
+    if whisper is None:
+        statut = "sans_whisper"
+    elif meilleur["confiance"] < WHISPER_INTELLIGIBLE:
+        statut = "inaudible"
+    elif meilleur["niveau"] != "brut":
+        statut = "ameliore"
+    else:
+        statut = "bon"
+    transcription = {"statut": statut, "niveau": meilleur["niveau"], "confiance": meilleur["confiance"],
+                     "texte": meilleur["texte"] if statut in ("bon", "ameliore") else "",
+                     "essais": essais, "voix": round(v0, 2), "musique": round(m0, 2), "souffle": round(hiss, 2)}
+    if not traitements:
+        return None, transcription
+    band = band_from_name(name)
+    pc = lambda x: f"{round(x * 100)} %"   # noqa: E731
+    if statut == "ameliore":
+        resume = (f"{band} : parole comprise à {pc(p0)} au brut, {pc(meilleur['confiance'])} "
+                  f"après nettoyage {meilleur['niveau']}.")
+    elif statut == "inaudible":
+        resume = f"{band} : parole peu compréhensible, même nettoyée ({pc(meilleur['confiance'])} au mieux)."
+    elif statut == "bon":
+        resume = f"{band} : déjà bien comprise ({pc(p0)}), le nettoyage n'apporte rien de net."
+    else:
+        resume = f"{band} : voix {v0:.2f}, nettoyages à comparer."
+    if origine == "demande":
+        resume = "Examen demandé — " + resume
+    # du meilleur au moins bon pour Whisper : T passe d'un niveau a l'autre dans cet ordre
+    traitements.sort(key=lambda t: -t.get("whisper", 0))
+    prop = {"id": pid, "le": time.time(), "origine": origine, "confiance": meilleur["confiance"],
+            "resume": resume, "brut": name, "traitements": traitements, "action": {}, "etat": "attente"}
+    return prop, transcription
+
+
+def run_clip(src, sortie, nom, whisper=None, origine="demande"):
+    """Clip demande a l'examen (touche E) ou choisi le soir : propositions.json et
+    transcription.json dans le dossier du travail."""
     tmpdir = tempfile.mkdtemp(prefix="pcw_examen_", dir=os.path.expanduser("~/pcw-analyse"))
     try:
-        prop = process_clip(src, sortie, tmpdir, "propositions_audio", False, force=True,
-                            origine="demande", nom=nom)
+        prop, transcription = examiner_clip(src, sortie, tmpdir, nom, whisper, origine)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
     _ecrire(os.path.join(sortie, "propositions.json"), [prop] if prop else [])
-    print(f"[analyse] examen {nom or os.path.basename(src)} : {prop['resume'] if prop else 'rien a proposer'}")
+    _ecrire(os.path.join(sortie, "transcription.json"), transcription)
+    print(f"[analyse] examen {nom or os.path.basename(src)} : {transcription['statut']} "
+          f"({transcription['confiance']}) ; {prop['resume'] if prop else 'aucun nettoyage a proposer'}")
     return 0
 
 
@@ -363,12 +507,18 @@ def main():
     ap.add_argument("--lot", action="store_true", help="passe de la nuit sur les bruts et rejets")
     ap.add_argument("--base", help="radio_log du NAS (defaut : partage monte)")
     ap.add_argument("--sortie", required=True, help="dossier du travail : propositions et sons y sont deposes")
+    ap.add_argument("--whisper-cli", help="whisper.cpp (whisper-cli) : la parole comprise guide l'examen")
+    ap.add_argument("--whisper-modele")
+    ap.add_argument("--whisper-prompt", default="")
+    ap.add_argument("--origine", default="demande")
     ap.add_argument("--hours", type=float, default=24)
     ap.add_argument("--max", type=int, default=300)
     args = ap.parse_args()
     os.makedirs(args.sortie, exist_ok=True)
     if args.clip:
-        return run_clip(args.clip, args.sortie, args.nom)
+        whisper = ((args.whisper_cli, args.whisper_modele, args.whisper_prompt)
+                   if args.whisper_cli and args.whisper_modele else None)
+        return run_clip(args.clip, args.sortie, args.nom, whisper, args.origine)
     if not args.lot:
         ap.error("--clip ou --lot")
     base = args.base or resolve_base()

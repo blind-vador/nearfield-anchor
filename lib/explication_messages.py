@@ -4,6 +4,12 @@ explique en clair ce qu'est le message et ce qu'il veut dire.
 La fiche entiere (<nom>.json : texte dit, donnees brutes, appareil...) part
 avec la question. La reponse est gardee dans la fiche (champ explication_ia) :
 la redemander ne coute plus de requete, meme apres un redemarrage.
+
+2026-11-11 (plan phase 3) : la reponse est du JSON. En plus de l'explication lue,
+l'IA rend les frequences et modulations citees dans le message, meme mal
+formatees ; lib/frequences_ia les verifie, renforce celles qu'on connait et met
+les autres en surveillance 14 jours. Une reponse qui n'est pas du JSON reste lue
+telle quelle.
 """
 import json
 import os
@@ -29,6 +35,13 @@ Ta réponse sera lue par une synthèse vocale : texte simple, phrases courtes, p
 puces, pas de tableau, pas de titre, pas de mise en forme, pas d'émoticône. Présente un sigle \
 par ce qu'il désigne la première fois (par exemple « ACARS, le système de messages des \
 avions »). Huit phrases au plus.
+
+Reponds en JSON avec deux cles. "explication" : le texte ci-dessus, pret a etre lu. \
+"frequences" : chaque frequence radio citee dans le message, meme sans unite ou mal ecrite \
+(« 145.6375 », « 1456375 » dans un champ de frequence, « QSY 25 » si le contexte rend la valeur sure), \
+sous la forme {{"mhz": nombre, "modulation": "FM, AM, BLU, DMR, D-Star, C4FM, numerique ou inconnue", \
+"role": "sortie, entree, rendez-vous, frequence de travail...", "phrase": "extrait du message", \
+"certitude": 0 a 1}} ; liste vide s'il n'y en a pas. Ne compte pas la frequence ou le message a ete recu.
 
 Nom du fichier : {nom}
 Fiche :
@@ -95,9 +108,34 @@ def expliquer(category, path):
     if deja(fiche):
         return fiche[CHAMP], None
     import gemini
-    texte, raison = gemini.ask(question(category, path, fiche), temperature=0.3, timeout=TIMEOUT, scanneur=True)
+    brut, raison = gemini.ask(question(category, path, fiche), temperature=0.3, timeout=TIMEOUT, scanneur=True,
+                              json_mode=True)
+    texte, trouvees = lire_reponse(brut)
     texte = nettoyer(texte or "")
     if not texte:
         return None, raison or "ia"
+    if trouvees:
+        try:
+            import frequences_ia
+            res = frequences_ia.ranger(trouvees, f"message {os.path.basename(path)[:40]}",
+                                       fiche.get("frequence_hz") or fiche.get("freq_hz"))
+            phrase = frequences_ia.phrase(res)
+            if phrase:
+                texte = f"{texte} {phrase}"
+        except Exception as exc:
+            print(f"[explication] frequences : {exc!r}")
     _garder(path, texte)
     return texte, None
+
+
+def lire_reponse(brut):
+    """(explication, frequences) d'une reponse JSON ; texte libre : (texte, [])."""
+    brut = (brut or "").strip()
+    try:
+        data = json.loads(brut)
+    except ValueError:
+        return brut, []
+    if not isinstance(data, dict):
+        return brut, []
+    trouvees = data.get("frequences")
+    return str(data.get("explication") or ""), trouvees if isinstance(trouvees, list) else []

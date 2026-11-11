@@ -158,10 +158,9 @@ def annoncer(freq_hz, mode, bande, label, texte, fichier, machine=""):
         relais.depuis_texte(re.sub(r"m[ée]gahertz", "MHz", propre, flags=re.I), freq_hz, "whisper", mode, label, sur=True)
     except Exception as exc:
         print("[whisper] texte non lu pour les relais : %r" % (exc,))
-    nom = nom_propose(propre, label or bande, mode)
-    if not nom:
-        print("[whisper] %s : pas de nom a proposer" % fichier)
-        return None
-    import nommage
-    nommage.deposer(freq_hz, mode, bande, label, nom, propre, machine, fichier)
+    # 2026-11-11 : la meme analyse que l'examen du Mac (nom, pourquoi, mise a jour,
+    # frequences citees), lib/analyse_station.py.
+    import analyse_station
+    if not analyse_station.analyser(freq_hz, mode, label or bande, None, propre, fichier, machine):
+        print("[whisper] %s : pas d'analyse" % fichier)
     return None

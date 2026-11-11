@@ -34,6 +34,8 @@ def _radio_log(folder):
 def _sorties(folder):
     """Fichiers rendus, chemins relatifs au dossier du travail (signes par le pont)."""
     out = ["propositions.json"]
+    if os.path.isfile(os.path.join(folder, "transcription.json")):
+        out.append("transcription.json")
     audio = os.path.join(folder, "propositions_audio")
     if os.path.isdir(audio):
         out += [os.path.join("propositions_audio", n) for n in sorted(os.listdir(audio))]
@@ -53,7 +55,15 @@ def process(folder, params):
         if not os.path.isfile(src):
             return "echec", [], "son a examiner absent"
         cmd = [VENV_PYTHON, "-W", "ignore", SCRIPT, "--clip", src, "--sortie", folder,
-               "--nom", params.get("origine") or os.path.basename(src)]
+               "--nom", params.get("origine") or os.path.basename(src),
+               "--origine", "soir" if params.get("soir") else "demande"]
+        try:  # Whisper d'abord : la parole comprise decide du nettoyage (plan phase 4)
+            import whisper_radio
+            if whisper_radio.disponible():
+                cmd += ["--whisper-cli", whisper_radio.CLI, "--whisper-modele", whisper_radio.MODEL,
+                        "--whisper-prompt", whisper_radio.PROMPT]
+        except Exception:
+            pass
         duree = DUREE_CLIP_SEC
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True, timeout=duree)

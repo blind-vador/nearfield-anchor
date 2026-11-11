@@ -93,7 +93,15 @@ class Examen(unittest.TestCase):
                 "traitements": [{"niveau": "léger", "audio": "propositions_audio/17_léger.wav", "action": {}}]}
         json.dump([prop], open(os.path.join(dossier, "propositions.json"), "w"))
         dits = []
-        with mock.patch("veille_donnees.announce", side_effect=lambda t, *a, **k: dits.append(t)):
+        class Direct:   # le fil de l'annonce s'execute aussitot
+            def __init__(self, target, args=(), daemon=None):
+                self.target, self.args = target, args
+
+            def start(self):
+                self.target(*self.args)
+
+        with mock.patch("veille_donnees.announce", side_effect=lambda t, *a, **k: dits.append(t)), \
+                mock.patch("threading.Thread", Direct):
             n = examen.ranger(job, {"etat": "fait"}, dossier)
             examen.ranger(job, {"etat": "fait"}, dossier)   # relu deux fois : une seule proposition
         self.assertEqual(n, 1)

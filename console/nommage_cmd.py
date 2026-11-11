@@ -3,6 +3,7 @@
   fleches haut / bas   proposition precedente / suivante
   c                    confirme : le nom est pose sur la station
   r                    refuse : ce nom ne sera plus propose pour cette frequence
+  e                    ce que l'IA a compris de l'echange (2026-11-11)
   Echap ferme. F1 : les touches.
 """
 import conseils
@@ -29,6 +30,14 @@ def _shim():
 
 
 def _phrase(item):
+    mhz = f"{float(item.get('freq_hz') or 0) / 1e6:.4f}".rstrip("0").replace(".", ",")
+    if item.get("ancien_nom"):
+        return dire("nommage.annonce_maj", ancien=item["ancien_nom"], nom=item.get("nom") or "",
+                    pourquoi=item.get("pourquoi") or "", bande=item.get("bande") or "", mhz=mhz)
+    if item.get("pourquoi"):
+        return dire("nommage.annonce_pourquoi", machine=item.get("machine") or "compagne", nom=item.get("nom") or "",
+                    pourquoi=item["pourquoi"], bande=item.get("bande") or "", mhz=mhz,
+                    modulation=item.get("modulation") or "")
     return dire(
         "nommage.annonce",
         machine=item.get("machine") or "compagne",
@@ -90,6 +99,10 @@ def run(line, key_source, say, out):
                 return dire("nommage.ferme")
             i = min(i, len(items) - 1)
             text = text + " " + _dire(items[i])
+        elif key in ("e", "E"):
+            item = items[i]
+            text = (" ".join(x for x in (item.get("mise_a_jour"), item.get("explication")) if x)
+                    or dire("nommage.sans_explication"))
         elif key in ("r", "R"):
             item = items.pop(i)
             nommage.refuser(item)
