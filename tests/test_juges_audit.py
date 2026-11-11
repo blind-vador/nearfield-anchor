@@ -124,5 +124,24 @@ class Donnees(Base):
         self.assertTrue(math.isclose(propositions.rang(1e6, "x"), 0.5))
 
 
+class Rendus(Base):
+    def test_du_plus_probable_au_moins(self):
+        """Phase 2 : voix prouvee d'abord, puis les avis sur cette frequence."""
+        f = 145_500_000
+        propositions._noter(f, "-fs", True)
+        propositions._noter(f, "am", False)
+        autres = [{"juge": "am", "wav": "a"}, {"juge": "usb", "wav": "u"}, {"juge": "-fs", "wav": "d"},
+                  {"juge": "lsb", "pcm": b"x"}]
+        self.assertEqual([a["juge"] for a in propositions.ordre_probable(f, autres)], ["lsb", "-fs", "usb", "am"])
+
+    def test_annonce_du_premier(self):
+        import phrases
+        phrases.BASE_DIR = os.path.join(RACINE, "phrases")
+        with mock.patch.object(propositions, "_charger", return_value={"courante": 0, "items": [{}, {}, {}]}):
+            self.assertEqual(propositions.annonce_courante("x.mp3"), "Rendu 1 sur 3, le plus probable.")
+        with mock.patch.object(propositions, "_charger", return_value={"courante": 1, "items": [{}, {}, {}]}):
+            self.assertEqual(propositions.annonce_courante("x.mp3"), "Rendu 2 sur 3.")
+
+
 if __name__ == "__main__":
     unittest.main()

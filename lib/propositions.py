@@ -374,11 +374,27 @@ def _wav_vers_mp3(src, dest):
     return proc.returncode == 0 and os.path.exists(dest) and os.path.getsize(dest) > 200
 
 
+def ordre_probable(freq_hz, autres):
+    """Les rendus d'une meme prise, du plus probable au moins probable (2026-11-11,
+    plan phase 2) : voix prouvee d'abord, puis tes avis et les indices sur cette
+    frequence (rang), puis le nombre de fois ou ce juge a deja sorti du clair ici.
+    Le journal reste dans l'ordre du temps : seul l'ordre des rendus (J) suit ceci."""
+    def cle(a):
+        juge = a.get("juge")
+        try:
+            r, v = rang(freq_hz, juge), vu(freq_hz, juge)
+        except Exception:
+            r, v = 0.5, 0
+        return (0 if a.get("pcm") or a.get("voix") else 1, -r, -v)
+    return sorted(autres or [], key=cle)
+
+
 def poser(journal, freq_hz, label, juge, empreinte, autres):
     """autres : rendus en plus de celui déjà dans le journal.
     Chaque autre est {juge, pcm, taux, canaux} ou {juge, wav}."""
     if not journal or not autres:
         return
+    autres = ordre_probable(freq_hz, autres)
     items = [{"juge": juge, "fichier": None, "empreinte": empreinte}]
     base = os.path.basename(journal)[:-4]
     dossier = os.path.dirname(journal)
@@ -443,6 +459,8 @@ def annonce_courante(journal):
     if not doc or len(doc["items"]) < 2:
         return None
     i = min(doc.get("courante", 0), len(doc["items"]) - 1)
+    if i == 0:
+        return dire("journal.proposition_premiere", total=len(doc["items"]))
     return dire("journal.proposition", indice=i + 1, total=len(doc["items"]))
 
 

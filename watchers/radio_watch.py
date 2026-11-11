@@ -3602,7 +3602,11 @@ def _presenter_banc(freq, mode, band_label, target, level_db, log_session, res, 
         w.setframerate(taux)
         w.writeframes(propre)
     # "juge suivant" : les autres rendus, ceux ou une voix est prouvee d'abord.
-    suite = sorted(autres, key=lambda a: 0 if a.get("pcm") else 1)
+    try:   # du plus probable au moins probable, le meme ordre partout (plan phase 2)
+        import propositions
+        suite = propositions.ordre_probable(freq, autres)
+    except Exception:
+        suite = sorted(autres, key=lambda a: 0 if a.get("pcm") else 1)
     rendus = [(modulation, propre_wav)]
     for n, a in enumerate(suite):
         wav = a.get("wav")
@@ -3719,7 +3723,7 @@ def _voix_numeriques_classees(freq, rendus, proches=None):
                 rang = propositions.rang(freq, mode)
             except Exception:
                 pass
-        return (0 if mode and mode == tete else 1, -vu, -rang,
+        return (0 if mode and mode == tete else 1, -rang, -vu,
                 0 if r.get("confirme") else 1, -(r.get("hits") or 0))
 
     gardes.sort(key=_cle)
@@ -3795,10 +3799,10 @@ def _presenter_voix_numeriques(freq, mode, band_label, target, level_db, log_ses
     if sur and sur == juge:
         print(f"[radio_watch] {freq / 1e6:.4f} MHz : {juge} confirme, on s'en tient a lui")
         # sauf une voix d'un AUTRE protocole : quelqu'un de nouveau sur la frequence
-        autres = [{"juge": r.get("mode"), "wav": r["wav"]} for r in jouables[1:]
+        autres = [{"juge": r.get("mode"), "wav": r["wav"], "voix": True} for r in jouables[1:]
                   if r.get("protocole") != premier.get("protocole")]
     else:
-        autres = [{"juge": r.get("mode"), "wav": r["wav"]} for r in jouables[1:]]
+        autres = [{"juge": r.get("mode"), "wav": r["wav"], "voix": True} for r in jouables[1:]]
         autres.extend({"juge": r.get("mode"), "wav": r["wav"]} for r in reserves)
         autres.extend(_analogiques_du_banc(res, target, freq, mode))
     if path and autres:
