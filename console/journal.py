@@ -788,8 +788,7 @@ def run(key_source, say, out, category="radio"):
                 # brut, tentera plusieurs nettoyages, et deposera une proposition.
                 import examen
                 path = recs[rec_i][1]
-                text = (dire("journal.examen_demande") if examen.demander(os.path.basename(path))
-                        else dire("journal.examen_deja"))
+                text = dire("journal.examen_" + examen.demander(path))
             elif conseils.is_help(key):
                 text = consigne
             else:

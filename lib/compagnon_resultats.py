@@ -164,8 +164,14 @@ def _whisper(job, result, folder):
         params.get("label") or "", texte, origine, machine)
 
 
+def _examen(job, result, folder):
+    """Examen d'une prise (touche E) ou passe de la nuit : rangement par lib/examen."""
+    import examen
+    examen.ranger(job, result, folder)
+
+
 HANDLERS = {"meteor": _meteor, "lora": _lora, "decrire_images": _decrire_images, "voix": _voix,
-            "radio_juges": _radio_juges, "whisper": _whisper}
+            "radio_juges": _radio_juges, "whisper": _whisper, "examen": _examen, "examen_lot": _examen}
 
 
 def poll_once():

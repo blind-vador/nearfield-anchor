@@ -187,6 +187,12 @@ def capabilities():
             caps.append("whisper")
     except Exception:
         pass
+    try:  # examen des prises radio, touche E et passe de la nuit (2026-11-11, mac/analyse.py)
+        import examen_mac
+        if examen_mac.disponible():
+            caps += ["examen", "examen_lot"]
+    except Exception:
+        pass
     try:  # TETRA : decode en direct le flux rtl_tcp du Pi (2026-10-26, dsd-neo)
         import tetra_neo
         if tetra_neo.disponible():
@@ -774,7 +780,7 @@ def forget(pi):
 
 # Deux files : les rafales LoRa (petites, a annoncer tout de suite) ne doivent
 # pas attendre derriere un passage Meteor de plusieurs minutes.
-FAST = ("lora", "decrire_images", "radio_juges")
+FAST = ("lora", "decrire_images", "radio_juges", "examen")
 _queues = {"rapide": queue.Queue(), "lourd": queue.Queue()}
 _links = {}  # pi -> Link
 
@@ -1021,6 +1027,9 @@ def _process(job, folder):
     if job.get("type") == "whisper":
         import whisper_radio
         return whisper_radio.process(folder, job.get("params") or {})
+    if job.get("type") in ("examen", "examen_lot"):
+        import examen_mac
+        return examen_mac.process(folder, job.get("params") or {})
     return "echec", [], "cette machine ne sait pas faire « %s »" % job.get("type")
 
 

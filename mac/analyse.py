@@ -10,19 +10,24 @@ nettoyage ici est DETERMINISTE (soustraction spectrale, noisereduce), donc pas
 d'hallucination de mots. Il ne fait que PROPOSER ; l'utilisateur tranche a
 l'oreille dans la console (commande "journal proposition", touches b/t/c/r).
 
-Flux :
-  1. retrouve le partage NAS monte (filet de securite : point de montage
-     dynamique), lit radio_log (+ rejets).
-  2. copie les clips du jour dans un TEMP local, decode en wav (afconvert).
-  3. score chaque clip (presence de voix, analyse spectrale fine).
-  4. cas ambigu (voix possible mais peu claire) -> nettoie a 3 niveaux
-     (noisereduce), re-score ; si un niveau fait ressortir la voix -> depose
-     une PROPOSITION avec les 3 niveaux (brut + traitements) sur le NAS.
-     cas "rejet mais voix probable" -> proposition de faux rejet.
-  5. verse les resultats sur le NAS, PUIS purge le TEMP (pas de poussiere).
+Flux (2026-11-11 : lance par l'agent du pont, plus par launchd) :
+  macOS refuse l'acces aux volumes reseau aux taches launchd d'arriere-plan
+  ("Operation not permitted" : 32 nuits a 0 clip du 11 octobre au 11 novembre).
+  L'agent du pont (bridge/examen_mac.py), qui a cet acces, lance ce script en
+  sous-processus pour un travail "examen" du Pi :
+  - --clip SRC --sortie DIR : un clip demande (touche E du journal radio) ;
+  - --lot --base RADIO_LOG --sortie DIR : la passe de la nuit (bruts + rejets).
+  Le script n'ecrit JAMAIS sur le NAS hors de DIR : propositions et sons
+  nettoyes y sont deposes, le Pi les range lui-meme (un seul ecrivain).
+  1. decode en wav (afconvert), score chaque clip (presence de voix, analyse
+     spectrale fine) ;
+  2. cas ambigu (voix possible mais peu claire) -> nettoie a plusieurs niveaux,
+     re-score ; si un niveau fait ressortir la voix -> PROPOSITION avec les
+     niveaux (brut + traitements). Cas "rejet mais voix probable" -> proposition
+     de faux rejet.
 
 Dependances (venv ~/pcw-analyse/venv) : numpy, scipy, soundfile, noisereduce.
-Usage : analyse.py [--hours 24] [--max 300] [--dry]
+Usage : analyse.py --clip SRC --sortie DIR [--nom NOM] | --lot [--base B] --sortie DIR [--hours 24] [--max 300]
 """
 import argparse
 import glob
@@ -207,22 +212,6 @@ def clean_df(y, sr):
         return y, sr
 
 
-# --- Propositions (meme schema que lib/propositions.py du Pi) ----------------
-def write_proposition(base, prop):
-    path = os.path.join(base, "propositions.json")
-    tmp = path + f".mac{os.getpid()}.tmp"
-    try:
-        with open(path) as f:
-            data = json.load(f)
-    except (OSError, ValueError):
-        data = []
-    data.append(prop)
-    del data[:-300]
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False)
-    os.replace(tmp, path)
-
-
 def band_from_name(name):
     """Libelle de bande lisible depuis le nom de fichier (prefixe avant la date)."""
     base = re.split(r"_(lundi|mardi|mercredi|jeudi|vendredi|samedi|dimanche)_", name)[0]
@@ -243,8 +232,10 @@ def collect(base, hours, limit):
     return recent[:limit]
 
 
-def process_clip(src, base, tmpdir, audio_rel_dir, dry, force=False, origine="ia"):
-    name = os.path.basename(src)
+def process_clip(src, out_root, tmpdir, audio_rel_dir, dry, force=False, origine="ia", nom=None):
+    """out_root : dossier ou poser les sons nettoyes (le dossier du travail).
+    nom : nom du clip tel que le journal le connait (src peut etre une copie)."""
+    name = nom or os.path.basename(src)
     is_rejet = os.path.basename(os.path.dirname(src)) == "rejets"
     wav = os.path.join(tmpdir, name + ".wav")
     try:
@@ -308,7 +299,7 @@ def process_clip(src, base, tmpdir, audio_rel_dir, dry, force=False, origine="ia
     for niveau, method, param, yc, sc in niveaux_calc:
         rel = os.path.join(audio_rel_dir, f"{pid}_{niveau}.wav")
         if not dry:
-            out = os.path.join(base, rel)
+            out = os.path.join(out_root, rel)
             os.makedirs(os.path.dirname(out), exist_ok=True)
             sf.write(out, np.clip(yc, -1, 1).astype(np.float32), sc)
         params = {"methode": method, "musique": is_music}
@@ -322,110 +313,68 @@ def process_clip(src, base, tmpdir, audio_rel_dir, dry, force=False, origine="ia
             "action": {}, "etat": "attente"}
 
 
-# --- File d'examen a la demande (touche "e" du journal, lib/examen.py) --------
-def _queue_path(base):
-    return os.path.join(base, "a_examiner.json")
+def _ecrire(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False)
+    os.replace(tmp, path)
 
 
-def queue_items(base):
-    try:
-        with open(_queue_path(base)) as f:
-            return json.load(f)
-    except (OSError, ValueError):
-        return []
-
-
-def dequeue(base, fichier):
-    import fcntl
-    p = _queue_path(base)
-    try:
-        with open("/tmp/pcw_examen.lock", "w") as lk:
-            fcntl.flock(lk, fcntl.LOCK_EX)
-            data = [e for e in queue_items(base) if e.get("fichier") != fichier]
-            tmp = p + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False)
-            os.replace(tmp, p)
-    except Exception as exc:
-        print(f"[analyse] dequeue : {exc}")
-
-
-def _brut_for(base, fichier):
-    """Resout l'audio BRUT d'un enregistrement du journal demande a l'examen :
-    son .brut.mp3 de preference, sinon le fichier tel quel, sinon dans rejets/."""
-    stem = fichier[:-4] if fichier.endswith(".mp3") else fichier
-    for cand in (os.path.join(base, stem + ".brut.mp3"),
-                 os.path.join(base, fichier),
-                 os.path.join(base, "rejets", fichier)):
-        if os.path.isfile(cand):
-            return cand
-    return None
-
-
-def run_queue(base):
-    """Traite les clips mis en file par la touche "e" du journal (force une
-    proposition meme si deja clair). Vide rapidement si la file est vide (ne
-    charge pas les modeles pour rien)."""
-    items = queue_items(base)
-    if not items:
-        print("[analyse] file d'examen vide.")
-        return 0
-    print(f"[analyse] {len(items)} clip(s) demandé(s) à l'examen")
+def run_clip(src, sortie, nom):
+    """Clip demande a l'examen (touche E) : proposition forcee, meme si deja clair."""
     tmpdir = tempfile.mkdtemp(prefix="pcw_examen_", dir=os.path.expanduser("~/pcw-analyse"))
-    n = 0
     try:
-        for e in items:
-            fichier = e.get("fichier", "")
-            src = _brut_for(base, fichier)
-            if src:
-                prop = process_clip(src, base, tmpdir, "propositions_audio", False,
-                                    force=True, origine="demande")
-                if prop:
-                    write_proposition(base, prop)
-                    n += 1
-                    print(f"  [examen] {prop['resume']}")
-            else:
-                print(f"  [examen] introuvable : {fichier}")
-            dequeue(base, fichier)  # retire dans tous les cas (pas de boucle infinie)
+        prop = process_clip(src, sortie, tmpdir, "propositions_audio", False, force=True,
+                            origine="demande", nom=nom)
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
-    print(f"[analyse] examen terminé : {n} proposition(s).")
+    _ecrire(os.path.join(sortie, "propositions.json"), [prop] if prop else [])
+    print(f"[analyse] examen {nom or os.path.basename(src)} : {prop['resume'] if prop else 'rien a proposer'}")
+    return 0
+
+
+def run_lot(base, sortie, hours, limit):
+    """Passe de la nuit : bruts et rejets des dernieres heures."""
+    clips = collect(base, hours, limit)
+    print(f"[analyse] {len(clips)} clip(s) a examiner (noisereduce {'OK' if nr else 'ABSENT'})")
+    tmpdir = tempfile.mkdtemp(prefix="pcw_analyse_", dir=os.path.expanduser("~/pcw-analyse"))
+    props = []
+    try:
+        for src in clips:
+            prop = process_clip(src, sortie, tmpdir, "propositions_audio", False)
+            if prop:
+                props.append(prop)
+                print(f"  [proposition] {prop['resume']}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    _ecrire(os.path.join(sortie, "propositions.json"), props)
+    print(f"[analyse] termine : {len(props)} proposition(s).")
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--clip", help="un clip demande a l'examen (touche E du journal)")
+    ap.add_argument("--nom", help="nom du clip dans le journal")
+    ap.add_argument("--lot", action="store_true", help="passe de la nuit sur les bruts et rejets")
+    ap.add_argument("--base", help="radio_log du NAS (defaut : partage monte)")
+    ap.add_argument("--sortie", required=True, help="dossier du travail : propositions et sons y sont deposes")
     ap.add_argument("--hours", type=float, default=24)
     ap.add_argument("--max", type=int, default=300)
-    ap.add_argument("--dry", action="store_true", help="n'écrit rien sur le NAS")
-    ap.add_argument("--queue", action="store_true", help="traite seulement la file d'examen (touche e)")
     args = ap.parse_args()
-
-    base = resolve_base()
-    if not os.path.isdir(base):
-        print(f"[analyse] NAS indisponible ({base}) -- partage non monté ? Abandon.")
+    os.makedirs(args.sortie, exist_ok=True)
+    if args.clip:
+        return run_clip(args.clip, args.sortie, args.nom)
+    if not args.lot:
+        ap.error("--clip ou --lot")
+    base = args.base or resolve_base()
+    try:
+        os.listdir(base)
+    except OSError as exc:
+        print(f"[analyse] NAS illisible ({base}) : {exc}")
         return 1
     print(f"[analyse] base : {base}")
-    if args.queue:
-        return run_queue(base)
-    clips = collect(base, args.hours, args.max)
-    print(f"[analyse] {len(clips)} clip(s) du jour à examiner (noisereduce {'OK' if nr else 'ABSENT'})")
-
-    tmpdir = tempfile.mkdtemp(prefix="pcw_analyse_", dir=os.path.expanduser("~/pcw-analyse"))
-    audio_rel_dir = "propositions_audio"
-    deposees = 0
-    try:
-        for src in clips:
-            prop = process_clip(src, base, tmpdir, audio_rel_dir, args.dry)
-            if prop:
-                if not args.dry:
-                    write_proposition(base, prop)
-                deposees += 1
-                print(f"  [proposition] {prop['resume']}")
-    finally:
-        shutil.rmtree(tmpdir, ignore_errors=True)  # on traite puis on nettoie
-    print(f"[analyse] terminé : {deposees} proposition(s) déposée(s).")
-    return 0
+    return run_lot(base, args.sortie, args.hours, args.max)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,9 @@
+[Unit]
+Description=Confie a 2 h 30 la passe d analyse de la journee au Mac
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

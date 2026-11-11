@@ -1,0 +1,11 @@
+[Unit]
+Description=Passe d analyse du Mac sur les prises de la journee
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=@RUN_USER@
+Environment=PYTHONPATH=@REPO@/lib:@REPO@/watchers:@REPO@/tools:@REPO@/config:@REPO@/bridge
+ExecStart=/usr/bin/python3 -u @REPO@/watchers/analyse_nuit.py
+StandardOutput=journal
+StandardError=journal

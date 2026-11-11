@@ -53,24 +53,21 @@ PL
 plist local.nearfield.disques \
   "<string>/bin/sh</string><string>-c</string><string>for i in \$(seq 1 60); do /usr/bin/nc -z -G 2 $NAS_HOST 445 2>/dev/null &amp;&amp; break; sleep 5; done; for s in server stockage; do /sbin/mount | /usr/bin/grep -q \"on /Volumes/\$s \" || /usr/bin/osascript -e \"mount volume \\\"smb://$NAS_USER@$NAS_HOST/\$s\\\"\" 2>/dev/null; done</string>" \
   "<key>RunAtLoad</key><true/><key>StartInterval</key><integer>300</integer>"
-# Passe complète la nuit (02:30).
-plist local.nearfield.analyse \
-  "<string>$VENV/bin/python</string><string>$APP/analyse.py</string><string>--hours</string><string>24</string>" \
-  "<key>StartCalendarInterval</key><dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict><key>RunAtLoad</key><false/>"
-# File d'examen à la demande (touche "e" du journal), toutes les 15 min.
-plist local.nearfield.examen \
-  "<string>$VENV/bin/python</string><string>$APP/analyse.py</string><string>--queue</string>" \
-  "<key>StartInterval</key><integer>900</integer><key>RunAtLoad</key><true/>"
+# 2026-11-11 : plus d'agent "analyse" ni "examen". macOS refuse l'acces aux
+# volumes reseau aux taches launchd d'arriere-plan ; la passe est lancee par
+# l'agent du pont (bridge/examen_mac.py, travaux "examen" et "examen_lot" du Pi).
 U=$(id -u)
-for a in disques analyse examen; do
+launchctl bootout "gui/$U" "$AGENTS/local.nearfield.disques.plist" 2>/dev/null || true
+launchctl bootstrap "gui/$U" "$AGENTS/local.nearfield.disques.plist"
+for a in analyse examen; do   # anciens agents : retires s'ils sont encore la
   launchctl bootout "gui/$U" "$AGENTS/local.nearfield.$a.plist" 2>/dev/null || true
-  launchctl bootstrap "gui/$U" "$AGENTS/local.nearfield.$a.plist"
+  rm -f "$AGENTS/local.nearfield.$a.plist"
 done
 
 echo "=== 5/5  terminé ==="
 cat <<FIN
 
-Installé : venv $VENV, modèles $PANNS, script $APP/analyse.py, 3 agents launchd.
+Installé : venv $VENV, modèles $PANNS, script $APP/analyse.py, agent launchd de montage du NAS.\nLa passe elle-même est lancée par le pont (bridge/installer.sh).
 
 À FAIRE MANUELLEMENT (une fois) :
   1. Monter le NAS : Finder > Aller > Se connecter au serveur >

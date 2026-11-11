@@ -78,6 +78,23 @@ def add(resume, action=None, origine="ia", confiance=0.5, brut=None, traitements
     return pid
 
 
+def ajouter(prop):
+    """Depose une proposition deja formee (passe d'analyse du Mac, rangee par
+    lib/examen.py) : son id et ses niveaux sont gardes tels quels."""
+    prop = dict(prop)
+    prop.setdefault("id", f"{int(time.time()*1000)}")
+    prop.setdefault("le", time.time())
+    prop.setdefault("etat", "attente")
+
+    def put(data):
+        if any(p.get("id") == prop["id"] for p in data):
+            return
+        data.append(prop)
+        del data[:-MAX_ENTRIES]
+    _with_lock(put)
+    return prop["id"]
+
+
 def entries(include_traitees=False):
     """A traiter (etat "attente") d'abord, de la plus confiante a la moins ;
     puis, si include_traitees, les deja vues."""
