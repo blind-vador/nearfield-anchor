@@ -38,6 +38,7 @@ import shutil
 import subprocess
 import tempfile
 import time
+import unicodedata
 
 import numpy as np
 import soundfile as sf
@@ -297,7 +298,10 @@ def process_clip(src, out_root, tmpdir, audio_rel_dir, dry, force=False, origine
 
     traitements = []
     for niveau, method, param, yc, sc in niveaux_calc:
-        rel = os.path.join(audio_rel_dir, f"{pid}_{niveau}.wav")
+        # Nom ASCII (2026-11-11) : "léger" ecrit par macOS (NFD) sur le partage Linux ne
+        # correspondait plus a l'empreinte signee par le pont, le Pi ignorait le resultat.
+        ascii_niveau = unicodedata.normalize("NFKD", niveau).encode("ascii", "ignore").decode()
+        rel = os.path.join(audio_rel_dir, f"{pid}_{ascii_niveau}.wav")
         if not dry:
             out = os.path.join(out_root, rel)
             os.makedirs(os.path.dirname(out), exist_ok=True)

@@ -60,6 +60,18 @@ def services_du_depot():
     return a_relancer
 
 
+def copier_phrases():
+    import shutil
+    sys.path.insert(0, os.path.join(REPO, "config"))
+    import chemins
+    dest = chemins.base("phrases")
+    os.makedirs(dest, exist_ok=True)
+    src = os.path.join(REPO, "phrases")
+    for nom in os.listdir(src):
+        if nom.endswith(".ini"):
+            shutil.copy2(os.path.join(src, nom), os.path.join(dest, nom))
+
+
 def main():
     # 1) jamais sur un arbre sale : on ne risque pas d'ecraser un correctif local.
     if git("status", "--porcelain", "--untracked-files=no").stdout.strip():
@@ -89,6 +101,11 @@ def main():
         subprocess.run(["sudo", "-n", sys.executable, "-m", "pip", "install", "-q", "-r",
                         os.path.join(REPO, "requirements.txt")],
                        env=dict(os.environ, PIP_BREAK_SYSTEM_PACKAGES="1"), timeout=600)
+    # 3 bis) phrases : lib/phrases lit des COPIES (chemins.base("phrases"), posees par
+    # install.sh). Sans cette copie, une phrase livree par la mise a jour etait dite
+    # par sa cle (« examen.pret », 2026-11-11). Relues a chaud (date du fichier).
+    if any(c.startswith("phrases/") and c.endswith(".ini") for c in changes):
+        copier_phrases()
     # 4) relance des services si du code tournant a change.
     relances = 0
     if any(c.endswith(".py") and c.split("/")[0] in RUNTIME_DIRS for c in changes):
