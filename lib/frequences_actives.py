@@ -16,7 +16,9 @@ bande radioamateur (relais.detecte) et l'utilisateur en est prevenu une fois."""
 import datetime
 import fcntl
 import json
+import math
 import os
+import random
 import time
 
 import chemins
@@ -32,6 +34,14 @@ VISITE_MIN_SEC = 10 * 60
 VISITE_MAX_SEC = 6 * 3600
 PAR_PASSE = 8                       # un rtl_power par passe : la liste reste courte
 TONALITE_MIN = 2
+# Visites par bandit (2026-11-11, plan phase 6, audit point 7) : chaque visite est un
+# essai ; reussi si une prise UTILE (voix, numerique, chiffre, donnees, texte) arrive
+# sur la frequence avant REGLEMENT_SEC. Beta(reussites, echecs) avec oubli (demi-vie
+# 7 jours, bandit non stationnaire), tirage de Thompson : on revient d'autant plus
+# souvent que la frequence rend, en gardant une part d'exploration.
+REGLEMENT_SEC = 15 * 60
+BANDIT_TAU = 7 * 86400 / math.log(2)
+NATURES_UTILES = ("voix", "numerique", "chiffre", "donnees", "texte")
 FM_DIFFUSION = (87_500_000, 108_000_000)    # couverte par sa bande et ses interets
 # (bas, haut, decalages) : l'ecart entrée/sortie d'usage. Il sert seulement a
 # remarquer que deux frequences actives vont peut-etre ensemble.
@@ -133,6 +143,8 @@ def noter(freq_hz, nature, protocole=None, modulation=None, target=None, label=N
             elif nature in ("voix", "numerique", "chiffre", "donnees"):
                 e.pop("expire", None)    # elle a donne quelque chose : elle reste
             _plus(e["natures"], nature)
+            if nature in NATURES_UTILES:
+                e["utile_le"] = maintenant
             e["heures"][datetime.datetime.fromtimestamp(maintenant).hour] += 1
             if protocole:
                 _plus(e["protocoles"], str(protocole))
@@ -229,14 +241,29 @@ def _utile(e):
     return e.get("vus", 0) >= (VUS_MIN["signal"] if seul_signal else VUS_MIN_DEFAUT)
 
 
-def _attente(e, maintenant):
-    """Plus elle emet, plus on y revient ; une frequence qui n'a donne qu'un signal
-    inconnu reste au rythme le plus lent."""
-    if set(e.get("natures") or {}) <= {"signal"}:
-        return VISITE_MAX_SEC
+def _regler_visite(e, maintenant):
+    """Solde la derniere visite (reussie si une prise utile a suivi)."""
+    v = e.get("visite")
+    if not v or e.get("visite_reglee") == v or maintenant - v < REGLEMENT_SEC:
+        return
+    b = e.setdefault("bandit", {"a": 0.0, "b": 0.0, "t": maintenant})
+    oubli = math.exp(-max(0.0, maintenant - b.get("t", maintenant)) / BANDIT_TAU)
+    b["a"], b["b"], b["t"] = b["a"] * oubli, b["b"] * oubli, maintenant
+    b["a" if e.get("utile_le", 0) >= v else "b"] += 1.0
+    e["visite_reglee"] = v
+
+
+def tirage(e, maintenant, rng=random):
+    """Probabilite qu'une visite rende, tiree de sa loi (Thompson). L'a priori suit
+    ce que la frequence a deja montre ; a son heure habituelle elle compte double."""
+    b = e.get("bandit") or {}
+    utiles = sum(n for k, n in (e.get("natures") or {}).items() if k in NATURES_UTILES)
+    a0 = 1.0 + 0.2 * min(utiles, 10)
+    b0 = 4.0 if set(e.get("natures") or {}) <= {"signal"} else 1.0
+    p = rng.betavariate(a0 + b.get("a", 0.0), b0 + b.get("b", 0.0))
     if (e.get("heures") or [0] * 24)[datetime.datetime.fromtimestamp(maintenant).hour] >= 2:
-        return VISITE_MIN_SEC        # son heure habituelle
-    return max(VISITE_MIN_SEC, VISITE_MAX_SEC / (1 + e.get("vus", 0)))
+        p = min(1.0, 2 * p)
+    return p
 
 
 def _deja_suivie(f):
@@ -262,14 +289,21 @@ def bands(now=None):
         import ignores
         import interets
         with _Verrou() as data:
-            candidates = sorted(data.values(), key=lambda e: -e.get("vus", 0))
+            tires = []
+            for e in data.values():
+                _regler_visite(e, maintenant)
+                p = tirage(e, maintenant)
+                # attente : 10 min pour une frequence qui rend a coup sur, jusqu'a 6 h
+                attente = min(VISITE_MAX_SEC, VISITE_MIN_SEC / max(p, VISITE_MIN_SEC / VISITE_MAX_SEC))
+                tires.append((p, attente, e))
+            tires.sort(key=lambda t: -t[0])
             n = 0
-            for e in candidates:
+            for p, attente, e in tires:
                 f = e["freq_hz"]
                 if n >= PAR_PASSE:
                     break
                 if (FM_DIFFUSION[0] <= f <= FM_DIFFUSION[1] or not _utile(e)
-                        or maintenant - e.get("visite", 0) < _attente(e, maintenant)
+                        or maintenant - e.get("visite", 0) < attente
                         or (e.get("target") and interets.disabled(e["target"]))
                         or ignores.frequence_ignoree(f) or _deja_suivie(f)):
                     continue

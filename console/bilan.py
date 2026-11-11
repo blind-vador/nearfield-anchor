@@ -287,6 +287,13 @@ def summary():
     if pending:
         parts.append(dire("bilan.dis_applique_reglages_appliquer"))
     parts.append(dire("bilan.reglages_auto_actives" if ra.load()["auto"] else "bilan.reglages_auto_desactives"))
+    try:   # fausses alarmes et prises manquees (lib/mesures_scanner, 2026-11-11)
+        import mesures_scanner
+        mesure = mesures_scanner.phrase()
+        if mesure:
+            parts.append(mesure)
+    except Exception as exc:
+        print(f"[bilan] mesures : {exc!r}")
     return " ".join(parts)
 
 

@@ -384,6 +384,12 @@ def _reject(path, rendu=None, juge_note=None):
     meme quand il n'y a pas d'empreinte de bruit a retenir."""
     info = ns.capture_info(path)
     fiche = _message_card(path)
+    if info and fiche is None:   # une prise du scanner rejetee comme bruit : fausse alarme
+        try:
+            import mesures_scanner
+            mesures_scanner.noter("fausse_alarme", info.get("label") or info.get("target"))
+        except Exception as exc:
+            print(f"[journal] mesure : {exc!r}", file=sys.stderr)
     # Deja partie (purge, autre rejet) : le rejet continue, il ne doit pas fermer le journal.
     for suffixe in (".mp3", ".brut.mp3", ".flux.wav") + ((".json",) if fiche is not None else ()):
         try:

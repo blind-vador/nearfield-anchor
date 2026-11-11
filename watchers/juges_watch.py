@@ -134,18 +134,53 @@ def trust(js):
     return (js["oui"] + 1) / (js["oui"] + js["non"] + 2)
 
 
-def ordre(scores, band, restants, freq_hz=None):
+BONUS_DEBIT = 0.3   # un juge compatible avec le debit symbole vu sur le son passe devant
+
+
+def ordre(scores, band, restants, freq_hz=None, debit=None):
     """Juges a essayer, le plus souvent valide sur cette frequence d'abord,
-    puis le plus digne de confiance pour la bande."""
+    puis le plus digne de confiance pour la bande. debit (2026-11-11, plan phase 6) :
+    rythme symbole estime a l'aveugle sur le son (lib/debit_symbole) ; les juges
+    compatibles passent devant, aucun n'est retire."""
     b = _bande(scores, band)
     try:
         import propositions
         souvenir = {j: propositions.rang(freq_hz, j) for j in restants}
     except Exception:
         souvenir = {}
+    compatibles = ()
+    if debit:
+        import debit_symbole
+        compatibles = debit_symbole.juges_compatibles(debit)
     return sorted(restants, key=lambda j: (
-        -souvenir.get(j, 0.5), -trust(b[j]),
+        -(souvenir.get(j, 0.5) + (BONUS_DEBIT if j in compatibles else 0)), -trust(b[j]),
         DEFAUT_ORDRE.index(j) if j in JUGES else 50))
+
+
+def _debit(wav, fiche):
+    """Debit symbole du son, estime une fois et garde dans sa fiche."""
+    if "debit_symbole" not in fiche:
+        import debit_symbole
+        debit, rapport = debit_symbole.estimer_fichier(wav)
+        fiche["debit_symbole"] = debit
+        fiche["debit_rapport"] = round(rapport, 1)
+        if debit:
+            print(f"[juges] {os.path.basename(wav)} : rythme de {debit} bauds (raie x{rapport:.0f})")
+            if debit == 1200 and fiche.get("freq_hz"):
+                try:   # AFSK 1200 : les juges de donnees de cette frequence passent devant
+                    import propositions
+                    propositions.a_priori(fiche["freq_hz"], "donnees", 1.0, "debit 1200 bauds")
+                except Exception as exc:
+                    print(f"[juges] a priori donnees : {exc!r}")
+        try:
+            _ecrire(_fiche_de(wav), fiche)
+        except OSError:
+            pass
+    return fiche.get("debit_symbole")
+
+
+def ordre_son(scores, wav, fiche, restants):
+    return ordre(scores, fiche.get("band"), restants, fiche.get("freq_hz"), _debit(wav, fiche))
 
 
 def _noter_profil(scores, band, protocole):
@@ -381,7 +416,7 @@ def _passer(wav):
             return
         band = fiche.get("band")
         juge_force = fiche.get("decodeur") if fiche.get("etiquette") == "decodeur" else None
-        restants = ordre(scores, band, _restants(fiche), fiche.get("freq_hz"))
+        restants = ordre_son(scores, wav, fiche, _restants(fiche))
         if not restants and not juge_force:
             return
         juge = juge_force or restants[0]
@@ -460,7 +495,7 @@ def _deleguer(wav, places):
     if places <= 0:
         return True  # une machine est la, elle a deja assez de sons : on l'attend plutot que chauffer
     best = machines[0]
-    restants = ordre(_scores(), fiche.get("band"), _restants(fiche), fiche.get("freq_hz"))
+    restants = ordre_son(_scores(), wav, fiche, _restants(fiche))
     if not restants:
         return True
     local = _fin_locale(taille, len(restants))
@@ -709,7 +744,7 @@ def _ouvrir_ticket(wav, places):
         return True
     if places <= 0:
         return True
-    eps = _epreuves_de(fiche, ordre(_scores(), fiche.get("band"), _restants(fiche), fiche.get("freq_hz")))
+    eps = _epreuves_de(fiche, ordre_son(_scores(), wav, fiche, _restants(fiche)))
     if not eps:
         return False
     garder = fiche.get("etiquette") in ("renvoi", "decodeur")

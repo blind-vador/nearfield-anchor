@@ -347,6 +347,12 @@ def record_capture(source, freq_hz, mode, label, target, log_path, fp, metrics=N
     capture (probabilite de voix, niveau, trous du silencieux...), confronte
     plus tard aux notes de l'utilisateur (dialogue de notation du journal)."""
     metrics = dict(metrics or {})
+    if log_path and not metrics.get("repeche"):   # le repechage compte comme prise manquee (lib/rejets)
+        try:
+            import mesures_scanner
+            mesures_scanner.noter("prise", label or target)
+        except Exception as exc:
+            print(f"[noise_signatures] mesure : {exc!r}")
     metrics["ressemblance_fond"] = background_similarity(target, fp)
     try:
         _atomic_write_json(LAST_CAPTURE_PATH, {

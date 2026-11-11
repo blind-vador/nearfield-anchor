@@ -169,6 +169,11 @@ def garder(freq_hz, mode, label, raison, sons, target=None, empreinte=None):
     chemin = session.finalize(subdir="rejets")
     if not chemin:
         return None
+    try:
+        import mesures_scanner
+        mesures_scanner.noter("rejet", label or target)
+    except Exception as exc:
+        print(f"[rejets] mesure : {exc!r}")
     rendus = []
     for i, son in enumerate(sons[1:], start=1):
         nom = f"{os.path.basename(chemin)[:-4]}.p{i}.mp3"
@@ -230,6 +235,11 @@ def repecher(fichier):
     chemin = session.finalize()
     if not chemin:
         return None
+    try:
+        import mesures_scanner
+        mesures_scanner.noter("manquee", e.get("label") or e.get("target"))
+    except Exception as exc:
+        print(f"[rejets] mesure : {exc!r}")
     ns.record_capture("rejets", e.get("freq_hz") or 0, e.get("mode") or juge, e.get("label"), e.get("target"),
                       chemin, e.get("empreinte"), {"juge": juge, "repeche": True, "raison": e.get("raison")})
     autres = [{"juge": r.get("juge"), "wav": path_of(r["fichier"])} for r in e.get("rendus") or []

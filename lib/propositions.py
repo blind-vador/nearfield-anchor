@@ -195,15 +195,61 @@ def suffisant(freq_hz):
     return juge
 
 
+# Mise en commun hierarchique (2026-11-11, plan phase 6, audit point 4) : une frequence
+# sans souvenir ne part plus de 0,5 pour tous les juges mais de ce que ce juge vaut sur
+# les frequences voisines (meme segment de bande), comme un a priori de bayesien
+# hierarchique / empirical Bayes. Sa force est faible (FORCE_VOISINES pseudo-avis) :
+# les avis de la frequence elle-meme l'emportent des qu'il y en a deux ou trois.
+FORCE_VOISINES = 2.0
+VOISINES_RETRAIT = 2.0     # une voisine : un tiers de son ecart a 0,5 ; dix : 83 %
+
+
+def _voisinage(freq_hz):
+    return max(500_000.0, 0.01 * float(freq_hz))
+
+
+def _moyenne_voisines(freqs, freq_hz, juge, maintenant=None):
+    """Ce que vaut le juge sur une frequence typique du segment : moyenne des rangs des
+    voisines qui en ont, ramenee vers 0,5 d'autant plus qu'elles sont peu nombreuses
+    (une seule voisine tres notee, un relais, ne fait pas l'a priori de toute la bande)."""
+    rangs = []
+    largeur = _voisinage(freq_hz)
+    soi = _cle(freq_hz)
+    for cle, juges in freqs.items():
+        if cle == soi or not isinstance(juges, dict):
+            continue
+        try:
+            f = int(cle) * PAS_HZ
+        except ValueError:
+            continue
+        st = juges.get(juge) if abs(f - float(freq_hz)) <= largeur else None
+        if isinstance(st, dict):
+            rangs.append(_rang_de(st))
+    if not rangs:
+        return 0.5
+    n = len(rangs)
+    return 0.5 + (sum(rangs) / n - 0.5) * n / (n + VOISINES_RETRAIT)
+
+
 def rang(freq_hz, juge):
-    """0,5 sans souvenir. Monte quand l'utilisateur valide ce juge ici,
-    descend quand il le rejette. Sert à le tester plus ou moins tôt."""
+    """Sans souvenir : ce que ce juge vaut sur les frequences voisines (0,5 si rien).
+    Monte quand l'utilisateur valide ce juge ici, descend quand il le rejette.
+    Sert à le tester plus ou moins tôt (ordre seulement : en_tete et suffisant ne
+    regardent que la frequence elle-meme)."""
     cle = _cle(freq_hz)
     if not cle or not juge:
         return 0.5
     with _verrou:
-        st = _lire_scores()["frequences"].get(cle, {}).get(juge) or {}
-    return _rang_de(st)
+        freqs = _lire_scores()["frequences"]
+    st = freqs.get(cle, {}).get(juge) or {}
+    m = _moyenne_voisines(freqs, freq_hz, juge)      # a priori du segment
+    faits = st.get("faits")
+    if faits:
+        oui, non = _poids(faits, True), _poids(faits, False)
+    else:
+        oui, non = st.get("oui", 0), st.get("non", 0)
+    oui += _a_priori(st)
+    return (oui + FORCE_VOISINES * m) / (oui + non + FORCE_VOISINES)
 
 
 def en_tete(freq_hz):
