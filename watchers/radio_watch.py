@@ -1767,6 +1767,7 @@ MIN_DECODED_MESSAGE_CHARS = 4
 
 
 MIN_CHARS_DONNEES_RETENUES = 2   # frequence notee "tonalites/donnees" : un DTMF de 2-3 chiffres compte
+RANG_DONNEES_MIN = 0.55          # une seule note suffit (0,67 au depart, 0,55 apres ~2 semaines)
 
 
 def _min_chars(freq_hz):
@@ -1774,7 +1775,7 @@ def _min_chars(freq_hz):
     "tonalites ou donnees" y ont retenu les decodeurs de donnees (audit E3)."""
     try:
         import propositions
-        if propositions.rang(freq_hz, "donnees") >= propositions.SEUIL_RETENU:
+        if propositions.rang(freq_hz, "donnees") > RANG_DONNEES_MIN:
             return MIN_CHARS_DONNEES_RETENUES
     except Exception:
         pass
