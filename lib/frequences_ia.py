@@ -65,7 +65,12 @@ def ranger(trouvees, source, freq_source=None):
         phrase = re.sub(r"\s+", " ", str(item.get("phrase") or ""))[:160]
         modulation = str(item.get("modulation") or "").strip()
         connue = _connue(freq)
-        fa.noter(freq, "annoncee", annoncee=True, texte=f"{source} : {phrase}" if phrase else source,
+        # « annoncee » est un indice de RELAIS (frequences_actives.raisons_relais) : seulement
+        # pour une sortie ou une entree de relais, pas pour toute frequence citee
+        # (133,760 dans un echange de controle aerien etait annonce « relais possible »).
+        role = str(item.get("role") or "").lower()
+        relais_cite = any(m in role for m in ("relais", "repeater", "sortie", "entree", "entrée"))
+        fa.noter(freq, "annoncee", annoncee=relais_cite, texte=f"{source} : {phrase}" if phrase else source,
                  surveillance_sec=None if connue else SURVEILLANCE_SEC)
         try:
             import propositions

@@ -164,6 +164,11 @@ def phrase(res, demande=True):
     from phrases import dire
     if not res:
         return ""
+    def phrase_finie(t):
+        t = (t or "").strip()
+        return t if not t or t[-1] in ".!?…" else t + "."
+
+    res = dict(res, explication=phrase_finie(res.get("explication")), mise_a_jour=phrase_finie(res.get("mise_a_jour")))
     morceaux = []
     if res.get("explication"):
         morceaux.append(dire("station.compris", explication=res["explication"]))

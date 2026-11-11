@@ -444,7 +444,9 @@ def examiner_clip(src, sortie, tmpdir, nom, whisper, origine):
     transcription = {"statut": statut, "niveau": meilleur["niveau"], "confiance": meilleur["confiance"],
                      "texte": meilleur["texte"] if statut in ("bon", "ameliore") else "",
                      "essais": essais, "voix": round(v0, 2), "musique": round(m0, 2), "souffle": round(hiss, 2)}
-    if not traitements:
+    if not traitements or statut == "bon":
+        # deja bien comprise et aucun niveau ne fait mieux : rien a proposer (on
+        # n'ameliore pas ce qui est deja bien, plan phase 4)
         return None, transcription
     band = band_from_name(name)
     pc = lambda x: f"{round(x * 100)} %"   # noqa: E731

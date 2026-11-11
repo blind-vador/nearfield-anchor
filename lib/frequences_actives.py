@@ -199,8 +199,8 @@ def _majeur(compteur):
 
 def _utile(e):
     natures = e.get("natures") or {}
-    if e.get("annoncee") or e.get("relais_possible"):
-        return True
+    if e.get("annoncee") or e.get("relais_possible") or e.get("expire"):
+        return True      # expire : en surveillance (frequence citee, lib/frequences_ia)
     seul_signal = set(natures) <= {"signal"}
     return e.get("vus", 0) >= (VUS_MIN["signal"] if seul_signal else VUS_MIN_DEFAUT)
 
