@@ -58,6 +58,8 @@ def texte(entree):
     g, p = entree["genre"], entree["item"]
     if g == "nettoyage":
         resume = re.sub(r"^Examen demandé\s*[—-]\s*", "", str(p.get("resume") or "")).strip()
+        # anciens resumes de la passe (« voix de 0.93 à 0.97 ») : en pourcentages, plus clairs a l'oreille
+        resume = re.sub(r"\b0[.,](\d\d)\b", lambda m: f"{int(m.group(1))} %", resume)
         traits = p.get("traitements") or []
         if traits:
             return dire("revue.fiche_nettoyage", resume=_phrase_finie(resume),
@@ -69,7 +71,10 @@ def texte(entree):
             return dire("revue.fiche_renommage", ancien=p["ancien_nom"], nom=p.get("nom") or "",
                         pourquoi=p.get("pourquoi") or "", mhz=_mhz(p.get("freq_hz")),
                         explication=_phrase_finie(p.get("explication")))
-        return dire("revue.fiche_nom", nom=p.get("nom") or "", pourquoi=p.get("pourquoi") or "",
+        if not p.get("pourquoi"):    # proposition d'avant le 11 novembre
+            return dire("revue.fiche_nom_simple", nom=p.get("nom") or "", mhz=_mhz(p.get("freq_hz")), bande=bande,
+                        explication=_phrase_finie(p.get("explication") or p.get("contexte")))
+        return dire("revue.fiche_nom", nom=p.get("nom") or "", pourquoi=p.get("pourquoi"),
                     mhz=_mhz(p.get("freq_hz")), bande=bande, explication=_phrase_finie(p.get("explication")))
     # frequence trouvee
     source = str(p.get("source") or "")

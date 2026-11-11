@@ -115,6 +115,16 @@ class Separees(Base):
         self.assertEqual(revue.nouvelles(), 2)
 
 
+    def test_anciennes_propositions(self):
+        pr.ajouter({"id": "9", "resume": "canal : voix de 0.93 à 0.97 après nettoyage.",
+                    "traitements": [{"niveau": "léger", "audio": "x.wav", "action": {}}], "action": {}})
+        nommage.deposer(446_031_250, "nfm", None, "446 civil", "Jumelage", "on se retrouve", "Mac")
+        t = {x["genre"]: revue.texte(x) for x in revue.entrees()}
+        self.assertIn("voix de 93 % à 97 %", t["nettoyage"])
+        self.assertNotIn("Pourquoi", t["nommage"])
+        self.assertIn("on se retrouve.", t["nommage"])
+
+
 class Frequences(Base):
     def test_garder_ou_oublier(self):
         self.peupler()
