@@ -4,7 +4,7 @@ After=local-fs.target
 
 [Service]
 Type=oneshot
-ExecStart=/usr/bin/python3 -u @BASE@/pi_console/sante_disques.py
+ExecStart=/usr/bin/python3 -u @BASE@/pi_console/bilan_disques.py
 User=@RUN_USER@
 Environment=XDG_RUNTIME_DIR=/run/user/1000
 Nice=10

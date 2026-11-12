@@ -2,9 +2,9 @@
 """Bilan quotidien de la sante des disques (2026-11-12), lance par
 sante-disques.timer chaque matin ; le dimanche, lance aussi un auto-test SMART
 (court, ou long le premier dimanche du mois), lu au bilan suivant.
-La logique est dans lib/sante_disques.py.
+La logique est dans lib/sante_disques.py (nom different : le script importerait lui-meme).
 
-  python3 tools/sante_disques.py [--test court|long|aucun]
+  python3 tools/bilan_disques.py [--test court|long|aucun]
 """
 import sys
 
