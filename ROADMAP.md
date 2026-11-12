@@ -7098,3 +7098,22 @@ fichiers répond 429 à ce client (Retry-After 600 s le 2026-11-07), limite resp
   - Pas de sous-tension du Pi (throttled sans bit 16), mais surchauffe : 76-83 C la
     nuit (64 C le 07/10), limite thermique atteinte.
 - lighttpd en echec : hors projet (dependance de dump1090, port 80 pris par haproxy).
+
+## 2026-11-12 : sante des disques
+
+- `lib/sante_disques.py` + `sante-disques.timer` (chaque matin 5 h 40) : carte SD
+  (erreurs ext4, volume ecrit, lecture seule), disques du NAS (SMART via l'aide
+  root `tools/disque-sante` : verdict, attributs 5/187/188/197/198/199, chaleur,
+  dernier auto-test), erreurs d'E/S du noyau sur 24 h. Auto-test court le
+  dimanche, long le premier dimanche du mois (lu au bilan suivant).
+- Commande "sante" : resume du dernier bilan ; un disque preoccupant ou
+  critique passe dans les problemes ; bilan de plus de 3 jours signale.
+- Veille systeme : alarmes propres (`disque_defaillant` en boucle,
+  `disque_secteurs` toutes les 2 h, `disque_erreurs` toutes les heures,
+  `disque_chaud` toutes les 30 min), redites jusqu'au "compris", reprises
+  seulement si la situation empire ; erreurs du noyau en direct (3 en 10 min, ou
+  une ligne grave), sauf disque disparu ensuite (debranchement).
+- Sons d'attente generes (sox) dans `server/systeme/disque_*.mp3`, a remplacer.
+- smartd desactive (le bilan le remplace). Etat au premier bilan : nd1 11 825 h,
+  nd2 14 389 h, carte SD 538 Go ecrits, tous en bon etat, aucune erreur disque
+  dans le noyau sur 30 jours.
