@@ -202,5 +202,28 @@ class DerniereTranchee(unittest.TestCase):
         self.assertIn("Gardée.", fin)
 
 
+class RetourArriere(unittest.TestCase):
+    """2026-11-12 : retour arriere refuse d'un coup tous les niveaux d'un nettoyage."""
+    def test_tous_les_niveaux_d_un_coup(self):
+        import proposition_cmd
+        nettoyage = {"genre": "nettoyage", "id": "n1", "le": 0,
+                     "item": {"traitements": [{"niveau": "léger"}, {"niveau": "moyen"}, {"niveau": "fort"}]}}
+        autre = {"genre": "frequence", "id": "f1", "le": 1, "item": {}}
+        refuses = []
+        with mock.patch.object(revue, "entrees", return_value=[nettoyage, autre]), \
+                mock.patch.object(revue, "menage"), \
+                mock.patch.object(revue, "fiche", return_value=None), \
+                mock.patch.object(revue, "texte", return_value="x"), \
+                mock.patch.object(revue, "marquer_entendue"), \
+                mock.patch.object(revue, "refuser", side_effect=lambda e: refuses.append(e["id"]) or "Refusée."), \
+                mock.patch.object(proposition_cmd, "Player"), \
+                mock.patch.object(proposition_cmd.voix, "say_blocking"), \
+                mock.patch.object(proposition_cmd.voix, "stop"):
+            sorties = []
+            proposition_cmd.run("journal proposition", iter(["\x7f", "\x1b"]), lambda t: None, sorties.append)
+        self.assertEqual(refuses, ["n1"])                       # une seule touche, la prise est ecartee
+        self.assertIn("3 niveaux refusés", "".join(sorties))
+
+
 if __name__ == "__main__":
     unittest.main()

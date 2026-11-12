@@ -15,6 +15,8 @@ l'entree est acceptee ou refusee.
   c                    accepte (le niveau en cours pour un nettoyage)
   r                    refuse (pour un nettoyage : le niveau en cours ; tous
                        refuses, la proposition est ecartee)
+  Retour arriere       (2026-11-12) refuse d'un coup tous les niveaux de
+                       nettoyage de la prise ; ailleurs, comme r
   Echap ferme. F1 : les touches.
 """
 import os
@@ -28,6 +30,7 @@ from phrases import dire, nombre
 from sound_paths import RADIO_LOG_DIR
 
 UP, DOWN, ESC = "\x1b[A", "\x1b[B", "\x1b"
+BACKSPACE = ("\x7f", "\x08")
 
 
 def _clip(path):
@@ -160,6 +163,12 @@ def run(line, key_source, say, out):
             elif key in ("c", "C"):
                 player.stop()
                 text = retirer(revue.accepter(e, lvl if _traitements(e) else None))
+            elif key in BACKSPACE:     # tout rejeter d'emblee, sans r r r r
+                player.stop()
+                verdict = revue.refuser(e)
+                if _traitements(e):
+                    verdict = dire("proposition.nettoyages_refuses", nombre=nombre(len(_traitements(e)), "niveau", "niveaux"))
+                text = retirer(verdict)
             elif key in ("r", "R"):
                 player.stop()
                 traits = _traitements(e)
