@@ -183,5 +183,24 @@ class BrutSansHabillage(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class DerniereTranchee(unittest.TestCase):
+    """2026-11-12 : apres avoir tranche la derniere entree, Echap levait
+    IndexError (la liste vide etait encore lue)."""
+    def test_echap_apres_la_derniere(self):
+        import proposition_cmd
+        entree = {"genre": "frequence", "id": "f1", "le": 0, "item": {}}
+        dits = []
+        with mock.patch.object(revue, "entrees", return_value=[entree]), \
+                mock.patch.object(revue, "menage"), \
+                mock.patch.object(revue, "fiche", return_value=None), \
+                mock.patch.object(revue, "texte", return_value="x"), \
+                mock.patch.object(revue, "marquer_entendue"), \
+                mock.patch.object(revue, "accepter", return_value="Gardée."), \
+                mock.patch.object(proposition_cmd, "Player"), \
+                mock.patch.object(proposition_cmd.voix, "stop"):
+            fin = proposition_cmd.run("journal proposition", iter(["c", "\x1b"]), dits.append, lambda t: None)
+        self.assertIn("Gardée.", fin)
+
+
 if __name__ == "__main__":
     unittest.main()

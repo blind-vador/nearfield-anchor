@@ -7072,3 +7072,29 @@ fichiers répond 429 à ce client (Retry-After 600 s le 2026-11-07), limite resp
 - TETRA SDS : lisible() acceptait tout le Latin-1 (isalnum) ; des octets binaires etaient lus comme message. Lettres = latin de base + accents du francais. tests/test_tetra_sds_lisible.py.
 - tests/test_frequences_actives.py aligne sur oublier_ressemblantes par juge (le test etait perime).
 - Reste ouvert : MPT1327 et FleetSync (session dediee, durcissement a decider).
+
+## 2026-11-12 : erreur du journal proposition, journaux, decrochages du dongle
+
+- Journal proposition : apres avoir tranche la derniere entree, la touche suivante
+  (Echap) lisait la liste vide -> IndexError. Le verdict de la derniere entree ferme
+  maintenant la revue. Les erreurs de commande impriment leur pile complete.
+- Veille terrain : rebellyon, paris-luttes, lenumerozero (meme hebergeur,
+  204.13.164.116) injoignables aussi depuis le Mac : panne externe. Une source en
+  panne est dite une fois puis reessayee de plus en plus rarement (jusqu'a 1 h) :
+  ~1 300 lignes de journal par jour en moins.
+- Decrochages du dongle (journaux noyau du 12/10 au 12/11) :
+  - courts (~1 par jour) : le dongle disparait du bus au moment ou un programme radio
+    l'ouvre (demarrage du tuner), revient seul en 5 s ; la veille reprend en une
+    minute. Signature d'une chute de tension brève cote hub / dongle ;
+  - hub entier (24/10, 07/11) : dongle ET carte son tombent ensemble -> alimentation
+    du hub ou son cable ; 21/10 : surintensite sur tous les ports du Pi a la fois
+    (evenement electrique), puis redemarrage ;
+  - figes (20/10 17 h, 29/10 9 h) : le dongle ne repond plus (-110/-71). usb-watch
+    faisait deux gestes puis abandonnait pour toujours. Il refait maintenant
+    l'echelle a 5, 10, 20 puis toutes les 30 min (le 29/10, un second essai avait suffi).
+  - Test uhubctl : le hub Genesys 05e3:0610 annonce une commutation groupee mais ne
+    coupe pas le courant (la carte son voisine ne decroche pas) : aucun logiciel ne
+    peut redemarrer electriquement un dongle fige sur ce hub.
+  - Pas de sous-tension du Pi (throttled sans bit 16), mais surchauffe : 76-83 C la
+    nuit (64 C le 07/10), limite thermique atteinte.
+- lighttpd en echec : hors projet (dependance de dump1090, port 80 pris par haproxy).

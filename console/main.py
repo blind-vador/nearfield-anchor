@@ -17,6 +17,7 @@ import os
 import select
 import signal
 import sys
+import traceback
 import time
 import termios
 import tty
@@ -508,6 +509,7 @@ def run_command(line, key_source, last_response):
             return nommage_cmd.run(line, key_source, voix.say, out)
         except Exception as exc:
             print(f"[console] erreur dans nommage : {exc!r}", file=sys.stderr)
+            traceback.print_exc()
             return dire("console.erreur_pendant_commande", name="nommage")
     if cmd.name == "proposition":
         import proposition_cmd
@@ -515,6 +517,7 @@ def run_command(line, key_source, last_response):
             return proposition_cmd.run(line, key_source, voix.say, out)
         except Exception as exc:
             print(f"[console] erreur dans proposition : {exc!r}", file=sys.stderr)
+            traceback.print_exc()
             return dire("console.erreur_pendant_commande", name="proposition")
     if cmd.name == "intérêts":
         import interets_cmd
@@ -549,6 +552,7 @@ def run_command(line, key_source, last_response):
         return cmd.handler()
     except Exception as exc:  # une commande qui plante ne doit pas tuer la console
         print(f"[console] erreur dans {cmd.name} : {exc!r}", file=sys.stderr)
+        traceback.print_exc()
         return dire("console.erreur_pendant_commande", name=cmd.name)
 
 

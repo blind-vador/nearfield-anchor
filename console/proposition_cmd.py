@@ -127,6 +127,8 @@ def run(line, key_source, say, out):
 
         for key in key_source:
             voix.stop()
+            if not items:            # tout a ete tranche : la touche suivante ferme
+                return dire("proposition.fermee")
             text = None
             e = items[i]
             if conseils.is_help(key):
@@ -168,6 +170,9 @@ def run(line, key_source, say, out):
                     text = dire("proposition.niveau_refuse") + " " + advance()
             else:
                 text = dire("proposition.touches")
+            if not items:            # derniere entree tranchee : le verdict ferme la revue
+                out(f"[{text}]\n")
+                return text or dire("proposition.fermee")
             if text:
                 out(f"[{text}]\n")
                 say(text)

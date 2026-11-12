@@ -45,6 +45,8 @@ from sound_paths import RADIO_SCANER_DIR  # noqa: E402
 SOURCES_PATH = chemins.base("terrain_sources.json")
 SEEN_PATH = chemins.base("terrain_vus.json")
 POLL_SEC = 120
+PANNE_MAX_SEC = 3600
+_pannes = {}   # source -> {n: echecs de suite, prochain: heure du prochain essai}
 TIMEOUT = 20
 HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux armv7l) veille-terrain"}
 FIRST_RUN_MAX_AGE_SEC = 3 * 3600   # premier lancement : on lit ce qui a moins de 3 h
@@ -480,10 +482,25 @@ def collect(conf, ctx):
                + [(read_mastodon, (instance, t, False)) for t in ctx["tags_moment"]]
                + [(read_telegram, (c,)) for c in conf.get("telegram", [])])
     for reader, args in readers:
+        cle = repr((reader.__name__, args))
+        panne = _pannes.get(cle)
+        if panne and time.time() < panne["prochain"]:
+            continue
         try:
             items += reader(*args)
         except Exception as exc:
-            print(f"[terrain] source illisible ({reader.__name__} {args[-1] if reader is read_mastodon else args[0]}) : {exc!r}")
+            # Source en panne (2026-11-12 : trois sites du meme hebergeur injoignables
+            # des jours durant, 1 300 lignes de journal par jour) : on la dit une fois,
+            # puis on la reessaie de plus en plus rarement, jusqu'a une heure.
+            n = panne["n"] + 1 if panne else 1
+            _pannes[cle] = {"n": n, "prochain": time.time() + min(POLL_SEC * 2 ** (n - 1), PANNE_MAX_SEC)}
+            if n == 1:
+                print(f"[terrain] source illisible ({reader.__name__} "
+                      f"{args[-1] if reader is read_mastodon else args[0]}) : {exc!r}")
+            continue
+        if panne:
+            print(f"[terrain] source revenue apres {panne['n']} echec(s) : {reader.__name__} {args[-1]}")
+            _pannes.pop(cle, None)
     unique = {}
     for i in items:
         unique.setdefault(i["id"], i)

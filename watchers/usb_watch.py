@@ -70,6 +70,8 @@ PORT_LADDER = ["port", "port-ancien"]
 # Apres echec de toute l'echelle : nouvel essai discret plus tard, rappel
 # vocal espace (pas toutes les 30 s comme un disque : rien n'est en danger).
 RETRY_AFTER_SEC = 1800
+# Port d'un vrai appareil toujours bloque apres l'echelle : nouveaux essais espaces.
+PORT_RETRY_SEC = (300, 600, 1200, 1800)
 REMIND_EVERY_SEC = 2 * 3600
 REMIND_HOURS = (8, 22)     # rappels seulement le jour (une annonce a 2 h du matin passe inapercue)
 ABSENT_CYCLES = 2          # ~30 s d'absence avant d'annoncer un debranchement
@@ -387,17 +389,30 @@ class Watch:
                 continue
             given_up = self.port_given_up.get(port)
             if given_up:
-                # Pas de nouvel essai auto apres abandon.
                 if time.time() - given_up["annonce"] >= REMIND_EVERY_SEC and _jour():
                     given_up["annonce"] = time.time()
                     _speak(dire("usb.port_bloque", ou=dire("usb.ou_pi" if _port_on_pi(port) else "usb.ou_hub")))
-                continue
+                # Nouvel essai discret de l'echelle, de plus en plus espace (2026-11-12) :
+                # le dongle fige du 29/10 est revenu au 2e essai, mais l'abandon
+                # definitif l'avait laisse muet 9 h (17 h le 20/10).
+                n = given_up.get("essais", 0)
+                if self.port_step.get(port, 0) < len(PORT_LADDER):
+                    pass                                     # nouvel essai en cours : geste suivant
+                elif time.time() - given_up["essai"] >= PORT_RETRY_SEC[min(n, len(PORT_RETRY_SEC) - 1)]:
+                    given_up["essais"] = n + 1
+                    given_up["essai"] = time.time()
+                    self.port_step[port] = 0
+                    print(f"[usb_watch] {port} : nouvel essai de reparation ({n + 1})")
+                else:
+                    continue
             step = self.port_step.get(port, 0)
             if step < len(PORT_LADDER):
                 self.port_step[port] = step + 1
                 self._log(f"port {port} : {PORT_LADDER[step]}", _helper(PORT_LADDER[step], port))
                 self.ports_stuck[port] = 0  # laisser le temps a l'enumeration
-            elif not given_up:
+            elif given_up:
+                given_up["essai"] = time.time()   # echelle refaite sans succes : attendre le prochain palier
+            else:
                 # Un vrai appareil qui ne repond plus (dongle radio, 2026-10-19) :
                 # le port reste ALIMENTE -- coupe pour toujours, l'appareil
                 # rebranche au meme endroit restait invisible. On previent, et
