@@ -1,0 +1,28 @@
+#!/bin/sh
+# Lecture SMART des disques pour lib/sante_disques.py (2026-11-12), seul geste
+# root de la sante des disques, appele via sudo -n (sudoers, install.sh).
+#   disque-sante smart|temp|test-court|test-long /dev/sdX
+# "temp" ne reveille pas un disque endormi (-n standby). Pont USB : d'abord en
+# SAT (les deux disques du NAS), sinon le type que smartctl devine.
+set -u
+quoi="${1:-}"; dev="${2:-}"
+case "$dev" in
+    /dev/sd[a-z]|/dev/sd[a-z][a-z]|/dev/nvme[0-9]n[0-9]) ;;
+    *) echo "peripherique refuse : $dev" >&2; exit 2 ;;
+esac
+case "$quoi" in
+    smart) args="-j -a" ;;
+    temp) args="-j -n standby -A" ;;
+    test-court) args="-t short" ;;
+    test-long) args="-t long" ;;
+    *) echo "usage : disque-sante smart|temp|test-court|test-long /dev/sdX" >&2; exit 2 ;;
+esac
+case "$dev" in /dev/nvme*) exec smartctl $args "$dev" ;; esac
+# shellcheck disable=SC2086
+sortie="$(smartctl -d sat $args "$dev")"
+rc=$?
+if [ $((rc & 2)) -eq 0 ]; then          # bits 3 et plus : etat du disque, la sortie est bonne
+    printf '%s\n' "$sortie"
+    exit "$rc"
+fi
+exec smartctl $args "$dev"

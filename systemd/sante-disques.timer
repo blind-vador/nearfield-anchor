@@ -1,0 +1,10 @@
+[Unit]
+Description=Sante des disques chaque matin a 5 h 40
+
+[Timer]
+OnCalendar=*-*-* 05:40:00
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

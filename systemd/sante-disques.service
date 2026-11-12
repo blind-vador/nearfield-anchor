@@ -1,0 +1,13 @@
+[Unit]
+Description=Sante des disques (carte SD, disques du NAS) : releve SMART et erreurs, auto-test le dimanche
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/python3 -u @BASE@/pi_console/sante_disques.py
+User=@RUN_USER@
+Environment=XDG_RUNTIME_DIR=/run/user/1000
+Nice=10
+IOSchedulingClass=idle
+StandardOutput=journal
+StandardError=journal

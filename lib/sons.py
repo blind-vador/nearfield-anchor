@@ -102,6 +102,11 @@ SONS = {
     "securite_bilan": "systeme/securite_bilan.mp3",
     "securite_faille": "systeme/securite_faille.mp3",
     "non_lus": "systeme/non_lus.mp3",
+    # sante des disques (2026-11-12, lib/sante_disques.py) : sons d'attente, a remplacer par les tiens
+    "disque_defaillant": "systeme/disque_defaillant.mp3",     # SMART en echec, auto-test rate : en boucle
+    "disque_secteurs": "systeme/disque_secteurs.mp3",         # secteurs abimes : rappel toutes les 2 h
+    "disque_erreurs": "systeme/disque_erreurs.mp3",           # erreurs d'E/S, lecture seule : rappel toutes les heures
+    "disque_chaud": "systeme/disque_chaud.mp3",               # disque a 55 degres ou plus : rappel toutes les 30 min
 }
 
 
@@ -193,8 +198,9 @@ def mode_chemin(chemin):
 # Evenements joues en alarme : sonnerie en boucle, message par-dessus, jusqu'au
 # "compris" (lib/alarmes.py, 2026-10-24). Ceux qui appellent alarmes.declencher().
 ALARMES = ["urgence_7700", "urgence_7600", "urgence_7500", "balise_detresse", "alarme_electrique", "antenne_muette",
-           "sous_tension", "pi_bride_chaleur", "veille_plantee", "nas_injoignable"]
-# pi_bride_chaleur : un seul tour ; veille_plantee, nas_injoignable : rappels espaces.
+           "sous_tension", "pi_bride_chaleur", "veille_plantee", "nas_injoignable",
+           "disque_defaillant", "disque_secteurs", "disque_erreurs", "disque_chaud"]
+# pi_bride_chaleur : un seul tour ; veille_plantee, nas_injoignable, disque_secteurs/erreurs/chaud : rappels espaces.
 
 
 def manquants():

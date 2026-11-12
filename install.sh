@@ -62,7 +62,9 @@ apt-get install -y \
     zlib1g-dev libxml2-dev libliquid-dev meson ninja-build nlohmann-json3-dev \
     libopenblas0 samba \
     python3-evdev python3-fuzzywuzzy python3-levenshtein python3-pil \
-    python3-cryptography python3-serial libssl-dev
+    python3-cryptography python3-serial libssl-dev smartmontools
+# smartd (service de smartmontools) : remplace par sante-disques.timer, qui lit les memes mesures
+systemctl disable --now smartmontools.service 2>/dev/null || true
 
 echo "=== 2/6 : compilation des bibliotheques externes (idempotent) ==="
 mkdir -p "$BUILD_DIR"
@@ -291,6 +293,7 @@ cp "$REPO_DIR"/radiono/magicsound.py "$PYTHON_SITE/magicsound.py"
 # Reparations USB (usb_watch.py) : seul geste root, appele via sudo -n.
 install -m 755 "$REPO_DIR"/tools/usb-repare /usr/local/sbin/usb-repare
 install -m 755 "$REPO_DIR"/tools/wifi-repare /usr/local/sbin/wifi-repare   # puce Wi-Fi calee (veille_systeme.py)
+install -m 755 "$REPO_DIR"/tools/disque-sante /usr/local/sbin/disque-sante  # lecture SMART (lib/sante_disques.py)
 chown -R "$RUN_USER:$RUN_USER" "$RADIONO_TARGET_DIR"
 
 # Sons de notification (jingles, bips, boucles de l'imprimante...) : branche
@@ -347,7 +350,7 @@ done
 # reste non interactive : apt ne doit jamais poser de question sur tty1).
 cat > "$SUDOERS_FILE.tmp" <<EOF
 Defaults!/usr/bin/apt-get env_keep += "DEBIAN_FRONTEND LC_ALL"
-$RUN_USER ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/apt-get, /usr/local/sbin/usb-repare, /usr/local/sbin/wifi-repare$VEILLE_CMDS
+$RUN_USER ALL=(root) NOPASSWD: /usr/bin/mount, /usr/bin/umount, /usr/bin/systemctl reboot, /usr/bin/systemctl poweroff, /usr/bin/apt-get, /usr/local/sbin/usb-repare, /usr/local/sbin/wifi-repare, /usr/local/sbin/disque-sante$VEILLE_CMDS
 EOF
 visudo -cf "$SUDOERS_FILE.tmp" && chmod 440 "$SUDOERS_FILE.tmp" && mv "$SUDOERS_FILE.tmp" "$SUDOERS_FILE"
 # Partages reseau "server" (nd1) et "stockage" (nd2) pour les autres

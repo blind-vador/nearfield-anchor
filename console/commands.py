@@ -233,6 +233,14 @@ def sante():
     if mounted < len(NAS_MOUNTS):
         problems.append(dire("commandes.disque_nas_manquant"))
 
+    try:  # dernier bilan de sante des disques (sante-disques.timer, 2026-11-12)
+        import sante_disques
+        p_disques, d_disques = sante_disques.pour_sante()
+        problems += p_disques
+        details += d_disques
+    except Exception as exc:
+        print(f"[console] sante des disques : {exc!r}", flush=True)
+
     states = subprocess.run(["systemctl", "is-active", *WATCHERS], capture_output=True,
                             text=True, timeout=10).stdout.split()
     down = [WATCHERS[u] for u, s in zip(WATCHERS, states) if s != "active"]

@@ -11,6 +11,10 @@ seul ne suffit pas a agir.
                          boucle, copie des journaux arretee, camera arretee,
                          fin d'une mise de cote ("ignorer"), antenne muette
                          (plus aucune trame de capteur depuis 2 heures)
+  disques                (2026-11-12) bilan quotidien de sante (lib/sante_disques.py) :
+                         alarmes propres -- disque defaillant (en boucle), secteurs
+                         abimes, erreurs d'entree-sortie (rappels espaces) ; en
+                         direct, erreurs du noyau et chaleur des disques
   puce Wi-Fi calee       (2026-11-01) erreurs SDIO de brcmfmac et plus de reseau :
                          pilote recharge, puis bus SDIO reinitialise, puis
                          redemarrage du Pi (au plus un par heure), sinon alarme
@@ -27,6 +31,7 @@ import time
 
 import alarmes
 import audio_lock
+import sante_disques
 import sons
 from phrases import dire, nombre
 from sound_player import play_sound_effect
@@ -135,6 +140,8 @@ def _noyau():
                         _sous_tension()
                 elif "brcmf" in bas and ("-110" in bas or "sdio error" in bas or "txfail" in bas):
                     _WIFI.erreur()
+                elif sante_disques.disque_de_ligne(ligne):
+                    _DISQUES.ligne_noyau(ligne)
                 elif "new usb device found" in bas:
                     usb.note("branche")
                 elif "usb disconnect" in bas:
@@ -324,6 +331,213 @@ def _disques():
                               reste=max(1, round(u.free / 1e9))))
 
 
+# --- sante des disques (2026-11-12) --------------------------------------------
+# Le bilan du matin (sante-disques.timer) dit ce qui ne va pas ; la veille en
+# tire les alarmes, une par sorte d'evenement, et guette en direct le noyau
+# (erreurs d'entree-sortie, lecture seule) et la chaleur des disques.
+DISQUE_RAPPEL_SEC = {sante_disques.DEFAILLANT: None,          # en boucle jusqu'au "compris"
+                     sante_disques.SECTEURS: 2 * 3600,
+                     sante_disques.ERREURS: 3600,
+                     sante_disques.CHAUD: 30 * 60}
+DISQUE_ERREURS_MIN = 3            # erreurs d'E/S en DISQUE_FENETRE_SEC (une seule : un hub qui retombe)
+DISQUE_FENETRE_SEC = 10 * 60
+DISQUE_CALME_SEC = 10             # le disque doit etre encore la apres la rafale (pas debranche)
+DISQUE_REALARME_SEC = 3 * 3600    # apres un "compris" : pas de nouvelle alarme directe avant
+DISQUE_TEMP_SEC = 30 * 60         # lecture de la chaleur des disques
+DISQUE_TEMP_CHAUD_SEC = 5 * 60    # ... plus souvent quand ils chauffent
+DISQUE_REBILAN_SEC = 3600
+DISQUE_ACQUIT = chemins.base("sante_disques_compris.json")
+
+
+class _SanteDisques:
+    def __init__(self):
+        self._garde = threading.Lock()
+        self._erreurs = {}          # disque -> [t]
+        self._graves = set()        # disques avec une ligne grave (lecture seule, erreur ext4, secteur illisible)
+        self._rapport_vu = None
+        self._temp_t = 0
+        self._chauds = set()
+        self._derniere = {}         # disque -> derniere erreur du noyau
+        self._compris_direct = {}   # disque -> "compris" d'une alarme directe (le bilan qui suit ne la redit pas)
+
+    # noyau (fil _noyau)
+    def ligne_noyau(self, ligne):
+        dev = sante_disques.disque_de_ligne(ligne)
+        if not dev or not os.path.exists(f"/sys/block/{dev}"):   # mmc1 : la puce Wi-Fi, pas un disque
+            return
+        bas = ligne.lower()
+        with self._garde:
+            now = time.time()
+            self._erreurs[dev] = [t for t in self._erreurs.get(dev, []) if now - t < DISQUE_FENETRE_SEC] + [now]
+            self._derniere[dev] = now
+            if "read-only" in bas or "ext4-fs error" in bas or "medium error" in bas:
+                self._graves.add(dev)
+
+    def verifier(self):
+        self._noyau()
+        self._rapport()
+        self._chaleur()
+
+    @staticmethod
+    def _disque(dev):
+        return next((d for d in sante_disques.peripheriques() if d["id"] == dev), None)
+
+    def _noyau(self):
+        now = time.time()
+        with self._garde:
+            prets = []
+            for dev, ts in list(self._erreurs.items()):
+                ts = [t for t in ts if now - t < DISQUE_FENETRE_SEC]
+                self._erreurs[dev] = ts
+                if ts and (dev in self._graves or len(ts) >= DISQUE_ERREURS_MIN) and now - ts[-1] >= DISQUE_CALME_SEC:
+                    prets.append((dev, len(ts)))
+                    self._erreurs[dev] = []
+                    self._graves.discard(dev)
+                elif not ts:
+                    self._graves.discard(dev)
+        for dev, n in prets:
+            disque = self._disque(dev)
+            if not disque:            # parti avec la rafale : c'est un debranchement (usb_watch, nas_watch)
+                _log(f"erreurs d'E/S sur {dev}, disparu ensuite : pas d'alarme disque")
+                continue
+            self._rebilan()
+            if not _une_fois(f"disque_noyau_{dev}", DISQUE_REALARME_SEC):
+                continue
+            detail = dire("sante_disques.erreurs_direct", nombre=nombre(n, "erreur"))
+            self._alarme(sante_disques.ERREURS, [sante_disques.nom(disque)], detail,
+                         encore=self._encore_noyau(dev), compris=lambda: self._compris_direct.__setitem__(dev, time.time()))
+
+    def _encore_noyau(self, dev):
+        """Rappel tant que le disque a encore eu des erreurs dans l'heure, ou reste en lecture seule."""
+        def encore():
+            disque = self._disque(dev)
+            if not disque:
+                return False
+            with self._garde:
+                recent = time.time() - self._derniere.get(dev, 0) < 3600
+            return recent or bool(sante_disques.mesures_fs(disque)["lecture_seule"])
+        return encore
+
+    def _rebilan(self):
+        """Erreur en direct : le bilan est refait (la commande "sante" le dit)."""
+        if _une_fois("disque_rebilan", DISQUE_REBILAN_SEC):
+            _plus_tard(lambda: sante_disques.bilan())
+
+    # bilan du matin
+    def _acquits(self):
+        try:
+            import json
+            with open(DISQUE_ACQUIT, encoding="utf-8") as f:
+                return json.load(f)
+        except (OSError, ValueError):
+            return {}
+
+    def _acquitter(self, signature):
+        import json
+        data = self._acquits()
+        data[signature] = time.time()
+        data = dict(sorted(data.items(), key=lambda kv: kv[1])[-200:])
+        tmp = f"{DISQUE_ACQUIT}.{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, DISQUE_ACQUIT)
+
+    @staticmethod
+    def _signature(evenement, d):
+        m = d["mesures"]
+        if evenement == sante_disques.DEFAILLANT:
+            cle = [m.get("verdict"), m.get("attributs_en_echec"), (m.get("dernier_test") or {}).get("heures")]
+        elif evenement == sante_disques.SECTEURS:
+            cle = [m.get(k) for k in ("en_attente", "illisibles", "realloues", "incorrigibles_signales")]
+        else:
+            cle = [m.get("erreurs_fs"), m.get("lecture_seule"), m.get("erreurs_noyau")]
+        return f"{d['serie']}:{evenement}:{cle}"
+
+    def _rapport(self):
+        try:
+            mtime = os.path.getmtime(sante_disques.RAPPORT)
+        except OSError:
+            return
+        if mtime == self._rapport_vu:
+            return
+        self._rapport_vu = mtime
+        rapport = sante_disques.dernier() or {}
+        for d in rapport.get("disques", []):   # erreurs deja dites en direct, et comprises
+            if sante_disques.ERREURS in d.get("alarmes", []) and \
+                    self._compris_direct.get(d["id"], 0) > rapport.get("t", 0) - 86400:
+                self._acquitter(self._signature(sante_disques.ERREURS, d))
+        acquits = self._acquits()
+        for evenement in (sante_disques.DEFAILLANT, sante_disques.SECTEURS, sante_disques.ERREURS):
+            touches = [d for d in rapport.get("disques", []) if evenement in d.get("alarmes", [])]
+            nouveaux = [d for d in touches if self._signature(evenement, d) not in acquits]
+            if not nouveaux:
+                continue
+            if evenement in alarmes._en_cours:   # la meme sorte sonne deja (alarme directe) : on revient apres
+                self._rapport_vu = None
+                continue
+            signatures = [self._signature(evenement, d) for d in nouveaux]
+            detail = ". ".join(f"{d['nom']} : " + "; ".join(c.rstrip(".") for c in d["constats"])
+                               for d in nouveaux)
+            series = {d["serie"] for d in nouveaux}
+            self._alarme(evenement, [d["nom"] for d in nouveaux], detail, signatures=signatures,
+                         encore=self._encore_rapport(evenement, series))
+
+    @staticmethod
+    def _encore_rapport(evenement, series):
+        def encore():
+            r = sante_disques.dernier() or {}
+            return any(d["serie"] in series and evenement in d.get("alarmes", []) for d in r.get("disques", []))
+        return encore
+
+    # chaleur
+    def _chaleur(self):
+        now = time.time()
+        if now - self._temp_t < (DISQUE_TEMP_CHAUD_SEC if self._chauds else DISQUE_TEMP_SEC):
+            return
+        self._temp_t = now
+        for d in sante_disques.peripheriques():
+            if d["type"] == "sd":
+                continue
+            t = sante_disques.temperature(d["id"])
+            if t is None:
+                continue
+            if t < sante_disques.CHAUD_C - 3:
+                self._chauds.discard(d["id"])
+                continue
+            if t >= sante_disques.CHAUD_C and d["id"] not in self._chauds:
+                self._chauds.add(d["id"])
+                detail = dire("sante_disques.chaud", degres=t)
+                self._alarme(sante_disques.CHAUD, [sante_disques.nom(d)], detail, encore=self._encore_chaud(d["id"]))
+
+    def _encore_chaud(self, dev):
+        lu = [0, True]
+
+        def encore():
+            if time.time() - lu[0] >= DISQUE_TEMP_CHAUD_SEC:
+                t = sante_disques.temperature(dev)
+                lu[0], lu[1] = time.time(), t is None or t >= sante_disques.CHAUD_C - 3
+                if not lu[1]:
+                    self._chauds.discard(dev)
+            return lu[1]
+        return encore
+
+    def _alarme(self, evenement, noms, detail, signatures=(), encore=None, compris=None):
+        texte = dire(f"sante_disques.alarme_{evenement}", disques=", ".join(noms), detail=detail)
+
+        def fini(resultat):
+            if resultat == "compris":
+                for s in signatures:
+                    self._acquitter(s)
+                if compris:
+                    compris()
+        _log(f"{evenement} : {texte}")
+        alarmes.declencher(evenement, texte, source="systeme", quand_fini=fini,
+                           rappel_sec=DISQUE_RAPPEL_SEC[evenement], encore=encore)
+
+
+_DISQUES = _SanteDisques()
+
+
 class _Services:
     def __init__(self):
         self.redemarrages = {}   # veille -> [(t, NRestarts)]
@@ -434,7 +648,8 @@ def main():
     threading.Thread(target=_noyau, daemon=True).start()
     horloge, reseau, services, ignores_ = _Horloge(), _Reseau(), _Services(), _Ignores()
     while True:
-        for verif in (_alimentation, horloge.verifier, reseau.verifier, _WIFI.verifier, _disques, services.verifier,
+        for verif in (_alimentation, horloge.verifier, reseau.verifier, _WIFI.verifier, _disques, _DISQUES.verifier,
+                      services.verifier,
                       ignores_.verifier, _antenne, _sonde_sol):
             try:
                 verif()
