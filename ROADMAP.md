@@ -7154,3 +7154,20 @@ fichiers répond 429 à ce client (Retry-After 600 s le 2026-11-07), limite resp
   puis action ; sons du depot `train_scaner/decors/depot` puis sons de la gare ;
   "Telecharger un son" ouvre "cherche des sons" vers ce depot et revient sur le
   son telecharge (`sons_en_ligne.deposer(..., dossier)`).
+
+## 2026-11-13 : effets sur la voix des annonces (commande "voix")
+
+- `lib/effets_voix.py` : filtres ffmpeg (echo, reverbe, harmonique a la quinte,
+  dissonant au triton, choeur, robot, telephone, flanger, vibrato, plus grave,
+  plus aigue). Reglage "effet" par source dans voix_sources.json : "aucun" (par
+  defaut), "aleatoire" (un effet tire a chaque annonce) ou un effet. Jamais pour
+  la console ni les touches.
+- Etape de la commande voix apres le debit et la hauteur : le nom, puis une
+  phrase d'exemple dite avec l'effet (exemple fabrique une fois en Piper).
+- Pose sur la voix seulement, jamais le jingle, apres la synthese (caches
+  propres) : `play_sound_effect(effet=)` dans speak, `cuire()` sur la prise
+  (prise_vocale.synthesize, sans le flux) et sur l'annonce de gare avant la
+  sono de quai. Fiches de la revue des propositions : sans effet. 0,5 a 1,2 s
+  de calcul pour 10 s de voix sur le Pi.
+- Voix Google : rien de casse au 2026-11-13 (moteur, helper, annonce de gare
+  simulee ; 50 a 160 annonces Google par jour dans tts_cache depuis le 2/11).

@@ -28,7 +28,7 @@ import revue_propositions as revue  # noqa: E402
 import stations  # noqa: E402
 
 
-def faux_synthese(texte, path, source=None):
+def faux_synthese(texte, path, source=None, effet=True):
     with open(path, "w", encoding="utf-8") as f:
         f.write(texte)
     return True

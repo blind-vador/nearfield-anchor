@@ -134,7 +134,7 @@ class _PcmMemoire:
 
 
 def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, volume=1.0, on_start=None,
-                      canal=None, contenu=False, arreter=None, pcm=None):
+                      canal=None, contenu=False, arreter=None, pcm=None, effet=None):
     """Joue un court effet sonore (mp3) sur le peripherique audio partage,
     de maniere bloquante. Module commun a radio_watch.py, adsb_watch.py et
     meteo_watch.py -- une seule implementation, evite la divergence entre
@@ -157,7 +157,10 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
     on s'arrete, ce son n'entre pas dans la prise et la fonction rend True.
 
     pcm (2026-11-06) : le son deja traite, en memoire (audio_effets.pcm_gare), a
-    jouer a la place de path ; path reste la source gardee au journal."""
+    jouer a la place de path ; path reste la source gardee au journal.
+
+    effet (2026-11-13, commande "voix") : id d'effet sur la voix (lib/effets_voix),
+    pose dans le decodeur ; le journal garde la voix seche."""
     try:  # evenement regle sur "rien" (commande "sons", lib/sons.py, 2026-10-23)
         import sons
         if sons.mode_chemin(path) == "rien":
@@ -183,13 +186,27 @@ def play_sound_effect(path, timeout_sec=8, label="sound_player", reverb=False, v
         if pcm is None:
             reverb_tmp = audio_effets.reverb_gare(path, profile)
     to_play = reverb_tmp or path  # repli sur le son sec si la reverb a echoue
+    filtre = None
+    if effet:
+        import effets_voix
+        filtre = effets_voix.filtre(effet)
+        if filtre and pcm is not None:
+            try:
+                pcm = subprocess.run(
+                    ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-f", "s16le",
+                     "-ar", str(EFFECT_RATE), "-ac", str(EFFECT_CHANNELS), "-i", "pipe:0", "-af", filtre,
+                     "-f", "s16le", "-ar", str(EFFECT_RATE), "-ac", str(EFFECT_CHANNELS), "pipe:1"],
+                    input=pcm, capture_output=True, timeout=60).stdout or pcm
+            except Exception as exc:
+                print(f"[{label}] effet {effet} : {exc!r}")
     decoder = player = None
     garder = False
     interrompu = False
     try:
         decoder = _PcmMemoire(pcm) if pcm is not None else subprocess.Popen(
-            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", to_play,
-             "-f", "s16le", "-ac", str(EFFECT_CHANNELS), "-ar", str(EFFECT_RATE), "-"],
+            ["ffmpeg", "-hide_banner", "-loglevel", "error", "-nostdin", "-i", to_play]
+            + (["-af", filtre] if filtre else [])
+            + ["-f", "s16le", "-ac", str(EFFECT_CHANNELS), "-ar", str(EFFECT_RATE), "-"],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         player = subprocess.Popen(
             ["aplay", "-q", "-D", AUDIO_DEVICE, "-r", str(EFFECT_RATE), "-f", "S16_LE",

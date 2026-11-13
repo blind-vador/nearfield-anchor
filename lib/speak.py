@@ -320,6 +320,7 @@ def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=
         return
     source = source or voix_sources.source_pour()
     choix = voix_sources.choisir(source)
+    effet = voix_sources.effet(source)   # commande "voix" : effet sur la voix, tire a chaque annonce
     lead_done = [False]
 
     def lead():
@@ -329,7 +330,8 @@ def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=
 
     def play(path):
         print(text)
-        voix = lambda: play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb)  # noqa: E731
+        voix = lambda: play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb,  # noqa: E731
+                                         effet=effet)
         if sound_path and not lead_done[0]:
             # Voix prete d'avance (cache) : elle part juste apres la derniere note
             # du jingle, sur sa traine, au lieu d'attendre la fin du fichier (2026-10-19).
@@ -343,7 +345,7 @@ def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=
         text = atomes_parole.indicatifs_en_clair(text)
         print(text)
         lead()
-        _dire_sans_cache(text, choix, label, reverb)
+        _dire_sans_cache(text, choix, label, reverb, effet)
         return
     if choix["moteur"] in ("edge", "piper") and not voix_sources.phrase_entiere(choix):
         # Nombres et indicatifs : colles depuis les mots en cache.
@@ -352,7 +354,7 @@ def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=
             import annonce_morceaux as morceaux
             if morceaux.a_assembler(text):
                 parts = morceaux.expand_texte(text)
-                if reverb:
+                if reverb or effet:   # un effet se pose sur un fichier, pas sur le flux
                     chemin = morceaux.assemble(parts, choix)
                     if chemin:
                         try:
@@ -433,13 +435,32 @@ def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=
             play(path)
             return
     print(text)
-    _espeak_recorded(text, label, reverb=reverb, choix=choix)
+    _espeak_recorded(text, label, reverb=reverb, choix=choix, effet=effet)
 
 
-def _dire_sans_cache(text, choix, label, reverb):
+def _fichier_puis_effet(text, choix, label, reverb, effet):
+    """Voix locale (Piper, MBROLA) dans un fichier, jouee avec son effet. True si elle a parle."""
+    fd, path = tempfile.mkstemp(suffix=".wav", prefix="effet_")
+    os.close(fd)
+    try:
+        if audio_lock.dropped() or not piper_out.to_file(text, path, voice_id=choix.get("voix"),
+                                                          scale_len=piper_out.length_scale(choix.get("debit"))):
+            return False
+        play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb, effet=effet)
+        return True
+    finally:
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+
+
+def _dire_sans_cache(text, choix, label, reverb, effet=None):
     """MBROLA ou espeak, en direct. Le fichier sert au journal, puis il est
     effacé : il n'entre pas dans le cache d'une voix."""
     voix = (choix or {}).get("voix") or ""
+    if effet and voix.startswith("piper:mbrola#") and _fichier_puis_effet(text, choix, label, reverb, effet):
+        return
     if voix.startswith("piper:mbrola#") and not audio_lock.dropped():
         fd, path = tempfile.mkstemp(suffix=".wav", prefix="mbrola_")
         os.close(fd)
@@ -461,7 +482,7 @@ def _dire_sans_cache(text, choix, label, reverb):
         subprocess.run(["espeak", "-v", "fr", "-b", "1", "-w", path, text], capture_output=True,
                        timeout=espeak_out.duree_max(text))
         if os.path.getsize(path) > 0:
-            play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb)
+            play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb, effet=effet)
             return
     except Exception as exc:
         print(f"[espeak fichier indisponible: {exc}]")
@@ -476,12 +497,14 @@ def _dire_sans_cache(text, choix, label, reverb):
         print(f"[espeak indisponible: {exc}]")
 
 
-def _espeak_recorded(text, label, reverb=False, choix=None):
+def _espeak_recorded(text, label, reverb=False, choix=None, effet=None):
     """Voix locale : Piper (voix et debit de la source, en flux, copiee au
     journal en cours, 2026-10-18), puis espeak en passant par un fichier :
     la voix est jouee ET copiee dans l'enregistrement du journal en cours
     (sinon la prise n'a que le carillon, 2026-10-03)."""
     choix = choix or voix_sources.secours(voix_sources.source_pour())
+    if effet and choix["moteur"] == "piper" and _fichier_puis_effet(text, choix, label, reverb, effet):
+        return
     fd, path = tempfile.mkstemp(suffix=".wav", prefix="espeak_")
     os.close(fd)
     session = sound_player.get_recording_session()
@@ -506,7 +529,9 @@ def _espeak_recorded(text, label, reverb=False, choix=None):
         repli = voix_sources.secours(voix_sources.source_pour())
         print("[voix] %s muette, secours %s" % (choix.get("voix"), repli.get("voix")))
         if voix_sources.en_direct(repli):
-            _dire_sans_cache(text, repli, label, reverb)
+            _dire_sans_cache(text, repli, label, reverb, effet)
+            return
+        if effet and repli.get("moteur") == "piper" and _fichier_puis_effet(text, repli, label, reverb, effet):
             return
         fd, path = tempfile.mkstemp(suffix=".wav", prefix="secours_")
         os.close(fd)
@@ -532,7 +557,7 @@ def _espeak_recorded(text, label, reverb=False, choix=None):
         subprocess.run(["espeak", "-v", "fr", "-b", "1", "-w", path, text], capture_output=True,
                        timeout=espeak_out.duree_max(text))
         if os.path.getsize(path) > 0:
-            play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb)
+            play_sound_effect(path, timeout_sec=_speech_timeout(path), label=label, reverb=reverb, effet=effet)
             return
     except Exception as exc:
         print(f"[espeak fichier indisponible: {exc}]")

@@ -131,7 +131,22 @@ def _piper(text, path, choix):
     return os.path.exists(path) and os.path.getsize(path) > 0
 
 
-def synthesize(text, path, source=None):
+def synthesize(text, path, source=None, effet=True):
+    """Comme _synthesize, puis l'effet de la source (commande "voix") : la prise
+    du journal garde la voix telle qu'elle a ete entendue. effet=False : voix
+    seche (fiches vocales de la revue des propositions)."""
+    import voix_sources
+    source = source or voix_sources.source_pour()
+    if not _synthesize(text, path, source):
+        return False
+    effet = voix_sources.effet(source) if effet else None
+    if effet:
+        import effets_voix
+        effets_voix.cuire(path, effet)
+    return True
+
+
+def _synthesize(text, path, source=None):
     """Voix du texte dans path (mp3), selon la voix de la source (commande
     "voix") : Microsoft s'il est choisi et present, sinon la voix de secours
     Piper (2026-10-18), espeak en dernier. True si reussi."""
@@ -240,7 +255,8 @@ def _dire_en_flux(item, text):
         source = item.get("source")
         choix = voix_sources.choisir(source or voix_sources.source_pour())
         if (choix.get("moteur") not in ("edge", "piper") or voix_sources.phrase_entiere(choix)
-                or voix_sources.en_direct(choix) or not morceaux.a_assembler(text)):
+                or voix_sources.en_direct(choix) or not morceaux.a_assembler(text)
+                or voix_sources.reglage(source or voix_sources.source_pour()).get("effet") not in (None, "aucun")):
             return False
         lock = audio_lock.acquire("donnees")
         lecture = None

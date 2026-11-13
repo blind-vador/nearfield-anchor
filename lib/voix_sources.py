@@ -8,6 +8,8 @@ commande "voix" :
   hauteur       hauteur (voix Microsoft seulement, "+10Hz")
   secours       voix Piper quand Microsoft ne repond pas, ou "aleatoire"
   secours_debit debit de la voix de secours
+  effet         effet sur la voix des annonces (lib/effets_voix.py) : "aucun",
+                "aleatoire" ou un effet (echo, reverbe...) ; pas pour la console
 
 Etat de Microsoft partage par tous les services (MS_ETAT, tenu par la sonde
 de la console et par chaque echec ou succes) : on ne fait plus attendre une
@@ -104,7 +106,7 @@ def _tout():
 
 def _defaut(source):
     base = {"voix": ALEATOIRE, "debit": NEUTRE_DEBIT, "hauteur": NEUTRE_HAUTEUR,
-            "secours": ALEATOIRE, "secours_debit": NEUTRE_DEBIT}
+            "secours": ALEATOIRE, "secours_debit": NEUTRE_DEBIT, "effet": "aucun"}
     if source in ("console", "touches"):
         import reglages
         console = reglages.get("console")
@@ -520,10 +522,23 @@ def locale(voix):
     return voix in (ALEATOIRE_PIPER,) + MODES_MELANGES or voix == ESPEAK or voix.startswith("piper:")
 
 
+def effet(source):
+    """Id de l'effet a poser sur cette annonce (lib/effets_voix.py), ou None.
+    Jamais pour la console ni les touches : leurs reponses restent seches."""
+    if source not in ANNONCES:
+        return None
+    import effets_voix
+    return effets_voix.tirer(reglage(source).get("effet"))
+
+
 def resume(source):
     """Phrase courte : "voix aleatoire, secours Siwis"."""
     r = reglage(source)
-    return nom_voix(r["voix"]) if locale(r["voix"]) else f"{nom_voix(r['voix'])}, secours {nom_voix(r['secours'])}"
+    texte = nom_voix(r["voix"]) if locale(r["voix"]) else f"{nom_voix(r['voix'])}, secours {nom_voix(r['secours'])}"
+    if source in ANNONCES and r.get("effet") not in (None, "aucun"):
+        from phrases import dire
+        texte += ", " + dire("voix.resume_effet", effet=dire(f"voix.effet.{r['effet']}"))
+    return texte
 
 
 def nom_voix(voix):

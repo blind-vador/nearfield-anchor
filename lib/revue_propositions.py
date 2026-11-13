@@ -137,7 +137,7 @@ def fiche(entree, creer=True):
         import prise_vocale
         os.makedirs(AUDIO_DIR, exist_ok=True)
         tmp = path[:-4] + f".{os.getpid()}.tmp.mp3"
-        if prise_vocale.synthesize(texte(entree), tmp, source="radio"):
+        if prise_vocale.synthesize(texte(entree), tmp, source="radio", effet=False):
             os.replace(tmp, path)
             return path
     except Exception as exc:

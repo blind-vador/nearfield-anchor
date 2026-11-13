@@ -1,7 +1,9 @@
 """Commande "voix" : choisir la voix de la console et son debit.
 
   fleches haut / bas   voix precedente / suivante, entendue dans cette voix
-  Entree               choisit, puis meme chose pour le debit
+  Entree               choisit, puis meme chose pour le debit, puis (veilles
+                       seulement) l'effet sur la voix des annonces : aucun,
+                       aleatoire, echo, reverbe... (lib/effets_voix.py)
   Echap                annule, rien ne change
 
 Les voix neuronales locales Piper (sans internet, 2026-10-18) et espeak
@@ -9,6 +11,7 @@ restent proposees. Reglages ecrits
 dans console.json (voir lib/reglages.py) ; les noms de touches sont
 ensuite prepares en tache de fond dans la nouvelle voix (voix.prewarm).
 """
+import os
 import sys
 
 
@@ -124,6 +127,61 @@ def _pick(values, labels, current, preview, key_source, out, title, feature):
     return None if i is None else values[i]
 
 
+def _choisir_effet(choice, rate, current, key_source, out):
+    """Etape effet (2026-11-13) : aucun, aleatoire, puis chaque effet. A chaque
+    fleche, son nom, puis une phrase d'exemple dite avec cet effet. Rend l'id, ou
+    None (Echap)."""
+    import tempfile
+    import threading
+    import effets_voix
+    import piper_out
+    import tmp_ram
+    values = effets_voix.CHOIX
+    labels = [dire(f"voix.effet.{v}") for v in values]
+    fd, exemple = tempfile.mkstemp(suffix=".wav", prefix="apercu_effet_", dir=tmp_ram.dossier())
+    os.close(fd)
+    pret, ok = threading.Event(), [False]
+    tour, lecteur = [0], [None]
+
+    def fabriquer():
+        v = piper_out.canonical(choice) if voix.is_piper(choice) else None
+        if not v or not piper_out.resolve(v):
+            v = piper_out.DEFAULT_VOICE
+        try:
+            ok[0] = piper_out.to_file(dire("voix.effet_exemple"), exemple, voice_id=v,
+                                      scale_len=piper_out.length_scale(rate))
+        finally:
+            pret.set()
+    threading.Thread(target=fabriquer, daemon=True).start()
+
+    def couper():
+        tour[0] += 1
+        proc, lecteur[0] = lecteur[0], None
+        if proc is not None and proc.poll() is None:
+            proc.terminate()
+        voix.stop()
+
+    def apercu(i, text):
+        couper()
+        mien = tour[0]
+
+        def fil():
+            voix.say_blocking(text, encore=lambda: tour[0] == mien)
+            pret.wait(30)
+            if tour[0] == mien and ok[0]:
+                lecteur[0] = effets_voix.ecouter(exemple, effets_voix.tirer(values[i]))
+        threading.Thread(target=fil, daemon=True).start()
+
+    try:
+        return _pick(values, labels, current, apercu, key_source, out, dire("voix.etape_effet"), "voix_effet")
+    finally:
+        couper()
+        try:
+            os.remove(exemple)
+        except OSError:
+            pass
+
+
 def _regler(source, key_source, say, out):
     """Etapes 1 a 4 pour une source ; rien n'est enregistre si on sort par Echap."""
     nom = voix_sources.SOURCES[source]
@@ -161,6 +219,12 @@ def _regler(source, key_source, say, out):
             if pitch is None:
                 return inchange
             new["hauteur"] = pitch
+    # 2 bis. effet sur la voix des annonces (pas la console ni les touches)
+    if source in voix_sources.ANNONCES:
+        effet = _choisir_effet(choice, new.get("debit") or r["debit"], r.get("effet") or "aucun", key_source, out)
+        if effet is None:
+            return inchange
+        new["effet"] = effet
     # 3 et 4. voix de secours (Piper) et son debit, si la principale passe par Microsoft
     if not voix_sources.locale(choice):
         secours = [voix_sources.ALEATOIRE] + voix.piper_out.voice_ids(lang=None)

@@ -883,6 +883,11 @@ def say(lead_sound, parts, label="annonce", reverb=False, prepared=None, source=
         return
     print(text)
     import sound_player
+    import voix_sources
+    effet = voix_sources.effet(source or voix_sources.source_pour())
+    if effet:   # commande "voix" : l'effet avant la sono de quai (fichier temporaire, pas le cache)
+        import effets_voix
+        effets_voix.cuire(path, effet)
     voix, pcm = path, None
     if reverb:
         # Effet de quai calcule AVANT le jingle (2026-10-22) : avant, il l'etait
