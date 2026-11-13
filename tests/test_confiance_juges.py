@@ -72,6 +72,14 @@ class Confiance(Base):
         self.assertEqual([r["mode"] for r in ecartes], ["freedv-700E"])
         self.assertIn("DMR", cj.raison(ecartes[0]["confiance"]))
 
+    def test_cote_basse_sans_refus_ouvre(self):
+        """Doctrine : un NXDN confirme sur un relais DMR connu, jamais refuse, s'ouvre."""
+        ouvrables, ecartes = cj.trier(RELAIS, [{"mode": "-fi", "confirme": True, "protocole": "NXDN"}])
+        self.assertEqual([r["mode"] for r in ouvrables], ["-fi"])
+        # un autre protocole prouve dans la prise l'explique : ecarte
+        ouvrables, ecartes = cj.trier(RELAIS, [{"mode": "-fi", "confirme": False, "protocole": "NXDN"}], prouve="DMR")
+        self.assertEqual([r["mode"] for r in ecartes], ["-fi"])
+
     def test_confiance_retrouvee(self):
         """Valide plusieurs fois depuis les rejets, le juge rouvre."""
         for _ in range(12):
@@ -82,9 +90,15 @@ class Confiance(Base):
 class Direct(Base):
     def test_arbitre(self):
         hist = cj.historique(RELAIS)
-        bloques = {m for m in ("-fs", "-fi", "-fm", "-fa") if m != "-fa"
-                   and cj.a_priori(RELAIS, m, hist) < cj.SEUIL_OUVERTURE}
-        self.assertEqual(bloques, {"-fi", "-fm"})
+        # Agnostique (2026-11-13) : NXDN et dPMR ont une cote basse sur ce relais DMR,
+        # mais personne ne les a refuses : ils gardent la parole.
+        self.assertLess(cj.a_priori(RELAIS, "-fi", hist), cj.SEUIL_OUVERTURE)
+        self.assertEqual({m for m in ("-fs", "-fi", "-fm") if cj.bloque(RELAIS, m, hist)}, set())
+        for _ in range(4):   # refuse quatre fois ici : il ecoute sans parler
+            propositions._noter(RELAIS, "-fi", False)
+        hist = cj.historique(RELAIS)
+        bloques = {m for m in ("-fs", "-fi", "-fm") if cj.bloque(RELAIS, m, hist)}
+        self.assertEqual(bloques, {"-fi"})
         a = prise_unique.Arbitre()
         a.bloques = bloques
         self.assertFalse(a.prendre("-fi", "NXDN"))

@@ -13,18 +13,18 @@ Selection par mots-cles sur la ligne tapee apres "simulation" :
 - "simulation" seul           -> liste les categories.
 Les scenarios tournent dans un thread : la console reste utilisable.
 """
-import chemins
+import os
 import sys
 import threading
 from datetime import datetime, timedelta
 
 import matcher
 
-PI_CONSOLE_DIR = chemins.base("pi_console")
-NAS_MANAGER_DIR = chemins.base("nas_manager")
-for _path in (PI_CONSOLE_DIR, NAS_MANAGER_DIR):
-    if _path not in sys.path:
-        sys.path.insert(0, _path)
+# nas_watch vient du depot (nas/), plus des anciens dossiers ~/autopilot qui
+# passaient devant les modules a jour (2026-11-13)
+_NAS = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "nas")
+if _NAS not in sys.path:
+    sys.path.append(_NAS)
 
 from phrases import _code, dire, etiquette, nombre  # noqa: E402
 

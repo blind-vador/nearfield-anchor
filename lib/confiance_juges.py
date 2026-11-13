@@ -176,8 +176,8 @@ def trier(freq_hz, rendus, prouve=None, cle_juge="mode"):
         r["confiance"] = detail
         notes.append((p, r))
     notes.sort(key=lambda x: -x[0])
-    ouvrables = [r for p, r in notes if p >= SEUIL_OUVERTURE]
-    ecartes = [r for p, r in notes if p < SEUIL_OUVERTURE]
+    ouvrables = [r for p, r in notes if not _ecarte(p, r["confiance"])]
+    ecartes = [r for p, r in notes if _ecarte(p, r["confiance"])]
     for r in ecartes:
         print(f"[confiance] {float(freq_hz) / 1e6:.4f} MHz, {r.get(cle_juge)} n'ouvre pas : "
               f"{raison(r['confiance'])}", flush=True)
@@ -187,4 +187,21 @@ def trier(freq_hz, rendus, prouve=None, cle_juge="mode"):
 def a_priori(freq_hz, juge, hist=None):
     """Confiance avant toute preuve (ordre et parole des decodeurs en direct)."""
     return confiance(freq_hz, juge, None, None, hist)[0]
+
+
+def _ecarte(p, detail):
+    """Agnostique (2026-11-13, doctrine) : la famille dominante d'une frequence ne
+    fait que baisser la cote ; elle n'ecarte jamais seule un decodeur. Il faut une
+    preuve contre CE juge : tes refus (ici ou sur les voisines), ou un autre
+    protocole prouve dans la meme prise qui explique sa sortie. Sans ca, un NXDN
+    ou un dPMR atypique sur un relais DMR connu garde la parole."""
+    if p >= SEUIL_OUVERTURE:
+        return False
+    return detail.get("juge", 0.5) < 0.5 or bool(detail.get("explique_par"))
+
+
+def bloque(freq_hz, juge, hist=None):
+    """Ecoute en direct : ce juge ecoute sans prendre la parole (meme regle que trier)."""
+    p, detail = confiance(freq_hz, juge, None, None, hist)
+    return _ecarte(p, detail)
 

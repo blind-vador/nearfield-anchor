@@ -1106,27 +1106,64 @@ def _noter_mixte(freq_fm):
 
 
 def _suivi_mixte(canal, label, target=None, numerique_d_abord=False):
-    """Alterne DMR et FM sur un canal mixte, dans la session du journal en
-    cours, tant que quelqu'un parle. Rend True si quelque chose a ete entendu."""
+    """Suite de la conversation sur un canal mixte, dans la session du journal en
+    cours, tant que quelqu'un parle. Rend True si quelque chose a ete entendu ;
+    _suivi_mixte.juges : les juges qui ont vraiment parle.
+
+    Prise unique (2026-11-13) : a chaque tour, FM et tous les decodeurs ecoutent
+    le meme flux en meme temps et l'arbitre donne la parole. L'ancienne
+    alternance ouvrait la FM sans arbitre juste apres le DMR : un relais DMR au
+    repos (synchros IDLE) passait pour de la voix FM, enregistree "veille DMR,
+    FM etroite" sous le juge DMR."""
+    _suivi_mixte.juges = []
     entendu, vides, numerique = False, 0, numerique_d_abord
+    freq = canal["dmr"]
     for _ in range(MIXTE_TOURS):
-        if numerique:
-            ok = try_digital_voice_decode(canal["dmr"], "-fs", label, probe_sec=MIXTE_SONDE_SEC, target="dmr")
-            ok = bool(ok) and not try_digital_voice_decode.last_muted
-        else:
-            ok = stream_until_quiet(canal["fm"], "nfm", label, target=target)
-        print(f"[radio_watch] canal mixte, {'DMR' if numerique else 'FM'} : {'entendu' if ok else 'rien'}")
+        prise = _ouvrir_prise(freq) if prise_unique.active() else None
+        if prise is not None:
+            try_digital_voice_decode.last_muted = False
+            try_digital_voice_decode.last_had_audio = False
+            protocol, fm = _ecoute_prise(prise, freq, label, target, prelisten_max=MIXTE_SONDE_SEC)
+            num = (bool(protocol) and protocol != "données"
+                   and _reception_a_presenter(protocol, try_digital_voice_decode.last_muted,
+                                              try_digital_voice_decode.last_had_audio))
+            ok = num or bool(fm)
+            juge = try_digital_voice_decode.juge_entendu if ok else None
+            quoi = protocol if num else ("FM" if fm else "rien")
+        else:   # interrupteur de la prise unique coupe : l'ancienne alternance
+            if numerique:
+                ok = try_digital_voice_decode(canal["dmr"], "-fs", label, probe_sec=MIXTE_SONDE_SEC, target="dmr")
+                ok = bool(ok) and not try_digital_voice_decode.last_muted
+                juge = "-fs" if ok else None
+            else:
+                ok = stream_until_quiet(canal["fm"], "nfm", label, target=target)
+                juge = "nfm" if ok else None
+            quoi = ("DMR" if numerique else "FM") if ok else "rien"
+            numerique = not numerique
+        print(f"[radio_watch] canal mixte : {quoi}")
+        if juge and juge not in _suivi_mixte.juges:
+            _suivi_mixte.juges.append(juge)
         entendu = entendu or ok
         vides = 0 if ok else vides + 1
         if vides >= MIXTE_VIDES:
             break
-        numerique = not numerique
     return entendu
 
 
+_suivi_mixte.juges = []
+
+
 def _dmr_ecoute(freq, dwell_sec=20):
-    """Une ecoute DMR sur cette frequence : veille DMR, ou verrouillage dessus
-    (2026-10-22 : le verrouillage reecoutait un appel DMR comme de la FM)."""
+    """Une ecoute sur une frequence ou du DMR a deja ete capte : veille DMR, ou
+    verrouillage dessus (2026-10-22 : le verrouillage reecoutait un appel DMR
+    comme de la FM).
+
+    Agnostique (2026-11-13) : la frequence est connue pour du DMR, mais on ne
+    presume pas qu'elle n'emet que ca. Prise unique : FM et tous les decodeurs en
+    meme temps pendant dwell_sec, l'arbitre donne la parole (la FM ne s'ouvre
+    pas sur un signal numerique valide, relais au repos compris). La prise est
+    rangee sous le juge qui a vraiment parle : un rejet ne fait plus baisser le
+    DMR quand c'etait la FM qu'on entendait."""
     label = dire("dmr.libelle_veille")
     # Meme habillage qu'une capture du balayage (_handle_candidate) : verrou
     # audio, session du journal radio, son de fin, empreinte de la capture.
@@ -1135,33 +1172,47 @@ def _dmr_ecoute(freq, dwell_sec=20):
     sound_player.set_recording_session(log_session)
     saved = False
     try:
-        protocol = try_digital_voice_decode(freq, "-fs", label, probe_sec=dwell_sec, target="dmr")
+        try_digital_voice_decode.last_muted = False
+        try_digital_voice_decode.last_had_audio = False
+        try_digital_voice_decode.juge_entendu = None
+        prise = _ouvrir_prise(freq) if prise_unique.active() else None
+        if prise is not None:
+            protocol, fm = _ecoute_prise(prise, freq, label, "dmr", prelisten_max=dwell_sec)
+            if protocol == "données":   # deja dites et archivees, rien a ouvrir
+                protocol = None
+            juges = [try_digital_voice_decode.juge_entendu] if (protocol or fm) else []
+        else:   # interrupteur coupe : DMR seul, comme avant
+            protocol = try_digital_voice_decode(freq, "-fs", label, probe_sec=dwell_sec, target="dmr")
+            fm = False
+            juges = ["-fs"] if protocol else []
         had_num = try_digital_voice_decode.last_had_audio   # clair capte cote numerique
         muet_num = try_digital_voice_decode.last_muted
+        num = bool(protocol) and _reception_a_presenter(protocol, muet_num, had_num)
         canal = _canal_mixte(freq)
-        if not protocol and not canal:
+        if canal and (num or fm):   # canal mixte : la suite de la conversation, d'un cote ou de l'autre
+            if _suivi_mixte(canal, label, numerique_d_abord=not num):
+                fm = fm or "nfm" in _suivi_mixte.juges
+                num = num or any(j != "nfm" for j in _suivi_mixte.juges)
+                juges += [j for j in _suivi_mixte.juges if j not in juges]
+        if not num and not fm:
+            # rien, chiffre, ou synchro validee sans clair (relais au repos) :
+            # appris, rien a presenter ni a garder (fantome 2026-10-28)
             log_session.discard()
-            return False
-        if protocol and muet_num:  # appel chiffre : rien n'est garde (le poste a poste en clair, si)
-            log_session.discard()
-            return True
-        fm = False
-        if canal:  # canal mixte : l'autre cote de la conversation, en FM
-            fm = _suivi_mixte(canal, label, numerique_d_abord=False)
-            if not protocol and not fm:
-                log_session.discard()
-                return False
-            protocol = f"{protocol} et FM" if protocol and fm else (protocol or "FM")
-        if not _reception_a_presenter(protocol, muet_num, had_num, autre=fm):
-            # synchro validee sans clair capte et pas de FM : appris, rien a
-            # presenter ni a garder (fantome 2026-10-28)
-            log_session.discard()
-            return True
+            return bool(protocol)
+        juges = [j for j in juges if j]
+        juge = juges[0] if juges else ("nfm" if fm and not num else None)
+        if num and fm:
+            protocole = f"{protocol or 'DMR'} et FM"
+        else:
+            protocole = protocol if num else "FM"
         ceremonie.fermer(freq, label="radio_watch")
         path = log_session.finalize()
-        noise_signatures.record_capture("dmr", freq, "nfm", label, "dmr", path, None,
-                                        {"numerique": True, "veille_dmr": True, "juge": "-fs", "protocole": protocol,
-                                         "dmr": getattr(try_digital_voice_decode, "last_dmr", {})})
+        noise_signatures.record_capture("dmr", freq, "nfm", label, "dmr", path,
+                                        None if num else _last_stream_fingerprint,
+                                        {"numerique": bool(num), "veille_dmr": True, "juge": juge,
+                                         "juges": juges, "protocole": protocole,
+                                         "dmr": getattr(try_digital_voice_decode, "last_dmr", {}) if num else {}})
+        _deposer_rendus(path, freq, label, juge)
         saved = True
         return True
     finally:
@@ -3229,10 +3280,10 @@ def _ecoute_prise(prise, freq, band_label, target, prelisten_max=None):
             import confiance_juges
             hist = confiance_juges.historique(freq)
             arbitre.bloques = {m for m in modes if m != "-fa" and m != tete
-                               and confiance_juges.a_priori(freq, m, hist) < confiance_juges.SEUIL_OUVERTURE}
+                               and confiance_juges.bloque(freq, m, hist)}
             if arbitre.bloques:
                 print(f"[radio_watch] {freq / 1e6:.4f} MHz : {' '.join(sorted(arbitre.bloques))} ecoutes sans "
-                      f"prendre la parole (confiance trop basse ici)")
+                      f"prendre la parole (tes refus ici)")
         except Exception as exc:
             print(f"[radio_watch] confiance des juges en direct : {exc!r}")
         if modes and (modes[0] == tete or propositions.rang(freq, modes[0]) >= propositions.SEUIL_RETENU):

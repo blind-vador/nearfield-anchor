@@ -321,6 +321,9 @@ def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=
     source = source or voix_sources.source_pour()
     choix = voix_sources.choisir(source)
     effet = voix_sources.effet(source)   # commande "voix" : effet sur la voix, tire a chaque annonce
+    # Qui parle, a chaque annonce (2026-11-13 : "jamais entendu Google" alors que le
+    # tirage le donne une fois sur deux ; les repli disent deja "muette, secours").
+    print(f"[voix] {source} : {choix.get('voix')}" + (f", effet {effet}" if effet else ""))
     lead_done = [False]
 
     def lead():

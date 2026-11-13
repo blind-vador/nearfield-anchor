@@ -29,7 +29,11 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, chemins.base("console"))
+# la console du depot (pas ~/autopilot/console, ancienne copie qui masquait les
+# commandes chargees plus tard, ex. "journal proposition", 2026-11-13)
+_CONSOLE = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "console")
+if _CONSOLE not in sys.path:
+    sys.path.append(_CONSOLE)
 
 import piper_out  # noqa: E402
 
