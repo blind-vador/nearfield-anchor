@@ -1,7 +1,8 @@
 """Decors de la gare (2026-11-13, demande utilisateur) : des evenements que
 l'utilisateur compose lui-meme pour la veille SNCF, avec la commande "decors".
 
-Un decor = des conditions, toutes vraies en meme temps, et une action.
+Un decor = un nom (facultatif ; il nomme aussi le dossier de ses sons), des
+conditions, toutes vraies en meme temps, et une action.
 
   ponctuel  vrai : il tombe de temps en temps, au hasard, comme un train qui
             passe (environ PONCTUEL_PAR_HEURE fois par heure ou ses conditions
@@ -17,13 +18,16 @@ Un decor = des conditions, toutes vraies en meme temps, et une action.
   meteo     None = indifferent, ou pluie, orage, neige, vent (meteo reelle,
             lib/gare_ambiance.active_weather), ou "sec" (aucun des quatre)
   action    "annonce" : texte dit par la gare apres le jingle "moderne" ou
-            "retro" ; "son" : un des sons cochés, tiré au hasard, joué dans le
-            hall (sons = chemins relatifs a train_scaner)
+            "retro" ; "son" : un des sons coches, retire au hasard a chaque
+            fois, joue dans le hall (sons = chemins relatifs a train_scaner).
+            Jamais les sons de la gare (ter_passby...) : on les confondrait
+            avec les vrais trains.
 
 Regles dans nearfield-anchor-settings/decors.json (reglages "decors"). Les sons
 telecharges pour les decors vont dans train_scaner/decors/depot (meme dialogue
 que les sonneries) ; a l'enregistrement, ceux du depot coches pour un decor
-quittent le depot pour train_scaner/<nom du decor> (ranger). La veille gare (watchers/sncf_watch.py) relit les decors a
+quittent le depot pour train_scaner/<nom du decor> (ranger) ; renomme, le
+dossier suit ; decoches, ils retournent au depot. La veille gare (watchers/sncf_watch.py) relit les decors a
 chaque tour (VERIFIER_SEC)."""
 import calendar
 import json
@@ -52,7 +56,7 @@ FAITS = chemins.base("decors_joues.json")
 
 
 def nouveau():
-    return {"id": "", "ponctuel": False, "jour": 0, "mois": 0, "annee": 0, "heure": "ouverture",
+    return {"id": "", "nom": "", "ponctuel": False, "jour": 0, "mois": 0, "annee": 0, "heure": "ouverture",
             "minute": None, "meteo": None, "action": "annonce", "texte": "", "jingle": "moderne", "sons": []}
 
 
@@ -111,7 +115,7 @@ def erreur(decor, maintenant=None):
             return "decors.erreur_date_passee"
     if decor.get("action") == "annonce" and not (decor.get("texte") or "").strip():
         return "decors.erreur_texte"
-    if decor.get("action") == "son" and not any(chemin_son(c) for c in decor.get("sons") or ()):
+    if decor.get("action") == "son" and not any(chemin_son(c) and not de_la_gare(c) for c in decor.get("sons") or ()):
         return "decors.erreur_son"
     return None
 
@@ -128,9 +132,14 @@ def _audios(dossier):
                   key=lambda p: os.path.basename(p).lower())
 
 
+def de_la_gare(relatif):
+    """Son de la veille gare (trains reels) : jamais propose pour un decor."""
+    return os.path.dirname(relatif) in set(DOSSIERS_GARE) | {""}
+
+
 def candidats(deja=()):
     """D'abord le depot des decors, puis les sons deja ranges pour des decors
-    (deja : ceux du decor en cours d'abord), puis les sons de la gare.
+    (deja : ceux du decor en cours d'abord). Jamais les sons de la gare.
     [(origine, chemin relatif)]."""
     try:
         os.makedirs(DEPOT, exist_ok=True)
@@ -138,14 +147,11 @@ def candidats(deja=()):
         pass
     out = [("depot", os.path.relpath(p, TRAIN_SCANER_DIR)) for p in _audios(DEPOT)]
     vus = {c for _, c in out}
-    gare = set(DOSSIERS_GARE) | {""}
+    depot = os.path.relpath(DEPOT, TRAIN_SCANER_DIR)
     for c in list(deja) + [c for d in lire() for c in d.get("sons") or ()]:
-        if c not in vus and os.path.dirname(c) not in gare and chemin_son(c):
+        if c not in vus and not de_la_gare(c) and os.path.dirname(c) != depot and chemin_son(c):
             out.append(("decor", c))
             vus.add(c)
-    for dossier in DOSSIERS_GARE:
-        out += [("gare", os.path.relpath(p, TRAIN_SCANER_DIR)) for p in _audios(os.path.join(TRAIN_SCANER_DIR, dossier))]
-    out += [("gare", nom) for nom in SONS_GARE if os.path.isfile(os.path.join(TRAIN_SCANER_DIR, nom))]
     return out
 
 
@@ -169,37 +175,75 @@ def nom_dossier(nom):
     return propre
 
 
-def ranger(decor, nom):
-    """Les sons coches qui sont encore dans le depot le quittent pour
-    train_scaner/<nom du decor>. Met decor["sons"] a jour ; rend le nombre deplaces."""
+def _deplacer(chemin, dossier):
+    """Deplace le fichier dans le dossier (sans ecraser) ; rend le nouveau chemin."""
+    base, ext = os.path.splitext(os.path.basename(chemin))
+    cible, n = os.path.join(dossier, base + ext), 2
+    while os.path.exists(cible):
+        cible, n = os.path.join(dossier, f"{base} {n}{ext}"), n + 1
+    os.makedirs(dossier, exist_ok=True)
+    shutil.move(chemin, cible)
+    return cible
+
+
+def ranger(decor, nom, avant=()):
+    """Les sons coches du depot, ou du dossier d'un ancien nom du decor, vont
+    dans train_scaner/<nom> ; ceux qu'il avait (avant) et qui ne sont plus
+    coches retournent au depot. Un son partage avec un autre decor ne bouge
+    pas. Met decor["sons"] a jour ; rend le nombre de sons deplaces."""
     dossier = os.path.join(TRAIN_SCANER_DIR, nom_dossier(nom))
     depot = os.path.realpath(DEPOT)
-    sons, deplaces = [], 0
+    racine = os.path.realpath(TRAIN_SCANER_DIR)
+    autres = {c for d in lire() if d["id"] != decor.get("id") for c in d.get("sons") or ()}
+    vides, sons, deplaces = set(), [], 0
+
+    def a_lui(relatif, chemin):
+        """Dans le depot, ou dans un dossier de decor que personne d'autre n'utilise."""
+        ici = os.path.dirname(chemin)
+        if ici == depot:
+            return True
+        return (relatif in avant and relatif not in autres and not de_la_gare(relatif)
+                and os.path.dirname(ici) == racine)
+
     for relatif in decor.get("sons") or []:
         chemin = chemin_son(relatif)
-        if not chemin or os.path.dirname(chemin) != depot:
+        if not chemin or de_la_gare(relatif) or os.path.dirname(chemin) == os.path.realpath(dossier) \
+                or not a_lui(relatif, chemin):
             sons.append(relatif)
             continue
-        base, ext = os.path.splitext(os.path.basename(chemin))
-        cible, n = os.path.join(dossier, base + ext), 2
-        while os.path.exists(cible):
-            cible, n = os.path.join(dossier, f"{base} {n}{ext}"), n + 1
         try:
-            os.makedirs(dossier, exist_ok=True)
-            shutil.move(chemin, cible)
+            cible = _deplacer(chemin, dossier)
         except OSError as exc:
             print(f"[decors] ranger {relatif} : {exc}", flush=True)
             sons.append(relatif)
             continue
+        if os.path.dirname(chemin) != depot:
+            vides.add(os.path.dirname(chemin))
         sons.append(os.path.relpath(cible, TRAIN_SCANER_DIR))
         deplaces += 1
+    for relatif in avant:
+        chemin = chemin_son(relatif)
+        if relatif in decor.get("sons", ()) or not chemin or not a_lui(relatif, chemin) \
+                or os.path.dirname(chemin) == depot:
+            continue
+        try:
+            _deplacer(chemin, DEPOT)
+            vides.add(os.path.dirname(chemin))
+            deplaces += 1
+        except OSError as exc:
+            print(f"[decors] rendre {relatif} au depot : {exc}", flush=True)
+    for ancien in vides:
+        try:
+            os.rmdir(ancien)                    # seulement s'il est vide
+        except OSError:
+            pass
     decor["sons"] = sons
     return deplaces
 
 
 def son_au_hasard(decor):
-    """Chemin absolu d'un des sons du decor qui existent encore, ou None."""
-    presents = [c for c in (chemin_son(r) for r in decor.get("sons") or ()) if c]
+    """Un des sons du decor, retire au hasard a chaque fois (chemin absolu), ou None."""
+    presents = [c for c in (chemin_son(r) for r in decor.get("sons") or () if not de_la_gare(r)) if c]
     return random.choice(presents) if presents else None
 
 

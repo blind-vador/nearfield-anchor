@@ -7,12 +7,13 @@ Liste
   Echap ferme. F1 : les touches.
 
 Conditions (elles s'empilent : toutes doivent etre vraies)
-  haut / bas         la condition : evenement ponctuel, jour, mois, annee,
+  haut / bas         le nom du decor (il nomme aussi le dossier de ses sons),
+                     puis la condition : evenement ponctuel, jour, mois, annee,
                      heure, minute, meteo, puis Suivant
   gauche / droite    sa valeur ; page precedente / suivante : de dix en dix ;
                      debut / fin : premier et dernier choix
-  Entree             sur l'annee : la taper (rien = toutes les annees) ;
-                     ailleurs : Suivant
+  Entree             sur le nom : le taper (rien : le garde) ; sur l'annee :
+                     la taper (rien = toutes les annees) ; ailleurs : Suivant
   Echap              abandonne le decor
 
 Action
@@ -25,7 +26,8 @@ Action
                      sons", qui pose dans le depot des decors et revient ici,
                      sons telecharges coches ; Enregistrer : garde le decor, et
                      les sons coches du depot le quittent pour
-                     train_scaner/<le decor> (decors.ranger)
+                     train_scaner/<nom du decor> (decors.ranger). Les sons de
+                     la gare ne sont jamais proposes (vrais trains).
   Echap              revient aux conditions
 """
 import os
@@ -57,7 +59,7 @@ CHOIX = {
     "action": ["annonce", "son"],
     "jingle": list(decors.JINGLES),
 }
-CONDITIONS = ["ponctuel", "jour", "mois", "annee", "heure", "minute", "meteo", "suivant"]
+CONDITIONS = ["nom", "ponctuel", "jour", "mois", "annee", "heure", "minute", "meteo", "suivant"]
 _ecoute = [None]
 
 
@@ -107,6 +109,8 @@ def _sons(d):
 
 def valeur(champ, d):
     v = d.get(champ)
+    if champ == "nom":
+        return v.strip() if (v or "").strip() else dire("decors.nom_vide")
     if champ == "ponctuel":
         return dire("decors.ponctuel_oui") if v else dire("decors.ponctuel_non")
     if champ == "jour":
@@ -187,6 +191,8 @@ def decrire(d):
     else:
         quoi = dire("decors.d_annonce", texte=(d.get("texte") or "").strip(),
                     jingle=dire(f"decors.d_jingle_{d.get('jingle') or 'moderne'}"))
+    if (d.get("nom") or "").strip():
+        return dire("decors.description_nom", nom=d["nom"].strip(), conditions=quand(d), action=quoi)
     return dire("decors.description", conditions=quand(d), action=quoi)
 
 
@@ -291,10 +297,18 @@ class _Dialogue:
                     texte = bord or valeur(champ, d)
                 elif champ == "annee":
                     texte = dire("decors.annee_entree")
+                elif champ == "nom":
+                    texte = dire("decors.nom_entree")
                 else:
                     texte = champ_texte(champ, d)
             elif key in ENTREE:
-                if champ == "annee":
+                if champ == "nom":
+                    self.parler(dire("decors.nom_saisie"))
+                    saisi = " ".join(self.read_line(self.keys).split())
+                    if saisi:
+                        d["nom"] = saisi
+                    texte = champ_texte("nom", d)
+                elif champ == "annee":
                     texte = self.annee(d)
                 else:
                     cle = decors.erreur(dict(d, action="annonce", texte="x"))
@@ -408,10 +422,10 @@ class _Dialogue:
                 return None
             r = self.action(d)
             if r == "enregistre":
-                if d["action"] == "son":
-                    decors.ranger(d, quand(d))
-                else:
+                avant = list(base.get("sons") or [])
+                if d["action"] != "son":
                     d["sons"] = []
+                decors.ranger(d, (d.get("nom") or "").strip() or quand(d), avant)
                 if not decors.enregistrer(d):
                     self.parler(dire("decors.nas"))
                     return None
