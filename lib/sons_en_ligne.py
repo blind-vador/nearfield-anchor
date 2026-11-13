@@ -172,14 +172,16 @@ def _chemin_libre(dossier, nom):
     return chemin
 
 
-def deposer(son, apercus):
-    """Pose le son dans le depot, s'il se lit vraiment. Rend son chemin ou None."""
+def deposer(son, apercus, dossier=None):
+    """Pose le son dans le depot (celui des sonneries, ou dossier : celui des decors
+    de la gare), s'il se lit vraiment. Rend son chemin ou None."""
+    dossier = dossier or sonneries.DEPOT
     source = apercus.fichier(son)
     if not source or not decodage.pcm(source, 8000, timeout=20):   # page d'erreur, fichier abime
         return None
     try:
-        os.makedirs(sonneries.DEPOT, exist_ok=True)
-        dest = _chemin_libre(sonneries.DEPOT, nom_de_fichier(son))
+        os.makedirs(dossier, exist_ok=True)
+        dest = _chemin_libre(dossier, nom_de_fichier(son))
         shutil.copyfile(source, dest)
     except OSError as exc:
         print(f"[sons_en_ligne] depot : {exc}")

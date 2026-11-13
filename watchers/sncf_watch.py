@@ -403,6 +403,43 @@ def _ambience_libre():
         time.sleep(max(0.0, debut + 3600 - time.time()))
 
 
+def _jouer_decor(d):
+    """Action d'un decor de l'utilisateur (lib/decors.py, commande "decors")."""
+    import decors
+    if d.get("action") == "son":
+        chemin = decors.chemin_son(d.get("son"))
+        if chemin:
+            print(f"[sncf_watch] decor {d['id']} : son {d.get('son')}", flush=True)
+            _play_file(chemin)
+        else:
+            print(f"[sncf_watch] decor {d['id']} : son introuvable ({d.get('son')})", flush=True)
+        return
+    texte = (d.get("texte") or "").strip()
+    if texte:
+        print(f"[sncf_watch] decor {d['id']} : annonce", flush=True)
+        _say_parts(decors.chemin_jingle(d.get("jingle")), morceaux.whole(texte))
+
+
+def _decors():
+    """Thread : toutes les VERIFIER_SEC, les decors dont les conditions tiennent."""
+    import decors
+    import gare_ambiance
+    faits = decors.lire_faits()
+    while True:
+        try:
+            liste = decors.lire()
+            meteo = gare_ambiance.active_weather() if decors.besoin_meteo(liste) else set()
+            t = time.localtime()
+            a_jouer = decors.a_jouer(liste, t, meteo, gare_ambiance._station_open(t), faits)
+            if a_jouer:
+                decors.ecrire_faits(faits, liste)
+            for d in a_jouer:
+                threading.Thread(target=_jouer_decor, args=(d,), name=f"decor-{d['id']}", daemon=True).start()
+        except Exception as exc:
+            print(f"[sncf_watch] decors : {exc!r}", flush=True)
+        time.sleep(decors.VERIFIER_SEC)
+
+
 def _schedule_ambient_sound(mode, action, event_dt, vj_id=None):
     """Lance une tache en attente (thread daemon) qui se reveille pile a
     l'heure reelle de l'evenement (retard deja connu inclus, puisqu'on
@@ -773,6 +810,7 @@ def main():
     import gare_ambiance
     threading.Thread(target=gare_ambiance.watch, name="gare_ambiance", daemon=True).start()
     threading.Thread(target=_ambience_libre, name="decor_libre", daemon=True).start()
+    threading.Thread(target=_decors, name="decors", daemon=True).start()
     state = {
         # un seul set unifie (2026-08-31) -- avant, deux sets separes
         # (announced_departures/announced_arrivals) laissaient un

@@ -37,7 +37,10 @@ def _phrase(son, coche):
     return dire("sons_ligne.coche_devant", titre=son["titre"]) + _duree(son) if coche else son["titre"] + _duree(son)
 
 
-def run(line, key_source, say, out, read_line):
+def run(line, key_source, say, out, read_line, depot=None):
+    """depot : dossier ou poser les sons (les decors de la gare) ; par defaut, les sonneries.
+    Rend la phrase de fin ; les chemins poses sont dans run.poses."""
+    run.poses = []
     fournisseurs = sl.disponibles()
     i_f = 0
     sons, i = [], -1
@@ -119,8 +122,11 @@ def run(line, key_source, say, out, read_line):
         couper()
         choisis = list(coches.values())
         voix.say(dire("sons_ligne.telechargement", sons=nombre(len(choisis), "son")))
-        poses = sum(1 for son in choisis if sl.deposer(son, apercus))
+        run.poses = [p for p in (sl.deposer(son, apercus, depot) for son in choisis) if p]
+        poses = len(run.poses)
         if poses == len(choisis):
+            if depot:
+                return dire("sons_ligne.fini_decors", sons=nombre(poses, "son"))
             return dire("sons_ligne.fini", sons=nombre(poses, "son"))
         return dire("sons_ligne.fini_partiel", sons=nombre(poses, "son"),
                     echecs=nombre(len(choisis) - poses, "son"))

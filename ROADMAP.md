@@ -7137,3 +7137,20 @@ fichiers répond 429 à ce client (Retry-After 600 s le 2026-11-07), limite resp
   (`whisper_textes.json`, jamais retranscrits), une analyse de station par
   frequence sur la concatenation datee (`station.consigne_analyse_serie`).
   Le soir (whisper_soir) ne nomme plus prise par prise : son texte sert a la serie.
+
+## 2026-11-13 : decors de la gare (commande "décors")
+
+- `lib/decors.py` : un decor = conditions empilees (evenement ponctuel, jour,
+  mois, annee, heure : ouverture / fermeture / n'importe quand / 1 a 24 h,
+  minute, meteo reelle : pluie, orage, neige, vent, temps sec) + une action
+  (annonce tapee, dite par la gare apres le jingle moderne ou retro ; ou un son
+  joue dans le hall). Regles dans `nearfield-anchor-settings/decors.json`.
+- Non ponctuel : une fois des que les conditions tiennent (par minute choisie,
+  par heure choisie, sinon par jour ; `decors_joues.json` evite de rejouer au
+  redemarrage). Ponctuel : au hasard, ~0,3 fois par heure ou les conditions
+  tiennent, comme le decor libre, jamais deux fois dans l'heure.
+- `watchers/sncf_watch.py` : fil "decors", verification toutes les 30 s.
+- `console/decors_cmd.py` : liste (Retour arriere supprime apres O/N), conditions
+  puis action ; sons du depot `train_scaner/decors/depot` puis sons de la gare ;
+  "Telecharger un son" ouvre "cherche des sons" vers ce depot et revient sur le
+  son telecharge (`sons_en_ligne.deposer(..., dossier)`).

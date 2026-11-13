@@ -556,6 +556,11 @@ COMMANDS = [
             None, keywords=["son", "apprendre les sons", "apprendre le son", "tutoriel des sons",
                             "tutoriel son", "tuto des sons", "tuto son", "tuto sons", "tutoriel", "tuto"],
             examples=["apprends-moi les sons", "tutoriel des sons", "fais-moi écouter les sons un par un"]),
+    Command("décors", "décors de la gare : des annonces ou des sons qui tombent à une date, une heure, "
+            "par un temps donné, ou de temps en temps comme un train qui passe ; créer, modifier, supprimer",
+            None, keywords=["decors", "decor", "decors de la gare", "decor de la gare", "decors sncf",
+                            "evenements de la gare", "annonce personnalisee", "annonces personnalisees"],
+            examples=["ajoute un décor à la gare", "une annonce de la gare le 25 décembre"]),
     Command("sonneries", "sonneries de la radio : arrivée, ouverture et fin, bande par bande, "
             "et les messages ; on prend un son du dépôt ou une sonnerie par défaut",
             None, keywords=["sonneries", "sonnerie", "choisir une sonnerie", "changer une sonnerie",

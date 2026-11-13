@@ -51,6 +51,8 @@ DEFAULTS = {
     "dab": {"interdites": []},
     # plantes de l'utilisateur (lib/plantes.py, commande "plantes")
     "plantes": {"plantes": []},
+    # decors de la gare (lib/decors.py, commande "decors")
+    "decors": {"decors": []},
     # plantes reperees par Gemini sur les photos, proposees a l'ajout (touche S)
     "plantes_suggestions": {"suggestions": [], "refusees": []},
     # capteurs sans fil de l'utilisateur, appairés (lib/capteurs_miens.py)

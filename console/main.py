@@ -400,6 +400,9 @@ def run_command(line, key_source, last_response):
     if cmd.name == "cherche des sons":
         import sons_en_ligne_cmd
         return sons_en_ligne_cmd.run(line, key_source, voix.say, out, read_line)
+    if cmd.name == "décors":
+        import decors_cmd
+        return decors_cmd.run(line, key_source, voix.say, out, read_line)
     if cmd.name == "sonneries":
         import sonneries_cmd
         return sonneries_cmd.run(line, key_source, voix.say, out)
