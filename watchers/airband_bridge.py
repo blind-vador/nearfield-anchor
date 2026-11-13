@@ -390,6 +390,22 @@ def _vers_les_decodeurs(freq_hz, label, pcm_f32):
         print(f"[airband_bridge] flux non depose : {exc!r}")
 
 
+# Banc complet tout de suite (2026-11-13, agnostique) : une fenetre n'ecoute
+# qu'une modulation (rtl_airband rend de l'AM OU de la FM etroite, jamais le
+# numerique). Une emission qui ouvre le silencieux sans que sa modulation y
+# trouve de la voix peut etre du numerique, de la FM dans la bande aviation, de
+# l'AM dans le 446... : radio_watch la reprend des la fenetre fermee avec tous
+# les decodeurs et toutes les modulations (_handle_candidate), au lieu
+# d'attendre un prochain tour ou elle se serait tue.
+REPRISE_MIN_SEC = MIN_AUDIO_SEC     # en dessous : un clic de silencieux, pas une emission
+_reprise = []
+
+
+def reprendre():
+    """(freq_hz, mode, nom, fenetre) a passer au banc complet, une seule fois, ou None."""
+    return _reprise.pop() if _reprise else None
+
+
 def _au_rejet(freq_hz, mode, label, target, raison, pcm):
     """Pas ouvert ne veut pas dire perdu (journal des rejets, lib/rejets.py) ;
     un signal d'une fenetre a une seule modulation repasse par le banc complet
@@ -551,9 +567,12 @@ def _relay_channel(sock, freq_hz, name_spoken, max_hold_sec=MAX_HOLD_SEC, window
         if not worth:
             print(f"[airband_bridge] pre-ecoute {freq_hz/1e6:.5f} MHz : pas de voix, son jamais ouvert")
             stop_event.set()
-            _au_rejet(freq_hz, next((w for w in AIRBAND_WINDOWS if w["name"] == window_name), {}).get("mode", "am"),
-                      name_spoken, window_name, "aucune voix prouvee",
-                      b"".join(p for p in prebuffer if p))
+            brut = b"".join(p for p in prebuffer if p)
+            _au_rejet(freq_hz, fenetre.get("mode", "am"), name_spoken, window_name, "aucune voix prouvee", brut)
+            if len(brut) >= REPRISE_MIN_SEC * AIRBAND_SAMPLE_RATE_HZ * 4:
+                print(f"[airband_bridge] {freq_hz/1e6:.5f} MHz : pas de voix en {fenetre.get('mode', 'am')}, "
+                      f"au banc complet (toutes modulations, tous decodeurs)")
+                _reprise[:] = [(freq_hz, fenetre.get("mode", "am"), name_spoken, window_name)]
             log_session.discard()
             return False
         # Parasites : plus d'ABANDON de frequence (demande utilisateur 2026-10-27).
@@ -696,6 +715,7 @@ def scan_window(window, dwell_sec=25):
     passe pendant tout le dwell. Un seul processus rtl_airband a la fois
     (meme dongle que radio_watch.py -- appele depuis la meme boucle
     sequentielle, jamais en parallele)."""
+    _reprise.clear()
     config_path = f"{AIRBAND_CONFIG_DIR}/airband_{window['name']}.conf"
     with open(config_path, "w") as f:
         f.write(_build_config(window))

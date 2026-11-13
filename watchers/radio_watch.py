@@ -4272,8 +4272,16 @@ def _modulations_prouvees(freq, mode):
         prouvees, raison, mesures = [], f"preuve impossible ({exc!r})", None
     _derniere_preuve.update(freq=freq, raison=raison, mesures=mesures)
     if mode == "wfm":
-        print(f"[radio_watch] {freq / 1e6:.4f} MHz : FM large, seule hypothese")
-        return ["wfm"]
+        # Plus de "FM large, seule hypothese" (2026-11-13, agnostique) : la bande
+        # de diffusion balayee va de 85 a 110 MHz, et rien n'empeche physiquement
+        # une FM etroite, de l'AM ou du numerique a ses marges (ou dedans). La FM
+        # large passe d'abord si l'IQ la prouve (ou ne prouve rien) ; une autre
+        # modulation prouvee passe devant elle ; les autres suivent.
+        etroites = [m for m in (prouvees or []) if m in ("am", "nfm", "usb", "lsb")]
+        suite = (["wfm"] + etroites) if not etroites or "wfm" in (prouvees or []) else (etroites + ["wfm"])
+        suite += [m for m in ("nfm", "am", "usb", "lsb") if m not in suite]
+        print(f"[radio_watch] {freq / 1e6:.4f} MHz : essai {', '.join(suite)} ({raison})")
+        return suite
     try:
         import propositions
         sur = propositions.suffisant(freq)
@@ -5224,6 +5232,12 @@ def main():
             print(f"[radio_watch] fenetre {kind} {target or obj.get('name', '') if isinstance(obj, dict) else target or obj}")
             if kind == "airband":
                 hit = airband_bridge.scan_window(obj, dwell_sec=dwell)
+                reprise = airband_bridge.reprendre()
+                if reprise and not hit and not _lock_pending():
+                    # La fenetre n'a qu'une modulation : ce qu'elle n'a pas compris
+                    # passe tout de suite par tous les decodeurs (2026-11-13).
+                    freq_r, mode_r, nom_r, fenetre_r = reprise
+                    hit = _handle_candidate(freq_r, mode_r, nom_r, target=fenetre_r)
             elif kind == "data":
                 hit = DATA_SCANNERS[obj](dwell_sec=dwell)
             else:

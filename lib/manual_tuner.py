@@ -61,10 +61,17 @@ CHUNK_MS = 200
 WFM_ARGS = ["-M", "wbfm", "-s", "200000", "-r", str(OUT_RATE), "-l", "0", "-E", "dc", "-E", "deemp"]
 
 DSD_TCP_PORT = 7360                 # serveur local qui nourrit dsd-fme (hors 7355 de SDR++)
-DSD_UDP_PORTS = (23460, 23461)      # voix decodee (le scanner utilise 23456)
+# Voix decodee, un port par decodeur (le scanner utilise 23456). Il n'y en avait
+# que deux pour cinq decodeurs (2026-11-13) : M17 et NXDN ne tournaient jamais.
+DSD_UDP_PORTS = tuple(range(23460, 23470))
 EVENTS_PATH = "/tmp/manuel_evenements.jsonl"
 DECODING_SOUND = os.path.join(RADIO_SCANER_DIR, "decoding_numeric.mp3")
 DIGITAL_HOLD_SEC = 1.0              # analogique coupe tant que la voix numerique arrive
+# Arbitre (2026-11-13, comme la prise unique du balayage) : une synchro numerique
+# validee, meme d'un relais au repos, coupe l'analogique pendant ce delai. Plus
+# long sur une station connue numerique : un relais au repos ne bat que de loin en loin.
+SYNCHRO_HOLD_SEC = 3.0
+SYNCHRO_HOLD_STATION_SEC = 10.0
 DTMF_GAP_SEC = 1.5                  # chiffres DTMF plus rapproches : une seule annonce
 AIRBAND_UDP_PORT = 9290            # hors de la plage des fenetres (9100-9204)
 AIRBAND_CONFIG = "/tmp/airband_manuel.conf"
@@ -141,14 +148,18 @@ class ManualStream:
         self._multimon = None
         self._digital_until = 0.0
         self._numerique = False
+        self._synchro_vue = 0.0
         self._chime = None
 
     def tune(self, freq_hz, mode, filtered=False, target=None, numerique=False):
         """Ecoute freq_hz ; ne fait rien si rien n'a change. target : la bande
         (reglages appris et filtres de la chaine commune, touche F). numerique :
-        station DMR connue -> dsd-fme en DMR (-fs) et souffle analogique coupe
-        (2026-10-08) : entre deux communications d'un relais, on veut le silence
-        et la voix decodee, pas le gresillement."""
+        station connue numerique -> DMR (-fs) en tete au lieu de l'auto-detection,
+        mais tous les decodeurs ecoutent quand meme, et l'analogique n'est plus
+        coupe d'office (2026-11-13, agnostique) : l'arbitre le coupe des qu'une
+        synchro numerique validee arrive, relais au repos compris, et le tient
+        coupe SYNCHRO_HOLD_STATION_SEC. Une FM ou un autre protocole sur une
+        frequence connue DMR s'entend donc."""
         airband = bool(filtered and mode in ("am", "nfm") and not numerique)
         key = (int(freq_hz), mode, airband, target, numerique)
         self._target, self._mode, self._numerique = target, mode, numerique
@@ -162,6 +173,7 @@ class ManualStream:
                 ["aplay", "-q", "-D", "default", "-r", str(OUT_RATE), "-f", "S16_LE", "-c", "1", "-B", "500000"],
                 stdin=subprocess.PIPE, stderr=subprocess.DEVNULL)
         self._generation += 1
+        self._synchro_vue = 0.0              # l'arbitre repart de zero sur la nouvelle frequence
         if airband:
             self._start_airband(freq_hz, mode, self._generation)
         else:
@@ -201,19 +213,20 @@ class ManualStream:
                     self._multimon = None
             if in_rate != OUT_RATE:
                 chunk, state = audioop.ratecv(chunk, 2, 1, in_rate, OUT_RATE, state)
-            if self._numerique or time.time() < self._digital_until:
-                continue  # station DMR connue : jamais d'analogique ; sinon la voix
-                # numerique decodee joue a la place du gresillement quand elle arrive
+            tenue = SYNCHRO_HOLD_STATION_SEC if self._numerique else SYNCHRO_HOLD_SEC
+            if time.time() < self._digital_until or time.time() - self._synchro_vue < tenue:
+                continue  # du numerique sur la frequence (voix, ou synchros d'un relais
+                # au repos) : la voix decodee joue a la place du gresillement
             if not self._write(chunk, generation):
                 return
 
     # --- decodeurs sur le flux de l'ecoute manuelle ---
     def _start_decoders(self, freq_hz, generation, numerique=False):
-        # Station DMR connue : dsd-fme en DMR seul (-fs), qui accroche bien
-        # mieux que l'auto-detection (-fa) sujette aux fausses synchros M17.
+        # Station DMR connue : DMR (-fs) en tete, qui accroche bien mieux que
+        # l'auto-detection (-fa) sujette aux fausses synchros M17. Les autres
+        # decodeurs ecoutent toujours (2026-11-13 : plus de DMR seul).
         flags = ["-fs"] if numerique else ["-fa"]
-        if not numerique:  # tous les modes, partout (2026-11-01, plus de mur par plage)
-            flags += [f for f, _ in decodeurs.extra_modes(freq_hz)]
+        flags += [f for f, _ in decodeurs.extra_modes(freq_hz) if f not in flags]
         try:
             server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -233,7 +246,7 @@ class ManualStream:
                                         stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                 self._helpers.append(proc)
                 stats = decodeurs.new_stats(freq_hz)  # textes transportes dits au fil de l'eau
-                threading.Thread(target=self._watch_dsd, args=(proc, stats), daemon=True).start()
+                threading.Thread(target=self._watch_dsd, args=(proc, stats, generation), daemon=True).start()
                 threading.Thread(target=self._relay_dsd, args=(udp, stats, flag, generation), daemon=True).start()
         except OSError as exc:
             print(f"[manual_tuner] decodage numerique indisponible : {exc}")
@@ -266,11 +279,14 @@ class ManualStream:
             except OSError:
                 self._dsd_clients.remove(conn)
 
-    @staticmethod
-    def _watch_dsd(proc, stats):
+    def _watch_dsd(self, proc, stats, generation=None):
         try:
             for raw in proc.stdout:
+                propres = stats["clean"]
                 decodeurs.dsd_line(stats, raw.decode(errors="replace").strip())
+                if stats["clean"] > propres and decodeurs.dsd_validated(stats) \
+                        and generation in (None, self._generation):
+                    self._synchro_vue = time.time()     # arbitre : l'analogique se tait
         except (OSError, ValueError):
             pass
 
