@@ -18,6 +18,11 @@ l'entree est acceptee ou refusee.
   Retour arriere       (2026-11-12) refuse d'un coup tous les niveaux de
                        nettoyage de la prise ; ailleurs, comme r
   Echap ferme. F1 : les touches.
+
+2026-11-13 : comme le journal radio, les captations en direct sont annoncees
+("captation entrante ajoutee au journal") sans etre jouees pendant la revue ; et
+le verdict de la derniere entree est dit ici, avec "plus de proposition" : rendu a
+la console, il attendait le verrou audio (pris par une captation) et se perdait.
 """
 import os
 import threading
@@ -25,7 +30,7 @@ import threading
 import conseils
 import revue_propositions as revue
 import voix
-from journal import Player
+from journal import Player, _journal_opened
 from phrases import dire, nombre
 from sound_paths import RADIO_LOG_DIR
 
@@ -70,6 +75,15 @@ def run(line, key_source, say, out):
     title = dire("proposition.titre", nombre=nombre(len(items), "proposition", "propositions"))
     intro = conseils.intro("proposition", title, dire("proposition.consigne"))
     out(intro + "\n")
+    _journal_opened(True)
+
+    def fin(texte):
+        """Derniere entree tranchee : verdict et "plus de proposition" dits ici, en
+        entier, avant de rendre la main (la console ne redit rien)."""
+        player.stop()
+        out(f"[{texte}]\n")
+        voix.say_blocking(texte)
+        return ""
 
     def lire_fiche(avant=None):
         """Joue la fiche vocale de l'entree courante (fabriquee si besoin, dans un fil).
@@ -180,11 +194,11 @@ def run(line, key_source, say, out):
             else:
                 text = dire("proposition.touches")
             if not items:            # derniere entree tranchee : le verdict ferme la revue
-                out(f"[{text}]\n")
-                return text or dire("proposition.fermee")
+                return fin(text or dire("proposition.plus_rien"))
             if text:
                 out(f"[{text}]\n")
                 say(text)
         return dire("proposition.fermee")
     finally:
+        _journal_opened(False)
         player.close()

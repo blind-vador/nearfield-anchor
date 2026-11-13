@@ -197,9 +197,34 @@ class DerniereTranchee(unittest.TestCase):
                 mock.patch.object(revue, "marquer_entendue"), \
                 mock.patch.object(revue, "accepter", return_value="Gardée."), \
                 mock.patch.object(proposition_cmd, "Player"), \
+                mock.patch.object(proposition_cmd.voix, "say_blocking", side_effect=dits.append), \
                 mock.patch.object(proposition_cmd.voix, "stop"):
             fin = proposition_cmd.run("journal proposition", iter(["c", "\x1b"]), dits.append, lambda t: None)
-        self.assertIn("Gardée.", fin)
+        self.assertEqual(fin, "")                                 # dit ici, la console ne redit rien
+        self.assertIn("Gardée.", dits[-1])                        # 2026-11-13 : plus de fermeture muette
+        self.assertIn("Plus de proposition", dits[-1])
+
+    def test_captations_annoncees_pas_jouees(self):
+        """2026-11-13 : pendant la revue, le drapeau "journal ouvert" est pose."""
+        import audio_lock
+        import proposition_cmd
+        vu = []
+        entree = {"genre": "frequence", "id": "f1", "le": 0, "item": {}}
+
+        def touches():
+            vu.append(audio_lock.journal_open())
+            yield "\x1b"
+        with mock.patch.object(audio_lock, "JOURNAL_FLAG", os.path.join(tempfile.mkdtemp(), "j.json")), \
+                mock.patch.object(revue, "entrees", return_value=[entree]), \
+                mock.patch.object(revue, "menage"), \
+                mock.patch.object(revue, "fiche", return_value=None), \
+                mock.patch.object(revue, "texte", return_value="x"), \
+                mock.patch.object(revue, "marquer_entendue"), \
+                mock.patch.object(proposition_cmd, "Player"), \
+                mock.patch.object(proposition_cmd.voix, "stop"):
+            proposition_cmd.run("journal proposition", touches(), lambda t: None, lambda t: None)
+            self.assertEqual(vu, [True])
+            self.assertFalse(audio_lock.journal_open())          # retire a la fermeture
 
 
 class RetourArriere(unittest.TestCase):

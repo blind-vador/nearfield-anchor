@@ -22,7 +22,7 @@ import conseils  # noqa: E402
 import propositions  # noqa: E402
 import rejets  # noqa: E402
 import voix  # noqa: E402
-from journal import Player  # noqa: E402  (meme lecteur audio que le journal)
+from journal import Player, _journal_opened  # noqa: E402  (meme lecteur audio que le journal)
 from phrases import dire, nombre  # noqa: E402
 
 UP, DOWN, ESC = "\x1b[A", "\x1b[B", "\x1b"
@@ -62,6 +62,7 @@ def run(line, key_source, say, out):
     title = dire("rejets.titre", nombre=nombre(len(items), "rejet", "rejets"))
     intro = conseils.intro("rejets", title, dire("rejets.consigne"))
     out(intro + "\n")
+    _journal_opened(True)   # captations en direct : annoncees, pas jouees (2026-11-13)
     try:
         if not items:
             say(f"{intro} {dire('rejets.vide')}")
@@ -131,4 +132,5 @@ def run(line, key_source, say, out):
                 say(text)
         return dire("rejets.fermee")
     finally:
+        _journal_opened(False)
         player.close()
