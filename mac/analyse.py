@@ -483,6 +483,35 @@ def run_clip(src, sortie, nom, whisper=None, origine="demande"):
     return 0
 
 
+def run_serie(liste, sortie, whisper):
+    """Series de la nuit (2026-11-13) : les prises a voix claire d'une meme frequence,
+    transcrites a la chaine sur le son brut, sans nettoyage (elles sont deja claires).
+    Rend transcriptions.json ; le Pi concatene et demande l'analyse de la frequence."""
+    with open(liste, encoding="utf-8") as f:
+        fichiers = json.load(f)
+    dossier = os.path.dirname(os.path.abspath(liste))
+    tmpdir = tempfile.mkdtemp(prefix="pcw_serie_", dir=os.path.expanduser("~/pcw-analyse"))
+    out = []
+    try:
+        for i, e in enumerate(fichiers):
+            src = os.path.join(dossier, e.get("fichier") or "")
+            if not os.path.isfile(src):
+                continue
+            t = transcrire(src, whisper, tmpdir, f"s{i:02d}") or {"texte": "", "confiance": 0.0}
+            statut = ("intelligible" if t["confiance"] >= WHISPER_INTELLIGIBLE and t["texte"]
+                      else "inaudible" if t["confiance"] < WHISPER_INAUDIBLE else "douteux")
+            out.append({"origine": e.get("origine"), "texte": t["texte"], "confiance": t["confiance"],
+                        "statut": statut, "invente": t.get("invente")})
+            print(f"  [serie] {e.get('origine')} : {statut} ({t['confiance']}) {t['texte'][:60]!r}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+    _ecrire(os.path.join(sortie, "transcriptions.json"), out)
+    _ecrire(os.path.join(sortie, "propositions.json"), [])
+    lisibles = sum(1 for t in out if t["statut"] == "intelligible")
+    print(f"[analyse] serie : {len(out)} prise(s) transcrite(s), {lisibles} intelligible(s)")
+    return 0
+
+
 def run_lot(base, sortie, hours, limit):
     """Passe de la nuit : bruts et rejets des dernieres heures."""
     clips = collect(base, hours, limit)
@@ -507,6 +536,7 @@ def main():
     ap.add_argument("--clip", help="un clip demande a l'examen (touche E du journal)")
     ap.add_argument("--nom", help="nom du clip dans le journal")
     ap.add_argument("--lot", action="store_true", help="passe de la nuit sur les bruts et rejets")
+    ap.add_argument("--serie", help="liste JSON des prises d'une frequence (series de la nuit)")
     ap.add_argument("--base", help="radio_log du NAS (defaut : partage monte)")
     ap.add_argument("--sortie", required=True, help="dossier du travail : propositions et sons y sont deposes")
     ap.add_argument("--whisper-cli", help="whisper.cpp (whisper-cli) : la parole comprise guide l'examen")
@@ -517,9 +547,13 @@ def main():
     ap.add_argument("--max", type=int, default=300)
     args = ap.parse_args()
     os.makedirs(args.sortie, exist_ok=True)
+    whisper = ((args.whisper_cli, args.whisper_modele, args.whisper_prompt)
+               if args.whisper_cli and args.whisper_modele else None)
+    if args.serie:
+        if not whisper:
+            ap.error("--serie demande --whisper-cli et --whisper-modele")
+        return run_serie(args.serie, args.sortie, whisper)
     if args.clip:
-        whisper = ((args.whisper_cli, args.whisper_modele, args.whisper_prompt)
-                   if args.whisper_cli and args.whisper_modele else None)
         return run_clip(args.clip, args.sortie, args.nom, whisper, args.origine)
     if not args.lot:
         ap.error("--clip ou --lot")

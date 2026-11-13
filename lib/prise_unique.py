@@ -223,6 +223,7 @@ class Arbitre:
         self.termine = threading.Event()  # l'ecoute est finie : les decodeurs en attente s'arretent
         self.pref = None             # juge le mieux note sur cette frequence
         self.pref_jusqua = 0.0       # il a la parole en premier pendant ce delai
+        self.bloques = set()         # confiance trop basse ici (lib/confiance_juges) : rendu garde, jamais joue
 
     def prioritaire(self, qui):
         """Un juge deja confirme ici n'a pas encore parle : les autres attendent."""
@@ -232,7 +233,7 @@ class Arbitre:
 
     def prendre(self, qui, protocole=None):
         with self._verrou:
-            if qui in self.cedes:
+            if qui in self.cedes or qui in self.bloques:
                 return False
             if qui == "analogique":
                 ok = self.gagnant is None

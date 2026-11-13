@@ -163,8 +163,18 @@ def ranger(job, result, folder):
     """Resultat d'un travail examen ou examen_lot : sons nettoyes vers
     radio_log/propositions_audio, propositions au journal proposition.
     Rend le nombre de propositions rangees."""
-    import propositions_reglages as pr
     params = job.get("params") or {}
+    if job.get("type") == "examen_serie":   # series de la nuit (2026-11-13) : une analyse par frequence
+        import series_nuit
+        machine = ""
+        try:
+            import compagnon
+            machine = (compagnon.trusted().get(result.get("compagnon"), {}) or {}).get("nom") or ""
+        except Exception:
+            pass
+        series_nuit.ranger(job, result, folder, machine)
+        return 0
+    import propositions_reglages as pr
     origine = params.get("origine")
     if origine:
         demandes = _lire(DEMANDES, {})
@@ -212,7 +222,13 @@ def _suite(params, transcription, resume, machine):
     origine = params.get("origine")
     texte = (transcription or {}).get("texte") or ""
     res = None
-    if texte and params.get("freq_hz"):
+    try:   # le texte resert aux series de la nuit (lib/series_nuit.py) : pas de second Whisper
+        import series_nuit
+        series_nuit.garder_texte(origine, transcription, params.get("freq_hz"))
+    except Exception as exc:
+        print(f"[examen] texte non garde : {exc!r}")
+    # Le soir, pas d'analyse prise par prise : la serie de la nuit analyse la frequence entiere.
+    if texte and params.get("freq_hz") and not params.get("soir"):
         try:
             import noms_whisper
             propre = noms_whisper.texte_utile(texte, params.get("label") or "")

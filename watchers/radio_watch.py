@@ -3225,6 +3225,16 @@ def _ecoute_prise(prise, freq, band_label, target, prelisten_max=None):
             return (0 if m == tete else 1, -propositions.rang(freq, m), -propositions.vu(freq, m))
 
         modes.sort(key=_cle_juge)
+        try:   # confiance avant preuve (2026-11-13) : un juge qui a perdu la confiance ici ne prend plus la parole
+            import confiance_juges
+            hist = confiance_juges.historique(freq)
+            arbitre.bloques = {m for m in modes if m != "-fa" and m != tete
+                               and confiance_juges.a_priori(freq, m, hist) < confiance_juges.SEUIL_OUVERTURE}
+            if arbitre.bloques:
+                print(f"[radio_watch] {freq / 1e6:.4f} MHz : {' '.join(sorted(arbitre.bloques))} ecoutes sans "
+                      f"prendre la parole (confiance trop basse ici)")
+        except Exception as exc:
+            print(f"[radio_watch] confiance des juges en direct : {exc!r}")
         if modes and (modes[0] == tete or propositions.rang(freq, modes[0]) >= propositions.SEUIL_RETENU):
             arbitre.pref = modes[0]
             arbitre.pref_jusqua = time.time() + 8
@@ -3438,6 +3448,7 @@ def _choisir_banc(res, target, freq, mode=None):
         sur = None
     _choisir_banc.parasite = False
     _choisir_banc.sans_emission = False
+    _choisir_banc.confiance_basse = False
     emission = (res.get("banc_preuve") or {}).get("emission")
     if emission is not None and not emission.get("secondes"):
         # Aucun exces de puissance au canal sur toute la fenetre : RNNoise trouve
@@ -3494,6 +3505,18 @@ def _choisir_banc(res, target, freq, mode=None):
         if garde:
             trouves[nom_mode] = garde
     voix = {nom_mode: garde for nom_mode, garde in trouves.items() if garde.get("voix")}
+    if voix:
+        try:   # confiance (2026-11-13) : une BLU "parlee" sur un relais DMR n'ouvre plus
+            import confiance_juges
+            _ouvr, ecartes = confiance_juges.trier(freq, list(voix.values()), res.get("_prouve"), cle_juge="juge")
+            for g in ecartes:
+                nom_mode = g["juge"]
+                del voix[nom_mode]
+                trouves[nom_mode] = {"juge": nom_mode, "wav": banc.get(nom_mode), "voix": False,
+                                     "detail": g.get("detail") or {}}
+                _choisir_banc.confiance_basse = True
+        except Exception as exc:
+            print(f"[radio_watch] confiance du banc : {exc!r}")
     if not voix:
         print(f"[radio_watch] banc {freq / 1e6:.4f} MHz : aucune voix prouvee (modulation : {raison})")
         return None
@@ -3589,6 +3612,7 @@ def _presenter_banc(freq, mode, band_label, target, level_db, log_session, res, 
                            "numerique prouve, pas de voix" if res.get("_numerique_prouve")
                            else "aucune emission mesuree" if getattr(_choisir_banc, "sans_emission", False)
                            else "ressemble a un parasite appris" if getattr(_choisir_banc, "parasite", False)
+                           else "confiance trop basse sur cette frequence" if getattr(_choisir_banc, "confiance_basse", False)
                            else "banc : aucune voix prouvee")
         return False
     modulation, propre, taux, detail, autres = choix
@@ -3773,6 +3797,12 @@ def _presenter_voix_numeriques(freq, mode, band_label, target, level_db, log_ses
             jouables.append(r)
         else:
             reserves.append(r)
+    try:   # confiance : frequence, tes avis sur ce juge, preuve de la prise (2026-11-13)
+        import confiance_juges
+        jouables, ecartes = confiance_juges.trier(freq, jouables, res.get("_prouve"))
+        reserves = reserves + ecartes
+    except Exception as exc:
+        print(f"[radio_watch] confiance des voix numeriques : {exc!r}")
     if not jouables:
         res["_reserves"] = reserves    # ecoutables aux rejets si rien d'autre ne s'ouvre
         return None
@@ -3789,7 +3819,8 @@ def _presenter_voix_numeriques(freq, mode, band_label, target, level_db, log_ses
     noise_signatures.record_capture(
         "rtl_fm", freq, mode, band_label, target, path, None,
         {"niveau_db": level_db, "numerique": True, "offload": machine,
-         "protocole": premier.get("protocole"), "juge": juge, "dmr": res.get("meta") or {}})
+         "protocole": premier.get("protocole"), "juge": juge, "dmr": res.get("meta") or {},
+         "confiance": premier.get("confiance")})
     _noter_relais(freq, {})
     try:
         import propositions
@@ -3915,6 +3946,20 @@ def _completer_juges_sync(freq, res, band_label=None):
                   flush=True)
 
 
+def _protocole_prouve(res):
+    """Protocole numerique prouve dans la prise (synchros propres), ou None. Calcule
+    AVANT de presenter les voix (2026-11-13) : un DMR prouve sans voix explique les
+    "voix" FreeDV ou BLU tirees du meme signal (lib/confiance_juges.py)."""
+    preuve = res.get("preuve") or {}
+    try:
+        import numerique_vus
+        if numerique_vus.prouve(preuve.get("propres"), preuve.get("total")):
+            return preuve.get("protocole") or res.get("protocole")
+    except Exception:
+        pass
+    return None
+
+
 def _numerique_sans_voix(freq, res):
     """Un mode prouve sans voix a jouer se dit au journal ; le banc continue, quelqu'un
     peut aussi parler en analogique. Une voix trop courte pour s'ouvrir (0,7 s sur un
@@ -3943,6 +3988,7 @@ def _presenter_distant(freq, mode, band_label, target, level_db, log_session, re
     if flux and os.path.isfile(flux):
         log_session.noter_flux(flux)
     _completer_juges_sync(freq, res, band_label)
+    res["_prouve"] = _protocole_prouve(res)   # avant les voix : il explique les sorties des autres decodeurs
     if res.get("rendus"):
         presente = _presenter_voix_numeriques(freq, mode, band_label, target, level_db, log_session, res, machine)
         if presente is not None:

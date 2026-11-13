@@ -92,14 +92,17 @@ def _propre(valeur, n=None):
     return texte[:n] if n else texte
 
 
-def analyser(freq_hz, mode, label, juge, texte, fichier, machine="", journal=None):
-    """Demande l'analyse ; rend le resultat (dict) ou None. Depose le nom propose."""
+def analyser(freq_hz, mode, label, juge, texte, fichier, machine="", journal=None, serie=0):
+    """Demande l'analyse ; rend le resultat (dict) ou None. Depose le nom propose.
+    serie : nombre de prises concatenees (series de la nuit, lib/series_nuit.py)."""
     if not freq_hz or not (texte or "").strip():
         return None
     import gemini
     from phrases import dire
     ctx, ancienne = _contexte(freq_hz, mode, label, juge)
-    reponse, probleme = gemini.ask(dire("station.consigne_analyse", texte=texte[:3000], **ctx),
+    consigne = (dire("station.consigne_analyse_serie", texte=texte[:8000], n=serie, **ctx) if serie
+                else dire("station.consigne_analyse", texte=texte[:3000], **ctx))
+    reponse, probleme = gemini.ask(consigne,
                                    temperature=0.3, json_mode=True, timeout=TIMEOUT, scanneur=True)
     if not reponse:
         print(f"[station] {fichier} : pas d'analyse ({probleme})")
@@ -111,7 +114,7 @@ def analyser(freq_hz, mode, label, juge, texte, fichier, machine="", journal=Non
     except ValueError:
         print(f"[station] reponse illisible : {reponse[:200]!r}")
         return None
-    res = {"le": time.strftime("%Y-%m-%dT%H:%M:%S"), "fichier": os.path.basename(fichier or ""),
+    res = {"le": time.strftime("%Y-%m-%dT%H:%M:%S"), "fichier": os.path.basename(fichier or ""), "serie": serie,
            "explication": _propre(r.get("explication"), 600), "nom": _propre(r.get("nom"), 42) or None,
            "pourquoi": _propre(r.get("pourquoi"), 40) or None, "mise_a_jour": _propre(r.get("mise_a_jour"), 400) or None,
            "indicatifs": [_propre(i, 12).upper() for i in (r.get("indicatifs") or []) if _propre(i)][:8]}

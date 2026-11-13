@@ -171,7 +171,8 @@ def _examen(job, result, folder):
 
 
 HANDLERS = {"meteor": _meteor, "lora": _lora, "decrire_images": _decrire_images, "voix": _voix,
-            "radio_juges": _radio_juges, "whisper": _whisper, "examen": _examen, "examen_lot": _examen}
+            "radio_juges": _radio_juges, "whisper": _whisper, "examen": _examen, "examen_lot": _examen,
+            "examen_serie": _examen}
 
 
 def poll_once():

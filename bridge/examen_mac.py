@@ -4,7 +4,9 @@ Travaux deposes par le Pi (lib/examen.py) :
   - "examen" (file rapide) : un son du journal demande avec la touche E, copie
     dans le dossier du travail (son.<ext>) ;
   - "examen_lot" (file lourde) : la passe de la nuit, lue directement dans
-    radio_log (params.mode == "lot").
+    radio_log (params.mode == "lot") ;
+  - "examen_serie" (2026-11-13, file lourde) : les prises a voix claire d'une
+    frequence (p00.mp3, p01.mp3...), transcrites a la chaine (params.mode == "serie").
 
 Pourquoi ici et plus dans launchd : macOS refuse l'acces aux volumes reseau aux
 taches launchd d'arriere-plan ("Operation not permitted"), la passe tournait a
@@ -19,6 +21,7 @@ VENV_PYTHON = os.path.expanduser("~/pcw-analyse/venv/bin/python")
 SCRIPT = os.path.expanduser("~/pcw-analyse/analyse.py")
 DUREE_CLIP_SEC = 600
 DUREE_LOT_SEC = 3 * 3600
+DUREE_SERIE_SEC = 3600
 
 
 def disponible():
@@ -34,8 +37,9 @@ def _radio_log(folder):
 def _sorties(folder):
     """Fichiers rendus, chemins relatifs au dossier du travail (signes par le pont)."""
     out = ["propositions.json"]
-    if os.path.isfile(os.path.join(folder, "transcription.json")):
-        out.append("transcription.json")
+    for nom in ("transcription.json", "transcriptions.json"):
+        if os.path.isfile(os.path.join(folder, nom)):
+            out.append(nom)
     audio = os.path.join(folder, "propositions_audio")
     if os.path.isdir(audio):
         out += [os.path.join("propositions_audio", n) for n in sorted(os.listdir(audio))]
@@ -46,7 +50,19 @@ def process(folder, params):
     params = params or {}
     if not disponible():
         return "echec", [], "passe d'analyse absente (~/pcw-analyse)"
-    if params.get("mode") == "lot":
+    if params.get("mode") == "serie":
+        import json
+        import whisper_radio
+        if not whisper_radio.disponible():
+            return "echec", [], "whisper absent"
+        liste = os.path.join(folder, "serie.json")
+        with open(liste, "w", encoding="utf-8") as f:
+            json.dump(params.get("fichiers") or [], f, ensure_ascii=False)
+        cmd = [VENV_PYTHON, "-W", "ignore", SCRIPT, "--serie", liste, "--sortie", folder,
+               "--whisper-cli", whisper_radio.CLI, "--whisper-modele", whisper_radio.MODEL,
+               "--whisper-prompt", whisper_radio.PROMPT]
+        duree = DUREE_SERIE_SEC
+    elif params.get("mode") == "lot":
         cmd = [VENV_PYTHON, "-W", "ignore", SCRIPT, "--lot", "--base", _radio_log(folder), "--sortie", folder,
                "--hours", str(params.get("heures", 24)), "--max", str(params.get("max", 300))]
         duree = DUREE_LOT_SEC
