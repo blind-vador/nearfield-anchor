@@ -7117,3 +7117,23 @@ fichiers répond 429 à ce client (Retry-After 600 s le 2026-11-07), limite resp
 - smartd desactive (le bilan le remplace). Etat au premier bilan : nd1 11 825 h,
   nd2 14 389 h, carte SD 538 Go ecrits, tous en bon etat, aucune erreur disque
   dans le noyau sur 30 jours.
+
+## 2026-11-13 : choix du decodeur, series de la nuit
+
+- Constat (7 jours) : sur les relais DMR 438,524 et 467,238 MHz, des prises
+  s'ouvraient en FreeDV 700E (10 refus, 0 oui), BLU ou AM. La memoire des juges
+  ordonnait les rendus sans jamais en refuser ; le DMR prouve sans voix n'etait
+  regarde qu'apres la presentation.
+- `lib/confiance_juges.py` : cote = famille sur la frequence (Beta, oui + indices
+  + decodages vus) x avis sur le juge (propositions.rang) x preuve de la prise x
+  0,15 si un autre protocole est prouve dans la prise ; sous 0,35 le rendu
+  n'ouvre pas (derriere J ou aux rejets). Applique aux voix numeriques, au banc
+  et, en direct, a l'arbitre (juges bloques). Frequence neuve : rien n'est bride.
+  Litterature : AMC par vraisemblance (Dobre 2007), SPRT de Wald, fausses alarmes
+  de synchro et comparaisons multiples.
+- `lib/series_nuit.py` + travail `examen_serie` (Mac, `mac/analyse.py --serie`) :
+  a 02 h 30, toutes les prises a voix claire (V/C, ou voix >= 50 % et lisibilite
+  >= 3) regroupees par frequence, Whisper a la chaine sur le brut, textes gardes
+  (`whisper_textes.json`, jamais retranscrits), une analyse de station par
+  frequence sur la concatenation datee (`station.consigne_analyse_serie`).
+  Le soir (whisper_soir) ne nomme plus prise par prise : son texte sert a la serie.
