@@ -16,12 +16,16 @@ Conditions (elles s'empilent : toutes doivent etre vraies)
   Echap              abandonne le decor
 
 Action
-  haut / bas         action, puis texte et jingle (annonce) ou son et
+  haut / bas         action, puis texte et jingle (annonce) ou sons et
                      Telecharger un son (jouer un son), puis Enregistrer
   gauche / droite    la valeur ; chaque jingle et chaque son est joue
+  espace             sur les sons : coche ou decoche le son (plusieurs sons :
+                     le decor en tire un au hasard a chaque fois)
   Entree             texte : le taper ; Telecharger : le dialogue "cherche des
-                     sons", qui pose dans le depot des decors et revient ici
-                     sur le son telecharge ; Enregistrer : garde le decor
+                     sons", qui pose dans le depot des decors et revient ici,
+                     sons telecharges coches ; Enregistrer : garde le decor, et
+                     les sons coches du depot le quittent pour
+                     train_scaner/<le decor> (decors.ranger)
   Echap              revient aux conditions
 """
 import os
@@ -39,6 +43,7 @@ HOME, END = ("\x1b[1~", "\x1b[H"), ("\x1b[4~", "\x1b[F")
 ENTREE = ("\r", "\n")
 BACKSPACE = ("\x7f", "\x08")
 ESC = "\x1b"
+ESPACE = " "
 OUI = ("o", "O", "y", "Y")
 GRAND_PAS = 10
 
@@ -80,7 +85,24 @@ def _nom_son(relatif):
         return dire("decors.son_depot", nom=nom)
     if not dossier:
         return dire("decors.son_gare", nom=etiquette(f"decors.dossier_{nom}", nom))
+    if dossier not in decors.DOSSIERS_GARE:
+        return dire("decors.son_decor", nom=nom)
     return dire("decors.son_gare", nom=f"{etiquette('decors.dossier_' + dossier, dossier.replace('_', ' '))} {nom}")
+
+
+def _son_curseur(relatif, d):
+    """Le son sous le curseur, et s'il est coche."""
+    if not relatif:
+        return dire("decors.son_aucun")
+    coche = relatif in (d.get("sons") or ())
+    return dire("decors.son_coche" if coche else "decors.son_libre", son=_nom_son(relatif))
+
+
+def _sons(d):
+    sons = d.get("sons") or []
+    if not sons:
+        return dire("decors.sons_aucun")
+    return dire("decors.sons_coches", n=nombre(len(sons), "son coché", "sons cochés"))
 
 
 def valeur(champ, d):
@@ -109,19 +131,21 @@ def valeur(champ, d):
         return v.strip() if (v or "").strip() else dire("decors.texte_vide")
     if champ == "jingle":
         return dire(f"decors.jingle_{v}")
-    if champ == "son":
-        return _nom_son(v)
     return ""
 
 
-def champ_texte(champ, d):
+def champ_texte(champ, d, curseur=None):
     if champ in ("suivant", "telecharger", "enregistrer"):
         return dire(f"decors.bouton_{champ}")
+    if champ == "sons":
+        return dire("decors.champ_sons", coches=_sons(d), son=_son_curseur(curseur, d))
     return dire(f"decors.champ_{champ}", valeur=valeur(champ, d))
 
 
-def decrire(d):
-    """Une phrase : quand, puis quoi."""
+def quand(d):
+    """Les conditions, en une phrase (aussi le nom du dossier des sons du decor)."""
+
+
     jour, mois, annee = d.get("jour") or 0, d.get("mois") or 0, d.get("annee") or 0
     if jour and mois:
         quand = [dire("decors.d_jour_mois", jour=_jour(jour), mois=_mois(mois))]
@@ -150,12 +174,20 @@ def decrire(d):
         quand.append(dire(f"decors.d_meteo_{d['meteo']}"))
     if d.get("ponctuel"):
         quand.append(dire("decors.d_ponctuel"))
-    if d.get("action") == "son":
-        quoi = dire("decors.d_son", nom=_nom_son(d.get("son")))
+    return ", ".join(quand)
+
+
+def decrire(d):
+    """Une phrase : quand, puis quoi."""
+    sons = d.get("sons") or []
+    if d.get("action") == "son" and len(sons) > 1:
+        quoi = dire("decors.d_sons", n=nombre(len(sons), "son"), noms=", ".join(_nom_son(c) for c in sons))
+    elif d.get("action") == "son":
+        quoi = dire("decors.d_son", nom=_nom_son(sons[0] if sons else ""))
     else:
         quoi = dire("decors.d_annonce", texte=(d.get("texte") or "").strip(),
                     jingle=dire(f"decors.d_jingle_{d.get('jingle') or 'moderne'}"))
-    return dire("decors.description", conditions=", ".join(quand), action=quoi)
+    return dire("decors.description", conditions=quand(d), action=quoi)
 
 
 # --- ecoute -------------------------------------------------------------------
@@ -219,12 +251,12 @@ class _Dialogue:
             return choix[n], None
         return actuel, dire("commun.debut_liste") if n < 0 else dire("commun.fin_liste")
 
-    def haut_bas(self, champs, i, key, d):
+    def haut_bas(self, champs, i, key, d, curseur=None):
         n = i + (1 if key == DOWN else -1)
         if 0 <= n < len(champs):
-            return n, champ_texte(champs[n], d)
+            return n, champ_texte(champs[n], d, curseur)
         bord = dire("commun.debut_liste") if n < 0 else dire("commun.fin_liste")
-        return i, f"{bord} {champ_texte(champs[i], d)}"
+        return i, f"{bord} {champ_texte(champs[i], d, curseur)}"
 
     def annee(self, d):
         self.parler(dire("decors.annee_saisie"))
@@ -276,11 +308,13 @@ class _Dialogue:
 
     def action(self, d):
         """"enregistre", "retour" (aux conditions) ou None (plus de touches)."""
-        candidats = decors.candidats()
+        d["sons"] = list(d.get("sons") or [])
+        candidats = [c for _, c in decors.candidats(d["sons"])]
+        curseur = [d["sons"][0] if d["sons"] else None]
         i = 0
 
         def champs():
-            milieu = ["texte", "jingle"] if d["action"] == "annonce" else ["son", "telecharger"]
+            milieu = ["texte", "jingle"] if d["action"] == "annonce" else ["sons", "telecharger"]
             return ["action"] + milieu + ["enregistrer"]
 
         consigne = dire("decors.action_consigne")
@@ -295,26 +329,33 @@ class _Dialogue:
             elif key == ESC:
                 return "retour"
             elif key in (UP, DOWN):
-                i, texte = self.haut_bas(liste, i, key, d)
+                i, texte = self.haut_bas(liste, i, key, d, curseur[0])
+            elif key == ESPACE and champ == "sons":
+                if curseur[0] is None:
+                    texte = dire("decors.son_vide") if not candidats else dire("decors.son_aucun")
+                elif curseur[0] in d["sons"]:
+                    d["sons"].remove(curseur[0])
+                    texte = f"{dire('decors.decoche')} {_sons(d)}"
+                else:
+                    d["sons"].append(curseur[0])
+                    texte = f"{dire('decors.coche')} {_sons(d)}"
             elif key in (LEFT, RIGHT, PGUP, PGDN) + HOME + END:
                 if champ in ("action", "jingle"):
                     d[champ], bord = self.deplacer(CHOIX[champ], d.get(champ), key)
                     texte = bord or valeur(champ, d)
                     if champ == "jingle" and not bord:
                         _jouer(decors.chemin_jingle(d["jingle"]))
-                elif champ == "son":
+                elif champ == "sons":
                     if not candidats:
                         texte = dire("decors.son_vide")
                     else:
-                        chemins = [c for _, c in candidats]
-                        actuel = d.get("son") if d.get("son") in chemins else None
-                        if actuel is None:
-                            d["son"], bord = (chemins[-1] if key == LEFT else chemins[0]), None
+                        if curseur[0] not in candidats:
+                            curseur[0], bord = (candidats[-1] if key == LEFT else candidats[0]), None
                         else:
-                            d["son"], bord = self.deplacer(chemins, actuel, key)
-                        texte = bord or valeur("son", d)
+                            curseur[0], bord = self.deplacer(candidats, curseur[0], key)
+                        texte = bord or _son_curseur(curseur[0], d)
                         if not bord:
-                            _jouer(decors.chemin_son(d["son"]))
+                            _jouer(decors.chemin_son(curseur[0]))
                 elif champ == "texte":
                     texte = dire("decors.texte_entree")
                 else:
@@ -327,10 +368,18 @@ class _Dialogue:
                         d["texte"] = saisi
                     texte = champ_texte("texte", d)
                 elif champ == "telecharger":
-                    texte = self.telecharger(d)
-                    candidats = decors.candidats()
-                    if d.get("son"):
-                        i = champs().index("son")
+                    poses = self.telecharger()
+                    candidats = [c for _, c in decors.candidats(d["sons"])]
+                    for c in poses:
+                        if c not in d["sons"]:
+                            d["sons"].append(c)
+                    if poses:
+                        curseur[0] = poses[0]
+                        i = champs().index("sons")
+                        _jouer(decors.chemin_son(poses[0]))
+                        texte = f"{self.fin_telechargement} {champ_texte('sons', d, curseur[0])}"
+                    else:
+                        texte = f"{self.fin_telechargement} {dire('decors.telecharge_aucun')} {champ_texte('telecharger', d)}"
                 elif champ == "enregistrer":
                     cle = decors.erreur(d)
                     if cle:
@@ -343,15 +392,13 @@ class _Dialogue:
                 self.parler(texte)
         return None
 
-    def telecharger(self, d):
+    def telecharger(self):
+        """Chemins relatifs des sons poses dans le depot."""
         import sons_en_ligne_cmd
-        fin = sons_en_ligne_cmd.run("", self.keys, self.say, self.out, self.read_line, depot=decors.DEPOT)
-        poses = getattr(sons_en_ligne_cmd.run, "poses", [])
-        if not poses:
-            return f"{fin} {dire('decors.telecharge_aucun')} {champ_texte('son', d)}"
-        d["son"] = os.path.relpath(poses[0], decors.TRAIN_SCANER_DIR)
-        _jouer(poses[0])
-        return f"{fin} {champ_texte('son', d)}"
+        sons_en_ligne_cmd.run.poses = []
+        self.fin_telechargement = sons_en_ligne_cmd.run("", self.keys, self.say, self.out, self.read_line,
+                                                        depot=decors.DEPOT)
+        return [os.path.relpath(p, decors.TRAIN_SCANER_DIR) for p in getattr(sons_en_ligne_cmd.run, "poses", [])]
 
     def assistant(self, base):
         """Le decor enregistre, ou None."""
@@ -361,6 +408,10 @@ class _Dialogue:
                 return None
             r = self.action(d)
             if r == "enregistre":
+                if d["action"] == "son":
+                    decors.ranger(d, quand(d))
+                else:
+                    d["sons"] = []
                 if not decors.enregistrer(d):
                     self.parler(dire("decors.nas"))
                     return None

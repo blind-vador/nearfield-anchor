@@ -407,12 +407,12 @@ def _jouer_decor(d):
     """Action d'un decor de l'utilisateur (lib/decors.py, commande "decors")."""
     import decors
     if d.get("action") == "son":
-        chemin = decors.chemin_son(d.get("son"))
+        chemin = decors.son_au_hasard(d)
         if chemin:
-            print(f"[sncf_watch] decor {d['id']} : son {d.get('son')}", flush=True)
+            print(f"[sncf_watch] decor {d['id']} : son {chemin}", flush=True)
             _play_file(chemin)
         else:
-            print(f"[sncf_watch] decor {d['id']} : son introuvable ({d.get('son')})", flush=True)
+            print(f"[sncf_watch] decor {d['id']} : sons introuvables ({d.get('sons')})", flush=True)
         return
     texte = (d.get("texte") or "").strip()
     if texte:

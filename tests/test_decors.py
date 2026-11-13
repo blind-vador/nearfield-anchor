@@ -73,7 +73,14 @@ class Regles(unittest.TestCase):
         self.assertEqual(decors.erreur(decor(annee=2026, mois=3, texte="a"), maintenant), "decors.erreur_date_passee")
         self.assertIsNone(decors.erreur(decor(annee=2026, mois=12, jour=25, texte="a"), maintenant))
         self.assertEqual(decors.erreur(decor(texte="  "), maintenant), "decors.erreur_texte")
-        self.assertEqual(decors.erreur(decor(action="son", son="../../etc/passwd"), maintenant), "decors.erreur_son")
+        self.assertEqual(decors.erreur(decor(action="son", sons=["../../etc/passwd"]), maintenant), "decors.erreur_son")
+        self.assertEqual(decors.erreur(decor(action="son", sons=[]), maintenant), "decors.erreur_son")
+
+    def test_ancien_son_unique_relu(self):
+        with mock.patch.object(decors.reglages, "get", lambda nom: {"decors": [{"id": "a", "son": "horn1.mp3"}]}):
+            d, = decors.lire()
+        self.assertEqual(d["sons"], ["horn1.mp3"])
+        self.assertNotIn("son", d)
 
 
 class Dialogue(unittest.TestCase):
@@ -83,6 +90,7 @@ class Dialogue(unittest.TestCase):
         os.makedirs(os.path.join(gare, "ter_passby"))
         open(os.path.join(gare, "ter_passby", "1.wav"), "wb").close()
         open(os.path.join(gare, "horn1.mp3"), "wb").close()
+        self.gare = gare
         self.store = {}
         import decors_cmd
         import voix
@@ -148,6 +156,7 @@ class Dialogue(unittest.TestCase):
             open(chemin, "wb").close()
             faux_telechargement.poses = [chemin]
             return "1 son dans le dépôt des décors de la gare."
+        faux_telechargement.poses = []
         touches = ["\r", RIGHT, DOWN, END, DOWN, RIGHT, RIGHT,   # ponctuel, le 31 fevrier
                    "\r", LEFT, LEFT, "\r",                    # refuse ; tous les mois ; suivant
                    RIGHT,                           # action : jouer un son
@@ -157,10 +166,41 @@ class Dialogue(unittest.TestCase):
             fin, parle = self.lancer(touches)
         self.assertIn(self.cmd.dire("decors.erreur_jour_mois"), parle)
         d, = self.store["decors"]
-        self.assertEqual((d["ponctuel"], d["jour"], d["mois"], d["action"], d["son"]),
-                         (True, 31, 0, "son", "decors/depot/cloche.mp3"))
-        self.assertTrue(any("cloche, du dépôt" in p for p in parle), parle)
+        dossier = self.cmd.quand(d)
+        self.assertEqual((d["ponctuel"], d["jour"], d["mois"], d["action"], d["sons"]),
+                         (True, 31, 0, "son", [f"{dossier}/cloche.mp3"]))
+        self.assertTrue(any("cloche, du dépôt, coché" in p for p in parle), parle)
         self.assertIn("de temps en temps, au hasard", self.cmd.decrire(d))
+        # le son telecharge et coche a quitte le depot pour le dossier du decor
+        self.assertFalse(os.path.exists(os.path.join(self.gare, "decors", "depot", "cloche.mp3")))
+        self.assertTrue(os.path.isfile(os.path.join(self.gare, dossier, "cloche.mp3")))
+
+    def test_plusieurs_sons_coches_et_ranges(self):
+        depot = os.path.join(self.gare, "decors", "depot")
+        os.makedirs(depot)
+        for nom in ("a vapeur.mp3", "b sifflet.mp3", "c reste.mp3"):
+            open(os.path.join(depot, nom), "wb").close()
+        touches = ["\r", "\r",                              # nouveau ; conditions telles quelles
+                   RIGHT,                                    # action : jouer un son
+                   DOWN, RIGHT, " ",                         # a vapeur : coche
+                   RIGHT, RIGHT, " ",                        # c reste : coche
+                   " ",                                      # ... decoche
+                   LEFT, " ",                                # b sifflet : coche
+                   RIGHT, RIGHT, " ",                        # ter qui passe 1 (gare) : coche
+                   DOWN, DOWN, "\r", ESC]
+        fin, parle = self.lancer(touches)
+        self.assertIn("Décoché.", " ".join(parle))
+        d, = self.store["decors"]
+        dossier = self.cmd.quand(d)
+        self.assertEqual(d["sons"], [f"{dossier}/a vapeur.mp3", f"{dossier}/b sifflet.mp3", "ter_passby/1.wav"])
+        self.assertEqual(sorted(os.listdir(depot)), ["c reste.mp3"])       # le non coche reste au depot
+        self.assertEqual(sorted(os.listdir(os.path.join(self.gare, dossier))), ["a vapeur.mp3", "b sifflet.mp3"])
+        self.assertTrue(os.path.isfile(os.path.join(self.gare, "ter_passby", "1.wav")))   # la gare ne bouge pas
+        self.assertIn("un son au hasard parmi 3 sons", self.cmd.decrire(d))
+        # en le rouvrant, ses sons ranges sont proposes et deja coches
+        fin, parle = self.lancer([DOWN, "\r", "\r", DOWN, ESC, ESC, ESC])
+        self.assertTrue(any("3 sons cochés" in p and "a vapeur, d'un décor, coché" in p for p in parle), parle)
+        self.assertIn(decors.son_au_hasard(d), [os.path.join(self.gare, c) for c in d["sons"]])
 
     def test_sons_de_la_gare(self):
         self.assertEqual([c for _, c in decors.candidats()], ["ter_passby/1.wav", "horn1.mp3"])
