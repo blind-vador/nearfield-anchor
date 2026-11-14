@@ -653,8 +653,12 @@ def scan_window(dwell_sec=30):
     ecoute = time.time() - started
     ecoute_ok = bool(count) or ecoute >= ECOUTE_MIN_PART * dwell_sec
     if not ecoute_ok:
+        detail = ' | '.join(erreurs) or 'aucun message'
         print(f"[capteurs_watch] rtl_433 arrete apres {ecoute:.0f} s sur {freq} (code {proc.returncode}) : "
-              f"{' | '.join(erreurs) or 'aucun message'}", flush=True)
+              f"{detail}", flush=True)
+        if "stalled" in detail.lower():   # dongle fige : reinitialisation USB (lib/dongle_fige.py)
+            import dongle_fige
+            dongle_fige.signaler("capteurs", detail, sur=True)
     if count:
         print(f"[capteurs_watch] {count} trame(s) capteurs sur {freq}")
         try:  # antenne vivante (veille_systeme : antenne muette)

@@ -19,6 +19,10 @@
 #   usb-repare sans-veille <1-1.3.3> desactive la mise en veille USB
 #                                    automatique d'un appareil
 #   usb-repare webcam                relance webcamd (mjpg-streamer d'OctoPi)
+#   usb-repare reinit <1-1.1.1>      reinitialisation USB d'un appareil (usbreset) :
+#                                    le dongle radio fige, reconnu mais qui ne rend
+#                                    plus aucun echantillon (2026-11-14, "Async read
+#                                    stalled") ; jamais un hub ni un disque
 set -euo pipefail
 
 SYS=/sys/bus/usb/devices
@@ -98,6 +102,12 @@ case "$action" in
         echo 1 > "$dir/disable"
         sleep 2
         echo 0 > "$dir/disable"
+        ;;
+    reinit)
+        [[ "$cible" =~ $DEV_RE ]] || die "appareil invalide : $cible"
+        [ -e "$SYS/$cible/busnum" ] || die "appareil introuvable : $cible"
+        protege "$cible" && die "$cible est un hub ou un disque : refuse"
+        usbreset "$(printf '%03d/%03d' "$(cat "$SYS/$cible/busnum")" "$(cat "$SYS/$cible/devnum")")"
         ;;
     rebranche)
         [[ "$cible" =~ $DEV_RE ]] || die "appareil invalide : $cible"

@@ -710,7 +710,21 @@ def _read_csv_bins(path):
             all_db.append(db)
             bins.append((freq, db))
     carte_antenne.noter(bins)   # carte de l'antenne entretenue a chaque passe (2026-11-14)
+    import dongle_fige
+    if rows:
+        dongle_fige.remis("rtl_power")
+    else:   # rtl_power sorti sans une ligne : dongle peut-etre fige (2026-11-14)
+        dongle_fige.signaler("rtl_power", f"passe vide ({path})", sur=False)
     return all_db, bins
+
+
+def _rtl_power_echec(result):
+    """rtl_power en echec : un dongle fige le dit ("stalled", lecture impossible) ;
+    reinitialisation USB (lib/dongle_fige.py, 2026-11-14)."""
+    err = (result.stderr or "").lower()
+    if "stalled" in err or "failed to read" in err or "short read" in err:
+        import dongle_fige
+        dongle_fige.signaler("rtl_power", result.stderr.strip()[-200:], sur=True)
 
 
 def _percentile(values, pct):
@@ -755,6 +769,7 @@ def check_channels_relative(freqs, span_hz=25_000, margin_db=None):
         global _rtl_power_failure_count
         if result.returncode != 0:
             _rtl_power_failure_count += 1
+            _rtl_power_echec(result)
             print(f"[radio_watch] ECHEC rtl_power (canaux fixes) rc={result.returncode}: {result.stderr.strip()[-200:]}")
             return []
 
@@ -804,6 +819,7 @@ def sweep_band_peak_relative(low_hz, high_hz, step_hz, margin_db=None):
         global _rtl_power_failure_count
         if result.returncode != 0:
             _rtl_power_failure_count += 1
+            _rtl_power_echec(result)
             print(f"[radio_watch] ECHEC rtl_power (balayage) rc={result.returncode}: {result.stderr.strip()[-200:]}")
             return None, None
 
@@ -848,6 +864,7 @@ def sweep_band_peaks_relative(low_hz, high_hz, step_hz, margin_db=None, max_peak
         global _rtl_power_failure_count
         if result.returncode != 0:
             _rtl_power_failure_count += 1
+            _rtl_power_echec(result)
             print(f"[radio_watch] ECHEC rtl_power (balayage) rc={result.returncode}: {result.stderr.strip()[-200:]}")
             return []
         all_db, bins = _read_csv_bins(tmp_path)

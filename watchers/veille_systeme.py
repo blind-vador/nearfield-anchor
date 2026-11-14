@@ -611,6 +611,33 @@ RATEES_MIN = 4
 RATEES_RAPPEL_SEC = 6 * 3600
 
 
+DONGLE_REPETE = 3                 # reinitialisations du dongle en une heure : il ou son alimentation lache
+DONGLE_REPETE_SEC = 3600
+
+
+class _Dongle:
+    """Dongle radio fige puis reinitialise par le scanner (lib/dongle_fige.py,
+    2026-11-14) : on le dit ; s'il se fige encore et encore, alarme."""
+
+    def __init__(self):
+        self.vu = time.time()
+
+    def verifier(self):
+        import dongle_fige
+        nouvelles = dongle_fige.reinits_depuis(self.vu)
+        if not nouvelles:
+            return
+        self.vu = max(x["t"] for x in nouvelles)
+        recentes = dongle_fige.reinits_depuis(time.time() - DONGLE_REPETE_SEC)
+        if len(recentes) >= DONGLE_REPETE and _une_fois("dongle_repete", DONGLE_REPETE_SEC):
+            alarmes.declencher("veille_plantee", dire("systeme_veille.dongle_repete", n=nombre(len(recentes), "fois")),
+                               source="systeme")
+            return
+        derniere = nouvelles[-1]
+        _jouer("peripherique_branche", dire("systeme_veille.dongle_reinit" if derniere.get("ok")
+                                            else "systeme_veille.dongle_reinit_echec"))
+
+
 def _capteurs_ratees():
     try:
         with open(FENETRES_RATEES) as f:
@@ -662,10 +689,11 @@ def main():
     _log("demarrage")
     threading.Thread(target=_noyau, daemon=True).start()
     horloge, reseau, services, ignores_ = _Horloge(), _Reseau(), _Services(), _Ignores()
+    dongle = _Dongle()
     while True:
         for verif in (_alimentation, horloge.verifier, reseau.verifier, _WIFI.verifier, _disques, _DISQUES.verifier,
                       services.verifier,
-                      ignores_.verifier, _antenne, _capteurs_ratees, _sonde_sol):
+                      ignores_.verifier, _antenne, _capteurs_ratees, dongle.verifier, _sonde_sol):
             try:
                 verif()
             except Exception as exc:
