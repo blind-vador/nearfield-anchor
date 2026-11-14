@@ -42,6 +42,7 @@ import reglages_audio
 import relais
 import meteo_locale
 import mesure_antenne
+import carte_antenne
 import ignores  # cibles mises de cote par la commande "ignorer" (2026-10-22)
 import donnees_prise  # AIS, EAS : Dire Wolf sur la prise unique (2026-11-01)
 import preuve_voix  # rythme syllabique, deuxieme preuve de voix (2026-11-01)
@@ -708,6 +709,7 @@ def _read_csv_bins(path):
                 continue  # zone du pic DC, on ignore ce bin
             all_db.append(db)
             bins.append((freq, db))
+    carte_antenne.noter(bins)   # carte de l'antenne entretenue a chaque passe (2026-11-14)
     return all_db, bins
 
 
@@ -3147,6 +3149,35 @@ def _antenne_if_requested():
     meteo_locale.set_scanner_state("actif")
 
 
+def _antenne_direct():
+    """Antenne en direct (commande "antenne direct", lib/carte_antenne.py) : tant
+    que la console renouvelle sa demande, on repasse le segment choisi en boucle
+    et on publie chaque passe ; la console la rend en son. Rend True si on l'a fait."""
+    if not carte_antenne.direct_demande():
+        return False
+    print("[radio_watch] antenne en direct demandee par la console")
+    meteo_locale.set_scanner_state("antenne_direct")
+    seq = 0
+    try:
+        while True:
+            nom = carte_antenne.direct_demande()
+            if not nom:
+                break
+            try:
+                res = carte_antenne.mesure_directe(nom)
+            except Exception as exc:
+                res = {"erreur": "rtl_power", "nom": nom}
+                print(f"[radio_watch] antenne en direct : {exc!r}")
+            seq += 1
+            carte_antenne.publier_direct(dict(res, seq=seq, t_publie=time.time()))
+            if res.get("erreur") in ("cle_absente", "cle_occupee"):
+                time.sleep(2)
+    finally:
+        print(f"[radio_watch] antenne en direct terminee ({seq} passes)")
+        meteo_locale.set_scanner_state("actif")
+    return True
+
+
 _meteo_pause = {"last_watch": 0.0, "announced": False}
 
 
@@ -3202,6 +3233,8 @@ def _thermal_pause_wait(duration):
         meteo_locale.set_scanner_state("pause_thermique_meteo" if allowed else "pause_thermique")
         if allowed and mesure_antenne.requested():  # mesure courte, permise comme la veille meteo
             _antenne_if_requested()
+        if allowed and carte_antenne.direct_demande():  # antenne en direct : rtl_power seul, leger
+            _antenne_direct()
         wanted = meteo_locale.scan_requested() or level >= 2
         if allowed and wanted:
             if not _meteo_pause["announced"]:
@@ -4742,7 +4775,7 @@ def _scan_locked(capture):
 def _lock_pending():
     import capteurs_miens  # appairage d'un capteur demande par la console : la fenetre en cours s'arrete
     return noise_signatures.lock_request() is not None or noise_signatures.manual_request() is not None \
-        or capteurs_miens.requested() is not None
+        or capteurs_miens.requested() is not None or carte_antenne.direct_demande() is not None
 
 
 def _publish_plages():
@@ -4892,6 +4925,7 @@ def main():
     airband_bridge.SPEECH_DETECTOR_FACTORY = _speech_detector  # pre-ecoute du 446 et de l'aviation
     radio_log.start_purge_scheduler()
     _publish_plages()
+    carte_antenne.declarer(BANDS)
     manual_stream = ManualStream()  # touche F = RTLSDR-Airband, voir manual_tuner.py
     _manual["stream"] = manual_stream  # aussi pendant une pause thermique (_manual_during_pause)
     manual_pending = (None, 0.0)  # (frequence, mode) demandee, et depuis quand
@@ -5093,6 +5127,12 @@ def main():
             manual_stream.stop()
             current_lock_key = None
             _antenne_if_requested()
+            manual_pending = (None, 0.0)
+            continue
+        if carte_antenne.direct_demande():  # "antenne direct" : la cle repasse un segment en boucle
+            manual_stream.stop()
+            current_lock_key = None
+            _antenne_direct()
             manual_pending = (None, 0.0)
             continue
         manual = noise_signatures.manual_request()

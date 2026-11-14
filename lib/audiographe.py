@@ -140,10 +140,29 @@ def wav_seuil():
     return s.ecrire()
 
 
-def wav_balayage(c, graduation_mhz):
+def wav_balayage(c, graduation_mhz, duree=BALAYAGE_SEC):
     s = _Son()
-    s.balayage(c, graduation_mhz)
+    s.balayage(c, graduation_mhz, duree)
     s.silence(0.3)
+    return s.ecrire()
+
+
+def wav_direct(c, graduation_mhz, force_db, mieux=False, moins=False, duree=1.5):
+    """Une passe de l'antenne en direct (lib/carte_antenne) : le balayage court du
+    segment, puis la FORCE en hauteur (comme le balayage : aigu = fort), puis un
+    carillon montant si c'est le meilleur reglage de la seance (le centrage), ou
+    un ton grave bref si l'antenne perd nettement."""
+    s = _Son()
+    s.balayage(c, graduation_mhz, duree)
+    s.silence(0.12)
+    s.ton(_hauteur(force_db), 0.35, vol=0.35)
+    if mieux:
+        s.silence(0.05)
+        s.carillon()
+        s.carillon()
+    elif moins:
+        s.silence(0.05)
+        s.ton(FLOOR_HZ / 2, 0.25, vol=0.3)
     return s.ecrire()
 
 

@@ -218,6 +218,8 @@ def measure(bands, seuil_extra=None):
                 break
             res["bandes"].append({"nom": band["name"], "dit": band.get("name_spoken", band["name"]), "erreur": bins})
             continue
+        import carte_antenne
+        carte_antenne.noter(bins, nom=band["name"], dit=band.get("name_spoken", band["name"]))
         floor = _percentile(levels, 20)
         pic_f, pic_db = max(bins, key=lambda b: b[1])
         seuil = band.get("margin_db", 9.0) + (seuil_extra(band["name"]) if seuil_extra else 0.0)
@@ -239,6 +241,8 @@ def measure(bands, seuil_extra=None):
     if not res["erreur"]:
         _levels, bins = _passe(*UHF_AUDIO)
         if _levels is not None:
+            import carte_antenne
+            carte_antenne.noter(bins, nom=carte_antenne.UHF["nom"], dit=carte_antenne.UHF["dit"])
             res["courbes"].append(dict(audiographe.courbe(bins), nom="uhf", graduation=10))
         res["capteurs"] = _ecoute_capteurs()
     res["duree"] = round(time.time() - started)

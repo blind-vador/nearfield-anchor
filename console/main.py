@@ -140,11 +140,18 @@ _derniere_touche = [time.time()]
 
 def _retour():
     """Premiere touche apres une absence (2026-10-23) : un son, sans parole,
-    s'il y a des entrees pas encore ecoutees dans les journaux."""
+    s'il y a des entrees pas encore ecoutees dans les journaux.
+
+    Par-dessus la parole de la console, sans la couper (2026-11-14 : il passait
+    par lecture_longue._jingle, qui commence par voix.stop() et coupait l'echo
+    de la touche ou la reponse). Le clip n'est pas la parole "en cours" de la
+    console : la touche suivante ne le coupe pas non plus."""
     try:
         if os.path.ismount("/media/nas/nd1") and journal.unheard_counts():
-            import lecture_longue
-            lecture_longue._jingle("non_lus", voix)
+            import sons
+            chemin = sons.chemin("non_lus")
+            if chemin:
+                voix.Clip(chemin).wait(timeout=30)
     except Exception as exc:
         print(f"[console] retour : {exc!r}", file=sys.stderr)
 
@@ -414,7 +421,7 @@ def run_command(line, key_source, last_response):
         return volume_cmd.run(line, key_source, voix.say, out)
     if cmd.name == "antenne":
         import antenne_cmd
-        return antenne_cmd.run(line, out, _annoncer_plus_tard)
+        return antenne_cmd.run(line, out, _annoncer_plus_tard, key_source, voix.say)
     if cmd.name == "phrases":
         import phrases_cmd
         return phrases_cmd.run(key_source, voix.say, out)
