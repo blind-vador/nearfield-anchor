@@ -14,7 +14,7 @@ l'installation complète en cas de panne de carte SD.
 
 | Dossier | Contenu |
 |---|---|
-| `watchers/` | Les 7 veilles autonomes (voir tableau ci-dessous) |
+| `watchers/` | Les veilles autonomes (voir tableau ci-dessous) |
 | `lib/` | Bibliothèques partagées (synthèse vocale, verrou audio, filtres...) |
 | `nas/` | Gestion du NAS (montage/remontage automatique des disques) |
 | `console/` | Console vocale sur tty1, pilotée au clavier (voir ci-dessous) |
@@ -26,24 +26,43 @@ l'installation complète en cas de panne de carte SD.
 | `APT_PACKAGES.md` | Détail des dépendances système et des bibliothèques compilées depuis les sources |
 | `ROADMAP.md` | Historique complet du développement, en prose, un point par fonctionnalité |
 
-### Les watchers
+### Les veilles
 
-| Fichier | Rôle |
-|---|---|
-| `radio_watch.py` | Scanner radio principal — balayage large bande (CB, radioamateur, aviation militaire, VHF/UHF pro...) + décodage numérique (multimon-ng, dsd-fme) |
-| `airband_bridge.py` | Squelch réel (RTLSDR-Airband) pour PMR446 et les fréquences aéronautiques locales fixes — utilisé par `radio_watch.py` |
-| `acars_watch.py` | Décodage ACARS (messages numériques avion/compagnie) — utilisé par `radio_watch.py` |
-| `sncf_watch.py` | Annonces temps réel gare Saint-Étienne Châteaucreux (départs/arrivées/perturbations, style annonce en gare) |
-| `meteo_watch.py` | Vigilance météo officielle + alerte hyperlocale (modèle AROME) |
-| `crue_watch.py` | Vigilance crues (Vigicrues, Loire forézienne) |
-| `adsb_watch.py` | Survols d'avions à proximité (API OpenSky) |
-| `stas_watch.py` | Perturbations réseau de bus/tram (STAS Saint-Étienne) |
-| `imprimante_watch.py` | Annonces de l'imprimante 3D (OctoPrint) : chauffe atteinte, impression lancée / 25-50-75 % / en pause / reprise / terminée / annulée, erreurs, rappel d'une chauffe oubliée sans impression |
-| `usb_watch.py` | Entretien des périphériques USB : répare tout seul un port bloqué, la caméra figée, la carte son ou le clavier sans pilote, le pilote TNT sur le dongle, reconnecte l'imprimante rebranchée à OctoPrint ; prévient à la voix quand il faut agir à la main (gestes root via `tools/usb-repare`, commande console « usb ») |
+Chaque veille est un service systemd indépendant (`Restart=always`), qui tourne
+depuis ce dépôt (surcharges `systemd/dropins`). Les écoutes radio partagent une
+seule clé RTL-SDR : `radio_watch.py` les enchaîne dans son cycle (système
+d'attention, `lib/attention.py`), jamais en parallèle.
 
-Chaque watcher tourne comme un service systemd indépendant (`Restart=always`),
-sauf `airband_bridge.py`/`acars_watch.py` qui sont des modules importés par
-`radio_watch.py` (partagent le même dongle RTL-SDR en rotation séquentielle).
+| Service | Fichier | Rôle |
+|---|---|---|
+| `radio-watch` | `radio_watch.py` | Scanner principal : balayage de ~30 bandes (CB à bande L), prise unique (FM + tous les décodeurs numériques en même temps, arbitre), journal ; chef d'orchestre des fenêtres ci-dessous |
+| (fenêtre) | `airband_bridge.py` | Canaux fixes via RTLSDR-Airband : PMR446, aéroports, VHF marine ; sans voix dans la modulation de la bande : banc complet |
+| (fenêtres) | `acars_watch.py`, `vdl2_watch.py` | Messages de données des avions, dits en clair |
+| (fenêtre) | `adsb_local_watch.py` | ADS-B 1090 MHz par l'antenne, météo Mode S |
+| (fenêtres) | `aprs_watch.py`, `lora_watch.py` | APRS 144,800 MHz, relais appris ; LoRa / Meshtastic |
+| (fenêtre) | `capteurs_watch.py` | Capteurs 433/868 MHz (rtl_433), voitures par les pneus |
+| (fenêtres) | `marine_watch.py`, `balises_watch.py` | AIS et ASN canal 70 ; balises de détresse 406 MHz |
+| (fenêtres) | `pagers_watch.py`, `dab_watch.py`, `rds_watch.py` | Pagers 466 MHz ; textes et images DAB+ ; RDS des radios FM |
+| (fenêtres) | `sondes_watch.py`, `satellites_watch.py` | Ballons-sondes ; passages de satellites (Meteor, ISS, relais FM) |
+| `juges-watch` | `juges_watch.py` | Rejoue les sons bruts devant tous les décodeurs, propositions au journal |
+| `adsb-watch` | `adsb_watch.py` | Avions proches (OpenSky + antenne), urgences, hélicoptères, planeurs (OGN) |
+| `sncf-watch` | `sncf_watch.py` | Gare en temps réel : annonces, bruitages, ambiance météo, décors |
+| `stas-watch` | `stas_watch.py` | Perturbations des transports en commun de la commune |
+| `meteo-watch` | `meteo_watch.py` | Vigilance, alerte hyperlocale AROME, signes avant-coureurs des voisins |
+| `crue-watch` | `crue_watch.py` | Vigilance crues (Vigicrues) |
+| `terrain-watch` | `veille_terrain.py` | Sources ouvertes non étatiques (sites, Mastodon, Telegram publics) |
+| `imprimante-watch` | `imprimante_watch.py` | Imprimante 3D (OctoPrint) |
+| `usb-watch` | `usb_watch.py` | Réparation automatique des périphériques USB |
+| `systeme-watch` | `veille_systeme.py` | Le Pi lui-même : chaleur, alimentation, réseau, Wi-Fi, disques, dongle figé |
+| `nas-watch` | `nas/nas_watch.py` | Montage et remontage des disques du NAS |
+| `voix-preparation` | `voix_preparation.py` | Voix Piper préparées à l'avance |
+| `compagnon-watch` | `compagnon_watch.py` | Résultats de la machine compagne (Mac) |
+| `edge-maj` | `edge_maj.py` | Réparation des voix Microsoft (lancée à la demande) |
+| `son-allumage` | `son_allumage.py` | Sons d'allumage et d'extinction |
+| `log-ship` | `tools/log_ship.py` | Copie des journaux sur le NAS |
+| minuteries | `analyse_nuit.py`, `whisper_soir.py`, `tools/nearfield_maj.py`, santé des disques, audit de sécurité | Travail de nuit du Mac, transcriptions du soir, mise à jour depuis le dépôt, contrôles |
+
+`ROADMAP.md` garde l'historique complet du développement, point par point.
 
 ### Console vocale (`console/`)
 
@@ -176,7 +195,7 @@ seuil fixe — voir le module pour le détail).
 ### Copie des logs vers le NAS (`tools/log_ship.py`)
 
 Service permanent (`log-ship.service`) qui suit en continu (`journalctl
--u <unit> -f`) les 7 watchers et copie chaque ligne dans
+-u <unit> -f`) les veilles et copie chaque ligne dans
 `logs/<unit>.log` sur le NAS — survit à la rotation/troncature
 du journal systemd local (carte SD), et reste accessible même en cas de
 panne de carte SD. Extrait en plus les messages décodés (ACARS, Morse/

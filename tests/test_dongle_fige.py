@@ -31,7 +31,8 @@ class Fige(unittest.TestCase):
                   mock.patch.object(dongle_fige, "APRES_REINIT_SEC", 0),
                   mock.patch.object(dongle_fige.time, "time", lambda: self.horloge[0]),
                   mock.patch.object(dongle_fige.subprocess, "run",
-                                    lambda cmd, **k: self.appels.append(cmd) or mock.Mock(returncode=0, stdout="ok", stderr=""))]
+                                    lambda cmd, **k: (self.appels.append(cmd) if cmd[0] == "sudo" else None)
+                                    or mock.Mock(returncode=0, stdout="throttled=0x0", stderr=""))]
         for x in self.p:
             x.start()
 
@@ -48,7 +49,9 @@ class Fige(unittest.TestCase):
         self.assertFalse(dongle_fige.signaler("capteurs", "Async read stalled"), "pas deux fois en 5 minutes")
         self.horloge[0] += 400
         self.assertTrue(dongle_fige.signaler("capteurs", "Async read stalled"))
-        self.assertEqual(len(dongle_fige.reinits_depuis(0)), 2)
+        premiere, seconde = dongle_fige.reinits_depuis(0)
+        self.assertIn("bride", premiere["contexte"])          # contexte garde pour comprendre les gels
+        self.assertEqual((premiere["depuis_reinit_s"], seconde["depuis_reinit_s"]), (None, 460))
 
     def test_indice_seul_ne_suffit_pas(self):
         self.assertFalse(dongle_fige.signaler("rtl_power", "passe vide", sur=False))

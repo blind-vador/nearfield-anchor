@@ -30,6 +30,15 @@ sudo apt-get install -y \
 - `direwolf` : décodeur de données branché sur la prise unique
   (`lib/donnees_prise.py`, config `config/direwolf_donnees.conf`) : AIS des
   navires (9600 bauds) et alertes EAS/SAME, que multimon-ng ne décode pas.
+- `welle.io` : `welle-cli`, décodage de la radio numérique DAB+ (textes et
+  diaporamas, `watchers/dab_watch.py`).
+- `usbutils` : `usbreset`, appelé par `usb-repare reinit` quand le dongle radio
+  se fige (reconnu mais muet, `lib/dongle_fige.py`, 2026-11-14) ; et `lsusb`.
+- `iw` : état et réparation du Wi-Fi (`watchers/veille_systeme.py`).
+
+La liste complète, telle que l'installeur la passe, est dans `install.sh`
+(étape 1/6) ; ce fichier explique les paquets principaux.
+
 - `build-essential`, `cmake`, `git` : nécessaires pour compiler les
   bibliothèques ci-dessous depuis les sources (aucune n'est empaquetée
   Debian/Raspbian).

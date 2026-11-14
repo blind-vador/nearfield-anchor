@@ -30,9 +30,11 @@ import json
 import os
 import time
 
+import chemins
+
 NAS_ROOT = "/media/nas/nd1"
 STORE_NAS = f"{NAS_ROOT}/server/radio_log/propositions.json"
-STORE_LOCAL = "/home/vador/autopilot/pi_console/propositions.json"
+STORE_LOCAL = chemins.base("pi_console", "propositions.json")   # plus de /home/<utilisateur> en dur (2026-11-14)
 LOCK_PATH = "/tmp/propositions.lock"
 MAX_ENTRIES = 300
 

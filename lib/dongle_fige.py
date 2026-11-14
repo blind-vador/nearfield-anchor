@@ -79,6 +79,36 @@ def trouver(sys_dir=None):
     return None
 
 
+def _contexte(dev):
+    """Ce qui peut expliquer un gel (2026-11-14 : cause encore inconnue -- clef
+    reconnue, plus aucun echantillon, aucune erreur du noyau) : chaleur du Pi,
+    bridage et sous-tension depuis le demarrage, ce qui tournait sur la clef,
+    depuis quand elle marchait. Garde avec chaque reinitialisation."""
+    ctx = {}
+    try:
+        with open("/sys/class/thermal/thermal_zone0/temp") as f:
+            ctx["temp_c"] = round(int(f.read()) / 1000, 1)
+    except (OSError, ValueError):
+        pass
+    try:
+        r = subprocess.run(["vcgencmd", "get_throttled"], capture_output=True, text=True, timeout=5)
+        ctx["bride"] = r.stdout.strip().split("=")[-1]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        r = subprocess.run(["pgrep", "-a", "-f", "rtl_|rtl_airband|dump1090|welle-cli|dec406|acarsdec|dumpvdl2"],
+                           capture_output=True, text=True, timeout=5)
+        ctx["outils"] = [l.split(None, 1)[-1][:80] for l in r.stdout.splitlines()][:5]
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        with open(os.path.join(SYS, dev, "devnum")) as f:
+            ctx["devnum"] = int(f.read())
+    except (OSError, ValueError):
+        pass
+    return ctx
+
+
 def signaler(source, detail="", sur=True):
     """Un lecteur du dongle n'a rien recu. Rend True si on vient de le reinitialiser."""
     now = time.time()
@@ -96,6 +126,7 @@ def signaler(source, detail="", sur=True):
     if not dev:
         print(f"[dongle_fige] {source} : dongle introuvable, rien a reinitialiser", flush=True)
         return False
+    ctx = _contexte(dev)
     try:
         r = subprocess.run(HELPER + [dev], capture_output=True, text=True, timeout=30)
         ok = r.returncode == 0
@@ -103,10 +134,12 @@ def signaler(source, detail="", sur=True):
     except (OSError, subprocess.TimeoutExpired) as exc:
         ok, message = False, repr(exc)
     print(f"[dongle_fige] {source} : {detail[:160]} -> reinitialisation USB de {dev} : "
-          f"{'faite' if ok else 'echec'} ({message})", flush=True)
+          f"{'faite' if ok else 'echec'} ({message}) ; contexte {ctx}", flush=True)
+    precedente = etat.get("derniere")
     etat.update(derniere=now, soupcons=[])
     etat["reinits"] = (etat.get("reinits") or [])[-(HISTORIQUE_MAX - 1):] + [
-        {"t": now, "source": source, "detail": detail[:200], "ok": ok}]
+        {"t": now, "source": source, "detail": detail[:200], "ok": ok, "contexte": ctx,
+         "depuis_reinit_s": round(now - precedente) if precedente else None}]
     _ecrire(etat)
     if ok:
         time.sleep(APRES_REINIT_SEC)   # le temps que le noyau le remette en service

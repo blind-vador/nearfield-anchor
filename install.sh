@@ -62,7 +62,8 @@ apt-get install -y \
     zlib1g-dev libxml2-dev libliquid-dev meson ninja-build nlohmann-json3-dev \
     libopenblas0 samba \
     python3-evdev python3-fuzzywuzzy python3-levenshtein python3-pil \
-    python3-cryptography python3-serial libssl-dev smartmontools
+    python3-cryptography python3-serial libssl-dev smartmontools \
+    welle.io usbutils iw   # DAB+ (welle-cli), usbreset du dongle fige (usb-repare reinit), Wi-Fi (veille systeme)
 # smartd (service de smartmontools) : remplace par sante-disques.timer, qui lit les memes mesures
 systemctl disable --now smartmontools.service 2>/dev/null || true
 
