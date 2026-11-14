@@ -35,7 +35,27 @@ EFFETS = {
     "vibrato": "vibrato=f=6:d=0.4",
     "grave": f"asetrate={_TAUX}*0.82,aresample={_TAUX},atempo=1.2195",
     "aigu": f"asetrate={_TAUX}*1.2,aresample={_TAUX},atempo=0.8333",
+    # 2026-11-14, demande utilisateur : "echo plus long, autres reverbes"
+    "echo_long": "aecho=0.8:0.6:420|840|1260:0.45|0.3|0.18",
+    "cathedrale": ("aecho=0.8:0.9:61|113|167|229|293|389|523|683|887|1103:"
+                   "0.55|0.5|0.46|0.42|0.38|0.33|0.28|0.23|0.18|0.13"),
+    "salle": "aecho=0.9:0.8:19|31|47|67|89:0.35|0.3|0.25|0.2|0.15",
+    "megaphone": "highpass=f=400,lowpass=f=3600,equalizer=f=1700:t=q:w=1.5:g=6,acompressor=threshold=0.1:ratio=4",
+    "radio_ancienne": "highpass=f=320,lowpass=f=2600,acrusher=bits=9:mode=log:aa=1,tremolo=f=8:d=0.12",
+    "lointain": "lowpass=f=1800,aecho=0.7:0.6:90|170:0.35|0.25",
+    "phaser": "aphaser=in_gain=0.6:out_gain=0.9:delay=3:decay=0.5:speed=0.5",
 }
+# Correction de volume (dB) par effet, mesuree sur des voix du cache (2026-11-14,
+# niveau de la parole active, 5 voix Microsoft) : chaque effet sonne aussi fort
+# que la voix seche. Robot perdait 14,5 dB, echo 5,8, flanger 5,1, telephone 4,1.
+GAINS_DB = {
+    "echo": 5.8, "reverbe": 0.9, "harmonique": -0.8, "dissonant": -0.9, "choeur": 2.0,
+    "robot": 14.5, "telephone": 4.1, "flanger": 5.1, "vibrato": -0.8,
+    "echo_long": 9.6, "cathedrale": 2.5, "salle": 1.6, "megaphone": 8.0,
+    "radio_ancienne": 5.2, "lointain": 7.3, "phaser": 5.3,
+}
+# Apres le gain : les cretes restent sous -1 dBFS (pas de saturation).
+LIMITEUR = "alimiter=limit=0.89:attack=5:release=60:level=0"
 CHOIX = [AUCUN, ALEATOIRE] + list(EFFETS)
 
 
@@ -49,7 +69,11 @@ def tirer(reglage):
 def filtre(effet_id):
     """Chaine -af complete, ou None."""
     f = EFFETS.get(effet_id or "")
-    return f"aresample={_TAUX},{f}" if f else None
+    if not f:
+        return None
+    gain = GAINS_DB.get(effet_id, 0.0)
+    regle = f",volume={gain:+.1f}dB" if gain else ""
+    return f"aresample={_TAUX},{f}{regle},{LIMITEUR}"
 
 
 def cuire(chemin, effet_id):

@@ -46,6 +46,39 @@ class Effets(unittest.TestCase):
                 self.assertGreater(duree(f), 1.5, nom)
         self.assertFalse(effets_voix.cuire(self.voix, "inconnu"))
 
+    def test_volume_egalise(self):
+        """2026-11-14, signale par l'utilisateur : certains effets baissaient le
+        volume (robot -14 dB). Sur une phrase, aucun
+        effet ne s'ecarte de plus de 4 dB de la voix seche (espeak) ; crete sous 0 dBFS."""
+        import numpy as np
+        rose = os.path.join(self.tmp, "parole.wav")
+        try:
+            subprocess.run(["espeak", "-v", "fr", "-w", rose, "Le train de dix-sept heures quarante deux "
+                            "entre en gare, voie trois. Éloignez-vous de la bordure du quai."], check=True)
+        except (OSError, subprocess.CalledProcessError):
+            self.skipTest("espeak absent")
+
+        def niveau(f):
+            args = ["ffmpeg", "-v", "error", "-i", rose] + (["-af", f] if f else []) + [
+                "-ac", "1", "-ar", "44100", "-f", "f32le", "-"]
+            x = np.frombuffer(subprocess.run(args, capture_output=True).stdout, dtype=np.float32)
+            n = len(x) // 2205 * 2205
+            db = 20 * np.log10(np.sqrt((x[:n].reshape(-1, 2205) ** 2).mean(1)) + 1e-9)
+            actif = db[db > db.max() - 30]
+            return 10 * np.log10((10 ** (actif / 10)).mean()), np.abs(x).max()
+        sec, _ = niveau(None)
+        for nom in effets_voix.EFFETS:
+            db, crete = niveau(effets_voix.filtre(nom))
+            self.assertLess(abs(db - sec), 4.0, (nom, round(db - sec, 1)))
+            self.assertLess(crete, 1.0, nom)
+        self.assertLessEqual(set(effets_voix.GAINS_DB), set(effets_voix.EFFETS))
+
+    def test_chaque_effet_a_un_nom(self):
+        import phrases
+        neutre = phrases._read(os.path.join(ICI, "..", "phrases", "fr.ini"))
+        for nom in effets_voix.EFFETS:
+            self.assertIn(f"voix.effet.{nom}", neutre, nom)
+
     def test_lecture_avec_effet(self):
         import sound_player
         lances = []

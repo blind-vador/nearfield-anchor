@@ -223,10 +223,36 @@ def a_assembler(text):
     return False
 
 
-def spoken(parts):
-    """Ce qui est dit, sans les marques de collage (elles ne se prononcent pas)."""
-    mots = []
+def _nombres_regroupes(parts):
+    """Les mots d'un meme nombre (colles par COLLE_NOMBRE) redeviennent un
+    nombre en chiffres : une voix qui lit la phrase d'un bloc lit le nombre
+    elle-meme. « 10000 » puis « 100 » cote a cote se lisaient « dix millions
+    cent mille » (espeak, 2026-11-14). L'alphabet radio reste en mots."""
+    out, run = [], []
+
+    def vider():
+        if not run:
+            return
+        chiffres = atomes_parole.en_chiffres([t for t, _ in run]) if len(run) > 1 else None
+        if chiffres is None:
+            out.extend(run)
+        else:
+            out.append((chiffres, run[-1][1]))
+        run.clear()
+
     for t, p in parts:
+        run.append((t, p))
+        if p != atomes_parole.COLLE_NOMBRE:
+            vider()
+    vider()
+    return out
+
+
+def spoken(parts):
+    """Ce qui est dit, sans les marques de collage (elles ne se prononcent pas).
+    Les nombres colles reviennent en chiffres (_nombres_regroupes)."""
+    mots = []
+    for t, p in _nombres_regroupes(parts):
         mot = str(t).strip()
         if not mot:
             continue

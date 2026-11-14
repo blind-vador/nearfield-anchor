@@ -224,6 +224,43 @@ def mots_entier(n):
     return [UNITES[int(d)] for d in str(abs(n))]
 
 
+_VALEURS = dict({u: i for i, u in enumerate(UNITES)}, **{
+    "vingt": 20, "trente": 30, "quarante": 40, "cinquante": 50, "soixante": 60,
+    "dix-sept": 17, "dix-huit": 18, "dix-neuf": 19, "quatre-vingts": 80, "quatre-vingt": 80,
+    "quatre-vingt-dix": 90, "et un": 1, "et une": 1, "et onze": 11, "une": 1, "cent": 100})
+_MULTIPLES = {"mille": 1000, "million": 10 ** 6, "millions": 10 ** 6,
+              "milliard": 10 ** 9, "milliards": 10 ** 9}
+
+
+def en_chiffres(mots):
+    """Mots d'un nombre colle (mots_entier) -> le nombre en chiffres, ou None.
+    [« 10000 », « 100 », « vingt », « trois »] -> « 10123 ». Pour une phrase
+    dite d'un bloc (espeak, MBROLA, Google, Mac) : « 10000 100 vingt trois »
+    s'y lit « dix millions cent mille vingt-trois » (2026-11-14, avions a plus
+    de 9 millions de metres). Zero en tete, virgule, « premier » : None."""
+    mots = [str(m).strip() for m in mots if str(m).strip()]
+    signe = 1
+    if mots and mots[0] == "moins":
+        signe, mots = -1, mots[1:]
+    if len(mots) < 2 or mots[0] == "zéro":
+        return None
+    total = courant = 0
+    for m in mots:
+        if m.isdigit():
+            courant += int(m)
+        elif m in _VALEURS:
+            if m == "cent":
+                courant = (courant or 1) * 100
+            else:
+                courant += _VALEURS[m]
+        elif m in _MULTIPLES:
+            total += (courant or 1) * _MULTIPLES[m]
+            courant = 0
+        else:
+            return None
+    return str(signe * (total + courant))
+
+
 def _mots_chaine_entier(s):
     """« 007 » -> zéro zéro sept ; « 410 » -> 400, dix."""
     neg = s.startswith("-")
