@@ -23,7 +23,15 @@ from sound_paths import METEO_SCANER_DIR
 
 DONNEES_DIR = "/media/nas/nd1/server/radio_log/donnees"
 import sons
-SOUND = sons.chemin("jingle_flashinfo", os.path.join(METEO_SCANER_DIR, "simple_message.mp3"))
+# Son propre du resume horaire (2026-11-14, demande utilisateur : il partageait le
+# jingle du flash info). Lu a chaque resume : un fichier pose plus tard sur le NAS
+# (server/jingles/resume_donnees.mp3) sert sans redemarrer ; en attendant, le
+# simple message, jamais le jingle du flash.
+REPLI_SON = os.path.join(METEO_SCANER_DIR, "simple_message.mp3")
+
+
+def _son():
+    return sons.chemin("jingle_resume_donnees", REPLI_SON)
 ETIQUETTE = "trafic_donnees"
 EXEMPLES = 6
 # Deja une parole a part : le resume de donnees ne les reprend pas.
@@ -300,7 +308,7 @@ def faire(fin=None):
         print(f"[trafic_heure] aucun trafic de donnees entre {debut:%H:%M} et {fin:%H:%M}")
         return None
     dit, auteur = paragraphe(donnees, debut, fin)
-    chemin = prise_vocale.record(dit, SOUND, ETIQUETTE,
+    chemin = prise_vocale.record(dit, _son(), ETIQUETTE,
                                  meta={"source": "trafic de donnees", "debut": str(debut), "fin": str(fin),
                                        "auteur": auteur, "donnees": donnees}, source="donnees")
     print(f"[trafic_heure] {debut:%H:%M}-{fin:%H:%M} ({auteur}) : {dit[:160]}")

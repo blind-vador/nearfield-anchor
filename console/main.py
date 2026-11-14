@@ -144,14 +144,17 @@ def _retour():
 
     Par-dessus la parole de la console, sans la couper (2026-11-14 : il passait
     par lecture_longue._jingle, qui commence par voix.stop() et coupait l'echo
-    de la touche ou la reponse). Le clip n'est pas la parole "en cours" de la
-    console : la touche suivante ne le coupe pas non plus."""
+    de la touche ou la reponse). Le son n'est pas la parole "en cours" de la
+    console : la touche suivante ne le coupe pas non plus. Joue par
+    sound_player, qui decode le MP3 (2026-11-14 : voix.Clip le passait a aplay,
+    qui ne lit que du WAV -- des gresillements a la place du son)."""
     try:
         if os.path.ismount("/media/nas/nd1") and journal.unheard_counts():
             import sons
+            import sound_player
             chemin = sons.chemin("non_lus")
             if chemin:
-                voix.Clip(chemin).wait(timeout=30)
+                sound_player.play_sound_effect(chemin, timeout_sec=30, label="console_retour")
     except Exception as exc:
         print(f"[console] retour : {exc!r}", file=sys.stderr)
 

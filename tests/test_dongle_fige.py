@@ -29,6 +29,8 @@ class Fige(unittest.TestCase):
         self.p = [mock.patch.object(dongle_fige, "ETAT", os.path.join(self.tmp, "etat.json")),
                   mock.patch.object(dongle_fige, "SYS", sysd),
                   mock.patch.object(dongle_fige, "APRES_REINIT_SEC", 0),
+                  mock.patch.dict(sys.modules, {"requests": mock.Mock(get=lambda *a, **k: mock.Mock(
+                      json=lambda: {"current": {"temperature_2m": 1.5, "relative_humidity_2m": 92}}))}),
                   mock.patch.object(dongle_fige.time, "time", lambda: self.horloge[0]),
                   mock.patch.object(dongle_fige.subprocess, "run",
                                     lambda cmd, **k: (self.appels.append(cmd) if cmd[0] == "sudo" else None)

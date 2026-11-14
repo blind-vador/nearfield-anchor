@@ -33,11 +33,14 @@ class Retour(unittest.TestCase):
         }
         import sys
         sys.modules["sons"] = types.SimpleNamespace(chemin=lambda e: f"/sons/{e}.mp3")
+        # le MP3 passe par le lecteur qui le decode (pas aplay : gresillements, 2026-11-14)
+        sys.modules["sound_player"] = types.SimpleNamespace(
+            play_sound_effect=lambda chemin, **k: joues.append(chemin))
         try:
             exec(compile(ast.get_source_segment(source, noeud), src_path, "exec"), espace)
             espace["_retour"]()
         finally:
-            del sys.modules["sons"]
+            del sys.modules["sons"], sys.modules["sound_player"]
         self.assertEqual(joues, ["/sons/non_lus.mp3"])
         self.assertEqual(coupes, [], "la parole de la console n'est pas coupee")
 

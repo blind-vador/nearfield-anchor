@@ -67,6 +67,7 @@ SONS = {
     "jingle_meteo": "jingles/meteo.mp3",
     "jingle_transport": "jingles/transport.mp3",
     "jingle_sport": "jingles/sport.mp3",
+    "jingle_resume_donnees": "jingles/resume_donnees.mp3",   # 2026-11-14 : plus celui du flash info
     # terrain, plantes, camera
     "terrain_urgence": "terrain/urgence.mp3",
     "terrain_alerte": "terrain/alerte.mp3",

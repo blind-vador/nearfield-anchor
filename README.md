@@ -257,3 +257,19 @@ VoiceOver) gere les ponts : appairage en meme temps que la commande
 statistiques, suppression, pause. Les images des satellites meteo ne sont
 ecoutees que si une machine compagne est appairee. Details : ROADMAP.md,
 section du 2026-10-01 sur le pont.
+
+## Licence
+
+Copyright (C) 2026 blind-vador et les contributeurs de nearfield_anchor.
+
+Ce programme est un logiciel libre : vous pouvez le redistribuer et/ou le
+modifier selon les termes de la licence publique générale GNU (GNU GPL) telle
+que publiée par la Free Software Foundation, soit la version 3 de la licence,
+soit (à votre choix) toute version ultérieure (`GPL-3.0-or-later`).
+
+Ce programme est distribué dans l'espoir qu'il sera utile, mais SANS AUCUNE
+GARANTIE, sans même la garantie implicite de COMMERCIALISATION ou
+d'ADÉQUATION À UN USAGE PARTICULIER. Voir le texte complet dans `LICENSE`.
+
+Les sons et contenus audio personnels (banques sonores, capsules de radiono)
+ne font pas partie du dépôt et ne sont pas couverts par cette licence.

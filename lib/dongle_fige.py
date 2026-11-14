@@ -83,7 +83,8 @@ def _contexte(dev):
     """Ce qui peut expliquer un gel (2026-11-14 : cause encore inconnue -- clef
     reconnue, plus aucun echantillon, aucune erreur du noyau) : chaleur du Pi,
     bridage et sous-tension depuis le demarrage, ce qui tournait sur la clef,
-    depuis quand elle marchait. Garde avec chaque reinitialisation."""
+    temps et humidite dehors (la clef est au pied du mat, au bout d'une
+    rallonge, hub alimente). Garde avec chaque reinitialisation."""
     ctx = {}
     try:
         with open("/sys/class/thermal/thermal_zone0/temp") as f:
@@ -100,6 +101,19 @@ def _contexte(dev):
                            capture_output=True, text=True, timeout=5)
         ctx["outils"] = [l.split(None, 1)[-1][:80] for l in r.stdout.splitlines()][:5]
     except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:  # la clef est dehors, au pied du mat (2026-11-14) : froid et humidite du moment
+        import reglages
+        import requests
+        lieu = reglages.get("lieu") or {}
+        if lieu.get("lat") is not None:
+            cur = requests.get("https://api.open-meteo.com/v1/forecast", timeout=5, params={
+                "latitude": lieu["lat"], "longitude": lieu["lon"],
+                "current": "temperature_2m,relative_humidity_2m,dew_point_2m,precipitation",
+                "timezone": "Europe/Paris"}).json().get("current", {})
+            ctx["dehors"] = {"temp_c": cur.get("temperature_2m"), "humidite": cur.get("relative_humidity_2m"),
+                             "rosee_c": cur.get("dew_point_2m"), "pluie_mm": cur.get("precipitation")}
+    except Exception:
         pass
     try:
         with open(os.path.join(SYS, dev, "devnum")) as f:
