@@ -42,6 +42,21 @@ PERSONA_FAMILIES = {"appairage", "arbre", "archives", "commun", "conseils", "con
                     "manuel", "nav", "notation", "observation", "personnalite", "priorites", "reglages",
                     "veilles", "voix", "maj", "vision", "simulation"}
 PERSONA_MAX_LEN = 140
+# Vocabulaire protege (2026-11-14, signale par l'utilisateur : la personnalite du
+# jour disait "nom de serre propose", "changement de tuteur", "frequence arrosee").
+# Le mot d'une phrase neutre qui commence par une de ces racines doit se retrouver
+# dans la phrase du jour (accents et casse ignores, pluriel admis) : la
+# personnalite colore autour, elle ne remplace jamais le mot technique. Sinon la
+# phrase neutre est dite.
+TERMES_PROTEGES = (
+    "station", "frequen", "megahertz", "kilohertz", "decibel", "juge", "decodeur", "decodag", "proposition",
+    "propos", "rendu", "prise", "relais", "bande", "modulation", "canal", "canaux", "nom", "renomm", "indicatif",
+    "parasite", "journal", "journaux", "capteur", "antenne", "scanner", "examen", "nettoy", "signal", "garde",
+    "rejet", "filtre", "supprim", "effac", "confirm", "oubli", "chiffr", "numerique", "analogique", "dmr", "fm",
+    "am", "blu", "whisper", "mac", "ia", "transcri", "seuil", "bruit", "pic", "alarme", "alerte", "urgence",
+    "detresse", "surveill", "veille", "note", "noter", "valid", "ecout", "enregistr", "minute", "heure", "jour",
+    "plante", "pot", "arros", "sonde", "imprim", "touche", "liste", "reseau", "ligne", "voix", "volume",
+)
 
 
 def rewritable(cle, entry):
@@ -98,8 +113,39 @@ def _read(path):
     return data
 
 
+DEPOT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "phrases")
+_copie_vue = {}
+COPIE_VERIF_SEC = 30
+
+
+def _rafraichir_copie(nom):
+    """La copie deployee (BASE_DIR) suit le depot, quel que soit le deploiement
+    (2026-11-14 : un "git pull" a la main ne la recopiait pas ; 31 phrases dites
+    par leur cle, "antenne tiret bas direct point fin" -- deja vu le 11/11 avec
+    "examen.pret"). Le depot plus recent que la copie : on recopie, a chaud."""
+    import time
+    import shutil
+    if time.time() - _copie_vue.get(nom, 0) < COPIE_VERIF_SEC:
+        return
+    _copie_vue[nom] = time.time()
+    src, dest = os.path.join(DEPOT_DIR, nom), os.path.join(BASE_DIR, nom)
+    try:
+        if os.path.realpath(src) == os.path.realpath(dest) or not os.path.isfile(src):
+            return
+        if os.path.exists(dest) and os.path.getmtime(dest) >= os.path.getmtime(src):
+            return
+        tmp = f"{dest}.{os.getpid()}.tmp"
+        shutil.copy2(src, tmp)
+        os.replace(tmp, dest)
+        print(f"[phrases] copie {dest} mise a jour depuis le depot")
+    except OSError as exc:
+        print(f"[phrases] copie de {nom} impossible : {exc}")
+
+
 def base(lang=None):
-    return _read(os.path.join(BASE_DIR, f"{lang or langue()}.ini"))
+    nom = f"{lang or langue()}.ini"
+    _rafraichir_copie(nom)
+    return _read(os.path.join(BASE_DIR, nom))
 
 
 def persona_path(lang=None):
@@ -110,10 +156,31 @@ def variables(text):
     return {name for _, name, _, _ in string.Formatter().parse(text) if name}
 
 
+def _sans_accents(text):
+    import unicodedata
+    text = re.sub(r"\{[^}]*\}", " ", text)        # les variables ne comptent pas comme des mots
+    return unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode().lower()
+
+
+def termes_perdus(neutre, nouveau):
+    """Mots du vocabulaire protege presents dans la neutre, absents de la nouvelle."""
+    mots_neutre = re.findall(r"[a-z0-9]+", _sans_accents(neutre))
+    mots_nouveau = re.findall(r"[a-z0-9]+", _sans_accents(nouveau))
+    perdus = []
+    for mot in mots_neutre:
+        racine = next((t for t in TERMES_PROTEGES if mot.startswith(t) and (len(t) >= 4 or mot == t)), None)
+        if racine and not any(m.startswith(racine) and (len(racine) >= 4 or m == racine) for m in mots_nouveau):
+            perdus.append(mot)
+    return sorted(set(perdus))
+
+
 def valid(entry, new_text):
     """La phrase du jour respecte-t-elle la neutre ? (rend une raison, ou None)"""
     if not new_text or "\n" in new_text:
         return "vide ou sur plusieurs lignes"
+    perdus = termes_perdus(entry["texte"], new_text)
+    if perdus:
+        return f"mot technique remplace : {', '.join(perdus)}"
     if variables(new_text) != variables(entry["texte"]):
         return "variables differentes"
     for word in entry["garder"]:
