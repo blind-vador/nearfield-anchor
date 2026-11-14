@@ -83,8 +83,15 @@ def _contexte(dev):
     """Ce qui peut expliquer un gel (2026-11-14 : cause encore inconnue -- clef
     reconnue, plus aucun echantillon, aucune erreur du noyau) : chaleur du Pi,
     bridage et sous-tension depuis le demarrage, ce qui tournait sur la clef,
-    temps et humidite dehors (la clef est au pied du mat, au bout d'une
-    rallonge, hub alimente). Garde avec chaque reinitialisation."""
+    temps et humidite dehors (la piece suit le dehors). Garde avec chaque
+    reinitialisation.
+
+    Montage (2026-11-14, precise par l'utilisateur) : Pi 4 rev 1.1 aux ports
+    USB en partie defaillants -> rallonge -> hub alimente sur secteur
+    (Genesys 05e3:0610, un seul TT) -> courte rallonge passive -> clef, a
+    l'interieur, au pied du mat -> filtre FM -> cable SMA -> antenne. Seule la
+    clef parle en haut debit (480 Mbit/s, transferts en masse) ; la carte son
+    du meme hub est en pleine vitesse (12 Mbit/s) et ne se fige jamais."""
     ctx = {}
     try:
         with open("/sys/class/thermal/thermal_zone0/temp") as f:
@@ -102,7 +109,7 @@ def _contexte(dev):
         ctx["outils"] = [l.split(None, 1)[-1][:80] for l in r.stdout.splitlines()][:5]
     except (OSError, subprocess.TimeoutExpired):
         pass
-    try:  # la clef est dehors, au pied du mat (2026-11-14) : froid et humidite du moment
+    try:  # froid et humidite du moment (la piece suit le dehors)
         import reglages
         import requests
         lieu = reglages.get("lieu") or {}
