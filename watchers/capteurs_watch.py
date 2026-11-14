@@ -20,6 +20,7 @@ Les derniers releves sont publies (READINGS_PATH) pour la console et le
 flash ; tout est archive.
 """
 import chemins
+import collections
 import json
 import os
 import subprocess
@@ -539,22 +540,60 @@ def pairing_session():
 
 
 FENETRES_VIDES = chemins.base("capteurs_fenetres_vides")
+# rtl_433 qui s'arrete tout de suite (2026-11-14 : 4 s au lieu de 30 a chaque
+# ecoute depuis 5 h 19, compte comme "ecoute vide" -> "antenne muette" chaque
+# matin). Une ecoute ratee n'est plus une ecoute vide : elle a son propre compteur
+# et sa propre alarme (veille_systeme, "ecoute des capteurs en panne").
+FENETRES_RATEES = chemins.base("capteurs_fenetres_ratees")
+ECOUTE_MIN_PART = 0.7          # en dessous de 70 % du temps prevu : ecoute ratee
+TRAMES_PAR_FREQ = chemins.base("capteurs_trames_freq.json")
+FREQ_VIVANTE_SEC = 7 * 86400   # une frequence ou l'on a eu des trames cette semaine
 
 
-def _compter_fenetre_vide(vide):
-    """Ecoutes des capteurs faites de suite sans aucune trame (2026-10-24) :
-    l'alarme antenne muette ne compte que des ecoutes reellement faites (le
-    mode restreint les sautait, et elle sonnait a tort)."""
+def _compteur(chemin, plus_un):
     try:
-        with open(FENETRES_VIDES) as f:
+        with open(chemin) as f:
             n = int(f.read().strip() or 0)
     except (OSError, ValueError):
         n = 0
     try:
-        with open(FENETRES_VIDES, "w") as f:
-            f.write(str(n + 1 if vide else 0))
+        with open(chemin, "w") as f:
+            f.write(str(n + 1 if plus_un else 0))
     except OSError:
         pass
+
+
+def _trames_freq():
+    try:
+        with open(TRAMES_PAR_FREQ) as f:
+            data = json.load(f)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def _compter_fenetre(freq, trames, ecoute_ok):
+    """Compteurs pour veille_systeme.
+
+    vides  : ecoutes reellement faites, de suite, sans trame, sur une frequence
+             qui en donne d'habitude (2026-11-14 : 315, 345, 915 MHz ne donnent
+             presque jamais rien ici, elles gonflaient le compte). Le mode
+             restreint, qui saute les ecoutes, ne compte pas (2026-10-24).
+    ratees : ecoutes ou rtl_433 s'est arrete avant l'heure, de suite."""
+    _compteur(FENETRES_RATEES, not ecoute_ok)
+    if not ecoute_ok:
+        return
+    vues = _trames_freq()
+    if trames:
+        vues[freq] = time.time()
+        try:
+            with open(TRAMES_PAR_FREQ, "w") as f:
+                json.dump(vues, f)
+        except OSError:
+            pass
+        _compteur(FENETRES_VIDES, False)
+    elif time.time() - vues.get(freq, 0) < FREQ_VIVANTE_SEC:
+        _compteur(FENETRES_VIDES, True)
 
 
 def scan_window(dwell_sec=30):
@@ -566,13 +605,21 @@ def scan_window(dwell_sec=30):
         taux = ["-s", SAMPLE_RATES[freq]] if freq in SAMPLE_RATES else []
         proc = subprocess.Popen(["rtl_433", "-d", "0", "-f", freq] + taux + ["-F", "json", "-M", "level",
                                  "-C", "si", "-T", str(int(dwell_sec))],
-                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+                                stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except FileNotFoundError:
         print("[capteurs_watch] rtl_433 introuvable")
         return False
     events, tpms = [], []
+    erreurs = collections.deque(maxlen=12)
     reader = threading.Thread(target=_reader, args=(proc, events), daemon=True)
     reader.start()
+
+    def lire_erreurs():
+        for ligne in proc.stderr:
+            ligne = ligne.decode(errors="replace").strip()
+            if ligne and not ligne.startswith(("Trying conf", "Registered", "Use -h", "rtl_433 version")):
+                erreurs.append(ligne)
+    threading.Thread(target=lire_erreurs, daemon=True).start()
     announced = False
     count = 0
     started = time.time()
@@ -603,6 +650,11 @@ def scan_window(dwell_sec=30):
 
         _memory.save()
         connus.save()
+    ecoute = time.time() - started
+    ecoute_ok = bool(count) or ecoute >= ECOUTE_MIN_PART * dwell_sec
+    if not ecoute_ok:
+        print(f"[capteurs_watch] rtl_433 arrete apres {ecoute:.0f} s sur {freq} (code {proc.returncode}) : "
+              f"{' | '.join(erreurs) or 'aucun message'}", flush=True)
     if count:
         print(f"[capteurs_watch] {count} trame(s) capteurs sur {freq}")
         try:  # antenne vivante (veille_systeme : antenne muette)
@@ -618,5 +670,5 @@ def scan_window(dwell_sec=30):
                 play_sound_effect(sons.chemin("trame_non_dite", SOUND), label="capteurs_watch")
             finally:
                 audio_lock.release(lock)
-    _compter_fenetre_vide(not count)
+    _compter_fenetre(freq, count, ecoute_ok)
     return announced

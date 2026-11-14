@@ -604,6 +604,21 @@ ANTENNE_MUETTE_SEC = 2 * 3600    # d'habitude une trame toutes les 10 minutes en
 ANTENNE_RAPPEL_SEC = 3 * 3600
 ANTENNE_FENETRES_MIN = 6         # au moins 6 ecoutes des capteurs de suite, toutes sans trame
 FENETRES_VIDES = chemins.base("capteurs_fenetres_vides")
+# rtl_433 qui s'arrete aussitot (2026-11-14) : ce n'est pas l'antenne, on le dit
+# comme tel (capteurs_watch tient le compte des ecoutes ratees de suite).
+FENETRES_RATEES = chemins.base("capteurs_fenetres_ratees")
+RATEES_MIN = 4
+RATEES_RAPPEL_SEC = 6 * 3600
+
+
+def _capteurs_ratees():
+    try:
+        with open(FENETRES_RATEES) as f:
+            n = int(f.read().strip() or 0)
+    except (OSError, ValueError):
+        return
+    if n >= RATEES_MIN and _une_fois("capteurs_ratees", RATEES_RAPPEL_SEC):
+        _jouer("veille_plantee", dire("systeme_veille.capteurs_ratees", n=nombre(n, "écoute")))
 
 
 def _antenne():
@@ -650,7 +665,7 @@ def main():
     while True:
         for verif in (_alimentation, horloge.verifier, reseau.verifier, _WIFI.verifier, _disques, _DISQUES.verifier,
                       services.verifier,
-                      ignores_.verifier, _antenne, _sonde_sol):
+                      ignores_.verifier, _antenne, _capteurs_ratees, _sonde_sol):
             try:
                 verif()
             except Exception as exc:

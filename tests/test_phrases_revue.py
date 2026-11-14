@@ -11,6 +11,9 @@ sys.path[:0] = [os.path.join(RACINE, d) for d in ("lib", "config", "bridge", "co
 import phrases  # noqa: E402
 
 phrases.BASE_DIR = os.path.join(RACINE, "phrases")
+# Jamais la personnalite du jour : le texte neutre du depot (2026-11-14, "30 pour cent
+# de floraison" un matin de personnalite fleurie).
+phrases.PERSONA_DIR = tempfile.mkdtemp()
 
 # --- l'outil de verification passe sur tout le depot
 r = subprocess.run([sys.executable, os.path.join(RACINE, "tools", "phrases_verifier.py")],
