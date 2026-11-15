@@ -228,7 +228,7 @@ mod tests {
         assert_eq!(m.niveau, Niveau::Logiciel);
         assert!(m.transport.is_some());
         // Ordonnateur : sans clé de transport.
-        let o = preparer(&v1, &v2, PARC, "deepspace9", None).unwrap();
+        let o = preparer(&v1, &v2, PARC, "pi-ordonnateur", None).unwrap();
         assert!(verifier(&o, PARC, &v1.cle_publique(), None).unwrap().transport.is_none());
     }
 

@@ -386,7 +386,7 @@ def test_migration_complete_depuis_de_vraies_cles_v1(tmp_path):
     assert ancien_pi.cle_publique() == fiche_pi_vue_du_mac  # la v2 relit bien la clé v1
     ord_v2 = np_.Coffre.generer("p256")
     parc = ord_v2.id
-    canal_pi.send({"type": "migration", "objet": np_.preparer_migration(ancien_pi, ord_v2, parc, "deepspace9")})
+    canal_pi.send({"type": "migration", "objet": np_.preparer_migration(ancien_pi, ord_v2, parc, "pi-ordonnateur")})
 
     # 2. La machine vérifie avec la clé v1 du Pi qu'elle connaît, et épingle la v2.
     recu = canal_mac.receive(fiche_pi_vue_du_mac["pub"])
@@ -416,7 +416,7 @@ def test_migration_complete_depuis_de_vraies_cles_v1(tmp_path):
 
     # 5. Bascule sur le port v2 : session Noise avec la clé de l'ordonnateur épinglée.
     t_ord = np_.CleTransport()
-    cert_ord = np_.emettre_certificat(ord_v2, parc, "deepspace9", cle_ord_epinglee, "logiciel", t_ord.public,
+    cert_ord = np_.emettre_certificat(ord_v2, parc, "pi-ordonnateur", cle_ord_epinglee, "logiciel", t_ord.public,
                                       ["ordonnateur"], [], 2, True)
     ecouteur = np_.Ecouteur("127.0.0.1:0")
     recus = []
