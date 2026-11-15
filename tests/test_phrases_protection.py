@@ -52,7 +52,9 @@ class Copie(unittest.TestCase):
         self.copie = os.path.join(self.tmp, "fr.ini")
         with open(self.copie, "w", encoding="utf-8") as f:
             f.write("[ancienne.phrase]\ntexte = vieille copie\n")
-        os.utime(self.copie, (time.time() - 3600, time.time() - 3600))
+        # plus vieille que le depot (et non "il y a une heure" : le depot peut dater d'hier)
+        vieux = os.path.getmtime(os.path.join(DEPOT, "fr.ini")) - 3600
+        os.utime(self.copie, (vieux, vieux))
         self.p = [mock.patch.object(phrases, "BASE_DIR", self.tmp), mock.patch.dict(phrases._copie_vue, clear=True)]
         for x in self.p:
             x.start()

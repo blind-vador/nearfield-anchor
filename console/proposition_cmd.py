@@ -72,6 +72,7 @@ def run(line, key_source, say, out):
     lvl, refused = 0, set()   # niveau courant + niveaux refuses (nettoyage)
     player = Player()
     tour = [0]                # change a chaque deplacement : une fiche en retard ne joue pas
+    parole = threading.Lock()  # le fil de la fiche et la fin ne se croisent pas
     title = dire("proposition.titre", nombre=nombre(len(items), "proposition", "propositions"))
     intro = conseils.intro("proposition", title, dire("proposition.consigne"))
     out(intro + "\n")
@@ -80,6 +81,8 @@ def run(line, key_source, say, out):
     def fin(texte):
         """Derniere entree tranchee : verdict et "plus de proposition" dits ici, en
         entier, avant de rendre la main (la console ne redit rien)."""
+        with parole:             # une fiche encore en preparation ne parlera plus
+            tour[0] += 1
         player.stop()
         out(f"[{texte}]\n")
         voix.say_blocking(texte)
@@ -95,12 +98,13 @@ def run(line, key_source, say, out):
             if avant:
                 voix.say_blocking(avant, encore=lambda: tour[0] == mon_tour)
             path = revue.fiche(e)
-            if tour[0] != mon_tour:
-                return
-            if path:
-                player.play(path)
-            else:
-                say(dire("revue.sans_fiche", texte=revue.texte(e)))
+            with parole:         # verifie et parle d'un seul tenant (2026-11-15 : la fiche
+                if tour[0] != mon_tour:   # d'une entree deja tranchee parlait apres le verdict)
+                    return
+                if path:
+                    player.play(path)
+                else:
+                    say(dire("revue.sans_fiche", texte=revue.texte(e)))
             revue.marquer_entendue(e)
         threading.Thread(target=travail, daemon=True).start()
 
