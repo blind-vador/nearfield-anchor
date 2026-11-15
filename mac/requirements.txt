@@ -53,5 +53,5 @@ torchaudio==2.2.2
 torchlibrosa==0.1.0
 tqdm==4.70.1
 typing_extensions==4.16.0
-urllib3==2.6.3
+urllib3==2.8.0
 zipp==3.23.1
