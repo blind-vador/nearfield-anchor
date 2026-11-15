@@ -1,0 +1,20 @@
+{
+  "description": "Vecteurs de test du protocole v2. Toute implémentation doit les retrouver. Les champs hachés sont préfixés par leur longueur (u32 big-endian).",
+  "identifiant": {
+    "entree": {"alg": "ed25519", "pub_hex": "1111111111111111111111111111111111111111111111111111111111111111"},
+    "formule": "minuscules(base32_sans_bourrage(sha256(alg || pub))[0..16])",
+    "attendu": "ytymkn3ulb3jyfun"
+  },
+  "appairage": {
+    "a": {"alg": "ed25519", "pub_hex": "11 x 32", "transport_hex": "22 x 32", "n_hex": "33 x 32"},
+    "b": {"alg": "ed25519", "pub_hex": "44 x 32", "transport_hex": "55 x 32", "n_hex": "66 x 32"},
+    "engagement_formule": "sha256(lp('pf-appairage-v2') lp(alg_a) lp(pub_a) lp(transport_a) lp(n_a))",
+    "engagement_attendu": "c0bf9ed4deba33797f4a5f37618255cec8ee5a0185c2d2da3bd62a2f0c399035",
+    "code_formule": "u32_be(sha256(lp('pf-code-v2') lp(alg_a) lp(pub_a) lp(transport_a) lp(alg_b) lp(pub_b) lp(transport_b) lp(n_a) lp(n_b))[0..4]) mod 1000000, sur 6 chiffres",
+    "code_attendu": "719237"
+  },
+  "jcs": {
+    "entree": {"b": 1, "a": [true, null, "x"]},
+    "attendu": "{\"a\":[true,null,\"x\"],\"b\":1}"
+  }
+}
