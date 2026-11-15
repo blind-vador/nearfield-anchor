@@ -17,10 +17,13 @@
 #      modification de code necessaire), deploie la console, les sons de
 #      notification (branche assets) et les voix Piper francaises
 #   5) reglages systeme (pilote DVB, session audio, points de montage,
-#      droits sudo limites, tty1 pour la console)
+#      droits sudo limites, tty1 pour la console) et securite : SSH par cle
+#      seulement, Samba en SMB3 chiffre, pare-feu limite au reseau local
 #   6) deploie les unites systemd et les active
 #
 # Usage : sudo bash install.sh
+#   SSH_CLES=non  sudo bash install.sh   garde les mots de passe SSH
+#   PARE_FEU=non  sudo bash install.sh   n'installe pas le pare-feu
 set -euo pipefail
 
 # Utilisateur de service : par defaut celui qui lance sudo (SUDO_USER), sinon
@@ -60,7 +63,7 @@ apt-get install -y \
     libconfig++-dev libmp3lame-dev libshout3-dev libfftw3-dev libpulse-dev \
     libsndfile1-dev libitpp-dev libncurses-dev libcodec2-dev portaudio19-dev \
     zlib1g-dev libxml2-dev libliquid-dev meson ninja-build nlohmann-json3-dev \
-    libopenblas0 samba \
+    libopenblas0 samba nftables \
     python3-evdev python3-fuzzywuzzy python3-levenshtein python3-pil \
     python3-cryptography python3-serial libssl-dev smartmontools \
     welle.io usbutils iw   # DAB+ (welle-cli), usbreset du dongle fige (usb-repare reinit), Wi-Fi (veille systeme)
@@ -365,6 +368,108 @@ sed -e "s#@RUN_USER@#$RUN_USER#g" -e "s#@HOSTNAME@#$(hostname -s)#g" \
 testparm -s >/dev/null
 systemctl enable smbd
 systemctl restart smbd
+# NetBIOS est coupe dans smb.conf (SMB3 chiffre sur le port 445 seulement) : nmbd ne sert plus.
+systemctl disable --now nmbd 2>/dev/null || true
+
+# SSH : cles seulement, plus de mot de passe ni de connexion root (lot 0 de
+# Prismaforge). Seulement si $RUN_USER a deja une cle autorisee : sinon on
+# l'enfermerait dehors. SSH_CLES=non pour garder les mots de passe.
+SSH_CONF=/etc/ssh/sshd_config.d/10-nearfield.conf
+CLES_SSH="$RUN_HOME/.ssh/authorized_keys"
+if [ "${SSH_CLES:-oui}" = "non" ]; then
+    rm -f "$SSH_CONF"
+    echo "-- SSH : mots de passe gardes (SSH_CLES=non) --"
+elif [ -s "$CLES_SSH" ] && grep -qE '^(ssh-|ecdsa-|sk-)' "$CLES_SSH"; then
+    cat > "$SSH_CONF" <<'EOF'
+# nearfield (install.sh) : authentification par cle uniquement.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+EOF
+    if sshd -t; then
+        rm -f /etc/ssh/sshd_config.d/10-prismaforge.conf   # ancien nom (script du lot 0)
+        systemctl reload ssh
+        echo "-- SSH : cles seulement --"
+    else
+        rm -f "$SSH_CONF"
+        echo "!! SSH : reglage refuse par sshd, rien change"
+    fi
+else
+    echo "!! SSH : aucune cle autorisee pour $RUN_USER, mots de passe gardes (ajoute une cle puis relance)"
+fi
+
+# Pare-feu (nftables, config/pare-feu.nft) : seul le reseau local atteint SSH,
+# Samba, haproxy, rtl_tcp et le pont (v1 47811, v2 47812) ; tout le reste est
+# refuse, IPv6 compris. Applique seulement si le reseau local est detecte et,
+# quand l'installeur tourne par SSH, si cette connexion vient bien de ce reseau
+# (sinon on se couperait). PARE_FEU=non pour ne pas l'installer.
+PORTS_TCP="22, 80, 443, 445, 1234, 47811, 47812"
+PF_DOSSIER=/etc/nearfield
+PF_IFACE="$(ip -4 route show default | awk '{print $5; exit}')"
+PF_LAN4=""; PF_LAN6=""
+if [ -n "$PF_IFACE" ]; then
+    PF_LAN4="$(ip -4 route show dev "$PF_IFACE" scope link | awk '{print $1; exit}')"
+    PF_LAN6="$(ip -6 route show dev "$PF_IFACE" | awk '$1 ~ /^[23][0-9a-f:]+\/64$/ {print $1; exit}')"
+fi
+# Connexions SSH ouvertes en ce moment (sudo efface SSH_CLIENT : on demande a ss).
+# La premiere qui vient d'hors du reseau local est rendue dans PF_CLIENT.
+PF_CLIENT=""
+pf_client_local() {
+    PF_CLIENT="$(ss -tnH state established '( sport = :22 )' | awk '{print $NF}' | python3 -c 'import ipaddress, sys
+reseaux = [ipaddress.ip_network(r) for r in sys.argv[1:] if r]
+reseaux += [ipaddress.ip_network(r) for r in ("fe80::/10", "fc00::/7", "127.0.0.0/8", "::1/128")]
+for ligne in sys.stdin:
+    hote = ligne.strip().rsplit(":", 1)[0].strip("[]").split("%")[0]
+    c = ipaddress.ip_address(hote)
+    if c.version == 6 and c.ipv4_mapped:
+        c = c.ipv4_mapped
+    if not any(c.version == r.version and c in r for r in reseaux):
+        print(c)
+        break' "$PF_LAN4" "$PF_LAN6")"
+    [ -z "$PF_CLIENT" ]
+}
+if [ "${PARE_FEU:-oui}" = "non" ]; then
+    echo "-- pare-feu : non installe (PARE_FEU=non) --"
+elif [ -z "$PF_LAN4" ]; then
+    echo "!! pare-feu : reseau local introuvable${PF_IFACE:+ sur $PF_IFACE}, non installe"
+elif ! pf_client_local; then
+    echo "!! pare-feu : une connexion SSH vient de $PF_CLIENT, hors du reseau local $PF_LAN4 -- non installe"
+else
+    mkdir -p "$PF_DOSSIER"
+    sed -e "s#@IFACE@#$PF_IFACE#g" -e "s#@LAN4@#$PF_LAN4#g" -e "s#@PORTS_TCP@#$PORTS_TCP#g" \
+        -e "s#@LAN6@#${PF_LAN6:+, $PF_LAN6}#g" "$REPO_DIR/config/pare-feu.nft" > "$PF_DOSSIER/pare-feu.nft.tmp"
+    if nft -c -f "$PF_DOSSIER/pare-feu.nft.tmp"; then
+        mv "$PF_DOSSIER/pare-feu.nft.tmp" "$PF_DOSSIER/pare-feu.nft"
+        cat > /etc/systemd/system/nearfield-pare-feu.service <<EOF
+[Unit]
+Description=nearfield : pare-feu (reseau local seulement)
+Before=network-pre.target
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/nft -f $PF_DOSSIER/pare-feu.nft
+ExecStop=/usr/sbin/nft delete table inet nearfield
+
+[Install]
+WantedBy=multi-user.target
+EOF
+        # Ancien pare-feu du script du lot 0 de Prismaforge : remplace par celui-ci.
+        nft -f "$PF_DOSSIER/pare-feu.nft"
+        if [ -f /etc/systemd/system/prismaforge-pare-feu.service ]; then
+            systemctl disable --quiet prismaforge-pare-feu.service 2>/dev/null || true
+            rm -f /etc/systemd/system/prismaforge-pare-feu.service
+        fi
+        nft delete table inet prismaforge 2>/dev/null || true
+        systemctl daemon-reload
+        systemctl enable --quiet nearfield-pare-feu.service
+        echo "-- pare-feu : reseau local $PF_LAN4${PF_LAN6:+ et $PF_LAN6} sur $PF_IFACE --"
+    else
+        rm -f "$PF_DOSSIER/pare-feu.nft.tmp"
+        echo "!! pare-feu : regles refusees par nft, rien change"
+    fi
+fi
 # Sortie son : adaptateur USB (config/asound.conf) plutot que le jack
 # integre, dont le pilote snd_bcm2835 plantait (2026-09-29). Seulement si
 # l'adaptateur est branche : sinon "default" viserait une carte absente et
@@ -434,6 +539,10 @@ Points a verifier manuellement :
   adapte NAS_BASE si ton organisation differe.
 - Partages Samba "server" et "stockage" : si ce Pi est neuf, cree le
   mot de passe de partage : sudo smbpasswd -a $RUN_USER
+  (SMB3 chiffre obligatoire : un tres vieil appareil peut ne plus s'y connecter)
+- Securite : SSH par cle seulement des qu'une cle est autorisee ; pare-feu
+  limite au reseau local ($PF_LAN4). Pour le retirer :
+  sudo systemctl disable --now nearfield-pare-feu
 - Le pilote TNT du dongle radio n'est completement decharge qu'apres un
   redemarrage : sudo reboot
 - nas/legacy/ (nas.py, smbv1.conf, smbv2.conf) n'est PAS deploye

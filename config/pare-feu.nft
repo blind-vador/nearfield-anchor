@@ -1,0 +1,26 @@
+# Pare-feu de nearfield (rendu par install.sh pour CETTE machine : @IFACE@, @LAN4@,
+# @LAN6@, @PORTS_TCP@). Seul le reseau local atteint les services ; le reste,
+# y compris depuis Internet en IPv6, est refuse. Repris du lot 0 de Prismaforge.
+# Si le prefixe IPv6 de la box change : relancer install.sh.
+table inet nearfield
+delete table inet nearfield
+table inet nearfield {
+    set lan6 {
+        type ipv6_addr
+        flags interval
+        elements = { fe80::/10, fc00::/7@LAN6@ }
+    }
+    chain entree {
+        type filter hook input priority 0; policy drop;
+        ct state established,related accept
+        ct state invalid drop
+        iif lo accept
+        meta l4proto { icmp, ipv6-icmp } accept
+        udp dport { 68, 546 } accept                 # adresse donnee par la box (DHCP)
+        udp dport 5353 accept                        # mDNS : <machine>.local
+        ip saddr @LAN4@ tcp dport { @PORTS_TCP@ } accept
+        ip6 saddr @lan6 tcp dport { @PORTS_TCP@ } accept
+        ip saddr @LAN4@ udp dport 1900 accept        # decouverte OctoPrint (SSDP)
+        reject with icmpx type admin-prohibited      # refus net : les clients basculent vite
+    }
+}

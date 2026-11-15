@@ -104,8 +104,7 @@ Pour activer :
 1. Sur le Pi, installer le module pour le Python des services :
    `/usr/bin/python3 -m pip install --user --break-system-packages <roue>`. Le service
    tourne sous l'utilisateur `vador`, dont le dossier `~/.local` est dans les chemins.
-2. Rouvrir le pare-feu avec `lot0/durcir_pi.sh`, étape 3, qui ouvre aussi le port 47812 au
-   réseau local. C'est un réglage de sécurité : l'utilisateur le lance lui-même.
+2. Le pare-feu posé par `install.sh` ouvre déjà le port 47812 au réseau local.
 3. Sur le Mac, installer le module pour `/usr/bin/python3` (celui de l'agent Nearfield
    Bridge) avec `--user`, puis recopier `bridge/nearfield_bridge.py` et
    `bridge/pont_v2_traduction.py` dans `~/.nearfield-bridge/`.
@@ -117,7 +116,7 @@ Pour activer :
 (`identite.pem`, `ponts/<pi>.json` avec la clé v2 du Pi épinglée).
 
 Essai de bout en bout : `tests/test_pont_v2_migration.py`. Il fait tourner le vrai serveur
-du Pi et la vraie liaison du Mac dans un dossier temporaire, et vérifie neuf scénarios :
+du Pi et la vraie liaison du Mac dans un dossier temporaire, et vérifie dix scénarios :
 - la v1 continue de fonctionner ;
 - la migration se fait dans les deux sens ;
 - les battements arrivent par la session Noise ;
@@ -128,7 +127,8 @@ du Pi et la vraie liaison du Mac dans un dossier temporaire, et vérifie neuf sc
 - la voix macOS fait l'aller-retour par la v2 ;
 - TETRA et numérique (voix, banc, rendus, résultats) passent par la v2, et la machine vise
   l'hôte de sa session, pas l'adresse envoyée ;
-- un message refusé par la liste fermée passe par la v1 en secours.
+- un message refusé par la liste fermée passe par la v1 en secours ;
+- une session tombée se rouvre toute seule, avec un certificat neuf.
 
 Suite complète de nearfield : `python3 tests/lancer_tous.py`, qui lance chaque fichier de
 test dans son propre processus.

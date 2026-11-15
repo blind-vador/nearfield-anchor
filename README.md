@@ -137,8 +137,18 @@ vocalement (espeak) l'état au démarrage et sur tout changement.
 **Partages réseau** (`nas/smb.conf`, déployé par `install.sh`) : `server`
 (petit disque nd1 entier : système, serveur, dépôt git) et `stockage` (gros
 disque nd2 entier), réservés à l'utilisateur `<user>`, avec les réglages de
-compatibilité macOS (`vfs_fruit`). Le mot de passe Samba se crée une fois à
-la main : `sudo smbpasswd -a <user>`. `nas/smb.conf.current` est l'ancienne
+compatibilité macOS (`vfs_fruit`), en SMB3 chiffré obligatoire et sans
+NetBIOS. Le mot de passe Samba se crée une fois à la main :
+`sudo smbpasswd -a <user>`.
+
+**Sécurité de la machine** (`install.sh`, étape 5) :
+- SSH par clé seulement, sans connexion root, dès qu'une clé est autorisée pour
+  l'utilisateur (sinon rien ne change, pour ne pas l'enfermer dehors) ;
+  `SSH_CLES=non` garde les mots de passe.
+- Pare-feu nftables (`config/pare-feu.nft`, service `nearfield-pare-feu`) : seul
+  le réseau local atteint SSH, Samba, haproxy, rtl_tcp et le pont (47811, 47812).
+  Il n'est posé que si le réseau local est détecté et qu'aucune connexion SSH
+  ouverte ne vient d'ailleurs ; `PARE_FEU=non` pour s'en passer. `nas/smb.conf.current` est l'ancienne
 configuration (partages `nd1`/`nd2`), gardée pour référence.
 
 `nas/legacy/` (`nas.py`, `smbv1.conf`, `smbv2.conf`) est **conservé pour
