@@ -147,3 +147,26 @@ fn deux_parcs_differents_ne_se_parlent_pas() {
     assert!(initier(TcpStream::connect(("127.0.0.1", port)).unwrap(), &ctx).is_err());
     assert!(fil.join().unwrap().is_err());
 }
+
+#[test]
+fn session_separee_envoie_et_recoit_depuis_deux_fils() {
+    let parc = "parc-test";
+    let (ord, m_ord, m) = parc_de_test(parc);
+    let cle_ord = ord.cle_publique();
+    let (port, fil) = ordonnateur(ord, m_ord, parc);
+    let verifier = move |o: &ObjetSigne| certificat::verifier(o, &cle_ord, parc, &ListeRevocations::default(), true, maintenant());
+    let ctx = Contexte { parc, cle: &m.transport, mon_certificat: &m.certificat, verifier_pair: &verifier };
+    let session = initier(TcpStream::connect(("127.0.0.1", port)).unwrap(), &ctx).unwrap();
+    let (mut emetteur, mut recepteur) = session.separer().unwrap();
+    // Trois battements, trois réponses : on les attend toutes avant de fermer.
+    let ecoute = thread::spawn(move || (0..3).map(|_| recepteur.recevoir()).collect::<Vec<_>>());
+    for i in 0..3 {
+        let b = Message::Battement { id: format!("b{i}"), etat: Etat::Occupe, capacites: vec![], puissance_libre: 10 };
+        emetteur.envoyer(&b).unwrap();
+    }
+    for reponse in ecoute.join().unwrap() {
+        assert!(matches!(reponse.unwrap(), Some(Message::Dire { .. })));
+    }
+    emetteur.fermer();
+    assert_eq!(fil.join().unwrap().unwrap().len(), 3);
+}

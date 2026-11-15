@@ -5,6 +5,7 @@ edition = "2021"
 description = "Protocole de confiance v2 de nearfield : clés, objets signés, appairage, certificats, transport Noise."
 license = "MIT"
 publish = false
+exclude = ["python"]
 
 [lib]
 name = "nearfield_pont"

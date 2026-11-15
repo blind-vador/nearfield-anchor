@@ -1,0 +1,13 @@
+[build-system]
+requires = ["maturin>=1.5,<2"]
+build-backend = "maturin"
+
+[project]
+name = "nearfield-pont"
+version = "0.1.0"
+description = "Protocole de confiance v2 de nearfield (liaison Python du crate Rust)."
+license = { text = "MIT" }
+requires-python = ">=3.9"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]

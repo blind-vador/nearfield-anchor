@@ -5,6 +5,8 @@
 //! transport certifiée est exactement la clé statique Noise reçue.
 
 use std::io::{Read, Write};
+use std::net::{Shutdown, TcpStream};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crate::certificat::Certificat;
@@ -110,7 +112,7 @@ pub fn initier<S: Read + Write>(mut flux: S, ctx: &Contexte) -> Resultat<Session
     let n = hs.write_message(&charge, &mut tampon)?;
     envoyer_trame(&mut flux, &tampon[..n])?;
 
-    Ok(Session::nouvelle(flux, hs.into_transport_mode()?, pair))
+    Ok(Session::nouvelle(flux, hs.into_stateless_transport_mode()?, pair))
 }
 
 /// Côté ordonnateur qui accepte une connexion (répondeur).
@@ -133,21 +135,71 @@ pub fn repondre<S: Read + Write>(mut flux: S, ctx: &Contexte) -> Resultat<Sessio
     let n = hs.read_message(&m3, &mut clair)?;
     let pair = controler_pair(&clair[..n], &hs, ctx)?;
 
-    Ok(Session::nouvelle(flux, hs.into_transport_mode()?, pair))
+    Ok(Session::nouvelle(flux, hs.into_stateless_transport_mode()?, pair))
 }
 
 /// Session établie : messages chiffrés, compteurs anti-rejeu de Noise.
+///
+/// Noise est utilisé en mode « sans état » avec nos propres compteurs : une session
+/// TCP peut ainsi être séparée en une moitié qui envoie et une moitié qui reçoit,
+/// utilisables depuis deux fils d'exécution (voir [`Session::separer`]).
 pub struct Session<S> {
     flux: S,
-    noise: snow::TransportState,
+    noise: Arc<snow::StatelessTransportState>,
     pair: Certificat,
     debut: Instant,
-    tampon: Vec<u8>,
+    envoi: u64,
+    reception: u64,
+}
+
+fn encore_valide(debut: Instant) -> Resultat<()> {
+    if debut.elapsed() > DUREE_SESSION {
+        return Err(Erreur::Transport("session de plus de 24 h, à renouveler".into()));
+    }
+    Ok(())
+}
+
+fn suivant(compteur: &mut u64) -> Resultat<u64> {
+    let n = *compteur;
+    *compteur = n.checked_add(1).ok_or_else(|| Erreur::Transport("compteur épuisé".into()))?;
+    Ok(n)
+}
+
+fn chiffrer_envoyer<S: Write>(
+    flux: &mut S,
+    noise: &snow::StatelessTransportState,
+    compteur: &mut u64,
+    debut: Instant,
+    message: &Message,
+) -> Resultat<()> {
+    encore_valide(debut)?;
+    let clair = message.encoder()?;
+    if clair.len() > MAX_CLAIR {
+        return Err(Erreur::Transport("message trop long : utiliser des morceaux".into()));
+    }
+    let mut tampon = vec![0u8; MAX_TRAME];
+    let n = noise.write_message(suivant(compteur)?, &clair, &mut tampon)?;
+    envoyer_trame(flux, &tampon[..n])
+}
+
+fn recevoir_dechiffrer<S: Read>(
+    flux: &mut S,
+    noise: &snow::StatelessTransportState,
+    compteur: &mut u64,
+    debut: Instant,
+) -> Resultat<Option<Message>> {
+    encore_valide(debut)?;
+    let Some(chiffre) = lire_trame(flux)? else { return Ok(None) };
+    let mut tampon = vec![0u8; MAX_TRAME];
+    // Le compteur attendu est imposé : une trame rejouée, supprimée ou réordonnée
+    // ne se déchiffre pas.
+    let n = noise.read_message(suivant(compteur)?, &chiffre, &mut tampon)?;
+    Message::decoder(&tampon[..n]).map(Some)
 }
 
 impl<S: Read + Write> Session<S> {
-    fn nouvelle(flux: S, noise: snow::TransportState, pair: Certificat) -> Self {
-        Session { flux, noise, pair, debut: Instant::now(), tampon: vec![0u8; MAX_TRAME] }
+    fn nouvelle(flux: S, noise: snow::StatelessTransportState, pair: Certificat) -> Self {
+        Session { flux, noise: Arc::new(noise), pair, debut: Instant::now(), envoi: 0, reception: 0 }
     }
 
     /// Le certificat vérifié de l'autre machine.
@@ -155,28 +207,57 @@ impl<S: Read + Write> Session<S> {
         &self.pair
     }
 
-    fn encore_valide(&self) -> Resultat<()> {
-        if self.debut.elapsed() > DUREE_SESSION {
-            return Err(Erreur::Transport("session de plus de 24 h, à renouveler".into()));
-        }
-        Ok(())
-    }
-
     pub fn envoyer(&mut self, message: &Message) -> Resultat<()> {
-        self.encore_valide()?;
-        let clair = message.encoder()?;
-        if clair.len() > MAX_CLAIR {
-            return Err(Erreur::Transport("message trop long : utiliser des morceaux".into()));
-        }
-        let n = self.noise.write_message(&clair, &mut self.tampon)?;
-        envoyer_trame(&mut self.flux, &self.tampon[..n])
+        chiffrer_envoyer(&mut self.flux, &self.noise, &mut self.envoi, self.debut, message)
     }
 
     /// Message suivant, ou `None` si l'autre a fermé la connexion.
     pub fn recevoir(&mut self) -> Resultat<Option<Message>> {
-        self.encore_valide()?;
-        let Some(chiffre) = lire_trame(&mut self.flux)? else { return Ok(None) };
-        let n = self.noise.read_message(&chiffre, &mut self.tampon)?;
-        Message::decoder(&self.tampon[..n]).map(Some)
+        recevoir_dechiffrer(&mut self.flux, &self.noise, &mut self.reception, self.debut)
+    }
+}
+
+impl Session<TcpStream> {
+    /// Sépare la session en deux moitiés indépendantes (envoi, réception).
+    pub fn separer(self) -> Resultat<(Emetteur, Recepteur)> {
+        let lecture = self.flux.try_clone()?;
+        Ok((
+            Emetteur { flux: self.flux, noise: self.noise.clone(), compteur: self.envoi, debut: self.debut },
+            Recepteur { flux: lecture, noise: self.noise, compteur: self.reception, debut: self.debut },
+        ))
+    }
+}
+
+/// Moitié d'une session qui envoie.
+pub struct Emetteur {
+    flux: TcpStream,
+    noise: Arc<snow::StatelessTransportState>,
+    compteur: u64,
+    debut: Instant,
+}
+
+impl Emetteur {
+    pub fn envoyer(&mut self, message: &Message) -> Resultat<()> {
+        chiffrer_envoyer(&mut self.flux, &self.noise, &mut self.compteur, self.debut, message)
+    }
+
+    /// Ferme la connexion dans les deux sens.
+    pub fn fermer(&self) {
+        let _ = self.flux.shutdown(Shutdown::Both);
+    }
+}
+
+/// Moitié d'une session qui reçoit.
+pub struct Recepteur {
+    flux: TcpStream,
+    noise: Arc<snow::StatelessTransportState>,
+    compteur: u64,
+    debut: Instant,
+}
+
+impl Recepteur {
+    /// Message suivant, ou `None` si l'autre a fermé la connexion.
+    pub fn recevoir(&mut self) -> Resultat<Option<Message>> {
+        recevoir_dechiffrer(&mut self.flux, &self.noise, &mut self.compteur, self.debut)
     }
 }
