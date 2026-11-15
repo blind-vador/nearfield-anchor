@@ -41,6 +41,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import pont_protocole as proto  # noqa: E402
 
+try:  # protocole v2 (module Rust pont/python) : pilote, inactif s'il manque
+    import nearfield_pont as pont2  # noqa: E402
+except ImportError:
+    pont2 = None
+
 HOME = os.path.expanduser("~/.nearfield-bridge")
 CONFIG = os.path.join(HOME, "config.json")
 KEY_PATH = os.path.join(HOME, "cle.pem")
@@ -63,6 +68,7 @@ NAS_FALLBACK_SEC = 12 * 3600
 LOOP_SEC = 5
 PAIRING_WAIT_SEC = 180
 RECONNECT_SEC = (10, 120)
+V2_DIR = os.path.join(HOME, "v2")            # identite.pem (cle v2), ponts/<pi>.json (cle v2 du Pi epinglee)
 
 
 # --- outils -------------------------------------------------------------------------
@@ -817,6 +823,8 @@ class Link(threading.Thread):
         self.channel = None
         self.lock = threading.Lock()
         self.stop = threading.Event()
+        self.transport_v2 = None
+        self.pilote_v2 = None
 
     def send(self, msg):
         with self.lock:
@@ -864,6 +872,8 @@ class Link(threading.Thread):
         hello = {"type": "bonjour", "compagnon": conf["id"], "pi": self.pi, "nom": conf["nom"],
                  "capacites": capabilities(), "adresse_materielle": mac, "ips": ips, "nonce": uuid.uuid4().hex,
                  "etat": etat, "voix_mac": mac_voices(), "puissance": power(etat)}
+        if pont2 is not None:
+            hello["v2"] = True  # le Pi lancera la migration s'il sait la faire
         channel.send(hello)
         welcome = channel.receive(card["cle"])
         if not welcome or welcome.get("type") != "bienvenue" or welcome.get("reponse_a") != hello["nonce"]:
@@ -896,14 +906,65 @@ class Link(threading.Thread):
                     threading.Thread(target=tetra_to_pi, args=(self, msg), daemon=True).start()
                 elif msg.get("type") == "numerique":
                     threading.Thread(target=numerique_to_pi, args=(self, msg), daemon=True).start()
+                elif msg.get("type") in ("migration_v2", "certificat_v2", "migration_v2_refusee") and pont2:
+                    self._v2(card, msg)
         except (OSError, ValueError) as exc:
             log("%s : liaison coupee (%r)" % (self.pi, exc))
         finally:
             with self.lock:
                 self.channel = None
             channel.close()
+            if self.pilote_v2:
+                self.pilote_v2.arreter()
+                self.pilote_v2 = None
             update_stats(self.pi, connecte=False, vu=time.time())
         return True
+
+    # --- pilote v2 (Prismaforge/specs/protocole-v2.md §9) ---------------------------
+
+    def _v2(self, card, msg):
+        """Migration par le canal v1 : le Pi annonce sa cle v2 (contresignee par sa
+        cle v1, celle de la fiche), on l'epingle et on annonce la notre ; il rend
+        un certificat v2, on ouvre la session Noise a cote de la v1."""
+        try:
+            if msg["type"] == "migration_v2":
+                objet = msg.get("objet") or {}
+                parc = (objet.get("charge") or {}).get("parc")
+                m = pont2.verifier_migration(objet, parc, {"alg": "ed25519", "pub": card["cle"]})
+                if pont2.identifiant(m["identite"]) != parc:
+                    raise pont2.MigrationRefusee("le parc n'est pas l'identifiant de l'ordonnateur")
+                chemin = os.path.join(V2_DIR, "ponts", "%s.json" % self.pi)
+                epingle = _read(chemin)
+                if epingle and epingle.get("ordonnateur") != m["identite"]:
+                    raise pont2.MigrationRefusee("la cle v2 du Pi a change : refuse (a verifier a la main)")
+                if not epingle:
+                    _write(chemin, {"ordonnateur": m["identite"], "parc": parc, "epingle": time.time()})
+                    log("%s : cle v2 du Pi epinglee (parc %s)" % (self.pi, parc))
+                os.makedirs(V2_DIR, mode=0o700, exist_ok=True)
+                moi = pont2.Coffre.charger_ou_creer(os.path.join(V2_DIR, "identite.pem"), "p256")
+                self.transport_v2 = pont2.CleTransport()
+                objet = pont2.preparer_migration(pont2.Coffre.ouvrir(KEY_PATH), moi, parc, config()["nom"],
+                                                 self.transport_v2.public)
+                self.send({"type": "migration_v2", "objet": objet})
+            elif msg["type"] == "certificat_v2":
+                epingle = _read(os.path.join(V2_DIR, "ponts", "%s.json" % self.pi))
+                if not epingle or self.transport_v2 is None:
+                    return
+                cert = msg.get("objet")
+                c = pont2.verifier_certificat(cert, epingle["ordonnateur"], epingle["parc"], pont2.Revocations(), True)
+                moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))
+                import base64
+                if c["identite"] != moi.cle_publique() or base64.b64decode(c["transport"]) != self.transport_v2.public:
+                    raise pont2.CertificatRefuse("ce certificat n'est pas le mien")
+                if self.pilote_v2:
+                    self.pilote_v2.arreter()
+                self.pilote_v2 = PiloteV2(self.pi, card, epingle, self.transport_v2, cert, int(msg.get("port") or 47812))
+                self.pilote_v2.start()
+            else:
+                log("%s : migration v2 refusee par le Pi : %s" % (self.pi, msg.get("raison")))
+        except pont2.ErreurPont as exc:
+            log("%s : v2 refusee : %s" % (self.pi, exc))
+            update_stats(self.pi, v2=False, erreur_v2=str(exc))
 
     def _beat(self):
         while not self.stop.is_set():
@@ -930,6 +991,65 @@ class Link(threading.Thread):
                 update_stats(self.pi, connecte=False, erreur="Pi injoignable (%s)" % exc.__class__.__name__)
             self.stop.wait(delay)
             delay = min(delay * 2, RECONNECT_SEC[1])
+
+
+class PiloteV2(threading.Thread):
+    """Session v2 (Noise, port 47812) a cote de la liaison v1 : battements
+    seulement, pour eprouver la v2 avant d'y faire passer le trafic."""
+
+    def __init__(self, pi, card, epingle, transport, certificat, port):
+        threading.Thread.__init__(self, daemon=True)
+        self.pi, self.card, self.epingle = pi, card, epingle
+        self.transport, self.certificat, self.port = transport, certificat, port
+        self.session = None
+        self.fin = threading.Event()
+
+    def arreter(self):
+        self.fin.set()
+        if self.session:
+            self.session.fermer()
+
+    def _battement(self):
+        p = power() or {}
+        libre = int(100 * p.get("disponible", 0) / p["puissance"]) if p.get("puissance") else 0
+        caps = [c for c in capabilities() if isinstance(c, str) and 0 < len(c) <= 128][:64]
+        return {"type": "battement", "id": uuid.uuid4().hex[:16], "etat": "libre", "capacites": caps,
+                "puissance_libre": max(0, min(100, libre))}
+
+    def run(self):
+        for host in (self.card.get("hote"), self.card.get("ip")):
+            if not host or self.fin.is_set():
+                continue
+            try:
+                self.session = pont2.connecter("%s:%d" % (host, self.port), self.epingle["parc"], self.transport,
+                                               self.certificat, self.epingle["ordonnateur"], pont2.Revocations(), True)
+                break
+            except (pont2.ErreurPont, OSError) as exc:
+                log("%s : session v2 impossible par %s (%s)" % (self.pi, host, exc))
+        if not self.session:
+            update_stats(self.pi, v2=False)
+            return
+        log("%s : session v2 etablie (Noise, port %d)" % (self.pi, self.port))
+        update_stats(self.pi, v2=True, v2_depuis=time.time())
+        lecteur = threading.Thread(target=self._lire, daemon=True)
+        lecteur.start()
+        try:
+            while not self.fin.is_set():
+                self.session.envoyer(self._battement())
+                self.fin.wait(BEAT_SEC)
+        except pont2.ErreurPont as exc:
+            log("%s : session v2 coupee (%s)" % (self.pi, exc))
+        finally:
+            self.session.fermer()
+            update_stats(self.pi, v2=False)
+
+    def _lire(self):
+        try:
+            while self.session.recevoir() is not None:
+                pass  # rien d'attendu du Pi en pilote (certificat renouvele par la v1)
+        except pont2.ErreurPont:
+            pass
+        self.fin.set()
 
 
 def _pending_for(share, fast):

@@ -33,6 +33,7 @@ import compagnon
 import compagnon_resultats
 import lora_messages
 import pont_protocole as proto
+import pont_v2
 
 NOTIFY_EVERY_SEC = 15  # re-avis rapide si le Mac a rate le claim SMB
 FORCE_NOTIFY_SPOOL = "/tmp/compagnon_force_notify"  # une ligne = job id (IPC console -> veille)
@@ -135,6 +136,16 @@ class _Handler(socketserver.StreamRequestHandler):
             elif time.time() - _sons_vus.get(("parti", cid), 0) > DECONNEXION_SEC:
                 _son("mac_connecte")  # vraie arrivee, pas une reconnexion eclair
             print(f"[compagnon] {hello.get('nom')} connectee depuis {self.client_address[0]}")
+            # Pilote v2 (lib/pont_v2.py) : seulement si le module est installe ici ET
+            # que la machine l'annonce ; sinon rien ne change pour la v1.
+            v2 = pont_v2.actif() and hello.get("v2") is True
+            if v2:
+                try:
+                    with _lock:
+                        channel.send({"type": "migration_v2", "objet": pont_v2.objet_migration()})
+                except Exception as exc:
+                    print(f"[pont v2] annonce de migration impossible : {exc!r}")
+                    v2 = False
             _results_ready.set()  # un "fini" a pu se perdre pendant la coupure
             for job in compagnon.open_jobs():  # ce qui l'attendait
                 _notify(cid, job["id"])
@@ -167,6 +178,18 @@ class _Handler(socketserver.StreamRequestHandler):
                     print(f"[compagnon] travail {msg.get('travail')} pris par {card.get('nom')}")
                 elif kind == "fini":
                     _results_ready.set()
+                elif kind == "migration_v2" and v2:
+                    try:
+                        cert = pont_v2.recevoir_migration(cid, compagnon.trusted().get(cid) or card,
+                                                          msg.get("objet"))
+                        reponse = {"type": "certificat_v2", "objet": cert, "port": pont_v2.PORT}
+                        print(f"[pont v2] {card.get('nom')} migree, certificat v2 delivre")
+                    except Exception as exc:
+                        print(f"[pont v2] migration de {card.get('nom')} refusee : {exc}")
+                        _son("pont_intrus", cle=("migration", cid), ecart=3600)
+                        reponse = {"type": "migration_v2_refusee", "raison": str(exc)[:200]}
+                    with _lock:
+                        channel.send(reponse)
                 if not compagnon.trusted().get(cid):
                     break  # pont retire pendant la connexion
         except TimeoutError:
@@ -654,6 +677,11 @@ def run():
     server = socketserver.ThreadingTCPServer(("0.0.0.0", proto.PORT), _Handler)
     server.daemon_threads = True
     threading.Thread(target=server.serve_forever, daemon=True).start()
+    if pont_v2.actif():
+        try:
+            pont_v2.demarrer()
+        except Exception as exc:
+            print(f"[pont v2] ecoute impossible, la v1 continue seule : {exc!r}")
     with _lock:
         _save_presence()  # personne de connecte au demarrage
     last_poll = 0

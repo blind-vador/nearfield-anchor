@@ -73,7 +73,46 @@ quand même côté machine, mais la connexion est aussitôt fermée : le premier
 
 28 tests Python reprennent le scénario des tests Rust ; l'un fait une migration complète à partir de vraies clés générées par `bridge/pont_protocole.py` (v1), transmise sur un vrai canal v1, jusqu'à la session Noise v2 (il faut `cryptography` dans l'environnement de test).
 
+## Branchement dans nearfield (pilote, à côté de la v1)
+
+- Côté Pi : `lib/pont_v2.py`, appelé par `lib/compagnon_serveur.py`.
+- Côté Mac : `PiloteV2` et `Link._v2` dans `bridge/nearfield_bridge.py`.
+
+Quand une machine se connecte en v1 et annonce `"v2": true`, la migration se fait toute
+seule sur le canal v1 : d'abord le Pi, puis la machine, puis le certificat. La machine
+ouvre ensuite une session Noise sur le port 47812 et y envoie ses battements. **Le trafic
+réel (travaux, voix, TETRA, numérique) reste sur la v1** : la liste fermée des messages v2
+ne le couvre pas encore.
+
+**Tout est inactif tant que le module `nearfield_pont` n'est pas installé** pour le Python
+qui fait tourner le service. Sans lui, la v1 tourne seule, inchangée.
+
+Pour activer le pilote :
+
+1. Sur le Pi, installer le module pour le Python des services (`/usr/bin/python3`).
+2. Rouvrir le pare-feu avec `lot0/durcir_pi.sh`, étape 3, qui ouvre maintenant aussi le
+   port 47812 au réseau local.
+3. Sur le Mac, installer le module pour `/usr/bin/python3` (celui de l'agent Nearfield
+   Bridge), puis recopier `bridge/nearfield_bridge.py` dans `~/.nearfield-bridge/`.
+4. Redémarrer la veille du Pi, puis l'agent du Mac.
+
+État local de la v2 : `<NFA_HOME>/compagnon/v2/` sur le Pi (`identite.pem`,
+`migrations.json`, `nonces.json`, `serie.json`), `~/.nearfield-bridge/v2/` sur le Mac
+(`identite.pem`, `ponts/<pi>.json` avec la clé v2 du Pi épinglée).
+
+Essai de bout en bout : `tests/test_pont_v2_migration.py`. Il fait tourner le vrai serveur
+du Pi et la vraie liaison du Mac dans un dossier temporaire, et vérifie cinq choses :
+- la v1 continue de fonctionner ;
+- la migration se fait dans les deux sens ;
+- les battements arrivent par la session Noise ;
+- une reconnexion ne casse rien, et une clé v2 remplacée est refusée, d'un côté comme de
+  l'autre ;
+- sans le module, rien ne change.
+
 ## Reste à faire
+
+- Étendre la liste fermée des messages v2 au trafic réel (travaux, tickets, voix en
+  morceaux, TETRA, numérique), avec un schéma pour chacun, puis basculer et couper la v1.
 
 - Coffres matériels : Secure Enclave (macOS), TPM 2.0 (Linux, Windows).
 - Enveloppe chiffrée pour les objets sensibles.
