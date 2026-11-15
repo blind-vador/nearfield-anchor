@@ -464,3 +464,51 @@ def test_ouvrir_ne_cree_jamais_de_cle(tmp_path):
     with pytest.raises(np_.ErreurEntreeSortie):
         np_.Coffre.ouvrir(tmp_path / "absente.pem")
     assert not (tmp_path / "absente.pem").exists()
+
+
+# --- enveloppe chiffree (spec §6.2) -----------------------------------------------
+
+def test_enveloppe_aller_retour_et_refus(tmp_path):
+    identite_pi = np_.Coffre.generer("p256")
+    mac = np_.CleReception.charger_ou_creer(tmp_path / "reception.cle")
+    assert (tmp_path / "reception.cle").stat().st_mode & 0o777 == 0o600
+    ryzen = np_.CleReception.generer()
+    identite_mac = np_.Coffre.generer("p256")
+    publication = mac.publier(identite_mac, "parc1")
+    assert np_.verifier_cle_reception(publication, identite_mac.cle_publique(), "parc1") == mac.public
+    with pytest.raises(np_.ErreurPont):
+        np_.verifier_cle_reception(publication, identite_pi.cle_publique(), "parc1")
+
+    dest = [("mac", mac.public), ("ryzen", ryzen.public)]
+    env = np_.sceller(dest, identite_pi.id, "ticket/42", b"code secret")
+    assert "secret" not in json.dumps(env)
+    # L'enveloppe voyage dans un objet signe par l'expediteur.
+    objet = identite_pi.signer_objet({"type": "ticket", "parc": "parc1", "id": "t42", "enveloppe": env})
+    charge = np_.verifier_objet(objet, identite_pi.cle_publique(), "ticket", "parc1")
+    assert np_.ouvrir(charge["enveloppe"], "mac", objet["signataire"], [mac]) == b"code secret"
+    assert np_.ouvrir(env, "ryzen", identite_pi.id, [mac, ryzen]) == b"code secret"
+    with pytest.raises(np_.DechiffrementImpossible):
+        np_.ouvrir(env, "mac", identite_pi.id, [ryzen])
+    with pytest.raises(np_.DechiffrementImpossible):
+        np_.ouvrir(env, "mac", "un-autre-signataire", [mac])
+    env2 = dict(env, contexte="ticket/43")
+    with pytest.raises(np_.DechiffrementImpossible):
+        np_.ouvrir(env2, "mac", identite_pi.id, [mac])
+    with pytest.raises(np_.ErreurFormat):
+        np_.ouvrir(dict(env, inconnu=1), "mac", identite_pi.id, [mac])
+
+
+def test_enveloppe_fichier(tmp_path):
+    mac = np_.CleReception.generer()
+    clair = os.urandom(200_000)
+    (tmp_path / "iq.bin").write_bytes(clair)
+    entete = np_.sceller_fichier([("mac", mac.public)], "pi", "travail/1", tmp_path / "iq.bin", tmp_path / "iq.scelle")
+    assert "chiffre" not in entete
+    np_.ouvrir_fichier(entete, "mac", "pi", [mac], tmp_path / "iq.scelle", tmp_path / "iq.ouvert")
+    assert (tmp_path / "iq.ouvert").read_bytes() == clair
+    abime = bytearray((tmp_path / "iq.scelle").read_bytes())
+    abime[70_000] ^= 1
+    (tmp_path / "iq.scelle").write_bytes(bytes(abime))
+    with pytest.raises(np_.DechiffrementImpossible):
+        np_.ouvrir_fichier(entete, "mac", "pi", [mac], tmp_path / "iq.scelle", tmp_path / "iq.mauvais")
+    assert not (tmp_path / "iq.mauvais").exists()

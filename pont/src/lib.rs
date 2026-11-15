@@ -7,6 +7,7 @@
 //! - [`jcs`]         : forme canonique JSON (RFC 8785, entiers seulement).
 //! - [`cles`]        : clés d'identité, coffres, identifiants de machine.
 //! - [`objet`]       : objets signés déposés sur un stockage partagé, anti-rejeu.
+//! - [`enveloppe`]   : chiffrement à destinataires multiples (clés de réception X25519).
 //! - [`appairage`]   : engagement préalable et code vocal à 6 chiffres.
 //! - [`certificat`]  : certificats de rôle et liste de révocation.
 //! - [`migration`]   : passage de la v1 à la v2 sans nouvel appairage.
@@ -16,6 +17,7 @@
 pub mod appairage;
 pub mod certificat;
 pub mod cles;
+pub mod enveloppe;
 pub mod erreur;
 pub mod jcs;
 pub mod messages;

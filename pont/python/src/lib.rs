@@ -20,6 +20,7 @@ use serde_json::Value;
 use pont::appairage::{self, Presentation};
 use pont::certificat::{self, Certificat, Demande, ListeRevocations, Role};
 use pont::cles::{Alg, CleIdentite, Coffre as _, CoffreLogiciel, Niveau};
+use pont::enveloppe;
 use pont::messages::Message;
 use pont::migration::{self, Migration};
 use pont::objet::{self, ObjetSigne};
@@ -43,6 +44,7 @@ create_exception!(nearfield_pont, MessageRefuse, ErreurPont);
 create_exception!(nearfield_pont, ErreurCle, ErreurPont);
 create_exception!(nearfield_pont, ErreurEntreeSortie, ErreurPont);
 create_exception!(nearfield_pont, MigrationRefusee, ErreurPont);
+create_exception!(nearfield_pont, DechiffrementImpossible, ErreurPont);
 
 fn err(e: Erreur) -> PyErr {
     let texte = e.to_string();
@@ -61,6 +63,7 @@ fn err(e: Erreur) -> PyErr {
         Erreur::Cle(_) => ErreurCle::new_err(texte),
         Erreur::Es(_) => ErreurEntreeSortie::new_err(texte),
         Erreur::Migration(_) => MigrationRefusee::new_err(texte),
+        Erreur::Dechiffrement => DechiffrementImpossible::new_err(texte),
     }
 }
 
@@ -757,6 +760,117 @@ impl Session {
     }
 }
 
+// ---------------------------------------------------------------- enveloppe chiffrée
+
+/// Clé X25519 de réception (fichier 0600) : on la publie, on ouvre avec, on ne la lit pas.
+#[pyclass(frozen, module = "nearfield_pont")]
+struct CleReception {
+    inner: Arc<enveloppe::CleReception>,
+}
+
+#[pymethods]
+impl CleReception {
+    #[staticmethod]
+    fn generer() -> Self {
+        CleReception { inner: Arc::new(enveloppe::CleReception::generer()) }
+    }
+
+    #[staticmethod]
+    fn charger_ou_creer(chemin: std::path::PathBuf) -> PyResult<Self> {
+        Ok(CleReception { inner: Arc::new(enveloppe::CleReception::charger_ou_creer(&chemin).map_err(err)?) })
+    }
+
+    #[getter]
+    fn public<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
+        PyBytes::new(py, &self.inner.public)
+    }
+
+    #[getter]
+    fn empreinte(&self) -> String {
+        self.inner.empreinte()
+    }
+
+    /// Objet `cle_reception` signé par le coffre d'identité (vaut 7 jours).
+    fn publier(&self, py: Python<'_>, coffre: &Coffre, parc: &str) -> PyResult<PyObject> {
+        vers_py(py, &self.inner.publier(&coffre.inner, parc).map_err(err)?)
+    }
+}
+
+fn destinataires(liste: Vec<(String, Vec<u8>)>) -> PyResult<Vec<(String, [u8; 32])>> {
+    liste
+        .into_iter()
+        .map(|(id, cle)| {
+            let cle: [u8; 32] = cle.as_slice().try_into().map_err(|_| ErreurCle::new_err("clé de réception : 32 octets"))?;
+            Ok((id, cle))
+        })
+        .collect()
+}
+
+fn trousseau(cles: &[PyRef<'_, CleReception>]) -> Vec<Arc<enveloppe::CleReception>> {
+    cles.iter().map(|c| c.inner.clone()).collect()
+}
+
+/// Vérifie une publication de clé de réception ; rend la clé publique (32 octets).
+#[pyfunction]
+fn verifier_cle_reception<'py>(py: Python<'py>, objet: &Bound<'py, PyAny>, identite: &Bound<'py, PyAny>, parc: &str) -> PyResult<Bound<'py, PyBytes>> {
+    let o: ObjetSigne = depuis(objet, "objet signé")?;
+    let cle = enveloppe::verifier_cle_reception(&o, &depuis(identite, "clé")?, parc).map_err(err)?;
+    Ok(PyBytes::new(py, &cle))
+}
+
+/// Scelle des octets pour [(id, clé de réception)] ; rend l'enveloppe (dict).
+#[pyfunction]
+fn sceller(py: Python<'_>, destinataires_: Vec<(String, Vec<u8>)>, de: &str, contexte: &str, donnees: &[u8]) -> PyResult<PyObject> {
+    let d = destinataires(destinataires_)?;
+    let e = py.allow_threads(|| enveloppe::sceller(&d, de, contexte, donnees)).map_err(err)?;
+    vers_py(py, &e)
+}
+
+/// Ouvre une enveloppe d'octets. `de` : signataire (vérifié) de l'objet qui la portait.
+#[pyfunction]
+fn ouvrir<'py>(py: Python<'py>, env: &Bound<'py, PyAny>, moi: &str, de: &str, cles: Vec<PyRef<'py, CleReception>>) -> PyResult<Bound<'py, PyBytes>> {
+    let e: enveloppe::Enveloppe = depuis(env, "enveloppe")?;
+    let t = trousseau(&cles);
+    let clair = py
+        .allow_threads(|| enveloppe::ouvrir(&e, moi, de, &t.iter().map(|c| c.as_ref()).collect::<Vec<_>>()))
+        .map_err(err)?;
+    Ok(PyBytes::new(py, &clair))
+}
+
+/// Scelle un fichier vers `cible` (suite de blocs) ; rend l'entête (dict).
+#[pyfunction]
+fn sceller_fichier(
+    py: Python<'_>,
+    destinataires_: Vec<(String, Vec<u8>)>,
+    de: &str,
+    contexte: &str,
+    source: std::path::PathBuf,
+    cible: std::path::PathBuf,
+) -> PyResult<PyObject> {
+    let d = destinataires(destinataires_)?;
+    let e = py.allow_threads(|| enveloppe::sceller_fichier(&d, de, contexte, &source, &cible)).map_err(err)?;
+    vers_py(py, &e)
+}
+
+/// Ouvre un fichier scellé vers `cible`, créé seulement si tout est authentifié.
+#[pyfunction]
+fn ouvrir_fichier<'py>(
+    py: Python<'py>,
+    entete: &Bound<'py, PyAny>,
+    moi: &str,
+    de: &str,
+    cles: Vec<PyRef<'py, CleReception>>,
+    source: std::path::PathBuf,
+    cible: std::path::PathBuf,
+) -> PyResult<()> {
+    let e: enveloppe::Enveloppe = depuis(entete, "enveloppe")?;
+    let t = trousseau(&cles);
+    py.allow_threads(|| {
+        enveloppe::ouvrir_fichier(&e, moi, de, &t.iter().map(|c| c.as_ref()).collect::<Vec<_>>(), &source, &cible)
+    })
+    .map_err(err)
+}
+
 // ---------------------------------------------------------------- module
 
 #[pymodule]
@@ -781,6 +895,7 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
         ("ErreurCle", py.get_type::<ErreurCle>()),
         ("ErreurEntreeSortie", py.get_type::<ErreurEntreeSortie>()),
         ("MigrationRefusee", py.get_type::<MigrationRefusee>()),
+        ("DechiffrementImpossible", py.get_type::<DechiffrementImpossible>()),
     ] {
         m.add(nom, t)?;
     }
@@ -794,6 +909,7 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Entrante>()?;
     m.add_class::<Session>()?;
     m.add_class::<RegistreMigrations>()?;
+    m.add_class::<CleReception>()?;
     m.add_function(wrap_pyfunction!(canonique, m)?)?;
     m.add_function(wrap_pyfunction!(identifiant, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_signature_brute, m)?)?;
@@ -812,5 +928,10 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(preparer_migration, m)?)?;
     m.add_function(wrap_pyfunction!(ancienne_annoncee, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_migration, m)?)?;
+    m.add_function(wrap_pyfunction!(verifier_cle_reception, m)?)?;
+    m.add_function(wrap_pyfunction!(sceller, m)?)?;
+    m.add_function(wrap_pyfunction!(ouvrir, m)?)?;
+    m.add_function(wrap_pyfunction!(sceller_fichier, m)?)?;
+    m.add_function(wrap_pyfunction!(ouvrir_fichier, m)?)?;
     Ok(())
 }

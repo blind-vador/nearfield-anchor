@@ -28,6 +28,8 @@ pub enum Erreur {
     Message(String),
     #[error("clé : {0}")]
     Cle(String),
+    #[error("enveloppe illisible : pas pour cette machine, ou modifiée")]
+    Dechiffrement,
     #[error("entrée/sortie : {0}")]
     Es(#[from] std::io::Error),
 }
