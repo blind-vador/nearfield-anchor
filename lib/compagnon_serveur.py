@@ -17,6 +17,10 @@ a cette voix, et le son revient en morceaux ("son", PCM 16 bits mono en
 base64, puis "son_fin"), relaye tel quel sur la prise au fil de l'eau.
 Rien d'ecrit sur le NAS. Pas de machine, ou rien sous VOIX_MAC_DELAI_SEC :
 la prise se ferme sans son, l'appelant passe a la voix suivante.
+
+Protocole v2 (2026-11-15, lib/pont_v2.py) : une machine migree ouvre en plus une
+session chiffree (Noise). Tout envoi passe par _envoyer : la v2 d'abord, la v1
+en secours ; tout message recu, par l'une ou l'autre, passe par _traiter.
 """
 import base64
 import queue
@@ -156,29 +160,7 @@ class _Handler(socketserver.StreamRequestHandler):
                 with _lock:
                     _presence[cid]["vu"] = time.time()
                     _save_presence()
-                kind = msg.get("type")
-                if kind == "battement":
-                    compagnon.note_battement(cid, msg.get("capacites", []), msg.get("voix_mac") or [],
-                                             msg.get("etat"), msg.get("puissance"))
-                elif kind in ("son", "son_fin"):
-                    file = _demandes_voix.get(msg.get("reponse_a"))
-                    if file is not None:
-                        file.put(msg)
-                elif kind in ("tetra_voix", "tetra_resultat"):
-                    file = _demandes_tetra.get(msg.get("reponse_a"))
-                    if file is not None:
-                        file.put(msg)
-                elif kind in ("numerique_voix", "numerique_audio", "numerique_flux", "numerique_resultat") \
-                        or str(kind).startswith("numerique_banc_") \
-                        or str(kind).startswith("numerique_rendu_"):
-                    file = _demandes_numerique.get(msg.get("reponse_a"))
-                    if file is not None:
-                        file.put(msg)
-                elif kind == "pris":
-                    print(f"[compagnon] travail {msg.get('travail')} pris par {card.get('nom')}")
-                elif kind == "fini":
-                    _results_ready.set()
-                elif kind == "migration_v2" and v2:
+                if msg.get("type") == "migration_v2" and v2:
                     try:
                         cert = pont_v2.recevoir_migration(cid, compagnon.trusted().get(cid) or card,
                                                           msg.get("objet"))
@@ -190,6 +172,8 @@ class _Handler(socketserver.StreamRequestHandler):
                         reponse = {"type": "migration_v2_refusee", "raison": str(exc)[:200]}
                     with _lock:
                         channel.send(reponse)
+                else:
+                    _traiter(cid, card, msg)
                 if not compagnon.trusted().get(cid):
                     break  # pont retire pendant la connexion
         except TimeoutError:
@@ -209,6 +193,40 @@ class _Handler(socketserver.StreamRequestHandler):
                     minuteur.daemon = True
                     minuteur.start()
             channel.close()
+
+
+def _traiter(cid, card, msg):
+    """Un message de la machine, arrive par la v1 ou par la v2 (deja traduit)."""
+    kind = msg.get("type")
+    if kind == "battement":
+        compagnon.note_battement(cid, msg.get("capacites", []), msg.get("voix_mac") or [],
+                                 msg.get("etat"), msg.get("puissance"))
+    elif kind in ("son", "son_fin"):
+        file = _demandes_voix.get(msg.get("reponse_a"))
+        if file is not None:
+            file.put(msg)
+    elif kind in ("tetra_voix", "tetra_resultat"):
+        file = _demandes_tetra.get(msg.get("reponse_a"))
+        if file is not None:
+            file.put(msg)
+    elif kind in ("numerique_voix", "numerique_audio", "numerique_flux", "numerique_resultat") \
+            or str(kind).startswith("numerique_banc_") \
+            or str(kind).startswith("numerique_rendu_"):
+        file = _demandes_numerique.get(msg.get("reponse_a"))
+        if file is not None:
+            file.put(msg)
+    elif kind == "pris":
+        print(f"[compagnon] travail {msg.get('travail')} pris par {card.get('nom')}")
+    elif kind == "fini":
+        _results_ready.set()
+
+
+def _envoyer(cid, channel, msg):
+    """Vers une machine : par sa session v2 si elle en a une (liste fermee, chiffre),
+    sinon (ou si la v2 refuse ce message) par la liaison v1."""
+    if pont_v2.actif() and pont_v2.envoyer(cid, msg):
+        return
+    channel.send(msg)
 
 
 def force_notify(job_id):
@@ -288,7 +306,7 @@ def _notify(cid, job_id):
         return False
     try:
         with _lock:
-            channel.send({"type": "travail", "travail": job_id})
+            _envoyer(cid, channel, {"type": "travail", "travail": job_id})
         _notified[job_id] = time.time()
         return True
     except OSError:
@@ -306,9 +324,9 @@ def _signal_tickets():
     except OSError:
         return
     with _lock:
-        for channel in list(_channels.values()):
+        for cid, channel in list(_channels.items()):
             try:
-                channel.send({"type": "tickets", "ids": ids})
+                _envoyer(cid, channel, {"type": "tickets", "ids": ids})
             except OSError:
                 pass
 
@@ -404,7 +422,7 @@ class _VoixMac(socketserver.StreamRequestHandler):
         file = queue.Queue()
         _demandes_voix[rid] = file
         try:
-            channel.send({"type": "dire", "id": rid, "texte": req["texte"], "voix": voix,
+            _envoyer(cid, channel, {"type": "dire", "id": rid, "texte": req["texte"], "voix": voix,
                           "debit": req.get("debit") or "+0%"})
             delai = VOIX_MAC_DELAI_SEC
             while True:
@@ -471,7 +489,7 @@ class _TetraMac(socketserver.StreamRequestHandler):
         secondes = int(req.get("secondes", 12))
         max_secondes = max(secondes, int(req.get("max_secondes") or secondes))  # suivi d'appel (2026-10-27)
         try:
-            channel.send({"type": "tetra", "id": rid,
+            _envoyer(cid, channel, {"type": "tetra", "id": rid,
                           "host": req.get("host") or compagnon._local_ip(),
                           "port": int(req.get("port", 1234)), "freq_hz": int(req["freq_hz"]),
                           "gain": req.get("gain", 32), "secondes": secondes, "max_secondes": max_secondes,
@@ -587,7 +605,7 @@ class _NumeriqueMac(socketserver.StreamRequestHandler):
             w.writeframes(base64.b64decode(msg.get("pcm") or ""))
 
         try:
-            channel.send({"type": "numerique", "id": rid,
+            _envoyer(cid, channel, {"type": "numerique", "id": rid,
                           "host": req.get("host") or compagnon._local_ip(),
                           "port": int(req.get("port", 1234)), "freq_hz": int(req["freq_hz"]),
                           "gain": req.get("gain", 32), "secondes": secondes, "max_secondes": max_secondes,
@@ -679,7 +697,7 @@ def run():
     threading.Thread(target=server.serve_forever, daemon=True).start()
     if pont_v2.actif():
         try:
-            pont_v2.demarrer()
+            pont_v2.demarrer(recu=_traiter)
         except Exception as exc:
             print(f"[pont v2] ecoute impossible, la v1 continue seule : {exc!r}")
     with _lock:

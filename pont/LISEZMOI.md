@@ -73,47 +73,70 @@ quand même côté machine, mais la connexion est aussitôt fermée : le premier
 
 28 tests Python reprennent le scénario des tests Rust ; l'un fait une migration complète à partir de vraies clés générées par `bridge/pont_protocole.py` (v1), transmise sur un vrai canal v1, jusqu'à la session Noise v2 (il faut `cryptography` dans l'environnement de test).
 
-## Branchement dans nearfield (pilote, à côté de la v1)
+## Branchement dans nearfield
 
 - Côté Pi : `lib/pont_v2.py`, appelé par `lib/compagnon_serveur.py`.
 - Côté Mac : `PiloteV2` et `Link._v2` dans `bridge/nearfield_bridge.py`.
+- Des deux côtés : `bridge/pont_v2_traduction.py`, qui traduit les messages v1 vers la liste
+  fermée v2 (spec §8) et retour.
 
 Quand une machine se connecte en v1 et annonce `"v2": true`, la migration se fait toute
 seule sur le canal v1 : d'abord le Pi, puis la machine, puis le certificat. La machine
-ouvre ensuite une session Noise sur le port 47812 et y envoie ses battements. **Le trafic
-réel (travaux, voix, TETRA, numérique) reste sur la v1** : la liste fermée des messages v2
-ne le couvre pas encore.
+ouvre ensuite une session Noise sur le port 47812, et **tout le trafic réel y passe** :
+avis de travail, tickets, voix macOS et son en retour, TETRA, numérique, battements
+complets.
+
+La v1 reste ouverte à côté pour trois usages seulement :
+- l'amorce de la migration ;
+- ses propres battements de présence ;
+- le secours, quand la session v2 manque ou que la liste fermée refuse un message (refus
+  journalisé une fois par type, par exemple « numerique passe par la v1 : champ « mode »
+  invalide »).
+
+Une différence voulue avec la v1 : une demande TETRA ou numérique ne porte plus d'adresse
+à contacter. La machine se connecte au flux radio du Pi de sa session.
 
 **Tout est inactif tant que le module `nearfield_pont` n'est pas installé** pour le Python
 qui fait tourner le service. Sans lui, la v1 tourne seule, inchangée.
 
-Pour activer le pilote :
+Pour activer :
 
-1. Sur le Pi, installer le module pour le Python des services (`/usr/bin/python3`).
-2. Rouvrir le pare-feu avec `lot0/durcir_pi.sh`, étape 3, qui ouvre maintenant aussi le
-   port 47812 au réseau local.
+1. Sur le Pi, installer le module pour le Python des services :
+   `/usr/bin/python3 -m pip install --user --break-system-packages <roue>`. Le service
+   tourne sous l'utilisateur `vador`, dont le dossier `~/.local` est dans les chemins.
+2. Rouvrir le pare-feu avec `lot0/durcir_pi.sh`, étape 3, qui ouvre aussi le port 47812 au
+   réseau local. C'est un réglage de sécurité : l'utilisateur le lance lui-même.
 3. Sur le Mac, installer le module pour `/usr/bin/python3` (celui de l'agent Nearfield
-   Bridge), puis recopier `bridge/nearfield_bridge.py` dans `~/.nearfield-bridge/`.
-4. Redémarrer la veille du Pi, puis l'agent du Mac.
+   Bridge) avec `--user`, puis recopier `bridge/nearfield_bridge.py` et
+   `bridge/pont_v2_traduction.py` dans `~/.nearfield-bridge/`.
+4. Redémarrer la veille du Pi (`compagnon-watch`), puis l'agent du Mac
+   (`launchctl kickstart -k gui/$(id -u)/local.nearfield.bridge`).
 
 État local de la v2 : `<NFA_HOME>/compagnon/v2/` sur le Pi (`identite.pem`,
 `migrations.json`, `nonces.json`, `serie.json`), `~/.nearfield-bridge/v2/` sur le Mac
 (`identite.pem`, `ponts/<pi>.json` avec la clé v2 du Pi épinglée).
 
 Essai de bout en bout : `tests/test_pont_v2_migration.py`. Il fait tourner le vrai serveur
-du Pi et la vraie liaison du Mac dans un dossier temporaire, et vérifie cinq choses :
+du Pi et la vraie liaison du Mac dans un dossier temporaire, et vérifie neuf scénarios :
 - la v1 continue de fonctionner ;
 - la migration se fait dans les deux sens ;
 - les battements arrivent par la session Noise ;
 - une reconnexion ne casse rien, et une clé v2 remplacée est refusée, d'un côté comme de
   l'autre ;
-- sans le module, rien ne change.
+- sans le module, rien ne change ;
+- avis de travail et tickets passent par la v2 ;
+- la voix macOS fait l'aller-retour par la v2 ;
+- TETRA et numérique (voix, banc, rendus, résultats) passent par la v2, et la machine vise
+  l'hôte de sa session, pas l'adresse envoyée ;
+- un message refusé par la liste fermée passe par la v1 en secours.
+
+Suite complète de nearfield : `python3 tests/lancer_tous.py`, qui lance chaque fichier de
+test dans son propre processus.
 
 ## Reste à faire
 
-- Étendre la liste fermée des messages v2 au trafic réel (travaux, tickets, voix en
-  morceaux, TETRA, numérique), avec un schéma pour chacun, puis basculer et couper la v1.
-
+- Couper la v1 une fois la v2 éprouvée : battements de présence en v2 seulement, port 47811
+  fermé, migration des nouvelles machines par un appairage v2.
+- Signer les travaux et leurs résultats au format v2 (§6), au lieu des fichiers v1.
 - Coffres matériels : Secure Enclave (macOS), TPM 2.0 (Linux, Windows).
 - Enveloppe chiffrée pour les objets sensibles.
-- Brancher la v2 dans le pont nearfield (`lib/compagnon.py`, `bridge/nearfield_bridge.py`).

@@ -41,10 +41,11 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import pont_protocole as proto  # noqa: E402
 
-try:  # protocole v2 (module Rust pont/python) : pilote, inactif s'il manque
+try:  # protocole v2 (module Rust pont/python) : inactif s'il manque
     import nearfield_pont as pont2  # noqa: E402
+    import pont_v2_traduction as trad  # noqa: E402
 except ImportError:
-    pont2 = None
+    pont2 = trad = None
 
 HOME = os.path.expanduser("~/.nearfield-bridge")
 CONFIG = os.path.join(HOME, "config.json")
@@ -826,7 +827,13 @@ class Link(threading.Thread):
         self.transport_v2 = None
         self.pilote_v2 = None
 
-    def send(self, msg):
+    def send(self, msg, v1=False):
+        """Vers le Pi : par la session v2 si elle est ouverte (liste fermee, chiffre),
+        sinon -- ou si la v2 refuse ce message -- par la liaison v1. v1=True : la v1
+        seulement (battements de presence de la liaison v1)."""
+        pilote = self.pilote_v2
+        if not v1 and pilote is not None and pilote.envoyer(msg):
+            return True
         with self.lock:
             if self.channel:
                 try:
@@ -893,21 +900,10 @@ class Link(threading.Thread):
                 msg = channel.receive(card["cle"])
                 if msg is None:
                     break
-                if msg.get("type") == "travail":
-                    log("%s : travail %s annonce" % (self.pi, msg.get("travail")))
-                    _wake_workers(self.pi)
-                elif msg.get("type") == "tickets":
-                    for tid in msg.get("ids") or []:
-                        _tickets_attendus[tid] = time.time() + TICKET_ATTENTE_SEC
-                    _tickets_reveil.set()
-                elif msg.get("type") == "dire":
-                    threading.Thread(target=say_to_pi, args=(self, msg), daemon=True).start()
-                elif msg.get("type") == "tetra":
-                    threading.Thread(target=tetra_to_pi, args=(self, msg), daemon=True).start()
-                elif msg.get("type") == "numerique":
-                    threading.Thread(target=numerique_to_pi, args=(self, msg), daemon=True).start()
-                elif msg.get("type") in ("migration_v2", "certificat_v2", "migration_v2_refusee") and pont2:
+                if msg.get("type") in ("migration_v2", "certificat_v2", "migration_v2_refusee") and pont2:
                     self._v2(card, msg)
+                else:
+                    self.recu(msg)
         except (OSError, ValueError) as exc:
             log("%s : liaison coupee (%r)" % (self.pi, exc))
         finally:
@@ -920,7 +916,24 @@ class Link(threading.Thread):
             update_stats(self.pi, connecte=False, vu=time.time())
         return True
 
-    # --- pilote v2 (Prismaforge/specs/protocole-v2.md §9) ---------------------------
+    def recu(self, msg):
+        """Un message du Pi, arrive par la v1 ou par la v2 (deja traduit)."""
+        t = msg.get("type")
+        if t == "travail":
+            log("%s : travail %s annonce" % (self.pi, msg.get("travail")))
+            _wake_workers(self.pi)
+        elif t == "tickets":
+            for tid in msg.get("ids") or []:
+                _tickets_attendus[tid] = time.time() + TICKET_ATTENTE_SEC
+            _tickets_reveil.set()
+        elif t == "dire":
+            threading.Thread(target=say_to_pi, args=(self, msg), daemon=True).start()
+        elif t == "tetra":
+            threading.Thread(target=tetra_to_pi, args=(self, msg), daemon=True).start()
+        elif t == "numerique":
+            threading.Thread(target=numerique_to_pi, args=(self, msg), daemon=True).start()
+
+    # --- protocole v2 (Prismaforge/specs/protocole-v2.md §8-9) ------------------------
 
     def _v2(self, card, msg):
         """Migration par le canal v1 : le Pi annonce sa cle v2 (contresignee par sa
@@ -958,7 +971,7 @@ class Link(threading.Thread):
                     raise pont2.CertificatRefuse("ce certificat n'est pas le mien")
                 if self.pilote_v2:
                     self.pilote_v2.arreter()
-                self.pilote_v2 = PiloteV2(self.pi, card, epingle, self.transport_v2, cert, int(msg.get("port") or 47812))
+                self.pilote_v2 = PiloteV2(self, card, epingle, self.transport_v2, cert, int(msg.get("port") or 47812))
                 self.pilote_v2.start()
             else:
                 log("%s : migration v2 refusee par le Pi : %s" % (self.pi, msg.get("raison")))
@@ -974,7 +987,7 @@ class Link(threading.Thread):
                 return
             etat = session_state()
             if not self.send({"type": "battement", "capacites": capabilities(), "etat": etat,
-                              "voix_mac": mac_voices(), "puissance": power(etat)}):
+                              "voix_mac": mac_voices(), "puissance": power(etat)}, v1=True):
                 return
             time.sleep(BEAT_SEC)
 
@@ -994,61 +1007,89 @@ class Link(threading.Thread):
 
 
 class PiloteV2(threading.Thread):
-    """Session v2 (Noise, port 47812) a cote de la liaison v1 : battements
-    seulement, pour eprouver la v2 avant d'y faire passer le trafic."""
+    """Session v2 (Noise, port 47812) a cote de la liaison v1. Tout le trafic y
+    passe (Link.send essaie la v2 d'abord) ; la v1 garde l'amorce, ses battements
+    de presence, et sert de secours pour un message que la v2 refuserait."""
 
-    def __init__(self, pi, card, epingle, transport, certificat, port):
+    def __init__(self, link, card, epingle, transport, certificat, port):
         threading.Thread.__init__(self, daemon=True)
-        self.pi, self.card, self.epingle = pi, card, epingle
+        self.link, self.pi, self.card, self.epingle = link, link.pi, card, epingle
         self.transport, self.certificat, self.port = transport, certificat, port
         self.session = None
+        self.hote = None
         self.fin = threading.Event()
+        self.refus_vus = set()
 
     def arreter(self):
         self.fin.set()
         if self.session:
             self.session.fermer()
 
+    def envoyer(self, msg):
+        """Message v1 traduit vers la liste fermee v2 et envoye. False : pas de
+        session, ou message refuse (l'appelant passe par la v1)."""
+        session = self.session
+        if session is None or self.fin.is_set():
+            return False
+        try:
+            session.envoyer(trad.vers_v2(msg))
+            return True
+        except (trad.NonTraduisible, pont2.MessageRefuse) as exc:
+            if msg.get("type") not in self.refus_vus:
+                self.refus_vus.add(msg.get("type"))
+                log("%s : %s passe par la v1 (%s)" % (self.pi, msg.get("type"), exc))
+            return False
+        except pont2.ErreurPont as exc:
+            log("%s : envoi v2 impossible (%s), la v1 prend le relais" % (self.pi, exc))
+            self.arreter()
+            return False
+
     def _battement(self):
-        p = power() or {}
-        libre = int(100 * p.get("disponible", 0) / p["puissance"]) if p.get("puissance") else 0
-        caps = [c for c in capabilities() if isinstance(c, str) and 0 < len(c) <= 128][:64]
-        return {"type": "battement", "id": uuid.uuid4().hex[:16], "etat": "libre", "capacites": caps,
-                "puissance_libre": max(0, min(100, libre))}
+        etat = session_state()
+        return {"type": "battement", "capacites": capabilities(), "etat": etat, "voix_mac": mac_voices(),
+                "puissance": power(etat), "occupe": bool(stats(self.pi).get("en_cours"))}
 
     def run(self):
         for host in (self.card.get("hote"), self.card.get("ip")):
             if not host or self.fin.is_set():
                 continue
             try:
-                self.session = pont2.connecter("%s:%d" % (host, self.port), self.epingle["parc"], self.transport,
-                                               self.certificat, self.epingle["ordonnateur"], pont2.Revocations(), True)
+                session = pont2.connecter("%s:%d" % (host, self.port), self.epingle["parc"], self.transport,
+                                          self.certificat, self.epingle["ordonnateur"], pont2.Revocations(), True)
+                self.hote = host
+                self.session = session
                 break
             except (pont2.ErreurPont, OSError) as exc:
                 log("%s : session v2 impossible par %s (%s)" % (self.pi, host, exc))
         if not self.session:
             update_stats(self.pi, v2=False)
             return
-        log("%s : session v2 etablie (Noise, port %d)" % (self.pi, self.port))
-        update_stats(self.pi, v2=True, v2_depuis=time.time())
+        log("%s : session v2 etablie (Noise, port %d), le trafic y passe" % (self.pi, self.port))
+        update_stats(self.pi, v2=True, v2_depuis=time.time(), erreur_v2=None)
         lecteur = threading.Thread(target=self._lire, daemon=True)
         lecteur.start()
         try:
             while not self.fin.is_set():
-                self.session.envoyer(self._battement())
+                if not self.envoyer(self._battement()):
+                    break
                 self.fin.wait(BEAT_SEC)
-        except pont2.ErreurPont as exc:
-            log("%s : session v2 coupee (%s)" % (self.pi, exc))
         finally:
-            self.session.fermer()
+            self.arreter()
             update_stats(self.pi, v2=False)
+            log("%s : session v2 fermee (la v1 reste)" % self.pi)
 
     def _lire(self):
         try:
-            while self.session.recevoir() is not None:
-                pass  # rien d'attendu du Pi en pilote (certificat renouvele par la v1)
-        except pont2.ErreurPont:
-            pass
+            while not self.fin.is_set():
+                msg = self.session.recevoir()
+                if msg is None:
+                    break
+                try:
+                    self.link.recu(trad.depuis_v2(msg, hote=self.hote))
+                except trad.NonTraduisible as exc:
+                    log("%s : message v2 ignore (%s)" % (self.pi, exc))
+        except pont2.ErreurPont as exc:
+            log("%s : session v2 refusee par la liste fermee (%s)" % (self.pi, exc))
         self.fin.set()
 
 
