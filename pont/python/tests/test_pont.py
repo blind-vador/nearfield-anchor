@@ -287,6 +287,21 @@ def test_envoi_et_reception_depuis_deux_fils_et_fermer_debloque():
     assert len(resultats[0][1]) == 5
 
 
+def test_session_silencieuse_plus_longue_que_le_delai_de_poignee():
+    # 2026-11-15 : le délai de la poignée de main restait sur la lecture, la
+    # session tombait après delai_sec sans trafic (battements toutes les 30 s).
+    p = Parc()
+    port, fil, resultats = lancer_ordonnateur(p, delai_sec=0.5)
+    _, transport, cert = p.machine(["travailleur"])
+    s = np_.connecter(f"127.0.0.1:{port}", PARC, transport, cert, p.cle_ord, p.revocations, True, delai_sec=0.5)
+    time.sleep(1.5)
+    s.envoyer(BATTEMENT)
+    assert s.recevoir()["texte"] == "Bien reçu."
+    s.fermer()
+    fil.join(5)
+    assert resultats[0][1] == [BATTEMENT]
+
+
 def test_le_travailleur_refuse_un_pair_qui_n_est_pas_ordonnateur():
     p = Parc()
     _, t_faux, c_faux = p.machine(["travailleur"], "faux")

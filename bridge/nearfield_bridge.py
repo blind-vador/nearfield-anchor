@@ -1128,7 +1128,7 @@ class PiloteV2(threading.Thread):
                 except trad.NonTraduisible as exc:
                     log("%s : message v2 ignore (%s)" % (self.pi, exc))
         except pont2.ErreurPont as exc:
-            log("%s : session v2 refusee par la liste fermee (%s)" % (self.pi, exc))
+            log("%s : session v2 interrompue (%s)" % (self.pi, exc))
         self.fin.set()
 
 

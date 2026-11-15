@@ -584,9 +584,14 @@ fn poignee(
     flux.set_read_timeout(Some(delai))?;
     flux.set_write_timeout(Some(delai))?;
     flux.set_nodelay(true)?;
+    let reglage = flux.try_clone()?;
     let verifier = |o: &ObjetSigne| confiance.verifier(o);
     let ctx = Contexte { parc: &confiance.parc, cle, mon_certificat: certificat, verifier_pair: &verifier };
     let session = if initiateur { transport::initier(flux, &ctx)? } else { transport::repondre(flux, &ctx)? };
+    // Session établie : plus de délai de lecture (le pair peut se taire longtemps
+    // entre deux messages ; 2026-11-15, la session tombait au bout de 10 s sans
+    // trafic). Le délai d'écriture reste : un envoi ne bloque jamais sans fin.
+    reglage.set_read_timeout(None)?;
     let pair = session.pair().clone();
     let (emetteur, recepteur) = session.separer()?;
     Ok(Session { emetteur: Mutex::new(emetteur), recepteur: Mutex::new(recepteur), pair })
