@@ -1141,6 +1141,8 @@ def _pending_for(share, fast):
         return False
     caps = capabilities()
     for job_id in names:
+        if job_id in _refus_travail:
+            continue  # objet signe refuse : rien a attendre de ce travail
         job = _read(os.path.join(folder, job_id, "travail.json"))
         if (job and job.get("type") in caps and (job.get("type") in FAST) == fast
                 and not _attributed_elsewhere(os.path.join(folder, job_id))):
@@ -1148,8 +1150,77 @@ def _pending_for(share, fast):
     return False
 
 
-def _claim(share, fast):
-    """Prend le plus ancien travail libre de sa file (renommage atomique) : (id, dossier, travail)."""
+# --- travaux signes v2 (spec §6, lib/pont_v2.py cote Pi) -----------------------------
+# Une fois la cle v2 du Pi epinglee, on ne prend plus un travail sur la seule foi du
+# travail.json du NAS : il faut travail.v2.json, signe par le Pi, et on execute le
+# travail QU'IL CONTIENT, apres avoir verifie l'empreinte de chaque fichier d'entree.
+# Le resultat part aussi en v2 (resultat.v2.json, signe par notre cle v2).
+TRAVAIL_V2 = "travail.v2.json"
+RESULTAT_V2 = "resultat.v2.json"
+TERMINES = os.path.join(V2_DIR, "termines.json")  # travaux v2 deja rendus : un travail rejoue n'est pas refait
+_refus_travail = set()
+
+
+class TravailRefuse(Exception):
+    pass
+
+
+def _epingle(pi):
+    return _read(os.path.join(V2_DIR, "ponts", "%s.json" % pi))
+
+
+def _termines():
+    data = _read(TERMINES) or {}
+    limite = time.time() - 8 * 86400  # au-dela, l'objet signe est trop vieux de toute facon
+    return {k: v for k, v in data.items() if isinstance(v, (int, float)) and v > limite}
+
+
+def _travail_signe(pi, folder, job_id):
+    """(travail, empreinte de la charge) tires de travail.v2.json, ou None si ce Pi n'a pas
+    migre (la v1 vaut encore). Leve TravailRefuse si l'objet manque ou ne tient pas."""
+    epingle = _epingle(pi)
+    if not epingle:
+        return None
+    if pont2 is None:
+        raise TravailRefuse("module nearfield_pont absent : impossible de verifier")
+    objet = _read(os.path.join(folder, TRAVAIL_V2))
+    if not objet:
+        raise TravailRefuse("travail non signe")
+    try:
+        charge = pont2.verifier_objet(objet, epingle["ordonnateur"], "travail", epingle["parc"])
+        if charge.get("id") != job_id:
+            raise TravailRefuse("objet signe d'un autre travail")
+        if job_id in _termines():
+            raise TravailRefuse("travail deja rendu (rejeu)")
+        pont2.verifier_fichiers(objet, folder)
+        job = json.loads(charge["contenu"])
+    except pont2.ErreurPont as exc:
+        raise TravailRefuse(str(exc))
+    except (KeyError, TypeError, ValueError) as exc:
+        raise TravailRefuse("contenu illisible : %s" % exc)
+    if not isinstance(job, dict) or job.get("id") != job_id:
+        raise TravailRefuse("contenu d'un autre travail")
+    import hashlib
+    return job, hashlib.sha256(pont2.canonique(charge)).hexdigest()
+
+
+def _rendre_v2(pi, folder, job_id, empreinte, state, message, duration, outputs):
+    """resultat.v2.json, signe par notre cle v2, lie au travail par l'empreinte de sa charge."""
+    epingle = _epingle(pi)
+    moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))
+    objet = moi.signer_objet({
+        "type": "resultat", "parc": epingle["parc"], "id": "resultat-" + job_id, "travail": job_id,
+        "objet_travail": empreinte, "etat": state, "message": str(message)[:4000], "duree": int(duration),
+        "fichiers": {name: pont2.empreinte_fichier(os.path.join(folder, name)) for name in outputs}})
+    _write(os.path.join(folder, RESULTAT_V2), objet)
+    termines = _termines()
+    termines[job_id] = time.time()
+    _write(TERMINES, termines)
+
+
+def _claim(share, fast, pi=None):
+    """Prend le plus ancien travail libre de sa file (renommage atomique) :
+    (id, dossier, travail, empreinte v2 ou None)."""
     folder = os.path.join(share, "travaux")
     try:
         names = sorted(os.listdir(folder))
@@ -1163,13 +1234,26 @@ def _claim(share, fast):
             continue
         if _attributed_elsewhere(os.path.join(folder, job_id)):
             continue  # confie a une machine plus libre
-        dst =os.path.join(folder, job_id, "travail.pris.json")
+        empreinte = None
+        if pi:
+            try:
+                signe = _travail_signe(pi, os.path.join(folder, job_id), job_id)
+            except TravailRefuse as exc:
+                if job_id not in _refus_travail:
+                    _refus_travail.add(job_id)
+                    log("%s : travail %s refuse : %s" % (pi, job_id, exc))
+                continue
+            if signe:
+                job, empreinte = signe
+                if job.get("type") not in caps or (job.get("type") in FAST) != fast:
+                    continue
+        dst = os.path.join(folder, job_id, "travail.pris.json")
         try:
             os.rename(src, dst)
         except OSError:
             continue  # une autre machine l'a pris
         _write(dst, dict(job, pris_par=config()["id"], pris_le=time.time()))  # pour reprendre apres une coupure
-        return job_id, os.path.join(folder, job_id), job
+        return job_id, os.path.join(folder, job_id), job, empreinte
     return None
 
 
@@ -1241,7 +1325,7 @@ def _work(pi, fast):
         return
     claimed = None
     for attempt in range(40):  # jusqu'a ~20 s si un travail de CETTE file est attendu
-        claimed = _claim(share, fast)
+        claimed = _claim(share, fast, pi)
         if claimed:
             break
         if not _pending_for(share, fast):
@@ -1250,7 +1334,7 @@ def _work(pi, fast):
             log("%s : claim %s en attente SMB (essai %d)" % (pi, "rapide" if fast else "lourd", attempt + 1))
         time.sleep(0.5)
     while claimed:
-        job_id, folder, job = claimed
+        job_id, folder, job, empreinte = claimed
         link = _links.get(pi)
         if link:
             link.send({"type": "pris", "travail": job_id})
@@ -1271,6 +1355,12 @@ def _work(pi, fast):
                 awake.terminate()
         duration = round(time.time() - started)
         conf = config()
+        if empreinte:  # avant resultat.json : le Pi tient pour fini un travail qui a un resultat.json
+            try:
+                _rendre_v2(pi, folder, job_id, empreinte, state, message, duration, outputs)
+            except Exception as exc:
+                log("%s : resultat v2 de %s non signe : %s" % (pi, job_id, exc))
+                state, message = "echec", "resultat v2 non signe : %s" % exc
         result = proto.sign(key(), {
             "type": "resultat", "travail": job_id, "compagnon": conf["id"], "etat": state, "message": message,
             "duree": duration, "sorties": {name: proto.file_digest(os.path.join(folder, name)) for name in outputs}})
@@ -1286,7 +1376,7 @@ def _work(pi, fast):
         log("%s : %s %s (%s), %d s" % (pi, job_id, state, message, duration))
         if link:
             link.send({"type": "fini", "travail": job_id})
-        claimed = _claim(share, fast)
+        claimed = _claim(share, fast, pi)
 
 
 def service():

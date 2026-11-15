@@ -482,7 +482,25 @@ def new_job(kind, params):
     return job_id, folder, {"id": job_id, "type": kind, "params": params, "cree": time.time(), "pi": pi_id()}
 
 
+def _pont_v2():
+    """Module lib/pont_v2 s'il est utilisable (import tardif : il importe ce module)."""
+    try:
+        import pont_v2
+    except ImportError:
+        return None
+    return pont_v2 if pont_v2.actif() else None
+
+
 def submit(job):
+    """Publie le travail. Avec la v2, d'abord l'objet signe (travail.v2.json) : les
+    machines migrees ne prennent que lui ; travail.json reste pour le code du Pi et
+    pour les machines v1."""
+    v2 = _pont_v2()
+    if v2:
+        try:
+            v2.signer_travail(job, _path("travaux", job["id"]))
+        except Exception as exc:  # une machine migree ne prendra pas ce travail
+            print(f"[compagnon] travail {job['id']} non signe en v2 : {exc}")
     _write(_path("travaux", job["id"], "travail.json"), job)
 
 
@@ -490,6 +508,9 @@ def open_jobs():
     """Travaux deposes et pas encore pris : [travail]."""
     jobs = (_read(_path("travaux", n, "travail.json")) for n in sorted(_list("travaux")))
     return [j for j in jobs if j]
+
+
+_refus_resultat = set()  # travaux dont le resultat a ete refuse (journalise une fois)
 
 
 def finished_jobs():
@@ -506,6 +527,22 @@ def finished_jobs():
         card = cards.get(result.get("compagnon"))
         if not card or not proto.verify(card["cle"], result, max_age=None):
             continue  # pas d'une machine appairee : ignore
+        if card.get("v2"):
+            # Machine migree : seul son resultat v2 compte (signe par sa cle v2, lie a CE
+            # travail) ; le resultat.json v1 ne sert plus qu'au code qui teste sa presence.
+            v2 = _pont_v2()
+            try:
+                if not v2:
+                    raise RuntimeError("module nearfield_pont absent")
+                r = v2.resultat_signe(card, job_id, folder)
+            except Exception as exc:
+                if job_id not in _refus_resultat:
+                    _refus_resultat.add(job_id)
+                    print(f"[compagnon] resultat de {job_id} refuse : {exc}")
+                continue
+            result = dict(result, etat=r["etat"], message=r["message"], duree=r["duree"], sorties=r["fichiers"])
+            found.append((job, result, folder))
+            continue
         try:
             if any(proto.file_digest(os.path.join(folder, name)) != digest
                    for name, digest in result.get("sorties", {}).items()):

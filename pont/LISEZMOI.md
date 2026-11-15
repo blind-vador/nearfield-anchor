@@ -28,7 +28,7 @@ Spécification complète : `specs/protocole-v2.md` dans le dossier de conception
 cargo test
 ```
 
-40 tests : vecteurs fixes (`vecteurs.json`, recalculés indépendamment en Python),
+43 tests : vecteurs fixes (`vecteurs.json`, recalculés indépendamment en Python),
 et les attaques que la v2 doit repousser (charge modifiée, rejeu, objet trop vieux, autre
 parc, faux ordonnateur, clé Noise différente du certificat, intermédiaire pendant
 l'appairage, type de message inconnu, chemin `../`, liste de révocation plus ancienne…).
@@ -93,6 +93,13 @@ La v1 reste ouverte à côté pour trois usages seulement :
   journalisé une fois par type, par exemple « numerique passe par la v1 : champ « mode »
   invalide »).
 
+**Travaux signés** (spec §6.1) : le Pi dépose `travail.v2.json`, signé par sa clé v2, à côté
+de chaque travail. Une machine migrée ne prend que ce qui est signé, exécute le travail
+contenu dans l'objet (pas `travail.json`) après avoir vérifié l'empreinte de chaque entrée,
+et rend `resultat.v2.json`, signé par sa clé v2 et lié à ce travail. Le Pi ne croit plus le
+résultat v1 d'une machine migrée. Essai : `tests/test_travaux_v2.py` (12 scénarios, dont
+les attaques : travail non signé, autre clé, entrée modifiée, rejeu, résultat recopié).
+
 Une différence voulue avec la v1 : une demande TETRA ou numérique ne porte plus d'adresse
 à contacter. La machine se connecte au flux radio du Pi de sa session.
 
@@ -137,6 +144,6 @@ test dans son propre processus.
 
 - Couper la v1 une fois la v2 éprouvée : battements de présence en v2 seulement, port 47811
   fermé, migration des nouvelles machines par un appairage v2.
-- Signer les travaux et leurs résultats au format v2 (§6), au lieu des fichiers v1.
+- Ne plus écrire `travail.json` ni `resultat.json` (quand la v1 sera coupée).
 - Coffres matériels : Secure Enclave (macOS), TPM 2.0 (Linux, Windows).
 - Enveloppe chiffrée pour les objets sensibles.

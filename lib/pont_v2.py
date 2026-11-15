@@ -267,3 +267,63 @@ def demarrer(adresse="0.0.0.0", port=PORT, recu=None):
 
     threading.Thread(target=boucle, daemon=True).start()
     return ecouteur.port
+
+
+# --- travaux signes (spec §6) ----------------------------------------------------------
+# Le NAS n'a aucune autorite : a cote du travail.json (lu par le code du Pi), le Pi
+# depose travail.v2.json, objet signe par sa cle v2. Une machine migree ne prend un
+# travail que si cet objet est valide (signature du Pi epinglee, parc, date, empreinte
+# de chaque fichier d'entree) et n'execute que le travail QU'IL CONTIENT. Elle rend
+# resultat.v2.json, signe par sa cle v2, lie a CE travail (empreinte de sa charge) :
+# le Pi ne croit plus le resultat.json v1 d'une machine migree.
+# La description du travail voyage en texte JSON ("contenu") : la forme canonique
+# (JCS) n'admet que des entiers, et les parametres ont des nombres a virgule.
+
+TRAVAIL_V2 = "travail.v2.json"
+RESULTAT_V2 = "resultat.v2.json"
+_PAS_DES_ENTREES = ("travail.json", "travail.pris.json", TRAVAIL_V2, "resultat.json", RESULTAT_V2,
+                    "attribution.json")  # simple indication de repartition, ecrite apres coup
+
+
+def _entrees(dossier):
+    """{nom: sha256} des fichiers d'entree deja ecrits dans le dossier du travail."""
+    out = {}
+    for nom in sorted(os.listdir(dossier)):
+        chemin = os.path.join(dossier, nom)
+        if nom.startswith(".") or nom in _PAS_DES_ENTREES or os.path.islink(chemin) or not os.path.isfile(chemin):
+            continue
+        out[nom] = np_.empreinte_fichier(chemin)
+    return out
+
+
+def empreinte_charge(charge):
+    import hashlib
+    return hashlib.sha256(np_.canonique(charge)).hexdigest()
+
+
+def signer_travail(job, dossier):
+    """Depose travail.v2.json a cote du travail (rien si la v2 est inactive)."""
+    if not actif():
+        return None
+    charge = {"type": "travail", "parc": parc(), "id": job["id"],
+              "contenu": json.dumps(job, ensure_ascii=False, sort_keys=True), "fichiers": _entrees(dossier)}
+    objet = coffre().signer_objet(charge)
+    compagnon._write(os.path.join(dossier, TRAVAIL_V2), objet)
+    return objet
+
+
+def resultat_signe(card, job_id, dossier):
+    """Resultat v2 d'une machine migree, verifie : charge du resultat, ou leve ErreurPont.
+    Le travail doit etre le notre (notre signature), le resultat signe par la cle v2 de
+    LA machine, pour CE travail, et chaque fichier rendu doit avoir son empreinte."""
+    travail = compagnon._read(os.path.join(dossier, TRAVAIL_V2))
+    objet = compagnon._read(os.path.join(dossier, RESULTAT_V2))
+    if not travail or not objet:
+        raise np_.ErreurPont("resultat v2 absent")
+    p = parc()
+    t = np_.verifier_objet(travail, coffre().cle_publique(), "travail", p)
+    r = np_.verifier_objet(objet, card["v2"]["identite"], "resultat", p)
+    if t["id"] != job_id or r.get("travail") != job_id or r.get("objet_travail") != empreinte_charge(t):
+        raise np_.ErreurPont("resultat d'un autre travail")
+    np_.verifier_fichiers(objet, dossier)
+    return r

@@ -92,14 +92,23 @@ impl ObjetSigne {
         Ok(())
     }
 
-    /// Vérifie les fichiers joints (`fichiers: {nom: sha256 hex}`) dans `dossier`.
+    /// Vérifie les fichiers joints (`fichiers: {chemin: sha256 hex}`) dans `dossier`.
+    /// Un chemin est relatif au dossier (`chemin_sur`) et ne traverse aucun lien
+    /// symbolique : on ne lit jamais hors du dossier.
     pub fn verifier_fichiers(&self, dossier: &Path) -> Resultat<()> {
         let Some(fichiers) = self.charge.get("fichiers") else { return Ok(()) };
         let fichiers = fichiers.as_object().ok_or_else(|| Erreur::Format("fichiers".into()))?;
         for (nom, attendu) in fichiers {
-            nom_sur(nom)?;
+            chemin_sur(nom)?;
+            let mut chemin = dossier.to_path_buf();
+            for morceau in nom.split('/') {
+                chemin.push(morceau);
+                if std::fs::symlink_metadata(&chemin)?.file_type().is_symlink() {
+                    return Err(Erreur::Chemin(nom.clone()));
+                }
+            }
             let attendu = attendu.as_str().ok_or_else(|| Erreur::Format("empreinte".into()))?;
-            if empreinte_fichier(&dossier.join(nom))? != attendu {
+            if empreinte_fichier(&chemin)? != attendu {
                 return Err(Erreur::Empreinte(nom.clone()));
             }
         }
@@ -141,6 +150,15 @@ pub fn nom_sur(nom: &str) -> Resultat<()> {
         return Err(Erreur::Chemin(nom.to_string()));
     }
     Ok(())
+}
+
+/// Un chemin relatif sûr : 1 à 4 noms simples (`nom_sur`) séparés par `/`.
+pub fn chemin_sur(chemin: &str) -> Resultat<()> {
+    let morceaux: Vec<&str> = chemin.split('/').collect();
+    if chemin.len() > 400 || morceaux.len() > 4 {
+        return Err(Erreur::Chemin(chemin.to_string()));
+    }
+    morceaux.into_iter().try_for_each(nom_sur)
 }
 
 /// Registre des `(signataire, nonce)` déjà consommés, gardés 7 jours (spec §6).
@@ -256,6 +274,36 @@ mod tests {
         assert!(matches!(o.verifier_fichiers(dossier.path()), Err(Erreur::Empreinte(_))));
         for mauvais in ["../x", "a/b", ".cache", "", "a\\b", "c:d"] {
             assert!(nom_sur(mauvais).is_err(), "{mauvais}");
+        }
+    }
+
+    #[test]
+    fn chemins_relatifs_surs_et_liens_refuses() {
+        for bon in ["a.wav", "audio/a.wav", "a/b/c/d"] {
+            chemin_sur(bon).unwrap();
+        }
+        for mauvais in ["../x", "a/../b", "/a", "a/", "a//b", "a/.b", "a/b/c/d/e", "a\\b", ""] {
+            assert!(chemin_sur(mauvais).is_err(), "{mauvais}");
+        }
+        let dossier = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dossier.path().join("audio")).unwrap();
+        std::fs::write(dossier.path().join("audio/a.wav"), b"abc").unwrap();
+        let e = empreinte_fichier(&dossier.path().join("audio/a.wav")).unwrap();
+        let c = CoffreLogiciel::generer(Alg::P256);
+        let o = ObjetSigne::signer(&c, charge("resultat", "p", "r2", json!({"fichiers": {"audio/a.wav": e}}))).unwrap();
+        o.verifier_fichiers(dossier.path()).unwrap();
+        // Un lien vers un fichier hors du dossier, de même contenu, est refusé.
+        let dehors = tempfile::tempdir().unwrap();
+        std::fs::write(dehors.path().join("a.wav"), b"abc").unwrap();
+        std::fs::remove_file(dossier.path().join("audio/a.wav")).unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(dehors.path().join("a.wav"), dossier.path().join("audio/a.wav")).unwrap();
+            assert!(matches!(o.verifier_fichiers(dossier.path()), Err(Erreur::Chemin(_))));
+            std::fs::remove_file(dossier.path().join("audio/a.wav")).unwrap();
+            std::fs::remove_dir(dossier.path().join("audio")).unwrap();
+            std::os::unix::fs::symlink(dehors.path(), dossier.path().join("audio")).unwrap();
+            assert!(matches!(o.verifier_fichiers(dossier.path()), Err(Erreur::Chemin(_))));
         }
     }
 

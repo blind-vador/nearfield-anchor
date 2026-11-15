@@ -254,6 +254,12 @@ fn empreinte_fichier(py: Python<'_>, chemin: std::path::PathBuf) -> PyResult<Str
     py.allow_threads(|| objet::empreinte_fichier(&chemin)).map_err(err)
 }
 
+/// Lève `CheminRefuse` si le chemin relatif n'est pas sûr (1 à 4 noms simples).
+#[pyfunction]
+fn chemin_sur(chemin: &str) -> PyResult<()> {
+    objet::chemin_sur(chemin).map_err(err)
+}
+
 /// Lève `CheminRefuse` si le nom n'est pas un nom de fichier simple.
 #[pyfunction]
 fn nom_sur(nom: &str) -> PyResult<()> {
@@ -796,6 +802,7 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(verifier_fichiers, m)?)?;
     m.add_function(wrap_pyfunction!(empreinte_fichier, m)?)?;
     m.add_function(wrap_pyfunction!(nom_sur, m)?)?;
+    m.add_function(wrap_pyfunction!(chemin_sur, m)?)?;
     m.add_function(wrap_pyfunction!(code_parle, m)?)?;
     m.add_function(wrap_pyfunction!(emettre_certificat, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_certificat, m)?)?;
