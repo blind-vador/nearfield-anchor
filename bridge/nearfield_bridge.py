@@ -61,6 +61,7 @@ SHARE_GUESSES = ["/Volumes/server/server/nearfield-anchor-bridge",  # Mac
                  "/mnt/server/server/nearfield-anchor-bridge",      # Linux
                  "/media/nas/nd1/server/nearfield-anchor-bridge"]   # le Pi lui-meme (essais)
 BEAT_SEC = 30
+RELANCE_V2_SEC = (60, 900)  # session v2 tombee ou refusee : nouvelle migration (certificat neuf), puis on retente
 SCAN_SEC = 30  # etait 300 : decrire_images restait bloque
 # Sans liaison directe : fonctionnement en DIFFERE par le NAS (decision
 # utilisateur 2026-10-02 : pas d'ecritures ni de lectures frequentes, les
@@ -826,6 +827,7 @@ class Link(threading.Thread):
         self.stop = threading.Event()
         self.transport_v2 = None
         self.pilote_v2 = None
+        self.relance_v2 = RELANCE_V2_SEC[0]
 
     def send(self, msg, v1=False):
         """Vers le Pi : par la session v2 si elle est ouverte (liste fermee, chiffre),
@@ -953,12 +955,7 @@ class Link(threading.Thread):
                 if not epingle:
                     _write(chemin, {"ordonnateur": m["identite"], "parc": parc, "epingle": time.time()})
                     log("%s : cle v2 du Pi epinglee (parc %s)" % (self.pi, parc))
-                os.makedirs(V2_DIR, mode=0o700, exist_ok=True)
-                moi = pont2.Coffre.charger_ou_creer(os.path.join(V2_DIR, "identite.pem"), "p256")
-                self.transport_v2 = pont2.CleTransport()
-                objet = pont2.preparer_migration(pont2.Coffre.ouvrir(KEY_PATH), moi, parc, config()["nom"],
-                                                 self.transport_v2.public)
-                self.send({"type": "migration_v2", "objet": objet})
+                self._annoncer_migration(parc)
             elif msg["type"] == "certificat_v2":
                 epingle = _read(os.path.join(V2_DIR, "ponts", "%s.json" % self.pi))
                 if not epingle or self.transport_v2 is None:
@@ -978,6 +975,41 @@ class Link(threading.Thread):
         except pont2.ErreurPont as exc:
             log("%s : v2 refusee : %s" % (self.pi, exc))
             update_stats(self.pi, v2=False, erreur_v2=str(exc))
+
+    def _annoncer_migration(self, parc):
+        """Notre objet "migration" (cle v2 contresignee par la cle v1), par la v1 :
+        le Pi rend un certificat v2 de 12 h pour une cle de transport neuve."""
+        os.makedirs(V2_DIR, mode=0o700, exist_ok=True)
+        moi = pont2.Coffre.charger_ou_creer(os.path.join(V2_DIR, "identite.pem"), "p256")
+        self.transport_v2 = pont2.CleTransport()
+        objet = pont2.preparer_migration(pont2.Coffre.ouvrir(KEY_PATH), moi, parc, config()["nom"],
+                                         self.transport_v2.public)
+        self.send({"type": "migration_v2", "objet": objet}, v1=True)
+
+    def v2_terminee(self, etablie):
+        """La session v2 est tombee (ou n'a pas pu s'ouvrir : pare-feu, Pi redemarre,
+        certificat expire). Tant que la v1 vit, on redemande un certificat neuf et
+        on retente, de plus en plus espace (RELANCE_V2_SEC)."""
+        if etablie:
+            self.relance_v2 = RELANCE_V2_SEC[0]
+        delai = self.relance_v2
+        self.relance_v2 = min(self.relance_v2 * 2, RELANCE_V2_SEC[1])
+        minuteur = threading.Timer(delai, self._relancer_v2)
+        minuteur.daemon = True
+        minuteur.start()
+
+    def _relancer_v2(self):
+        if self.stop.is_set() or self.channel is None or pont2 is None:
+            return
+        if self.pilote_v2 is not None and self.pilote_v2.session is not None and not self.pilote_v2.fin.is_set():
+            return  # une session est revenue entre-temps
+        epingle = _read(os.path.join(V2_DIR, "ponts", "%s.json" % self.pi))
+        if not epingle:
+            return
+        try:
+            self._annoncer_migration(epingle["parc"])
+        except pont2.ErreurPont as exc:
+            log("%s : relance v2 impossible : %s" % (self.pi, exc))
 
     def _beat(self):
         while not self.stop.is_set():
@@ -1018,9 +1050,11 @@ class PiloteV2(threading.Thread):
         self.session = None
         self.hote = None
         self.fin = threading.Event()
+        self.voulu = False  # arrete par la liaison (v1 coupee, certificat remplace) : pas de relance
         self.refus_vus = set()
 
-    def arreter(self):
+    def arreter(self, voulu=True):
+        self.voulu = self.voulu or voulu
         self.fin.set()
         if self.session:
             self.session.fermer()
@@ -1041,7 +1075,7 @@ class PiloteV2(threading.Thread):
             return False
         except pont2.ErreurPont as exc:
             log("%s : envoi v2 impossible (%s), la v1 prend le relais" % (self.pi, exc))
-            self.arreter()
+            self.arreter(voulu=False)
             return False
 
     def _battement(self):
@@ -1062,7 +1096,10 @@ class PiloteV2(threading.Thread):
             except (pont2.ErreurPont, OSError) as exc:
                 log("%s : session v2 impossible par %s (%s)" % (self.pi, host, exc))
         if not self.session:
+            self.fin.set()
             update_stats(self.pi, v2=False)
+            if not self.voulu:
+                self.link.v2_terminee(False)
             return
         log("%s : session v2 etablie (Noise, port %d), le trafic y passe" % (self.pi, self.port))
         update_stats(self.pi, v2=True, v2_depuis=time.time(), erreur_v2=None)
@@ -1074,9 +1111,11 @@ class PiloteV2(threading.Thread):
                     break
                 self.fin.wait(BEAT_SEC)
         finally:
-            self.arreter()
+            self.arreter(voulu=False)
             update_stats(self.pi, v2=False)
             log("%s : session v2 fermee (la v1 reste)" % self.pi)
+            if not self.voulu:
+                self.link.v2_terminee(True)
 
     def _lire(self):
         try:

@@ -17,7 +17,9 @@ On verifie :
   - le trafic reel passe par la v2 (avis de travail, tickets, voix macOS et son
     retour, TETRA, numerique avec banc et rendus), traduit et valide ;
   - une demande TETRA v2 vise l'hote de la session, jamais une adresse recue ;
-  - un message que la liste fermee refuse passe par la v1 en secours.
+  - un message que la liste fermee refuse passe par la v1 en secours ;
+  - une session v2 impossible (pare-feu ferme) ou tombee est retentee toute seule,
+    avec un certificat neuf redemande par la v1.
 
 Tout l'etat est dans un dossier temporaire (NFA_HOME, HOME du pont) : aucun
 fichier du Pi en service n'est touche. Saute si nearfield_pont ou
@@ -345,6 +347,32 @@ class PassageV1V2(unittest.TestCase):
         self.assertEqual(pi, [("numerique", False)])
         self.assertEqual(recues[0]["host"], "10.9.9.9")  # arrive par la v1, inchange
         self.assertTrue(self.pont_v2.en_v2(self.mac_id), "la session v2 reste ouverte")
+
+    def test_10_session_v2_retentee_apres_ouverture_du_port(self):
+        # Le Pi annonce un port ferme (pare-feu pas encore ouvert) : la session v2
+        # echoue, le trafic reste en v1 ; une fois le port "ouvert", le Mac redemande
+        # un certificat par la v1 et la session s'etablit, sans reconnexion v1.
+        vrai_port = self.pont_v2.PORT
+        ferme = socket.socket()
+        ferme.bind(("127.0.0.1", 0))
+        self.pont_v2.PORT = ferme.getsockname()[1]   # personne n'ecoute : refus de connexion
+        ferme.close()
+        self.addCleanup(setattr, self.pont_v2, "PORT", vrai_port)
+        echecs = []
+        vraie = self.nb.Link.v2_terminee
+
+        def compter(lien, etablie):
+            echecs.append(etablie)
+            return vraie(lien, etablie)
+        with mock.patch.object(self.nb, "RELANCE_V2_SEC", (0.5, 1)), \
+                mock.patch.object(self.nb.Link, "v2_terminee", compter):
+            self.lancer_mac()
+            self.assertTrue(attendre(lambda: len(echecs) >= 2), "tentatives refusees puis relancees")
+            self.assertEqual(set(echecs), {False})
+            self.assertFalse(self.pont_v2.en_v2(self.mac_id))
+            self.pont_v2.PORT = vrai_port                  # le pare-feu s'ouvre
+            self.assertTrue(attendre(lambda: self.pont_v2.en_v2(self.mac_id), 15), "session v2 retentee")
+            self.assertTrue(attendre(lambda: self.nb.stats(self.pi_id).get("v2")))
 
 
 if __name__ == "__main__":
