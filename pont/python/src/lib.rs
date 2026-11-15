@@ -21,6 +21,7 @@ use pont::appairage::{self, Presentation};
 use pont::certificat::{self, Certificat, Demande, ListeRevocations, Role};
 use pont::cles::{Alg, CleIdentite, Coffre as _, CoffreLogiciel, Niveau};
 use pont::enveloppe;
+use pont::{journal, ticket, validation};
 use pont::messages::Message;
 use pont::migration::{self, Migration};
 use pont::objet::{self, ObjetSigne};
@@ -926,6 +927,91 @@ fn ouvrir_fichier<'py>(
     .map_err(err)
 }
 
+// ---------------------------------------------------------------- lot 2 : validations, tickets, journal
+
+fn decision(nom: &str) -> PyResult<validation::Decision> {
+    match nom {
+        "accepte" => Ok(validation::Decision::Accepte),
+        "refuse" => Ok(validation::Decision::Refuse),
+        _ => Err(ErreurFormat::new_err("décision : « accepte » ou « refuse »")),
+    }
+}
+
+fn cles_humaines(humains: &Bound<'_, PyAny>) -> PyResult<Vec<CleIdentite>> {
+    depuis(humains, "clés humaines")
+}
+
+/// L'humain valide (ou refuse) exactement cette charge ; rend l'objet `validation`.
+#[pyfunction]
+#[pyo3(signature = (humain, parc, charge, decision_nom, motif = None))]
+fn preparer_validation(py: Python<'_>, humain: &Coffre, parc: &str, charge: &Bound<'_, PyAny>, decision_nom: &str, motif: Option<&str>) -> PyResult<PyObject> {
+    let o = validation::preparer(&humain.inner, parc, &valeur(charge)?, decision(decision_nom)?, motif).map_err(err)?;
+    vers_py(py, &o)
+}
+
+/// Vérifie une validation (5 minutes, cette charge, cette clé) ; rend « accepte » ou « refuse ».
+#[pyfunction]
+fn verifier_validation(objet: &Bound<'_, PyAny>, humain: &Bound<'_, PyAny>, parc: &str, charge: &Bound<'_, PyAny>) -> PyResult<&'static str> {
+    let o: ObjetSigne = depuis(objet, "validation")?;
+    match validation::verifier(&o, &depuis(humain, "clé")?, parc, &valeur(charge)?, maintenant()).map_err(err)? {
+        validation::Decision::Accepte => Ok("accepte"),
+        validation::Decision::Refuse => Ok("refuse"),
+    }
+}
+
+/// L'ordonnateur émet un ticket : brouillon + validation humaine acceptée de moins de 5 min.
+#[pyfunction]
+fn emettre_ticket(py: Python<'_>, ordonnateur: &Coffre, brouillon: &Bound<'_, PyAny>, validation_: &Bound<'_, PyAny>, humains: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+    let b: ticket::Brouillon = depuis(brouillon, "brouillon de ticket")?;
+    let v: ObjetSigne = depuis(validation_, "validation")?;
+    vers_py(py, &ticket::emettre(&ordonnateur.inner, &b, &v, &cles_humaines(humains)?).map_err(err)?)
+}
+
+/// Vérifie un ticket reçu ; rend son brouillon (ce que l'humain a validé).
+#[pyfunction]
+fn verifier_ticket(py: Python<'_>, objet: &Bound<'_, PyAny>, ordonnateur: &Bound<'_, PyAny>, parc: &str, humains: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+    let t: ObjetSigne = depuis(objet, "ticket")?;
+    vers_py(py, &ticket::verifier(&t, &depuis(ordonnateur, "clé")?, parc, &cles_humaines(humains)?).map_err(err)?)
+}
+
+/// Nouvelle entrée de journal, à la suite de `precedente` (None : la première).
+#[pyfunction]
+#[pyo3(signature = (auteur, parc, ticket_objet, precedente, genre, texte = None, donnees = None))]
+#[allow(clippy::too_many_arguments)]
+fn ecrire_journal(
+    py: Python<'_>,
+    auteur: &Coffre,
+    parc: &str,
+    ticket_objet: &Bound<'_, PyAny>,
+    precedente: Option<&Bound<'_, PyAny>>,
+    genre: &str,
+    texte: Option<&str>,
+    donnees: Option<&Bound<'_, PyAny>>,
+) -> PyResult<PyObject> {
+    let t: ObjetSigne = depuis(ticket_objet, "ticket")?;
+    let p: Option<ObjetSigne> = precedente.map(|p| depuis(p, "entrée précédente")).transpose()?;
+    let g: journal::Genre =
+        serde_json::from_value(Value::String(genre.into())).map_err(|_| ErreurFormat::new_err(format!("genre inconnu : {genre}")))?;
+    let d = donnees.map(valeur).transpose()?;
+    vers_py(py, &journal::ecrire(&auteur.inner, parc, &t, p.as_ref(), g, texte, d).map_err(err)?)
+}
+
+/// Vérifie un journal complet ; `cles` : {identifiant: clé} des signataires connus.
+/// Rend les entrées vérifiées (dict).
+#[pyfunction]
+fn verifier_journal(py: Python<'_>, ticket_objet: &Bound<'_, PyAny>, entrees: &Bound<'_, PyAny>, parc: &str, cles: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+    let t: ObjetSigne = depuis(ticket_objet, "ticket")?;
+    let e: Vec<ObjetSigne> = depuis(entrees, "entrées")?;
+    let c: std::collections::HashMap<String, CleIdentite> = depuis(cles, "clés")?;
+    vers_py(py, &journal::verifier(&t, &e, parc, &|id| c.get(id).cloned()).map_err(err)?)
+}
+
+/// Empreinte (sha256 hex) d'un objet signé complet.
+#[pyfunction]
+fn empreinte_objet(objet: &Bound<'_, PyAny>) -> PyResult<String> {
+    journal::empreinte_objet(&depuis(objet, "objet signé")?).map_err(err)
+}
+
 // ---------------------------------------------------------------- module
 
 #[pymodule]
@@ -986,6 +1072,13 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(verifier_cle_reception, m)?)?;
     m.add_function(wrap_pyfunction!(preparer_renouvellement, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_renouvellement, m)?)?;
+    m.add_function(wrap_pyfunction!(preparer_validation, m)?)?;
+    m.add_function(wrap_pyfunction!(verifier_validation, m)?)?;
+    m.add_function(wrap_pyfunction!(emettre_ticket, m)?)?;
+    m.add_function(wrap_pyfunction!(verifier_ticket, m)?)?;
+    m.add_function(wrap_pyfunction!(ecrire_journal, m)?)?;
+    m.add_function(wrap_pyfunction!(verifier_journal, m)?)?;
+    m.add_function(wrap_pyfunction!(empreinte_objet, m)?)?;
     m.add_function(wrap_pyfunction!(sceller, m)?)?;
     m.add_function(wrap_pyfunction!(ouvrir, m)?)?;
     m.add_function(wrap_pyfunction!(sceller_fichier, m)?)?;

@@ -546,3 +546,47 @@ def test_session_normale_pas_perimee_avec_grace_et_preuve_de_renouvellement():
     autre = base64.b64encode(np_.CleTransport().public).decode()
     with pytest.raises(np_.CertificatRefuse):
         np_.verifier_renouvellement(preuve, identite.cle_publique(), PARC, autre)
+
+
+# --- lot 2 : validation, ticket, journal (lot2-fondations) ---------------------------
+
+def _ticket():
+    ordo, humain, mac = np_.Coffre.generer(), np_.Coffre.generer(), np_.Coffre.generer()
+    brouillon = {"type": "ticket", "parc": PARC, "id": "t42", "titre": "Corriger la doc",
+                 "plan": "1. lire\n2. corriger", "budget": {"secondes": 600, "cout_centimes": 50},
+                 "capacites": ["agent:code"], "zones": ["pont/"]}
+    v = np_.preparer_validation(humain, PARC, brouillon, "accepte")
+    assert np_.verifier_validation(v, humain.cle_publique(), PARC, brouillon) == "accepte"
+    t = np_.emettre_ticket(ordo, brouillon, v, [humain.cle_publique()])
+    return ordo, humain, mac, brouillon, t
+
+
+def test_ticket_valide_par_l_humain_puis_signe():
+    ordo, humain, mac, brouillon, t = _ticket()
+    assert np_.verifier_ticket(t, ordo.cle_publique(), PARC, [humain.cle_publique()]) == brouillon
+    with pytest.raises(np_.ErreurPont):
+        np_.verifier_ticket(t, ordo.cle_publique(), PARC, [mac.cle_publique()])
+    pire = dict(brouillon, zones=["/"])
+    v = np_.preparer_validation(humain, PARC, brouillon, "accepte")
+    with pytest.raises(np_.ErreurPont):
+        np_.emettre_ticket(ordo, pire, v, [humain.cle_publique()])
+    refus = np_.preparer_validation(humain, PARC, brouillon, "refuse", "pas maintenant")
+    with pytest.raises(np_.ErreurPont):
+        np_.emettre_ticket(ordo, brouillon, refus, [humain.cle_publique()])
+
+
+def test_journal_chaine_et_refus():
+    ordo, humain, mac, brouillon, t = _ticket()
+    a = np_.ecrire_journal(mac, PARC, t, None, "prise", "Le Mac prend le ticket.")
+    b = np_.ecrire_journal(mac, PARC, t, a, "resultat", "Doc corrigée.", {"fichiers": 2})
+    c = np_.ecrire_journal(ordo, PARC, t, b, "cloture", "Ticket clos.")
+    cles = {mac.id: mac.cle_publique(), ordo.id: ordo.cle_publique()}
+    e = np_.verifier_journal(t, [a, b, c], PARC, cles)
+    assert [x["texte"] for x in e] == ["Le Mac prend le ticket.", "Doc corrigée.", "Ticket clos."]
+    assert b["charge"]["precedent"] == np_.empreinte_objet(a)
+    with pytest.raises(np_.ErreurPont):
+        np_.verifier_journal(t, [a, c], PARC, cles)          # entrée retirée
+    with pytest.raises(np_.ErreurPont):
+        np_.verifier_journal(t, [a, b, c], PARC, {mac.id: mac.cle_publique()})  # signataire inconnu
+    with pytest.raises(np_.ErreurFormat):
+        np_.ecrire_journal(mac, PARC, t, a, "commande")       # genre hors liste

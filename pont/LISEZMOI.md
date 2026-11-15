@@ -17,6 +17,9 @@ Spécification complète : `specs/protocole-v2.md` dans le dossier de conception
 | `cles` | Clés Ed25519 et P-256, coffres (fichier aujourd'hui, puces ensuite), identifiants de machine. Relit la `cle.pem` de la v1 |
 | `objet` | Objets signés pour le NAS : vérification, empreintes des fichiers joints, noms sûrs, registre anti-rejeu de 7 jours |
 | `enveloppe` | Chiffrement à destinataires multiples (spec §6.2) : clé de réception X25519 publiée chaque semaine (objet signé), X25519 éphémère + HKDF-SHA256 + ChaCha20-Poly1305, contenu en blocs de 64 Kio liés à l'entête ; octets ou fichiers |
+| `validation` | Validations humaines (protocole-v2 §7) : liées à l'empreinte d'une charge, 5 minutes, `accepte` ou `refuse` |
+| `ticket` | Manifeste de ticket (lot 2) : brouillon borné (plan, budget, capacités, zones), validé par l'humain puis signé par l'ordonnateur ; les machines revérifient la validation |
+| `journal` | Journal chaîné d'un ticket (lot 2) : entrées signées, numérotées, chacune liée à la précédente (la première au ticket) ; trou, échange, fourche ou ajout après clôture refusés |
 | `appairage` | Engagement préalable et code vocal à 6 chiffres, dit en 3 paires |
 | `certificat` | Certificats de 12 h (rôles, capacités, niveau), liste de révocation qui ne recule jamais |
 | `migration` | Passage de la v1 à la v2 sans nouvel appairage : nouvelle identité signée par la nouvelle clé et contresignée par la clé v1 ; une ancienne clé ne migre qu'une fois |
@@ -29,7 +32,7 @@ Spécification complète : `specs/protocole-v2.md` dans le dossier de conception
 cargo test
 ```
 
-50 tests : vecteurs fixes (`vecteurs.json`, recalculés indépendamment en Python),
+58 tests : vecteurs fixes (`vecteurs.json`, recalculés indépendamment en Python),
 et les attaques que la v2 doit repousser (charge modifiée, rejeu, objet trop vieux, autre
 parc, faux ordonnateur, clé Noise différente du certificat, intermédiaire pendant
 l'appairage, type de message inconnu, chemin `../`, liste de révocation plus ancienne…).
@@ -59,6 +62,8 @@ Ce qu'il offre :
 | Clés | `Coffre.charger_ou_creer(chemin, "p256")`, `.cle_publique()`, `.id`, `.signer_objet(charge)`, `identifiant(cle)`, `canonique(valeur)` |
 | Objets signés | `verifier_objet(objet, cle, type, parc, registre)`, `RegistreNonces.charger/enregistrer`, `verifier_fichiers`, `empreinte_fichier`, `nom_sur` |
 | Enveloppe | `CleReception.charger_ou_creer(chemin)`, `.public`, `.empreinte`, `.publier(coffre, parc)`, `verifier_cle_reception(objet, identite, parc)`, `sceller([(id, cle)], de, contexte, octets)`, `ouvrir(env, moi, de, [cles])`, `sceller_fichier(...)`, `ouvrir_fichier(...)` |
+| Lot 2 | `preparer_validation(humain, parc, charge, "accepte")`, `verifier_validation(...)`, `emettre_ticket(ordonnateur, brouillon, validation, [humains])`, `verifier_ticket(ticket, ordonnateur, parc, [humains])`, `ecrire_journal(auteur, parc, ticket, precedente, genre, texte, donnees)`, `verifier_journal(ticket, entrees, parc, {id: cle})`, `empreinte_objet(objet)` |
+| Renouvellement | `CleTransport.charger / .enregistrer`, `preparer_renouvellement(identite, parc, transport)`, `verifier_renouvellement(preuve, identite, parc, transport_b64, registre)`, `Entrante.repondre(..., grace_sec=...)`, `Session.perime` |
 | Appairage | `Rejoignant(identite, transport).engagement / .recevoir(pres)`, `Accueil(engagement, identite, transport).presentation / .verifier(pres)`, `code_parle` |
 | Certificats | `CleTransport()`, `emettre_certificat(...)`, `verifier_certificat(...)`, `Revocations().publier / .recevoir / .est_revoque` |
 | Migration | `Coffre.ouvrir(cle_v1)`, `preparer_migration(ancien, nouveau, parc, nom, transport)`, `ancienne_annoncee`, `verifier_migration(objet, parc, cle_v1_de_la_fiche, registre)`, `RegistreMigrations` |
@@ -73,7 +78,7 @@ dernier message de la poignée de main. Si l'ordonnateur le refuse, `connecter` 
 quand même côté machine, mais la connexion est aussitôt fermée : le premier
 `recevoir` rend `None`.
 
-31 tests Python reprennent le scénario des tests Rust ; l'un fait une migration complète à partir de vraies clés générées par `bridge/pont_protocole.py` (v1), transmise sur un vrai canal v1, jusqu'à la session Noise v2 (il faut `cryptography` dans l'environnement de test).
+35 tests Python reprennent le scénario des tests Rust ; l'un fait une migration complète à partir de vraies clés générées par `bridge/pont_protocole.py` (v1), transmise sur un vrai canal v1, jusqu'à la session Noise v2 (il faut `cryptography` dans l'environnement de test).
 
 ## Branchement dans nearfield
 
@@ -154,6 +159,9 @@ test dans son propre processus.
 
 - Ne plus écrire `travail.json` ni `resultat.json`, ni signer les tickets en v1 (lot 2).
 - Coffres matériels : Secure Enclave (macOS), TPM 2.0 (Linux, Windows).
+- Lot 2 : point d'accès local des extensions (spec `lot2-fondations.md` §5), par lequel le
+  logiciel IA distribué par PrismaLab (hors de ce dépôt) se branche ; tickets et journaux
+  stockés sur le NAS.
 - Brancher l'enveloppe là où il y a du sensible (lot 2 : tickets et code ; entrées des
   travaux, pour que la machine travaille sur sa copie déchiffrée) et publier les clés de
   réception chaque semaine.

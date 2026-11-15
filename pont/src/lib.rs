@@ -8,6 +8,9 @@
 //! - [`cles`]        : clés d'identité, coffres, identifiants de machine.
 //! - [`objet`]       : objets signés déposés sur un stockage partagé, anti-rejeu.
 //! - [`enveloppe`]   : chiffrement à destinataires multiples (clés de réception X25519).
+//! - [`validation`]  : validations humaines (biométrie), 5 minutes, liées à une charge.
+//! - [`ticket`]      : manifeste validé par l'humain, signé par l'ordonnateur.
+//! - [`journal`]     : journal chaîné et signé d'un ticket.
 //! - [`appairage`]   : engagement préalable et code vocal à 6 chiffres.
 //! - [`certificat`]  : certificats de rôle et liste de révocation.
 //! - [`migration`]   : passage de la v1 à la v2 sans nouvel appairage.
@@ -20,10 +23,13 @@ pub mod cles;
 pub mod enveloppe;
 pub mod erreur;
 pub mod jcs;
+pub mod journal;
 pub mod messages;
 pub mod migration;
 pub mod objet;
+pub mod ticket;
 pub mod transport;
+pub mod validation;
 
 pub use erreur::{Erreur, Resultat};
 

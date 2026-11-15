@@ -274,7 +274,7 @@ fn fini(nom: &str, v: f64, min: f64, max: f64) -> Resultat<()> {
 }
 
 /// Données descriptives bornées (§8.2).
-fn donnees(nom: &str, v: &Option<Value>) -> Resultat<()> {
+pub(crate) fn donnees(nom: &str, v: &Option<Value>) -> Resultat<()> {
     fn parcourir(v: &Value, prof: usize) -> bool {
         if prof > PROFONDEUR_DONNEES {
             return false;
