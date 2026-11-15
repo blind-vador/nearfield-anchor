@@ -99,7 +99,8 @@ def vers_v2(m):
             return _sans_none({"type": "battement", "id": _id(), "etat": "occupe" if m.get("occupe") else "libre",
                                "capacites": caps, "puissance_libre": _puissance_libre(m.get("puissance")),
                                "voix": voix, "session": m.get("etat") if isinstance(m.get("etat"), dict) else None,
-                               "puissance": m.get("puissance") if isinstance(m.get("puissance"), dict) else None})
+                               "puissance": m.get("puissance") if isinstance(m.get("puissance"), dict) else None,
+                               "reseau": m.get("reseau") if isinstance(m.get("reseau"), dict) else None})
         if t == "pris":
             return {"type": "travail_pris", "id": _id(), "travail": m["travail"],
                     "jusqu_a": int(time.time()) + PRISE_SEC}
@@ -171,8 +172,8 @@ def depuis_v2(m, hote=None):
             r.update(mode=m["mode"], banc=bool(m.get("banc")), modes=m.get("modes"))
         return r
     if t == "battement":
-        return {"type": "battement", "capacites": m["capacites"], "voix_mac": m.get("voix") or [],
-                "etat": m.get("session"), "puissance": m.get("puissance")}
+        return _sans_none({"type": "battement", "capacites": m["capacites"], "voix_mac": m.get("voix") or [],
+                           "etat": m.get("session"), "puissance": m.get("puissance"), "reseau": m.get("reseau")})
     if t == "travail_pris":
         return {"type": "pris", "travail": m["travail"]}
     if t == "travail_fini":

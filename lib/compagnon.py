@@ -103,7 +103,7 @@ def _read_card(path, verrou_tenu=False):
             card, _ = json.JSONDecoder().raw_decode(f.read())
     except (OSError, ValueError):
         return None
-    if not isinstance(card, dict) or not card.get("cle"):
+    if not isinstance(card, dict) or not (card.get("cle") or card.get("v2")):
         return None
     with contextlib.nullcontext() if verrou_tenu else _verrou_confiance():
         if _read(path) is None:
@@ -132,7 +132,7 @@ def trusted():
     for name in names:
         if name.endswith(".json"):
             card = _read_card(os.path.join(TRUST_DIR, name))
-            if card and card.get("cle"):
+            if card and (card.get("cle") or card.get("v2")):  # cle v1, ou machine appairee en v2
                 found[name[:-5]] = card
     return found
 
@@ -175,7 +175,7 @@ def connected():
     for cid, card in cards.items():
         if cid in found:
             continue
-        beat = _read(_path("compagnons", f"{cid}.battement.json"))
+        beat = _read(_path("compagnons", f"{cid}.battement.json")) if card.get("cle") else None
         if (beat and beat.get("compagnon") == cid and beat.get("pi") == pi_id()
                 and proto.verify(card["cle"], beat, max_age=NAS_BEAT_MAX_SEC)):
             found[cid] = {"vu": beat["t"], "par": "nas", "capacites": beat.get("capacites", [])}
@@ -454,6 +454,21 @@ def stop_pairing():
             pass
 
 
+def _oubli_valide(card, msg):
+    """Retrait signe par la machine : objet v2 (cle d'identite v2 de la fiche) ou
+    message v1 (cle v1 de la fiche)."""
+    if card.get("v2") and isinstance(msg.get("charge"), dict):
+        v2 = _pont_v2()
+        if not v2:
+            return False
+        try:
+            c = v2.np_.verifier_objet(msg, card["v2"]["identite"], "oubli", v2.parc())
+        except Exception:
+            return False
+        return c.get("pi") == pi_id()
+    return bool(card.get("cle")) and msg.get("pi") == pi_id() and proto.verify(card["cle"], msg, max_age=None)
+
+
 def read_revocations():
     """Ponts retires depuis la machine compagne (message signe par elle) : [(id, nom)]."""
     cards = trusted()
@@ -462,7 +477,9 @@ def read_revocations():
         path = _path("revocations", name)
         msg = _read(path) or {}
         cid = msg.get("compagnon")
-        if cid in cards and msg.get("pi") == pi_id() and proto.verify(cards[cid]["cle"], msg, max_age=None):
+        if cid not in cards and isinstance(msg.get("charge"), dict):  # oubli v2 : objet signe par la machine
+            cid = msg["charge"].get("compagnon")
+        if cid in cards and _oubli_valide(cards[cid], msg):
             forget(cid)
             gone.append((cid, cards[cid].get("nom", cid)))
             _remove(path)
@@ -525,8 +542,8 @@ def finished_jobs():
         if not result or not job or result.get("travail") != job_id:
             continue
         card = cards.get(result.get("compagnon"))
-        if not card or not proto.verify(card["cle"], result, max_age=None):
-            continue  # pas d'une machine appairee : ignore
+        if not card or (not card.get("v2") and not proto.verify(card["cle"], result, max_age=None)):
+            continue  # pas d'une machine appairee : ignore (une machine migree : resultat v2 ci-dessous)
         if card.get("v2"):
             # Machine migree : seul son resultat v2 compte (signe par sa cle v2, lie a CE
             # travail) ; le resultat.json v1 ne sert plus qu'au code qui teste sa presence.

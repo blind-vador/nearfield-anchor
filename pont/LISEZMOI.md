@@ -83,17 +83,23 @@ quand même côté machine, mais la connexion est aussitôt fermée : le premier
   fermée v2 (spec §8) et retour.
 
 Quand une machine se connecte en v1 et annonce `"v2": true`, la migration se fait toute
-seule sur le canal v1 : d'abord le Pi, puis la machine, puis le certificat. La machine
-ouvre ensuite une session Noise sur le port 47812, et **tout le trafic réel y passe** :
-avis de travail, tickets, voix macOS et son en retour, TETRA, numérique, battements
-complets.
+seule sur le canal v1 : d'abord le Pi, puis la machine, puis le certificat. **La machine
+ferme alors sa liaison v1 et passe en v2 seule** (`LiaisonV2`) : session Noise sur le port
+47812, où passe tout le trafic réel (avis de travail, tickets, voix macOS et son en retour,
+TETRA, numérique, battements avec de quoi la réveiller).
 
-La v1 reste ouverte à côté pour trois usages seulement :
-- l'amorce de la migration ;
-- ses propres battements de présence ;
-- le secours, quand la session v2 manque ou que la liste fermée refuse un message (refus
-  journalisé une fois par type, par exemple « numerique passe par la v1 : champ « mode »
-  invalide »).
+- Elle garde sa clé de transport et son certificat (`~/.nearfield-bridge/v2/session/<pi>/`) :
+  après un redémarrage, elle se reconnecte directement en v2.
+- Le certificat (12 h) se renouvelle à mi-vie dans la session, avec une preuve signée par la
+  clé d'identité. Après une longue veille, un certificat expiré depuis moins de 30 jours
+  ouvre une session de renouvellement seulement.
+- Côté Pi, un `CanalV2` tient la place de la liaison v1 de la machine : le reste du code ne
+  voit pas la différence. L'écoute v1 (47811) se ferme dès que toutes les machines sont en
+  v2 seule.
+- Un message que la liste fermée refuse n'est plus envoyé (refus journalisé une fois par
+  type).
+- Une nouvelle machine s'appaire directement en v2 (code de 6 chiffres, par le NAS) : console
+  du Pi, commande « appairage » ; sur la machine, « Appairer avec un Pi ».
 
 **Travaux signés** (spec §6.1) : le Pi dépose `travail.v2.json`, signé par sa clé v2, à côté
 de chaque travail. Une machine migrée ne prend que ce qui est signé, exécute le travail
@@ -125,7 +131,9 @@ Pour activer :
 (`identite.pem`, `ponts/<pi>.json` avec la clé v2 du Pi épinglée).
 
 Essai de bout en bout : `tests/test_pont_v2_migration.py`. Il fait tourner le vrai serveur
-du Pi et la vraie liaison du Mac dans un dossier temporaire, et vérifie dix scénarios :
+du Pi et la vraie liaison du Mac dans un dossier temporaire, et vérifie douze scénarios (migration puis v2 seule, redémarrage sans v1, renouvellement à
+mi-vie et après expiration, preuve exigée, clé du Pi changée, trafic réel, refus de la liste
+fermée, appairage v2 et engagement non tenu). Le détail des scénarios d'avant :
 - la v1 continue de fonctionner ;
 - la migration se fait dans les deux sens ;
 - les battements arrivent par la session Noise ;
@@ -144,9 +152,7 @@ test dans son propre processus.
 
 ## Reste à faire
 
-- Couper la v1 une fois la v2 éprouvée : battements de présence en v2 seulement, port 47811
-  fermé, migration des nouvelles machines par un appairage v2.
-- Ne plus écrire `travail.json` ni `resultat.json` (quand la v1 sera coupée).
+- Ne plus écrire `travail.json` ni `resultat.json`, ni signer les tickets en v1 (lot 2).
 - Coffres matériels : Secure Enclave (macOS), TPM 2.0 (Linux, Windows).
 - Brancher l'enveloppe là où il y a du sensible (lot 2 : tickets et code ; entrées des
   travaux, pour que la machine travaille sur sa copie déchiffrée) et publier les clés de

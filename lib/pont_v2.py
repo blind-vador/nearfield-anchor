@@ -44,12 +44,14 @@ PRESENCE_V2 = "/tmp/compagnons_v2.json"
 DELAI_POIGNEE_SEC = 10
 RENOUVELLEMENT_SEC = 6 * 3600  # le certificat du Pi (12 h) est refait a mi-vie
 TOLERANCE_LOGICIELLE = True    # pas de puce sur le Pi : ordonnateur logiciel tolere
+GRACE_SEC = 30 * 86400         # certificat expire (machine en veille) : session de renouvellement seulement
 
 _verrou = threading.Lock()
 _moi = {}            # transport et certificat du Pi
 _presence_v2 = {}    # id v1 de la machine -> {depuis, vu, battements}
 _sessions = {}       # id v1 de la machine -> session v2 ouverte
 _recu = [None]       # rappel du pont (compagnon_serveur) : (cid, fiche, message v1)
+_evenement = [None]  # rappel du pont : ("arrivee" | "depart", cid, fiche, adresse IP)
 _refus_vus = set()   # types deja journalises comme passes par la v1
 
 
@@ -178,17 +180,66 @@ def presence():
         return {}
 
 
+def _renouveler(card, msg):
+    """Certificat neuf pour la nouvelle cle de transport de la machine. Exige la preuve
+    signee par sa cle d'identite v2 (celle de sa fiche) : une cle de transport volee
+    ne suffit pas a se faire certifier (spec §4.1)."""
+    import base64
+    if not msg.get("preuve"):
+        raise np_.CertificatRefuse("demande de certificat sans preuve signee")
+    p = parc()
+    with _verrou:
+        nonces = np_.RegistreNonces.charger(_chemin("nonces.json"))
+        transport = np_.verifier_renouvellement(msg["preuve"], card["v2"]["identite"], p, msg["transport"], nonces)
+        nonces.enregistrer(_chemin("nonces.json"))
+        serie = _serie_suivante()
+    return np_.emettre_certificat(coffre(), p, card.get("nom") or card["v2"]["id"], card["v2"]["identite"],
+                                  card["v2"]["niveau"], transport, ["travailleur"],
+                                  [c for c in card.get("capacites") or [] if isinstance(c, str) and c][:64],
+                                  serie, TOLERANCE_LOGICIELLE)
+
+
+def _servir_perime(session, cid, card, adresse):
+    """Certificat expire (machine restee en veille) : rien d'autre qu'un renouvellement."""
+    try:
+        msg = session.recevoir()
+        if msg is None or msg["type"] != "certificat_demande":
+            print(f"[pont v2] {card.get('nom')} : certificat expire, seul un renouvellement est permis", flush=True)
+            return
+        nouveau = _renouveler(card, msg)
+        session.envoyer({"type": "certificat", "id": uuid.uuid4().hex[:16], "objet": nouveau})
+        print(f"[pont v2] {card.get('nom')} : certificat expire renouvele ({adresse})", flush=True)
+    except np_.ErreurPont as exc:
+        print(f"[pont v2] {card.get('nom')} : renouvellement refuse : {exc}", flush=True)
+    finally:
+        session.fermer()
+
+
+def _signaler(kind, cid, card, adresse):
+    if _evenement[0]:
+        try:
+            _evenement[0](kind, cid, card, adresse.rsplit(":", 1)[0].strip("[]"))
+        except Exception as exc:
+            print(f"[pont v2] {kind} de {cid} : {exc!r}", flush=True)
+
+
 def _servir(entrante):
     cid = None
+    session = None
+    arrivee = False
     try:
         transport, cert = _mon_certificat()
         session = entrante.repondre(parc(), transport, cert, coffre().cle_publique(), np_.Revocations(),
-                                    TOLERANCE_LOGICIELLE, None, DELAI_POIGNEE_SEC)
+                                    TOLERANCE_LOGICIELLE, None, DELAI_POIGNEE_SEC, GRACE_SEC)
         pair = session.pair
         cid, card = _machine_de(pair["sujet"])
         if not card:  # certificat valide mais machine retiree du pont depuis
             print(f"[pont v2] {pair.get('nom')} n'est plus de confiance : refusee", flush=True)
             session.fermer()
+            return
+        if session.perime:
+            _servir_perime(session, cid, card, entrante.adresse)
+            cid = None  # session de renouvellement : ni presence ni depart
             return
         print(f"[pont v2] {pair['nom']} connectee en v2 depuis {entrante.adresse}", flush=True)
         with _verrou:
@@ -198,6 +249,8 @@ def _servir(entrante):
             _sessions[cid] = session
         if ancienne is not None:
             ancienne.fermer()
+        _signaler("arrivee", cid, card, entrante.adresse)
+        arrivee = True
         while True:
             msg = session.recevoir()
             if msg is None:
@@ -222,14 +275,13 @@ def _servir(entrante):
                     except Exception as exc:  # le pont journalise, la session continue
                         print(f"[pont v2] {pair['nom']} : traitement de {msg['type']} : {exc!r}", flush=True)
             else:
-                import base64
-                m = {"nom": card.get("nom") or cid, "identite": card["v2"]["identite"],
-                     "niveau": card["v2"]["niveau"]}
-                nouveau = np_.emettre_certificat(coffre(), parc(), m["nom"], m["identite"], m["niveau"],
-                                                 base64.b64decode(msg["transport"]), ["travailleur"],
-                                                 [c for c in card.get("capacites") or [] if c][:64],
-                                                 _serie_suivante(), TOLERANCE_LOGICIELLE)
+                try:
+                    nouveau = _renouveler(card, msg)
+                except np_.ErreurPont as exc:
+                    print(f"[pont v2] {pair['nom']} : renouvellement refuse : {exc}", flush=True)
+                    continue
                 session.envoyer({"type": "certificat", "id": uuid.uuid4().hex[:16], "objet": nouveau})
+                print(f"[pont v2] {pair['nom']} : certificat renouvele", flush=True)
         session.fermer()
     except np_.ErreurPont as exc:
         print(f"[pont v2] {entrante.adresse} refusee : {exc}", flush=True)
@@ -237,17 +289,23 @@ def _servir(entrante):
         print(f"[pont v2] {entrante.adresse} : {exc!r}", flush=True)
     finally:
         if cid:
+            parti = False
             with _verrou:
                 if _sessions.get(cid) is session:
                     _sessions.pop(cid, None)
                     _presence_v2.pop(cid, None)
                     _ecrire_presence()
+                    parti = True
+            if parti and arrivee:
+                _signaler("depart", cid, compagnon.trusted().get(cid) or {}, entrante.adresse)
 
 
-def demarrer(adresse="0.0.0.0", port=PORT, recu=None):
+def demarrer(adresse="0.0.0.0", port=PORT, recu=None, evenement=None):
     """Ecoute v2 en tache de fond ; rend le port reel (port 0 : port libre, pour les essais).
-    recu(cid, fiche, message_v1) : ce que la machine envoie, remis au code du pont."""
+    recu(cid, fiche, message_v1) : ce que la machine envoie, remis au code du pont.
+    evenement(kind, cid, fiche, ip) : "arrivee" / "depart" d'une session v2."""
     _recu[0] = recu
+    _evenement[0] = evenement
     ecouteur = np_.Ecouteur(f"{adresse}:{port}")
     print("[pont v2] ecoute sur le port %d ; ordonnateur LOGICIEL tolere (pas de puce), parc %s"
           % (ecouteur.port, parc()), flush=True)
@@ -327,3 +385,116 @@ def resultat_signe(card, job_id, dossier):
         raise np_.ErreurPont("resultat d'un autre travail")
     np_.verifier_fichiers(objet, dossier)
     return r
+
+
+# --- appairage v2 (spec §3), par le NAS ----------------------------------------------
+# Canal NON authentifie (fichiers du NAS) : la securite vient du code a 6 chiffres que
+# l'humain compare. La machine s'engage sur sa cle AVANT de connaitre notre alea : un
+# intermediaire n'a qu'une chance sur un million. Fichiers dans appairage/v2/ :
+#   ouvert.json                 Pi : fenetre ouverte (parc, adresse pour se connecter)
+#   engagement-<n>.json         machine : engagement, nom, id, capacites
+#   presentation-<n>.json       Pi : sa presentation (identite, transport, alea)
+#   revelation-<n>.json         machine : sa presentation (tient l'engagement)
+#   certificat-<n>.json         Pi, apres validation du code : premier certificat
+#   refus-<n>.json              machine : la personne a dit non
+# <n> : nom simple choisi par la machine. Rien de tout ca n'est cru sans le code.
+
+APPAIRAGE_SEC = 180
+
+
+def _dossier_appairage():
+    return compagnon._path("appairage", "v2")
+
+
+class AppairageV2:
+    """Cote Pi, pour la console : ouvrir(), puis etat() en boucle, puis accepter()."""
+
+    def __init__(self):
+        self.accueil = None
+        self.n = None
+        self.machine = None   # engagement lu : nom, id, capacites
+        self.revelation = None
+        self.code = None
+        self.erreur = None
+
+    def ouvrir(self):
+        import shutil
+        dossier = _dossier_appairage()
+        shutil.rmtree(dossier, ignore_errors=True)
+        os.makedirs(dossier, exist_ok=True)
+        compagnon._write(os.path.join(dossier, "ouvert.json"),
+                         {"parc": parc(), "pi": compagnon.pi_id(), "hote": f"{compagnon.pi_id()}.local",
+                          "ip": compagnon._local_ip(), "port": PORT, "t": time.time()})
+
+    def fermer(self):
+        import shutil
+        shutil.rmtree(_dossier_appairage(), ignore_errors=True)
+
+    def _lire(self, nom):
+        return compagnon._read(os.path.join(_dossier_appairage(), nom))
+
+    def etat(self):
+        """"attente", "code" (self.code, self.machine), "refus" ou "erreur" (self.erreur)."""
+        if self.erreur:
+            return "erreur"
+        if self.n is None:
+            for nom in sorted(os.listdir(_dossier_appairage()) if os.path.isdir(_dossier_appairage()) else []):
+                if not (nom.startswith("engagement-") and nom.endswith(".json")):
+                    continue
+                e = self._lire(nom) or {}
+                n = nom[len("engagement-"):-5]
+                try:
+                    np_.nom_sur(n)
+                    np_.nom_sur(str(e.get("compagnon") or ""))
+                    if not isinstance(e.get("engagement"), str):
+                        raise np_.ErreurFormat("engagement")
+                    self.accueil = np_.Accueil(e["engagement"], coffre().cle_publique(), np_.CleTransport().public)
+                except np_.ErreurPont as exc:
+                    print(f"[pont v2] appairage : engagement {n} ignore ({exc})", flush=True)
+                    continue
+                self.n = n
+                nom_machine = str(e.get("nom") or e["compagnon"])[:64]
+                caps = [c for c in e.get("capacites") or [] if isinstance(c, str) and 0 < len(c) <= 128][:64]
+                self.machine = {"nom": nom_machine, "compagnon": e["compagnon"], "capacites": caps,
+                                "niveau": "materiel" if e.get("niveau") == "materiel" else "logiciel"}
+                compagnon._write(os.path.join(_dossier_appairage(), f"presentation-{n}.json"),
+                                 {"presentation": self.accueil.presentation, "parc": parc()})
+                break
+            return "attente"
+        if os.path.exists(os.path.join(_dossier_appairage(), f"refus-{self.n}.json")):
+            return "refus"
+        if self.code is None:
+            r = self._lire(f"revelation-{self.n}.json")
+            if not r:
+                return "attente"
+            try:
+                self.code = self.accueil.verifier(r.get("presentation"))
+            except np_.ErreurPont as exc:
+                self.erreur = str(exc)
+                return "erreur"
+            self.revelation = r["presentation"]
+        return "code"
+
+    def accepter(self):
+        """La personne a valide le code ici : fiche de confiance v2 et premier certificat.
+        Rend le nom de la machine."""
+        import base64
+        m, pres = self.machine, self.revelation
+        cid = m["compagnon"]
+        ident = pres["identite"]
+        vid = np_.identifiant(ident)
+        existante = compagnon.trusted().get(cid)
+        if existante and (existante.get("v2") or {}).get("id") not in (None, vid):
+            raise np_.AppairageRefuse(f"une autre machine porte deja le nom {cid}")
+        with _verrou:
+            serie = _serie_suivante()
+        cert = np_.emettre_certificat(coffre(), parc(), m["nom"], ident, m["niveau"], base64.b64decode(pres["transport"]),
+                                      ["travailleur"], m["capacites"], serie, TOLERANCE_LOGICIELLE)
+        fiche = dict(existante or {}, nom=m["nom"], capacites=m["capacites"], appaire=time.time(), vu=time.time(),
+                     v2={"id": vid, "identite": ident, "niveau": m["niveau"], "appaire": time.time()})
+        fiche.setdefault("stats", {})
+        os.makedirs(compagnon.TRUST_DIR, exist_ok=True)
+        compagnon._write(os.path.join(compagnon.TRUST_DIR, f"{cid}.json"), fiche)
+        compagnon._write(os.path.join(_dossier_appairage(), f"certificat-{self.n}.json"),
+                         {"objet": cert, "port": PORT, "parc": parc()})
+        return m["nom"]

@@ -512,3 +512,37 @@ def test_enveloppe_fichier(tmp_path):
     with pytest.raises(np_.DechiffrementImpossible):
         np_.ouvrir_fichier(entete, "mac", "pi", [mac], tmp_path / "iq.scelle", tmp_path / "iq.mauvais")
     assert not (tmp_path / "iq.mauvais").exists()
+
+
+# --- renouvellement sans la v1 (spec §4.1) ------------------------------------------
+
+def test_cle_de_transport_gardee_et_relue(tmp_path):
+    t = np_.CleTransport()
+    t.enregistrer(tmp_path / "transport.cle")
+    assert (tmp_path / "transport.cle").stat().st_mode & 0o777 == 0o600
+    assert np_.CleTransport.charger(tmp_path / "transport.cle").public == t.public
+    with pytest.raises(np_.ErreurPont):
+        (tmp_path / "abime.cle").write_bytes(b"court")
+        np_.CleTransport.charger(tmp_path / "abime.cle")
+
+
+def test_session_normale_pas_perimee_avec_grace_et_preuve_de_renouvellement():
+    p = Parc()
+    port, fil, resultats = lancer_ordonnateur(p, grace_sec=7 * 86400)
+    identite, transport, cert = p.machine(["travailleur"])
+    s = np_.connecter(f"127.0.0.1:{port}", PARC, transport, cert, p.cle_ord, p.revocations, True)
+    neuve = np_.CleTransport()
+    preuve = np_.preparer_renouvellement(identite, PARC, neuve.public)
+    t64 = base64.b64encode(neuve.public).decode()
+    s.envoyer({"type": "certificat_demande", "id": "c1", "transport": t64, "preuve": preuve})
+    s.fermer()
+    fil.join(5)
+    pair, recus = resultats[0]
+    assert recus[0]["preuve"] == preuve
+    registre = np_.RegistreNonces()
+    assert np_.verifier_renouvellement(recus[0]["preuve"], identite.cle_publique(), PARC, t64, registre) == neuve.public
+    with pytest.raises(np_.Rejeu):
+        np_.verifier_renouvellement(preuve, identite.cle_publique(), PARC, t64, registre)
+    autre = base64.b64encode(np_.CleTransport().public).decode()
+    with pytest.raises(np_.CertificatRefuse):
+        np_.verifier_renouvellement(preuve, identite.cle_publique(), PARC, autre)

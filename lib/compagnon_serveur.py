@@ -21,6 +21,11 @@ la prise se ferme sans son, l'appelant passe a la voix suivante.
 Protocole v2 (2026-11-15, lib/pont_v2.py) : une machine migree ouvre en plus une
 session chiffree (Noise). Tout envoi passe par _envoyer : la v2 d'abord, la v1
 en secours ; tout message recu, par l'une ou l'autre, passe par _traiter.
+
+v2 seule (2026-11-16) : une machine qui se connecte en v2 sans liaison v1 est
+"autonome" ; un CanalV2 tient alors sa place dans _channels, et tout le reste
+(avis, voix, TETRA, numerique) marche sans changement. L'ecoute v1 (port 47811)
+ne tourne plus que tant qu'une machine de confiance n'est pas autonome.
 """
 import base64
 import queue
@@ -62,6 +67,52 @@ _results_ready = threading.Event()
 _demandes_voix = {}  # id de "dire" -> queue des morceaux recus
 _demandes_tetra = {}  # id de "tetra" -> queue (voix + resultat recus)
 _demandes_numerique = {}  # id de "numerique" -> queue (voix + resultat recus)
+V1_VERIF_SEC = 60  # ecoute v1 : ouverte ou fermee selon les fiches, revu chaque minute
+
+
+class CanalV2:
+    """Tient la place d'une liaison v1 pour une machine connectee en v2 seulement."""
+
+    def __init__(self, cid):
+        self.cid = cid
+
+    def send(self, msg):
+        if not pont_v2.envoyer(self.cid, msg):
+            raise OSError("session v2 fermee ou message refuse")
+
+    def close(self):
+        pass
+
+
+def _evenement_v2(kind, cid, card, ip):
+    """Arrivee / depart d'une session v2 (lib/pont_v2). Avec une liaison v1 ouverte a
+    cote (machine pas encore autonome), c'est la v1 qui tient la presence."""
+    if kind == "arrivee":
+        with _lock:
+            actuel = _channels.get(cid)
+            if actuel is not None and not isinstance(actuel, CanalV2):
+                return
+            _channels[cid] = CanalV2(cid)
+            _presence[cid] = {"depuis": time.time(), "vu": time.time()}
+            _save_presence()
+        compagnon.update_card(cid, vu=time.time(), ips=[ip] if ip else (card.get("ips") or []), v2_autonome=time.time())
+        if actuel is None and time.time() - _sons_vus.get(("parti", cid), 0) > DECONNEXION_SEC:
+            _son("mac_connecte")
+        print(f"[compagnon] {card.get('nom')} connectee en v2 seule depuis {ip}")
+        _results_ready.set()
+        for job in compagnon.open_jobs():
+            _notify(cid, job["id"])
+    elif kind == "depart":
+        with _lock:
+            if not isinstance(_channels.get(cid), CanalV2):
+                return
+            del _channels[cid]
+            _presence.pop(cid, None)
+            _save_presence()
+            _sons_vus[("parti", cid)] = time.time()
+            minuteur = threading.Timer(DECONNEXION_SEC, _parti, args=(cid,))
+            minuteur.daemon = True
+            minuteur.start()
 
 
 def _save_presence():
@@ -201,6 +252,20 @@ def _traiter(cid, card, msg):
     if kind == "battement":
         compagnon.note_battement(cid, msg.get("capacites", []), msg.get("voix_mac") or [],
                                  msg.get("etat"), msg.get("puissance"))
+        reseau = msg.get("reseau")
+        if isinstance(reseau, dict):  # v2 : de quoi la reveiller (Wake-on-LAN)
+            ips = [i for i in reseau.get("ips") or [] if isinstance(i, str) and len(i) <= 64][:8]
+            mac = reseau.get("adresse_materielle")
+            champs = {"ips": ips} if ips else {}
+            if isinstance(mac, str) and len(mac) <= 32:
+                champs["adresse_materielle"] = mac
+            if champs and (card.get("ips") != champs.get("ips", card.get("ips"))
+                           or card.get("adresse_materielle") != champs.get("adresse_materielle", card.get("adresse_materielle"))):
+                compagnon.update_card(cid, **champs)
+        with _lock:
+            if cid in _presence:
+                _presence[cid]["vu"] = time.time()
+                _save_presence()
     elif kind in ("son", "son_fin"):
         file = _demandes_voix.get(msg.get("reponse_a"))
         if file is not None:
@@ -687,23 +752,55 @@ def _serveur_numerique():
     threading.Thread(target=server.serve_forever, daemon=True).start()
 
 
+def v1_necessaire(v2_actif):
+    """L'ecoute v1 ne sert plus que tant qu'une machine de confiance ne s'est jamais
+    connectee en v2 seule (amorce de sa migration)."""
+    if not v2_actif:
+        return True
+    return any(not card.get("v2_autonome") for card in compagnon.trusted().values())
+
+
+def _ecoute_v1(etat, v2_actif):
+    """Ouvre ou ferme l'ecoute v1 (port 47811) selon v1_necessaire."""
+    voulu = v1_necessaire(v2_actif)
+    if voulu and etat[0] is None:
+        socketserver.ThreadingTCPServer.allow_reuse_address = True
+        server = socketserver.ThreadingTCPServer(("0.0.0.0", proto.PORT), _Handler)
+        server.daemon_threads = True
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        etat[0] = server
+        print(f"[compagnon] ecoute v1 ouverte (port {proto.PORT})")
+    elif not voulu and etat[0] is not None:
+        etat[0].shutdown()
+        etat[0].server_close()
+        etat[0] = None
+        print("[compagnon] toutes les machines sont en v2 seule : ecoute v1 fermee")
+    elif not voulu and etat[0] is None and not getattr(_ecoute_v1, "annonce", False):
+        _ecoute_v1.annonce = True
+        print("[compagnon] toutes les machines sont en v2 seule : pas d'ecoute v1")
+
+
 def run():
     _serveur_voix_mac()
     _serveur_tetra()
     _serveur_numerique()
-    socketserver.ThreadingTCPServer.allow_reuse_address = True
-    server = socketserver.ThreadingTCPServer(("0.0.0.0", proto.PORT), _Handler)
-    server.daemon_threads = True
-    threading.Thread(target=server.serve_forever, daemon=True).start()
+    v2 = False
     if pont_v2.actif():
         try:
-            pont_v2.demarrer(recu=_traiter)
+            pont_v2.demarrer(recu=_traiter, evenement=_evenement_v2)
+            v2 = True
         except Exception as exc:
             print(f"[pont v2] ecoute impossible, la v1 continue seule : {exc!r}")
+    ecoute_v1 = [None]
+    _ecoute_v1(ecoute_v1, v2)
+    derniere_verif = time.time()
     with _lock:
         _save_presence()  # personne de connecte au demarrage
     last_poll = 0
     while True:
+        if time.time() - derniere_verif > V1_VERIF_SEC:
+            derniere_verif = time.time()
+            _ecoute_v1(ecoute_v1, v2)
         try:
             _drain_force_notify()
             _signal_tickets()

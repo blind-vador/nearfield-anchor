@@ -19,7 +19,7 @@ use zeroize::Zeroizing;
 
 use crate::cles::{CleIdentite, Coffre};
 use crate::objet::ObjetSigne;
-use crate::{aleatoire, b64, de_b64, jcs, maintenant, Erreur, Resultat};
+use crate::{aleatoire, b64, de_b64, ecrire_prive, jcs, maintenant, Erreur, Resultat};
 
 pub const ALG: &str = "x25519-hkdf-sha256-chacha20poly1305";
 pub const BLOC: usize = 64 * 1024;
@@ -79,23 +79,6 @@ impl CleReception {
                    "cle": b64(&self.public)}),
         )
     }
-}
-
-fn ecrire_prive(chemin: &Path, octets: &[u8]) -> Resultat<()> {
-    let tmp = chemin.with_extension("tmp");
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    let _ = std::fs::remove_file(&tmp);
-    let mut f = options.open(&tmp)?;
-    f.write_all(octets)?;
-    f.sync_all()?;
-    std::fs::rename(tmp, chemin)?;
-    Ok(())
 }
 
 pub fn empreinte_cle(public: &[u8]) -> String {

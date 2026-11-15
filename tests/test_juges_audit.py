@@ -136,7 +136,12 @@ class Rendus(Base):
 
     def test_annonce_du_premier(self):
         import phrases
+        import tempfile
         phrases.BASE_DIR = os.path.join(RACINE, "phrases")
+        # Pas la personnalite du jour du Pi (reecrite chaque nuit) : seulement le depot.
+        p = mock.patch.object(phrases, "PERSONA_DIR", tempfile.mkdtemp(prefix="essai_persona_"))
+        p.start()
+        self.addCleanup(p.stop)
         with mock.patch.object(propositions, "_charger", return_value={"courante": 0, "items": [{}, {}, {}]}):
             self.assertEqual(propositions.annonce_courante("x.mp3"), "Rendu 1 sur 3, le plus probable.")
         with mock.patch.object(propositions, "_charger", return_value={"courante": 1, "items": [{}, {}, {}]}):

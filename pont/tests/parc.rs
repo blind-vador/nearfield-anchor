@@ -98,7 +98,7 @@ fn appairage_puis_session_chiffree() {
     assert!(session.pair().roles.contains(&Role::Ordonnateur));
 
     session
-        .envoyer(&Message::Battement { id: "b1".into(), etat: Etat::Libre, capacites: vec!["whisper".into()], puissance_libre: 80, voix: None, session: None, puissance: None })
+        .envoyer(&Message::Battement { id: "b1".into(), etat: Etat::Libre, capacites: vec!["whisper".into()], puissance_libre: 80, voix: None, session: None, puissance: None, reseau: None })
         .unwrap();
     match session.recevoir().unwrap() {
         Some(Message::Dire { texte, .. }) => assert_eq!(texte, "Bien reçu."),
@@ -161,7 +161,7 @@ fn session_separee_envoie_et_recoit_depuis_deux_fils() {
     // Trois battements, trois réponses : on les attend toutes avant de fermer.
     let ecoute = thread::spawn(move || (0..3).map(|_| recepteur.recevoir()).collect::<Vec<_>>());
     for i in 0..3 {
-        let b = Message::Battement { id: format!("b{i}"), etat: Etat::Occupe, capacites: vec![], puissance_libre: 10, voix: None, session: None, puissance: None };
+        let b = Message::Battement { id: format!("b{i}"), etat: Etat::Occupe, capacites: vec![], puissance_libre: 10, voix: None, session: None, puissance: None, reseau: None };
         emetteur.envoyer(&b).unwrap();
     }
     for reponse in ecoute.join().unwrap() {

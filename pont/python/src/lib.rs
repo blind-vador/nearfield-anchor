@@ -350,6 +350,42 @@ impl CleTransport {
     fn public<'py>(&self, py: Python<'py>) -> Bound<'py, PyBytes> {
         PyBytes::new(py, &self.inner.public)
     }
+
+    /// Relit une clé gardée par `enregistrer` (fichier 0600).
+    #[staticmethod]
+    fn charger(chemin: std::path::PathBuf) -> PyResult<Self> {
+        Ok(CleTransport { inner: Arc::new(transport::CleTransport::charger(&chemin).map_err(err)?) })
+    }
+
+    /// Garde la clé dans un fichier 0600 (reconnexion après redémarrage, sans la v1).
+    fn enregistrer(&self, chemin: std::path::PathBuf) -> PyResult<()> {
+        self.inner.enregistrer(&chemin).map_err(err)
+    }
+}
+
+/// Preuve de renouvellement : l'identité de la machine signe sa nouvelle clé de transport.
+#[pyfunction]
+fn preparer_renouvellement(py: Python<'_>, identite: &Coffre, parc: &str, transport: &[u8]) -> PyResult<PyObject> {
+    vers_py(py, &certificat::preparer_renouvellement(&identite.inner, parc, transport).map_err(err)?)
+}
+
+/// Vérifie une preuve de renouvellement ; rend la clé de transport certifiée (32 octets).
+#[pyfunction]
+#[pyo3(signature = (preuve, identite, parc, transport_demande, registre = None))]
+fn verifier_renouvellement<'py>(
+    py: Python<'py>,
+    preuve: &Bound<'py, PyAny>,
+    identite: &Bound<'py, PyAny>,
+    parc: &str,
+    transport_demande: &str,
+    registre: Option<PyRefMut<'py, RegistreNonces>>,
+) -> PyResult<Bound<'py, PyBytes>> {
+    let o: ObjetSigne = depuis(preuve, "preuve")?;
+    let mut registre = registre;
+    let t = certificat::verifier_renouvellement(&o, &depuis(identite, "clé")?, parc, transport_demande,
+                                                registre.as_mut().map(|r| &mut r.inner))
+        .map_err(err)?;
+    Ok(PyBytes::new(py, &t))
 }
 
 /// L'ordonnateur émet un certificat de 12 h ; rend l'objet signé.
@@ -551,6 +587,9 @@ struct Confiance {
     revocations: ListeRevocations,
     tolerance: bool,
     roles_acceptes: Option<Vec<Role>>,
+    /// Secondes pendant lesquelles un certificat expiré ouvre encore une session de
+    /// renouvellement (`Session.perime`) ; 0 : jamais.
+    grace: i64,
 }
 
 impl Confiance {
@@ -567,11 +606,14 @@ impl Confiance {
             revocations: revocations.inner.clone(),
             tolerance,
             roles_acceptes: roles_acceptes.as_deref().map(roles).transpose()?,
+            grace: 0,
         })
     }
 
-    fn verifier(&self, o: &ObjetSigne) -> pont::Resultat<Certificat> {
-        let c = certificat::verifier(o, &self.ordonnateur, &self.parc, &self.revocations, self.tolerance, maintenant())?;
+    fn verifier(&self, o: &ObjetSigne, perime: &std::cell::Cell<bool>) -> pont::Resultat<Certificat> {
+        let (c, p) = certificat::verifier_avec_grace(o, &self.ordonnateur, &self.parc, &self.revocations, self.tolerance,
+                                                    maintenant(), self.grace)?;
+        perime.set(p);
         if let Some(acceptes) = &self.roles_acceptes {
             if !c.roles.iter().any(|r| acceptes.contains(r)) {
                 return Err(Erreur::Certificat(format!("rôle non attendu pour {}", c.nom)));
@@ -594,7 +636,8 @@ fn poignee(
     flux.set_write_timeout(Some(delai))?;
     flux.set_nodelay(true)?;
     let reglage = flux.try_clone()?;
-    let verifier = |o: &ObjetSigne| confiance.verifier(o);
+    let perime = std::cell::Cell::new(false);
+    let verifier = |o: &ObjetSigne| confiance.verifier(o, &perime);
     let ctx = Contexte { parc: &confiance.parc, cle, mon_certificat: certificat, verifier_pair: &verifier };
     let session = if initiateur { transport::initier(flux, &ctx)? } else { transport::repondre(flux, &ctx)? };
     // Session établie : plus de délai de lecture (le pair peut se taire longtemps
@@ -603,7 +646,7 @@ fn poignee(
     reglage.set_read_timeout(None)?;
     let pair = session.pair().clone();
     let (emetteur, recepteur) = session.separer()?;
-    Ok(Session { emetteur: Mutex::new(emetteur), recepteur: Mutex::new(recepteur), pair })
+    Ok(Session { emetteur: Mutex::new(emetteur), recepteur: Mutex::new(recepteur), pair, perime: perime.get() })
 }
 
 fn delai(secondes: f64) -> PyResult<Duration> {
@@ -686,7 +729,9 @@ struct Entrante {
 #[pymethods]
 impl Entrante {
     /// Poignée de main côté répondeur. Par défaut tout rôle certifié est accepté.
-    #[pyo3(signature = (parc, cle_transport, certificat, ordonnateur, revocations, tolerance_logiciel = false, roles_acceptes = None, delai_sec = 10.0))]
+    /// `grace_sec` > 0 : un certificat expiré depuis moins que ça ouvre une session
+    /// marquée `perime`, qui ne doit servir qu'à renouveler le certificat (§4.1).
+    #[pyo3(signature = (parc, cle_transport, certificat, ordonnateur, revocations, tolerance_logiciel = false, roles_acceptes = None, delai_sec = 10.0, grace_sec = 0))]
     #[allow(clippy::too_many_arguments)]
     fn repondre(
         &self,
@@ -699,8 +744,10 @@ impl Entrante {
         tolerance_logiciel: bool,
         roles_acceptes: Option<Vec<String>>,
         delai_sec: f64,
+        grace_sec: i64,
     ) -> PyResult<Session> {
-        let confiance = Confiance::nouvelle(parc, ordonnateur, revocations, tolerance_logiciel, roles_acceptes)?;
+        let mut confiance = Confiance::nouvelle(parc, ordonnateur, revocations, tolerance_logiciel, roles_acceptes)?;
+        confiance.grace = grace_sec.max(0);
         let mon_certificat: ObjetSigne = depuis(certificat, "certificat")?;
         let cle = cle_transport.inner.clone();
         let delai = delai(delai_sec)?;
@@ -721,6 +768,7 @@ struct Session {
     emetteur: Mutex<Emetteur>,
     recepteur: Mutex<Recepteur>,
     pair: Certificat,
+    perime: bool,
 }
 
 #[pymethods]
@@ -729,6 +777,13 @@ impl Session {
     #[getter]
     fn pair(&self, py: Python<'_>) -> PyResult<PyObject> {
         vers_py(py, &self.pair)
+    }
+
+    /// Vrai si le pair s'est présenté avec un certificat expiré (dans la grâce) :
+    /// cette session ne sert qu'à lui renouveler son certificat.
+    #[getter]
+    fn perime(&self) -> bool {
+        self.perime
     }
 
     fn envoyer(&self, py: Python<'_>, message: &Bound<'_, PyAny>) -> PyResult<()> {
@@ -929,6 +984,8 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(ancienne_annoncee, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_migration, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_cle_reception, m)?)?;
+    m.add_function(wrap_pyfunction!(preparer_renouvellement, m)?)?;
+    m.add_function(wrap_pyfunction!(verifier_renouvellement, m)?)?;
     m.add_function(wrap_pyfunction!(sceller, m)?)?;
     m.add_function(wrap_pyfunction!(ouvrir, m)?)?;
     m.add_function(wrap_pyfunction!(sceller_fichier, m)?)?;

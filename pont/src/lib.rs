@@ -55,3 +55,22 @@ pub(crate) fn de_b64(texte: &str) -> Resultat<Vec<u8>> {
         .decode(texte.as_bytes())
         .map_err(|_| Erreur::Format("base64 invalide".into()))
 }
+
+/// Écrit un secret dans un fichier en 0600 (fichier temporaire puis renommage).
+pub(crate) fn ecrire_prive(chemin: &std::path::Path, octets: &[u8]) -> Resultat<()> {
+    use std::io::Write;
+    let tmp = chemin.with_extension("tmp");
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    let _ = std::fs::remove_file(&tmp);
+    let mut f = options.open(&tmp)?;
+    f.write_all(octets)?;
+    f.sync_all()?;
+    std::fs::rename(tmp, chemin)?;
+    Ok(())
+}

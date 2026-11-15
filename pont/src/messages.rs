@@ -51,8 +51,18 @@ pub enum Message {
         /// Données : mesure de puissance (attribution des travaux).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         puissance: Option<Value>,
+        /// Données : de quoi réveiller la machine (adresse matérielle, adresses IP).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reseau: Option<Value>,
     },
-    CertificatDemande { id: String, transport: String },
+    /// Nouvelle clé de transport ; `preuve` : objet `renouvellement` signé par la clé
+    /// d'identité de la machine (obligatoire pour renouveler sans la v1, §4.1).
+    CertificatDemande {
+        id: String,
+        transport: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        preuve: Option<ObjetSigne>,
+    },
     Certificat { id: String, objet: ObjetSigne },
     Revocations { id: String, objet: ObjetSigne },
     TravailAnnonce { id: String, travail: String },
@@ -326,7 +336,7 @@ impl Message {
     pub fn valider(&self) -> Resultat<()> {
         court("id", self.id())?;
         match self {
-            Message::Battement { capacites, puissance_libre, voix, session, puissance, .. } => {
+            Message::Battement { capacites, puissance_libre, voix, session, puissance, reseau, .. } => {
                 if capacites.len() > 64 || *puissance_libre > 100 {
                     return Err(Erreur::Message("battement hors limites".into()));
                 }
@@ -335,7 +345,8 @@ impl Message {
                     liste("voix", v, 64, |x| court("voix", x))?;
                 }
                 donnees("session", session)?;
-                donnees("puissance", puissance)
+                donnees("puissance", puissance)?;
+                donnees("reseau", reseau)
             }
             Message::TravailFini { travail, .. } => nom_sur(travail),
             Message::Tickets { ids, .. } => liste("ids", ids, MAX_LISTE, nom_sur),

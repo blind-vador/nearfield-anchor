@@ -25,6 +25,12 @@ def _done_text(answer):
 
 
 def run(key_source, say, out):
+    try:
+        import pont_v2
+    except ImportError:
+        pont_v2 = None
+    if pont_v2 is not None and pont_v2.actif():
+        return _run_v2(pont_v2, key_source, say, out)
     compagnon.start_pairing()
     keys.drain_wake()
     found = {}
@@ -82,3 +88,69 @@ def run(key_source, say, out):
     finally:
         stop.set()
         compagnon.stop_pairing()
+
+
+def _run_v2(pont_v2, key_source, say, out):
+    """Appairage v2 (protocole-v2 §3) : code de 6 chiffres dit en 3 paires, que la
+    personne valide sur les DEUX machines (ici : Entree, apres la machine)."""
+    app = pont_v2.AppairageV2()
+    app.ouvrir()
+    keys.drain_wake()
+    found = {}
+    stop = threading.Event()
+
+    def tell(text):
+        out(f"[{text}]\n")
+        say(text)
+
+    def surveiller():
+        deadline = time.time() + pont_v2.APPAIRAGE_SEC
+        while not stop.is_set() and time.time() < deadline:
+            etat = app.etat()
+            if etat == "code" and "code" not in found:
+                found["code"] = app.code
+                caps = ", ".join(app.machine["capacites"]) or dire("appairage.aucune_capacite")
+                tell(dire("appairage.reponse_v2", nom=app.machine["nom"], code=pont_v2.np_.code_parle(app.code),
+                          capacites=caps))
+            elif etat in ("refus", "erreur"):
+                found["fin"] = etat
+                keys.wake()
+                return
+            stop.wait(1)
+        if not stop.is_set() and "code" not in found:
+            found["timeout"] = True
+            tell(dire("appairage.delai"))
+
+    consigne = dire("appairage.consigne_v2")
+    tell(conseils.intro("appairage", dire("appairage.titre"), consigne) + " " + dire("appairage.attente"))
+    threading.Thread(target=surveiller, daemon=True).start()
+    accepte = False
+    try:
+        for key in key_source:
+            if key == keys.WAKE:
+                if found.get("fin") == "refus":
+                    return dire("appairage.refus")
+                if found.get("fin") == "erreur":
+                    return dire("appairage.erreur_v2", raison=app.erreur)
+                continue
+            if key == "\x1b":
+                return dire("appairage.annule")
+            if key in ("\r", "\n"):
+                if found.get("code"):
+                    try:
+                        nom = app.accepter()
+                    except pont_v2.np_.ErreurPont as exc:
+                        return dire("appairage.erreur_v2", raison=str(exc))
+                    accepte = True
+                    return dire("appairage.reussi", nom=nom)
+                text = dire("appairage.pas_reponse" if not found.get("timeout") else "appairage.personne")
+            elif conseils.is_help(key):
+                text = consigne
+            else:
+                text = dire("appairage.aide_courte")
+            tell(text)
+        return dire("appairage.ferme")
+    finally:
+        stop.set()
+        if not accepte:
+            app.fermer()  # apres une validation, le certificat reste le temps que la machine le lise

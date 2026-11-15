@@ -71,6 +71,7 @@ LOOP_SEC = 5
 PAIRING_WAIT_SEC = 180
 RECONNECT_SEC = (10, 120)
 V2_DIR = os.path.join(HOME, "v2")            # identite.pem (cle v2), ponts/<pi>.json (cle v2 du Pi epinglee)
+CERT_MI_VIE_SEC = 6 * 3600  # certificat v2 de 12 h : renouvele a mi-vie, dans la session
 
 
 # --- outils -------------------------------------------------------------------------
@@ -123,7 +124,7 @@ def bridges():
         return {}
     for name in names:
         card = _read(os.path.join(BRIDGES, name)) if name.endswith(".json") else None
-        if card and card.get("cle"):
+        if card and (card.get("cle") or card.get("v2")):  # cle v1 du Pi, ou pont appaire en v2
             found[name[:-5]] = card
     return found
 
@@ -297,8 +298,8 @@ def _tickets_boucle():
         conf = config()
         for pi, card in bridges().items():
             link = _links.get(pi)
-            if not link or link.channel is None:
-                continue
+            if not link or not link.direct or not card.get("cle"):
+                continue  # tickets du lot 1 : signes par les cles v1 (le lot 2 les passera en v2)
             cles = {pi: card["cle"], conf["id"]: proto.public_b64(key())}
             try:
                 share = find_share(card)
@@ -661,6 +662,12 @@ def pairing_wait():
     share = find_share()
     if not share:
         return "ERREUR", "Je ne trouve pas le disque partagé du NAS. Monte le partage server, puis recommence."
+    if pont2 is not None:
+        return _pairing_wait_v2(conf, share)
+    return _pairing_wait_v1(conf, share)
+
+
+def _pairing_wait_v1(conf, share):
     request_path = os.path.join(share, "appairage", "demande.json")
     deadline = time.time() + PAIRING_WAIT_SEC
     while time.time() < deadline:
@@ -724,6 +731,8 @@ def pairing_decide():
     pending = _read(PENDING)
     if not pending:
         return "ERREUR", "Aucun appairage en cours."
+    if pending.get("v2"):
+        return _pairing_decide_v2(conf, pending)
     request, share = pending["demande"], pending["partage"]
     pi = request.get("pi", "inconnu")
     done = "Pont créé avec %s : nos clés sont échangées. Le service s'y connecte dans quelques secondes." % pi
@@ -758,6 +767,99 @@ def pairing_decide():
         _remove(PENDING)
 
 
+# --- appairage v2 (Prismaforge/specs/protocole-v2.md §3 ; lib/pont_v2.py cote Pi) ---------
+# Code de 6 chiffres, dit en 3 paires ; la personne valide sur LES DEUX machines. On
+# s'engage sur notre cle avant de connaitre l'alea du Pi.
+
+def _pairing_wait_v2(conf, share):
+    dossier = os.path.join(share, "appairage", "v2")
+    deadline = time.time() + PAIRING_WAIT_SEC
+    ouvert = None
+    while time.time() < deadline:
+        ouvert = _read(os.path.join(dossier, "ouvert.json"))
+        if ouvert and ouvert.get("parc") and time.time() - ouvert.get("t", 0) < PAIRING_WAIT_SEC:
+            break
+        if _read(os.path.join(share, "appairage", "demande.json")):
+            break  # Pi encore en v1 : ancien appairage
+        time.sleep(2)
+    else:
+        return "ERREUR", "Le Pi ne s'est pas manifesté en trois minutes. Appairage abandonné."
+    if not ouvert or not ouvert.get("parc"):
+        return _pairing_wait_v1(conf, share)
+    os.makedirs(V2_DIR, mode=0o700, exist_ok=True)
+    moi = pont2.Coffre.charger_ou_creer(os.path.join(V2_DIR, "identite.pem"), "p256")
+    transport = pont2.CleTransport()
+    rejoignant = pont2.Rejoignant(moi.cle_publique(), transport.public)
+    n = uuid.uuid4().hex[:12]
+    _write(os.path.join(dossier, "engagement-%s.json" % n),
+           {"engagement": rejoignant.engagement, "compagnon": conf["id"], "nom": conf["nom"],
+            "capacites": capabilities(), "niveau": moi.niveau, "t": time.time()})
+    presentation = None
+    while time.time() < deadline:
+        presentation = _read(os.path.join(dossier, "presentation-%s.json" % n))
+        if presentation:
+            break
+        time.sleep(1)
+    else:
+        return "ERREUR", "Le Pi n'a pas répondu à notre engagement. Appairage abandonné."
+    try:
+        ma_presentation, code = rejoignant.recevoir(presentation.get("presentation"))
+    except pont2.ErreurPont as exc:
+        return "ERREUR", "Réponse du Pi invalide : %s" % exc
+    _write(os.path.join(dossier, "revelation-%s.json" % n), {"presentation": ma_presentation})
+    # La cle de transport du premier certificat doit survivre jusqu'a l'etape 2.
+    attente = os.path.join(V2_DIR, "appairage")
+    os.makedirs(attente, mode=0o700, exist_ok=True)
+    transport.enregistrer(os.path.join(attente, "transport.cle"))
+    _write(PENDING, {"v2": True, "n": n, "partage": share, "code": code, "ouvert": ouvert,
+                     "ordonnateur": presentation["presentation"]["identite"], "t": time.time()})
+    return "OK", ouvert.get("pi", "inconnu"), pont2.code_parle(code)
+
+
+def _pairing_decide_v2(conf, pending):
+    share, n, ouvert = pending["partage"], pending["n"], pending["ouvert"]
+    dossier = os.path.join(share, "appairage", "v2")
+    try:
+        answer = _ask("Pi trouvé : %s.\nCode : %s.\n\nSi le Pi dit le même code, valide ici, puis appuie sur "
+                      "Entrée sur la console du Pi." % (ouvert.get("pi", "inconnu"), pont2.code_parle(pending["code"])),
+                      lambda: True)
+        if answer != "Oui":
+            _write(os.path.join(dossier, "refus-%s.json" % n), {"t": time.time()})
+            return "OK", "Appairage refusé, rien n'est enregistré. Le Pi ferme son dialogue tout seul."
+        deadline = time.time() + 120
+        while time.time() < deadline:
+            reponse = _read(os.path.join(dossier, "certificat-%s.json" % n))
+            if reponse:
+                break
+            time.sleep(1)
+        else:
+            return "ERREUR", "Le Pi n'a pas validé dans les deux minutes. Rien n'est enregistré."
+        import base64
+        parc = pending["ordonnateur"]
+        if pont2.identifiant(parc) != reponse.get("parc"):
+            return "ERREUR", "Le certificat ne vient pas du Pi dont on a comparé le code. Rien n'est enregistré."
+        transport = pont2.CleTransport.charger(os.path.join(V2_DIR, "appairage", "transport.cle"))
+        cert = reponse.get("objet")
+        try:
+            c = pont2.verifier_certificat(cert, parc, reponse["parc"], pont2.Revocations(), True)
+            moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))
+            if c["identite"] != moi.cle_publique() or base64.b64decode(c["transport"]) != transport.public:
+                raise pont2.CertificatRefuse("ce certificat n'est pas le mien")
+        except pont2.ErreurPont as exc:
+            return "ERREUR", "Certificat refusé : %s. Rien n'est enregistré." % exc
+        pi = reponse["parc"]
+        _write(os.path.join(V2_DIR, "ponts", "%s.json" % pi), {"ordonnateur": parc, "parc": pi, "epingle": time.time()})
+        _garder_v2(pi, transport, cert, int(reponse.get("port") or 47812))
+        _write(os.path.join(BRIDGES, pi + ".json"),
+               {"pi": pi, "nom": ouvert.get("pi"), "v2": True, "hote": ouvert.get("hote"), "ip": ouvert.get("ip"),
+                "partage": share, "montage": _mount_url(share), "appaire": time.time()})
+        return "OK", ("Pont créé avec %s (protocole v2) : nos clés sont échangées. Le service s'y connecte dans "
+                      "quelques secondes." % ouvert.get("pi", pi))
+    finally:
+        _remove(PENDING)
+        _remove(os.path.join(V2_DIR, "appairage", "transport.cle"))
+
+
 def pairing_terminal():
     result = pairing_wait()
     if result[0] != "OK":
@@ -775,11 +877,19 @@ def forget(pi):
     if not card:
         return "ERREUR", "Pas de pont avec %s." % pi
     share = find_share(card)
-    if share:
+    epingle = _read(os.path.join(V2_DIR, "ponts", "%s.json" % pi))
+    if share and pont2 is not None and epingle and os.path.exists(os.path.join(V2_DIR, "identite.pem")):
+        moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))  # retrait signe en v2
+        _write(os.path.join(share, "revocations", conf["id"] + ".json"),
+               moi.signer_objet({"type": "oubli", "parc": epingle["parc"], "id": "oubli-" + conf["id"],
+                                 "compagnon": conf["id"], "pi": card.get("nom") or pi}))
+    elif share:
         _write(os.path.join(share, "revocations", conf["id"] + ".json"),
                proto.sign(key(), {"type": "oubli", "compagnon": conf["id"], "pi": pi}))
     _remove(os.path.join(BRIDGES, pi + ".json"))
     _remove(os.path.join(STATS, pi + ".json"))
+    _remove(os.path.join(_dossier_session(pi), "certificat.json"))
+    _remove(os.path.join(_dossier_session(pi), "transport.cle"))
     return "OK", ("Pont avec %s supprimé%s." % (pi, "" if share else
                   ", mais le disque du NAS est absent : le Pi ne le saura qu'au prochain essai"))
 
@@ -845,12 +955,20 @@ class Link(threading.Thread):
                     self.channel.close()
         return False
 
+    @property
+    def direct(self):
+        """Liaison directe ouverte (v1, ou session v2)."""
+        pilote = self.pilote_v2
+        return self.channel is not None or (pilote is not None and pilote.etablie and not pilote.fin.is_set())
+
     def shutdown(self):
         """Pont supprime : coupe la liaison tout de suite."""
         self.stop.set()
         with self.lock:
             if self.channel:
                 self.channel.close()
+        if self.pilote_v2:
+            self.pilote_v2.arreter()
 
     def _connect(self, card):
         self.last_error = None
@@ -966,10 +1084,15 @@ class Link(threading.Thread):
                 import base64
                 if c["identite"] != moi.cle_publique() or base64.b64decode(c["transport"]) != self.transport_v2.public:
                     raise pont2.CertificatRefuse("ce certificat n'est pas le mien")
-                if self.pilote_v2:
-                    self.pilote_v2.arreter()
-                self.pilote_v2 = PiloteV2(self, card, epingle, self.transport_v2, cert, int(msg.get("port") or 47812))
-                self.pilote_v2.start()
+                _garder_v2(self.pi, self.transport_v2, cert, int(msg.get("port") or 47812))
+                # v2 seule desormais (2026-11-16) : la liaison v1 s'arrete, LiaisonV2 prend
+                # le relais avec ce certificat ; il se renouvelle ensuite dans la session.
+                log("%s : migration v2 terminee, la v1 n'est plus utilisee" % self.pi)
+                self.stop.set()
+                _basculer_v2(self.pi)
+                with self.lock:
+                    if self.channel:
+                        self.channel.close()
             else:
                 log("%s : migration v2 refusee par le Pi : %s" % (self.pi, msg.get("raison")))
         except pont2.ErreurPont as exc:
@@ -1038,6 +1161,75 @@ class Link(threading.Thread):
             delay = min(delay * 2, RECONNECT_SEC[1])
 
 
+def _dossier_session(pi):
+    return os.path.join(V2_DIR, "session", pi)
+
+
+def _garder_v2(pi, transport, cert, port):
+    """Cle de transport (0600) et certificat v2 : la machine se reconnecte apres un
+    redemarrage sans repasser par la v1."""
+    dossier = _dossier_session(pi)
+    os.makedirs(dossier, mode=0o700, exist_ok=True)
+    transport.enregistrer(os.path.join(dossier, "transport.cle"))
+    _write(os.path.join(dossier, "certificat.json"), {"objet": cert, "port": port, "t": time.time()})
+
+
+def _etat_v2(pi):
+    """(epingle, transport, certificat, port) si ce pont tourne en v2 seule, sinon None."""
+    if pont2 is None:
+        return None
+    epingle = _read(os.path.join(V2_DIR, "ponts", "%s.json" % pi))
+    c = _read(os.path.join(_dossier_session(pi), "certificat.json"))
+    chemin = os.path.join(_dossier_session(pi), "transport.cle")
+    if not epingle or not c or not os.path.exists(chemin) or not os.path.exists(os.path.join(V2_DIR, "identite.pem")):
+        return None
+    try:
+        return epingle, pont2.CleTransport.charger(chemin), c["objet"], int(c.get("port") or 47812)
+    except (pont2.ErreurPont, KeyError, TypeError, ValueError):
+        return None
+
+
+def _basculer_v2(pi):
+    nouvelle = LiaisonV2(pi)
+    _links[pi] = nouvelle
+    nouvelle.start()
+
+
+class LiaisonV2(Link):
+    """Pont en v2 seule (2026-11-16) : plus de liaison v1. Session Noise avec le
+    certificat garde ; renouvele a mi-vie dans la session ; apres une longue veille
+    (certificat expire), le Pi ouvre une session de renouvellement seulement."""
+
+    def v2_terminee(self, etablie):
+        pass  # la boucle de run() se reconnecte elle-meme
+
+    def run(self):
+        delay = RECONNECT_SEC[0]
+        while not self.stop.is_set():
+            card = bridges().get(self.pi)
+            if not card:
+                return  # pont supprime
+            etat = _etat_v2(self.pi)
+            if not etat:
+                log("%s : etat v2 introuvable, retour a la liaison v1" % self.pi)
+                return  # la boucle du service relancera une liaison v1
+            epingle, transport, cert, port = etat
+            pilote = PiloteV2(self, card, epingle, transport, cert, port)
+            self.pilote_v2 = pilote
+            pilote.run()  # dans ce fil : rend la main quand la session tombe
+            self.pilote_v2 = None
+            update_stats(self.pi, connecte=False, vu=time.time())
+            if pilote.renouvele:
+                delay = RECONNECT_SEC[0]
+                continue  # certificat neuf : reconnexion tout de suite
+            if pilote.etablie:
+                delay = RECONNECT_SEC[0]
+            elif card.get("hote") or card.get("ip"):
+                update_stats(self.pi, erreur="Pi injoignable en v2")
+            self.stop.wait(delay)
+            delay = min(delay * 2, RECONNECT_SEC[1])
+
+
 class PiloteV2(threading.Thread):
     """Session v2 (Noise, port 47812) a cote de la liaison v1. Tout le trafic y
     passe (Link.send essaie la v2 d'abord) ; la v1 garde l'amorce, ses battements
@@ -1052,6 +1244,13 @@ class PiloteV2(threading.Thread):
         self.fin = threading.Event()
         self.voulu = False  # arrete par la liaison (v1 coupee, certificat remplace) : pas de relance
         self.refus_vus = set()
+        self.etablie = False
+        self.renouvele = False   # certificat neuf recu : se reconnecter tout de suite avec lui
+        self.demande = None      # cle de transport neuve en attente de son certificat
+        try:
+            self.expire = int(certificat["charge"]["expire"])
+        except (KeyError, TypeError, ValueError):
+            self.expire = 0
 
     def arreter(self, voulu=True):
         self.voulu = self.voulu or voulu
@@ -1080,8 +1279,37 @@ class PiloteV2(threading.Thread):
 
     def _battement(self):
         etat = session_state()
+        mac, ips = network_identity()
         return {"type": "battement", "capacites": capabilities(), "etat": etat, "voix_mac": mac_voices(),
-                "puissance": power(etat), "occupe": bool(stats(self.pi).get("en_cours"))}
+                "puissance": power(etat), "occupe": bool(stats(self.pi).get("en_cours")),
+                "reseau": {"adresse_materielle": mac, "ips": ips}}
+
+    def _demander_certificat(self):
+        """Certificat neuf pour une cle de transport neuve, avec la preuve signee par
+        notre cle d'identite (spec §4.1). A mi-vie, ou tout de suite s'il a expire."""
+        import base64
+        neuve = pont2.CleTransport()
+        moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))
+        preuve = pont2.preparer_renouvellement(moi, self.epingle["parc"], neuve.public)
+        self.demande = neuve
+        self.session.envoyer({"type": "certificat_demande", "id": uuid.uuid4().hex[:16],
+                              "transport": base64.b64encode(neuve.public).decode(), "preuve": preuve})
+        log("%s : certificat v2 demande (expire %s)" % (self.pi, time.strftime("%d/%m %H:%M", time.localtime(self.expire))))
+
+    def _certificat_recu(self, msg):
+        import base64
+        neuve = self.demande
+        if neuve is None:
+            return
+        cert = msg.get("objet")
+        c = pont2.verifier_certificat(cert, self.epingle["ordonnateur"], self.epingle["parc"], pont2.Revocations(), True)
+        moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))
+        if c["identite"] != moi.cle_publique() or base64.b64decode(c["transport"]) != neuve.public:
+            raise pont2.CertificatRefuse("ce certificat n'est pas le mien")
+        _garder_v2(self.pi, neuve, cert, self.port)
+        log("%s : certificat v2 renouvele, reconnexion avec lui" % self.pi)
+        self.renouvele = True
+        self.arreter(voulu=False)
 
     def run(self):
         for host in (self.card.get("hote"), self.card.get("ip")):
@@ -1101,19 +1329,38 @@ class PiloteV2(threading.Thread):
             if not self.voulu:
                 self.link.v2_terminee(False)
             return
-        log("%s : session v2 etablie (Noise, port %d), le trafic y passe" % (self.pi, self.port))
-        update_stats(self.pi, v2=True, v2_depuis=time.time(), erreur_v2=None)
+        self.etablie = True
         lecteur = threading.Thread(target=self._lire, daemon=True)
         lecteur.start()
+        if self.expire and self.expire <= time.time():
+            # Certificat expire pendant une veille : le Pi n'ouvre qu'une session de
+            # renouvellement ; rien d'autre a y faire.
+            log("%s : certificat v2 expire, renouvellement" % self.pi)
+            try:
+                self._demander_certificat()
+            except pont2.ErreurPont as exc:
+                log("%s : renouvellement impossible (%s)" % (self.pi, exc))
+            self.fin.wait(30)
+            self.arreter(voulu=False)
+            return
+        log("%s : session v2 etablie (Noise, port %d), le trafic y passe" % (self.pi, self.port))
+        update_stats(self.pi, v2=True, v2_depuis=time.time(), erreur_v2=None, connecte=True, depuis=time.time(),
+                     erreur=None)
+        _wake_workers(self.pi)  # ce qui attendait
         try:
             while not self.fin.is_set():
+                if self.demande is None and self.expire and self.expire - time.time() < CERT_MI_VIE_SEC:
+                    try:
+                        self._demander_certificat()
+                    except pont2.ErreurPont as exc:
+                        log("%s : renouvellement impossible (%s)" % (self.pi, exc))
                 if not self.envoyer(self._battement()):
                     break
                 self.fin.wait(BEAT_SEC)
         finally:
             self.arreter(voulu=False)
             update_stats(self.pi, v2=False)
-            log("%s : session v2 fermee (la v1 reste)" % self.pi)
+            log("%s : session v2 fermee" % self.pi)
             if not self.voulu:
                 self.link.v2_terminee(True)
 
@@ -1123,6 +1370,12 @@ class PiloteV2(threading.Thread):
                 msg = self.session.recevoir()
                 if msg is None:
                     break
+                if msg.get("type") == "certificat":
+                    try:
+                        self._certificat_recu(msg)
+                    except pont2.ErreurPont as exc:
+                        log("%s : certificat v2 refuse : %s" % (self.pi, exc))
+                    continue
                 try:
                     self.link.recu(trad.depuis_v2(msg, hote=self.hote))
                 except trad.NonTraduisible as exc:
@@ -1405,12 +1658,12 @@ def service():
         current = bridges()
         for pi in current:
             if pi not in _links or not _links[pi].is_alive():
-                _links[pi] = Link(pi)
+                _links[pi] = LiaisonV2(pi) if _etat_v2(pi) else Link(pi)
                 _links[pi].start()
         for pi in list(_links):
             if pi not in current:
                 _links.pop(pi).shutdown()
-        direct = {pi for pi in current if _links.get(pi) and _links[pi].channel is not None}
+        direct = {pi for pi in current if _links.get(pi) and _links[pi].direct}
         # Liaison directe : NAS releve toutes les 5 min, en filet de securite
         # si un avis s'est perdu ; sans elle, en differe toutes les 12 h.
         every = SCAN_SEC if len(direct) == len(current) else NAS_FALLBACK_SEC

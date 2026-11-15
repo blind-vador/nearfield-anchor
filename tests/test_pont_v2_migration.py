@@ -1,4 +1,4 @@
-"""Essai de connexion de bout en bout : passage de la v1 a la v2 (pilote).
+"""Essai de connexion de bout en bout : passage de la v1 a la v2, puis v2 seule.
 
 On part d'un parc v1 deja appairé (cles Ed25519, fiche de confiance cote Pi,
 fiche du pont cote Mac) et on fait tourner le VRAI code : le serveur du Pi
@@ -7,19 +7,20 @@ fiche du pont cote Mac) et on fait tourner le VRAI code : le serveur du Pi
 la machine (capacites, voix, puissance) et les sons.
 
 On verifie :
-  - la v1 marche comme avant (bonjour, bienvenue, battements) ;
-  - la migration se fait toute seule sur le canal v1, dans les deux sens ;
-  - le Mac ouvre une session Noise v2 et ses battements y arrivent ;
-  - une reconnexion refait la migration sans rien casser (meme identite) ;
-  - un Mac dont la cle v2 a ete remplacee est refuse (une cle v1 ne migre qu'une fois) ;
+  - la migration se fait toute seule sur le canal v1, puis le Mac passe en v2 SEULE :
+    sa liaison v1 se ferme, il garde cle de transport et certificat, et le Pi le tient
+    pour "autonome" (son ecoute v1 n'est plus necessaire) ;
+  - apres un redemarrage, le Mac se reconnecte en v2 sans la v1 ;
+  - le certificat se renouvelle dans la session, a mi-vie, avec une preuve signee par
+    la cle d'identite ; un certificat expire (longue veille) se renouvelle aussi ;
+  - une demande de certificat sans preuve, ou avec la preuve d'une autre cle, est refusee ;
   - un Pi dont la cle v2 change est refuse par le Mac (cle epinglee) ;
-  - sans le module nearfield_pont, rien de tout ca ne se declenche ;
   - le trafic reel passe par la v2 (avis de travail, tickets, voix macOS et son
     retour, TETRA, numerique avec banc et rendus), traduit et valide ;
   - une demande TETRA v2 vise l'hote de la session, jamais une adresse recue ;
-  - un message que la liste fermee refuse passe par la v1 en secours ;
-  - une session v2 impossible (pare-feu ferme) ou tombee est retentee toute seule,
-    avec un certificat neuf redemande par la v1.
+  - un message que la liste fermee refuse n'est pas envoye (plus de v1 en secours) ;
+  - appairage v2 d'une nouvelle machine par le NAS : meme code des deux cotes, fiche
+    v2 seule, session etablie ; un engagement non tenu est refuse.
 
 Tout l'etat est dans un dossier temporaire (NFA_HOME, HOME du pont) : aucun
 fichier du Pi en service n'est touche. Saute si nearfield_pont ou
@@ -114,21 +115,30 @@ class PassageV1V2(unittest.TestCase):
         cls.v1 = socketserver.ThreadingTCPServer(("127.0.0.1", 0), compagnon_serveur._Handler)
         cls.v1.daemon_threads = True
         threading.Thread(target=cls.v1.serve_forever, daemon=True).start()
-        pont_v2.PORT = pont_v2.demarrer("127.0.0.1", 0, recu=compagnon_serveur._traiter)
+        pont_v2.PORT = pont_v2.demarrer("127.0.0.1", 0, recu=compagnon_serveur._traiter,
+                                         evenement=compagnon_serveur._evenement_v2)
         nb._write(os.path.join(nb.BRIDGES, cls.pi_id + ".json"),
                   {"cle": cls.cle_pi_v1, "hote": "127.0.0.1", "port": cls.v1.server_address[1]})
 
     def lancer_mac(self):
-        link = self.nb.Link(self.pi_id)
+        """Comme la boucle du service : LiaisonV2 si l'etat v2 est garde, sinon Link (v1)."""
+        nb = self.nb
+        link = nb.LiaisonV2(self.pi_id) if nb._etat_v2(self.pi_id) else nb.Link(self.pi_id)
+        nb._links[self.pi_id] = link
         link.start()
 
         def arreter():
-            link.shutdown()
-            link.join(10)  # sa fin ecrit les stats : qu'elle n'empiete pas sur l'essai suivant
-            if link.pilote_v2:
-                link.pilote_v2.arreter()
+            for lien in {link, nb._links.get(self.pi_id)}:
+                if lien is not None:
+                    lien.shutdown()
+                    lien.join(10)  # sa fin ecrit les stats : qu'elle n'empiete pas sur l'essai suivant
+            nb._links.pop(self.pi_id, None)
+            attendre(lambda: not self.presence_v2(), 5)
         self.addCleanup(arreter)
         return link
+
+    def lien(self):
+        return self.nb._links.get(self.pi_id)
 
     def presence_v2(self):
         return self.pont_v2.presence().get(self.mac_id) or {}
@@ -136,79 +146,100 @@ class PassageV1V2(unittest.TestCase):
     def fiche(self):
         return self.compagnon.trusted()[self.mac_id]
 
-    def test_1_passage_complet(self):
-        link = self.lancer_mac()
-        # v1 : le Pi reconnait la machine comme avant
-        self.assertTrue(attendre(lambda: self.nb.stats(self.pi_id).get("connecte")), "liaison v1")
-        # migration : la fiche du Pi recoit l'identite v2, le Mac epingle celle du Pi
+    def certificat_garde(self):
+        return self.nb._read(os.path.join(self.nb._dossier_session(self.pi_id), "certificat.json"))["objet"]
+
+    def connecte_en_v2(self):
+        self.lancer_mac()
+        nb = self.nb
+        self.assertTrue(attendre(lambda: isinstance(self.lien(), nb.LiaisonV2) and self.lien().pilote_v2 is not None
+                                 and self.lien().pilote_v2.etablie and self.lien().pilote_v2.session is not None),
+                        "session v2 cote Mac")
+        self.assertTrue(attendre(lambda: isinstance(self.serveur._channels.get(self.mac_id), self.serveur.CanalV2)),
+                        "canal v2 cote Pi")
+        return self.lien()
+
+    def test_01_migration_puis_v2_seule(self):
+        self.lancer_mac()
         self.assertTrue(attendre(lambda: "v2" in self.fiche()), "migration du Mac")
         epingle = self.nb._read(os.path.join(self.nb.V2_DIR, "ponts", self.pi_id + ".json"))
         self.assertEqual(epingle["parc"], self.pont_v2.parc())
         self.assertEqual(epingle["ordonnateur"], self.pont_v2.coffre().cle_publique())
         mac_v2 = nearfield_pont.Coffre.ouvrir(os.path.join(self.nb.V2_DIR, "identite.pem"))
         self.assertEqual(self.fiche()["v2"]["id"], mac_v2.id)
-        # session v2 : les battements arrivent par Noise
-        self.assertTrue(attendre(lambda: self.presence_v2().get("battements", 0) >= 3), "battements v2")
-        self.assertTrue(self.nb.stats(self.pi_id).get("v2"))
-        # la v1 continue a vivre a cote
+        # Bascule : la liaison v1 s'arrete, LiaisonV2 prend le relais
+        self.assertTrue(attendre(lambda: isinstance(self.lien(), self.nb.LiaisonV2)), "bascule en v2 seule")
+        self.assertTrue(attendre(lambda: self.presence_v2().get("battements", 0) >= 2), "battements v2")
+        self.assertTrue(attendre(lambda: isinstance(self.serveur._channels.get(self.mac_id), self.serveur.CanalV2)))
+        self.assertTrue(self.fiche().get("v2_autonome"))
+        self.assertFalse(self.serveur.v1_necessaire(True), "plus besoin de l'ecoute v1")
         self.assertTrue(self.nb.stats(self.pi_id).get("connecte"))
+        self.assertIn("127.0.0.1", self.fiche()["ips"])
+        self.assertEqual(self.fiche().get("adresse_materielle"), "00:11:22:33:44:55")  # par le battement v2
+        cle = os.path.join(self.nb._dossier_session(self.pi_id), "transport.cle")
+        self.assertEqual(os.stat(cle).st_mode & 0o777, 0o600)
         with open(os.path.join(self.pont_v2.V2_DIR, "migrations.json")) as f:
-            migrations = json.load(f)
-        self.assertEqual(migrations["faites"], {self.cle_mac_v1: mac_v2.id})
-        link.shutdown()
-        self.assertTrue(attendre(lambda: not self.presence_v2()), "fin de session v2")
+            self.assertEqual(json.load(f)["faites"], {self.cle_mac_v1: mac_v2.id})
 
-    def test_2_reconnexion_refait_la_migration_sans_rien_casser(self):
+    def test_02_redemarrage_sans_la_v1(self):
         avant = self.fiche()["v2"]["id"]
-        self.lancer_mac()
-        self.assertTrue(attendre(lambda: self.presence_v2().get("battements", 0) >= 2), "v2 apres reconnexion")
+        with mock.patch.object(self.nb.Link, "_session", side_effect=AssertionError("v1 utilisee")):
+            link = self.connecte_en_v2()
+        self.assertIsInstance(link, self.nb.LiaisonV2)
         self.assertEqual(self.fiche()["v2"]["id"], avant)
+        self.assertTrue(attendre(lambda: self.presence_v2().get("battements", 0) >= 2))
 
-    def test_3_cle_v2_du_mac_remplacee_refusee(self):
-        # Quelqu'un remplace la cle v2 du Mac (ou un voleur de cle.pem essaie une
-        # autre identite) : la cle v1 a deja migre, le Pi refuse.
-        ident = os.path.join(self.nb.V2_DIR, "identite.pem")
-        os.replace(ident, ident + ".vraie")
-        self.addCleanup(os.replace, ident + ".vraie", ident)
-        avant = self.fiche()["v2"]["id"]
-        self.lancer_mac()
-        self.assertTrue(attendre(lambda: self.nb.stats(self.pi_id).get("connecte")))
-        time.sleep(1.5)
-        self.assertFalse(self.presence_v2(), "aucune session v2 ne doit s'ouvrir")
-        self.assertEqual(self.fiche()["v2"]["id"], avant, "l'identite v2 enregistree ne change pas")
+    def test_03_renouvellement_a_mi_vie_dans_la_session(self):
+        avant = self.certificat_garde()
+        with mock.patch.object(self.nb, "CERT_MI_VIE_SEC", 13 * 3600):  # tout certificat est "a mi-vie"
+            self.lancer_mac()
+            self.assertTrue(attendre(lambda: self.certificat_garde() != avant, 15), "certificat renouvele")
+        neuf = self.certificat_garde()["charge"]
+        self.assertNotEqual(neuf["transport"], avant["charge"]["transport"])
+        self.assertGreater(neuf["serie"], avant["charge"]["serie"])
+        self.assertTrue(attendre(lambda: self.pont_v2.en_v2(self.mac_id)), "reconnecte avec le nouveau")
 
-    def test_4_cle_v2_du_pi_changee_refusee_par_le_mac(self):
+    def test_04_certificat_expire_renouvele(self):
+        avant = self.certificat_garde()
+        vrai = self.nb.PiloteV2
+        nb = self.nb
+
+        class PiloteDormeur(vrai):
+            premier = [True]
+
+            def __init__(self, *a, **k):
+                vrai.__init__(self, *a, **k)
+                if PiloteDormeur.premier[0]:
+                    PiloteDormeur.premier[0] = False
+                    self.expire = int(time.time()) - 60  # comme apres une longue veille
+        with mock.patch.object(nb, "PiloteV2", PiloteDormeur):
+            self.lancer_mac()
+            self.assertTrue(attendre(lambda: self.certificat_garde() != avant, 15), "certificat expire renouvele")
+            self.assertTrue(attendre(lambda: self.pont_v2.en_v2(self.mac_id)), "puis session normale")
+
+    def test_05_demande_de_certificat_sans_preuve_refusee(self):
+        import base64
+        card = self.fiche()
+        t = base64.b64encode(nearfield_pont.CleTransport().public).decode()
+        with self.assertRaises(nearfield_pont.CertificatRefuse):
+            self.pont_v2._renouveler(card, {"type": "certificat_demande", "transport": t})
+        intrus = nearfield_pont.Coffre.generer("p256")
+        preuve = nearfield_pont.preparer_renouvellement(intrus, self.pont_v2.parc(), base64.b64decode(t))
+        with self.assertRaises(nearfield_pont.ErreurPont):
+            self.pont_v2._renouveler(card, {"type": "certificat_demande", "transport": t, "preuve": preuve})
+
+    def test_06_cle_v2_du_pi_changee_refusee_par_le_mac(self):
         ident = os.path.join(self.pont_v2.V2_DIR, "identite.pem")
         os.replace(ident, ident + ".vraie")
         self.addCleanup(os.replace, ident + ".vraie", ident)
         self.pont_v2._moi.clear()
         self.addCleanup(self.pont_v2._moi.clear)
-        self.nb.update_stats(self.pi_id, erreur_v2=None)
         self.lancer_mac()
-        self.assertTrue(attendre(lambda: self.nb.stats(self.pi_id).get("erreur_v2")), "refus cote Mac")
-        self.assertIn("a change", self.nb.stats(self.pi_id)["erreur_v2"])
-        self.assertFalse(self.presence_v2())
-
-    def test_5_sans_module_v2_rien_ne_change(self):
-        # Le Pi sans le module (cas des services apres fusion tant qu'il n'est pas
-        # installe) : pas d'annonce de migration, la v1 seule.
-        self.serveur.pont_v2.np_, garde = None, self.serveur.pont_v2.np_
-        self.addCleanup(setattr, self.serveur.pont_v2, "np_", garde)
-        self.nb.update_stats(self.pi_id, v2=None, erreur_v2=None)
-        self.lancer_mac()
-        self.assertTrue(attendre(lambda: self.nb.stats(self.pi_id).get("connecte")))
-        time.sleep(1.0)
-        self.assertFalse(self.presence_v2())
+        time.sleep(2)
+        self.assertFalse(self.presence_v2(), "aucune session avec un faux Pi")
         self.assertFalse(self.nb.stats(self.pi_id).get("v2"))
 
     # --- trafic reel par la v2 --------------------------------------------------------
-
-    def connecte_en_v2(self):
-        link = self.lancer_mac()
-        self.assertTrue(attendre(lambda: self.pont_v2.en_v2(self.mac_id)), "session v2 cote Pi")
-        self.assertTrue(attendre(lambda: link.pilote_v2 is not None and link.pilote_v2.session is not None))
-        self.assertTrue(attendre(lambda: self.mac_id in self.serveur._channels), "liaison v1")
-        return link
 
     def espions(self, link):
         """(envois du Pi, envois du Mac) : [(type v1, passe par la v2 ?)]."""
@@ -231,7 +262,7 @@ class PassageV1V2(unittest.TestCase):
         link.pilote_v2.envoyer = mac_envoyer
         return pi, mac
 
-    def test_6_travail_et_tickets_par_la_v2(self):
+    def test_07_travail_et_tickets_par_la_v2(self):
         link = self.connecte_en_v2()
         pi, _ = self.espions(link)
         reveils = []
@@ -245,7 +276,7 @@ class PassageV1V2(unittest.TestCase):
         self.assertIn(("travail", True), pi)
         self.assertIn(("tickets", True), pi)
 
-    def test_7_voix_mac_aller_retour_par_la_v2(self):
+    def test_08_voix_mac_aller_retour_par_la_v2(self):
         import base64
         import queue
         link = self.connecte_en_v2()
@@ -271,7 +302,7 @@ class PassageV1V2(unittest.TestCase):
         self.assertIn(("dire", True), pi)
         self.assertEqual([r for _, r in mac if _ in ("son", "son_fin")], [True, True])
 
-    def test_8_tetra_et_numerique_par_la_v2(self):
+    def test_09_tetra_et_numerique_par_la_v2(self):
         import base64
         import queue
         link = self.connecte_en_v2()
@@ -330,49 +361,102 @@ class PassageV1V2(unittest.TestCase):
         self.assertTrue(all(r for t_, r in pi if t_ in ("tetra", "numerique")))
         self.assertTrue(mac and all(r for _, r in mac if _ != "battement"), mac)
 
-    def test_9_refus_de_la_liste_fermee_passe_par_la_v1(self):
-        import queue
+    def test_10_refus_de_la_liste_fermee_n_est_pas_envoye(self):
         link = self.connecte_en_v2()
         pi, _ = self.espions(link)
         recues = []
-        rid = uuid.uuid4().hex
-        self.serveur._demandes_numerique[rid] = queue.Queue()
-        self.addCleanup(self.serveur._demandes_numerique.pop, rid, None)
         with mock.patch.object(self.nb, "numerique_to_pi", side_effect=lambda lien, msg: recues.append(msg)):
-            # un mode qui ressemble a une commande : refuse par nearfield_pont, la v1 l'achemine comme avant
-            self.serveur._envoyer(self.mac_id, self.serveur._channels[self.mac_id],
-                                  {"type": "numerique", "id": rid, "host": "10.9.9.9", "port": 1234, "freq_hz": 1,
-                                   "gain": 32, "secondes": 8, "max_secondes": 8, "ppm": 0, "mode": "-fa; rm -rf /"})
-            self.assertTrue(attendre(lambda: recues))
-        self.assertEqual(pi, [("numerique", False)])
-        self.assertEqual(recues[0]["host"], "10.9.9.9")  # arrive par la v1, inchange
+            # un mode qui ressemble a une commande : refuse par nearfield_pont ; plus de v1 en secours
+            with self.assertRaises(OSError):
+                self.serveur._envoyer(self.mac_id, self.serveur._channels[self.mac_id],
+                                      {"type": "numerique", "id": uuid.uuid4().hex, "host": "10.9.9.9", "port": 1234,
+                                       "freq_hz": 1, "gain": 32, "secondes": 8, "max_secondes": 8, "ppm": 0,
+                                       "mode": "-fa; rm -rf /"})
+            time.sleep(0.5)
+        self.assertEqual(recues, [])
         self.assertTrue(self.pont_v2.en_v2(self.mac_id), "la session v2 reste ouverte")
 
-    def test_10_session_v2_retentee_apres_ouverture_du_port(self):
-        # Le Pi annonce un port ferme (pare-feu pas encore ouvert) : la session v2
-        # echoue, le trafic reste en v1 ; une fois le port "ouvert", le Mac redemande
-        # un certificat par la v1 et la session s'etablit, sans reconnexion v1.
-        vrai_port = self.pont_v2.PORT
-        ferme = socket.socket()
-        ferme.bind(("127.0.0.1", 0))
-        self.pont_v2.PORT = ferme.getsockname()[1]   # personne n'ecoute : refus de connexion
-        ferme.close()
-        self.addCleanup(setattr, self.pont_v2, "PORT", vrai_port)
-        echecs = []
-        vraie = self.nb.Link.v2_terminee
+    # --- appairage v2 d'une nouvelle machine ------------------------------------------
 
-        def compter(lien, etablie):
-            echecs.append(etablie)
-            return vraie(lien, etablie)
-        with mock.patch.object(self.nb, "RELANCE_V2_SEC", (0.5, 1)), \
-                mock.patch.object(self.nb.Link, "v2_terminee", compter):
-            self.lancer_mac()
-            self.assertTrue(attendre(lambda: len(echecs) >= 2), "tentatives refusees puis relancees")
-            self.assertEqual(set(echecs), {False})
-            self.assertFalse(self.pont_v2.en_v2(self.mac_id))
-            self.pont_v2.PORT = vrai_port                  # le pare-feu s'ouvre
-            self.assertTrue(attendre(lambda: self.pont_v2.en_v2(self.mac_id), 15), "session v2 retentee")
-            self.assertTrue(attendre(lambda: self.nb.stats(self.pi_id).get("v2")))
+    def machine_neuve(self, nom):
+        """Une autre machine (son propre dossier du pont), qui n'a jamais connu la v1."""
+        nb = self.nb
+        dossier = os.path.join(TMP, nom)
+        patches = [mock.patch.object(nb, "HOME", dossier), mock.patch.object(nb, "CONFIG", os.path.join(dossier, "config.json")),
+                   mock.patch.object(nb, "KEY_PATH", os.path.join(dossier, "cle.pem")),
+                   mock.patch.object(nb, "BRIDGES", os.path.join(dossier, "ponts")),
+                   mock.patch.object(nb, "STATS", os.path.join(dossier, "stats")),
+                   mock.patch.object(nb, "V2_DIR", os.path.join(dossier, "v2")),
+                   mock.patch.object(nb, "PENDING", os.path.join(dossier, "appairage.json")),
+                   mock.patch.object(nb, "find_share", lambda card=None: self.compagnon.BRIDGE_DIR),
+                   mock.patch.object(nb, "_mount_url", lambda share: None),
+                   mock.patch.object(nb, "_ask", lambda question, wait_while: "Oui")]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        nb._write(nb.CONFIG, {"id": nom, "nom": "PC " + nom})
+
+    def appairer(self, nom, tricher=None):
+        """Lance les deux cotes ; rend (appairage Pi, resultat Mac etape 1)."""
+        import threading as th
+        p = mock.patch.object(self.compagnon, "_local_ip", lambda: "127.0.0.1")
+        p.start()
+        self.addCleanup(p.stop)
+        app = self.pont_v2.AppairageV2()
+        app.ouvrir()
+        self.addCleanup(app.fermer)
+        self.machine_neuve(nom)
+        if tricher:
+            tricher()
+        etape1 = {}
+        fil = th.Thread(target=lambda: etape1.update(r=self.nb.pairing_wait()), daemon=True)
+        fil.start()
+        self.assertTrue(attendre(lambda: app.etat() in ("code", "erreur", "refus"), 20), "reponse de la machine")
+        fil.join(20)
+        return app, etape1.get("r")
+
+    def test_11_appairage_v2_d_une_nouvelle_machine(self):
+        app, r = self.appairer("pcneuf0001")
+        self.assertEqual(app.etat(), "code")
+        self.assertEqual(r[0], "OK")
+        self.assertEqual(r[2], nearfield_pont.code_parle(app.code), "meme code des deux cotes")
+        self.assertEqual(app.machine["compagnon"], "pcneuf0001")
+        nom = app.accepter()
+        self.assertEqual(nom, "PC pcneuf0001")
+        etape2 = self.nb.pairing_decide()
+        self.assertEqual(etape2[0], "OK", etape2)
+        fiche = self.compagnon.trusted()["pcneuf0001"]
+        self.assertNotIn("cle", fiche)  # aucune cle v1 : machine appairee en v2
+        parc = self.pont_v2.parc()
+        pont = self.nb.bridges()[parc]
+        self.assertTrue(pont["v2"])
+        self.assertTrue(self.nb._etat_v2(parc))
+        lien = self.nb.LiaisonV2(parc)
+        lien.start()
+        self.addCleanup(lambda: (lien.shutdown(), lien.join(10)))
+        with mock.patch.object(self.nb, "network_identity", lambda: ("aa:bb:cc:dd:ee:ff", ["127.0.0.1"])):
+            self.assertTrue(attendre(lambda: isinstance(self.serveur._channels.get("pcneuf0001"), self.serveur.CanalV2)),
+                            "nouvelle machine connectee en v2")
+        self.assertTrue(attendre(lambda: self.compagnon.trusted()["pcneuf0001"].get("v2_autonome")),
+                        "fiche notee autonome (ecrite juste apres le canal)")
+
+    def test_12_appairage_v2_engagement_non_tenu_refuse(self):
+        def tricher():
+            # Un intermediaire remplace, dans la presentation de la machine, sa cle par la
+            # sienne : elle ne tient plus l'engagement pris avant l'alea du Pi.
+            vrai = self.nb._write
+
+            def ecrire(chemin, data):
+                if os.path.basename(chemin).startswith("revelation-"):
+                    data = {"presentation": dict(data["presentation"],
+                                                 identite=nearfield_pont.Coffre.generer("p256").cle_publique())}
+                return vrai(chemin, data)
+            p = mock.patch.object(self.nb, "_write", ecrire)
+            p.start()
+            self.addCleanup(p.stop)
+        app, _ = self.appairer("pcneuf0002", tricher)
+        self.assertTrue(attendre(lambda: app.etat() == "erreur", 10), app.etat())
+        self.assertNotIn("pcneuf0002", self.compagnon.trusted())
 
 
 if __name__ == "__main__":

@@ -43,6 +43,27 @@ impl CleTransport {
         let k = snow::Builder::new(parametres()).generate_keypair()?;
         Ok(CleTransport { prive: k.private, public: k.public })
     }
+
+    /// Garde la clé (32 octets bruts, fichier 0600) : la machine se reconnecte après un
+    /// redémarrage avec le certificat qui la porte, sans repasser par la v1.
+    pub fn enregistrer(&self, chemin: &std::path::Path) -> Resultat<()> {
+        crate::ecrire_prive(chemin, &self.prive)
+    }
+
+    pub fn charger(chemin: &std::path::Path) -> Resultat<Self> {
+        let prive = zeroize::Zeroizing::new(std::fs::read(chemin)?);
+        let octets: [u8; 32] =
+            prive.as_slice().try_into().map_err(|_| Erreur::Cle("clé de transport : 32 octets attendus".into()))?;
+        let public = x25519_dalek::PublicKey::from(&x25519_dalek::StaticSecret::from(octets)).to_bytes().to_vec();
+        Ok(CleTransport { prive: octets.to_vec(), public })
+    }
+}
+
+impl Drop for CleTransport {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.prive.zeroize();
+    }
 }
 
 /// Ce dont chaque côté a besoin pour la poignée de main.

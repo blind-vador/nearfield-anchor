@@ -129,6 +129,75 @@ pub fn verifier(
     Ok(c)
 }
 
+/// Délai maximal pendant lequel un certificat expiré permet encore de demander un
+/// renouvellement (machine restée en veille), dans une session limitée à cela (§4.1).
+pub const GRACE_MAX_SEC: i64 = 30 * 24 * 3600;
+
+/// Comme [`verifier`], mais accepte un certificat **expiré depuis moins de `grace`**
+/// secondes (signature, parc, révocation, politique toujours vérifiés). Rend
+/// `(certificat, perime)` : une session ouverte avec `perime` ne doit servir qu'à
+/// renouveler le certificat.
+pub fn verifier_avec_grace(
+    objet: &ObjetSigne,
+    ordonnateur: &CleIdentite,
+    parc: &str,
+    revocations: &ListeRevocations,
+    tolerance_logiciel: bool,
+    instant: i64,
+    grace: i64,
+) -> Resultat<(Certificat, bool)> {
+    match verifier(objet, ordonnateur, parc, revocations, tolerance_logiciel, instant) {
+        Ok(c) => Ok((c, false)),
+        Err(e) if grace > 0 => {
+            objet.verifier_signature(ordonnateur).map_err(|_| Erreur::Certificat("pas signé par l'ordonnateur".into()))?;
+            let c: Certificat = serde_json::from_value(objet.charge.clone())?;
+            let grace = grace.min(GRACE_MAX_SEC);
+            if c.expire <= instant && c.expire > instant - grace {
+                Ok((verifier(objet, ordonnateur, parc, revocations, tolerance_logiciel, c.expire - 1)?, true))
+            } else {
+                Err(e)
+            }
+        }
+        Err(e) => Err(e),
+    }
+}
+
+/// Preuve de renouvellement : la clé d'identité de la machine (dans sa puce quand elle
+/// en a une) signe sa nouvelle clé de transport. Exigée par l'ordonnateur pour tout
+/// certificat demandé dans une session v2 (§4.1).
+pub fn preparer_renouvellement(identite: &dyn Coffre, parc: &str, transport: &[u8]) -> Resultat<ObjetSigne> {
+    if transport.len() != 32 {
+        return Err(Erreur::Certificat("clé de transport de 32 octets attendue".into()));
+    }
+    let sujet = identite.cle_publique().id()?;
+    ObjetSigne::signer(
+        identite,
+        json!({"type": "renouvellement", "parc": parc, "id": format!("renouvellement-{sujet}-{}", maintenant()),
+               "transport": crate::b64(transport)}),
+    )
+}
+
+/// Vérifie une preuve de renouvellement avec la clé d'identité connue de la machine et
+/// rend la clé de transport qu'elle certifie, qui doit être celle de la demande.
+pub fn verifier_renouvellement(
+    preuve: &ObjetSigne,
+    identite: &CleIdentite,
+    parc: &str,
+    transport_demande: &str,
+    registre: Option<&mut crate::objet::RegistreNonces>,
+) -> Resultat<Vec<u8>> {
+    preuve.verifier(identite, "renouvellement", parc, registre)?;
+    let t = preuve.champ_texte("transport")?;
+    if t != transport_demande {
+        return Err(Erreur::Certificat("la preuve porte une autre clé de transport".into()));
+    }
+    let octets = de_b64(t)?;
+    if octets.len() != 32 {
+        return Err(Erreur::Certificat("clé de transport".into()));
+    }
+    Ok(octets)
+}
+
 /// Liste de révocation : son numéro ne fait que croître.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ListeRevocations {
@@ -247,5 +316,42 @@ mod tests {
         charge["root"] = true.into();
         let o = ObjetSigne::signer(&p.ord, charge).unwrap();
         assert!(verifier(&o, &p.ord.cle_publique(), "parc1", &ListeRevocations::default(), false, maintenant()).is_err());
+    }
+
+    #[test]
+    fn grace_pour_un_certificat_expire_et_preuve_de_renouvellement() {
+        use crate::cles::{Alg, CoffreLogiciel};
+        let ord = CoffreLogiciel::generer(Alg::P256);
+        let mac = CoffreLogiciel::generer(Alg::P256);
+        let roles = [Role::Travailleur];
+        let o = emettre(&ord, "parc", Demande { nom: "Mac", identite: mac.cle_publique(), niveau: Niveau::Logiciel,
+                        transport: &[1u8; 32], roles: &roles, capacites: &[], serie: 1 }, false).unwrap();
+        let rev = ListeRevocations::default();
+        let t = maintenant();
+        let (_, perime) = verifier_avec_grace(&o, &ord.cle_publique(), "parc", &rev, false, t, 3600).unwrap();
+        assert!(!perime);
+        // Expire depuis 1 h : refuse sans grace, accepte (perime) avec 2 h de grace.
+        let plus_tard = t + DUREE_SEC + 3600;
+        assert!(verifier(&o, &ord.cle_publique(), "parc", &rev, false, plus_tard).is_err());
+        let (_, perime) = verifier_avec_grace(&o, &ord.cle_publique(), "parc", &rev, false, plus_tard, 7200).unwrap();
+        assert!(perime);
+        assert!(verifier_avec_grace(&o, &ord.cle_publique(), "parc", &rev, false, plus_tard, 1800).is_err());
+        // Jamais au-dela de GRACE_MAX_SEC, jamais pour une machine revoquee ou un faux ordonnateur.
+        let bien_plus_tard = t + DUREE_SEC + GRACE_MAX_SEC + 10;
+        assert!(verifier_avec_grace(&o, &ord.cle_publique(), "parc", &rev, false, bien_plus_tard, i64::MAX).is_err());
+        let mut revoque = ListeRevocations::default();
+        revoque.sujets.push(mac.cle_publique().id().unwrap());
+        assert!(verifier_avec_grace(&o, &ord.cle_publique(), "parc", &revoque, false, plus_tard, 7200).is_err());
+        let intrus = CoffreLogiciel::generer(Alg::P256);
+        assert!(verifier_avec_grace(&o, &intrus.cle_publique(), "parc", &rev, false, plus_tard, 7200).is_err());
+        // Preuve : signee par l'identite de la machine, pour CETTE cle de transport.
+        let p = preparer_renouvellement(&mac, "parc", &[2u8; 32]).unwrap();
+        let t2 = crate::b64(&[2u8; 32]);
+        assert_eq!(verifier_renouvellement(&p, &mac.cle_publique(), "parc", &t2, None).unwrap(), vec![2u8; 32]);
+        assert!(verifier_renouvellement(&p, &mac.cle_publique(), "parc", &crate::b64(&[3u8; 32]), None).is_err());
+        assert!(verifier_renouvellement(&p, &intrus.cle_publique(), "parc", &t2, None).is_err());
+        let mut reg = crate::objet::RegistreNonces::default();
+        verifier_renouvellement(&p, &mac.cle_publique(), "parc", &t2, Some(&mut reg)).unwrap();
+        assert!(verifier_renouvellement(&p, &mac.cle_publique(), "parc", &t2, Some(&mut reg)).is_err());
     }
 }
