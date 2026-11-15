@@ -21,6 +21,7 @@ use pont::appairage::{self, Presentation};
 use pont::certificat::{self, Certificat, Demande, ListeRevocations, Role};
 use pont::cles::{Alg, CleIdentite, Coffre as _, CoffreLogiciel, Niveau};
 use pont::messages::Message;
+use pont::migration::{self, Migration};
 use pont::objet::{self, ObjetSigne};
 use pont::transport::{self, Contexte, Emetteur, Recepteur};
 use pont::{jcs, maintenant, Erreur};
@@ -41,6 +42,7 @@ create_exception!(nearfield_pont, ErreurTransport, ErreurPont);
 create_exception!(nearfield_pont, MessageRefuse, ErreurPont);
 create_exception!(nearfield_pont, ErreurCle, ErreurPont);
 create_exception!(nearfield_pont, ErreurEntreeSortie, ErreurPont);
+create_exception!(nearfield_pont, MigrationRefusee, ErreurPont);
 
 fn err(e: Erreur) -> PyErr {
     let texte = e.to_string();
@@ -58,6 +60,7 @@ fn err(e: Erreur) -> PyErr {
         Erreur::Message(_) => MessageRefuse::new_err(texte),
         Erreur::Cle(_) => ErreurCle::new_err(texte),
         Erreur::Es(_) => ErreurEntreeSortie::new_err(texte),
+        Erreur::Migration(_) => MigrationRefusee::new_err(texte),
     }
 }
 
@@ -125,6 +128,13 @@ impl Coffre {
     #[pyo3(signature = (chemin, alg_nom = "p256"))]
     fn charger_ou_creer(chemin: std::path::PathBuf, alg_nom: &str) -> PyResult<Self> {
         Ok(Coffre { inner: CoffreLogiciel::charger_ou_creer(&chemin, alg(alg_nom)?).map_err(err)? })
+    }
+
+    /// Ouvre une clé existante sans jamais en créer (par exemple la `cle.pem` v1).
+    #[staticmethod]
+    fn ouvrir(chemin: std::path::PathBuf) -> PyResult<Self> {
+        let pem = std::fs::read_to_string(&chemin).map_err(es)?;
+        Ok(Coffre { inner: CoffreLogiciel::depuis_pem(&pem).map_err(err)? })
     }
 
     /// Clé publique d'identité : `{"alg": ..., "pub": ...}`.
@@ -447,6 +457,82 @@ fn decoder_message(py: Python<'_>, octets: &[u8]) -> PyResult<PyObject> {
     vers_py(py, &Message::decoder(octets).map_err(err)?)
 }
 
+// ---------------------------------------------------------------- migration v1 → v2
+
+/// Prépare l'objet `migration` : `ancien` ouvert sur la `cle.pem` v1, `nouveau` la
+/// clé v2. `transport` (32 octets) pour une machine, `None` pour l'ordonnateur.
+#[pyfunction]
+#[pyo3(signature = (ancien, nouveau, parc, nom, transport = None))]
+fn preparer_migration(
+    py: Python<'_>,
+    ancien: &Coffre,
+    nouveau: &Coffre,
+    parc: &str,
+    nom: &str,
+    transport: Option<&[u8]>,
+) -> PyResult<PyObject> {
+    vers_py(py, &migration::preparer(&ancien.inner, &nouveau.inner, parc, nom, transport).map_err(err)?)
+}
+
+/// Ancienne clé annoncée, NON vérifiée : sert seulement à retrouver la fiche v1.
+#[pyfunction]
+fn ancienne_annoncee(py: Python<'_>, objet: &Bound<'_, PyAny>) -> PyResult<PyObject> {
+    vers_py(py, &migration::ancienne_annoncee(&depuis(objet, "objet signé")?).map_err(err)?)
+}
+
+/// Vérifie une migration contre la clé v1 connue de la machine ; rend
+/// `{ancienne, identite, niveau, nom, transport?}`.
+#[pyfunction]
+#[pyo3(signature = (objet, parc, ancienne_connue, registre = None))]
+fn verifier_migration(
+    py: Python<'_>,
+    objet: &Bound<'_, PyAny>,
+    parc: &str,
+    ancienne_connue: &Bound<'_, PyAny>,
+    registre: Option<PyRefMut<'_, RegistreNonces>>,
+) -> PyResult<PyObject> {
+    let o: ObjetSigne = depuis(objet, "objet signé")?;
+    let mut registre = registre;
+    let m = migration::verifier(&o, parc, &depuis(ancienne_connue, "clé")?, registre.as_mut().map(|r| &mut r.inner))
+        .map_err(err)?;
+    vers_py(py, &m)
+}
+
+/// Migrations faites : une ancienne clé ne migre qu'une fois.
+#[pyclass(module = "nearfield_pont")]
+#[derive(Default)]
+struct RegistreMigrations {
+    inner: migration::RegistreMigrations,
+}
+
+#[pymethods]
+impl RegistreMigrations {
+    #[new]
+    fn nouveau() -> Self {
+        Self::default()
+    }
+
+    #[staticmethod]
+    fn charger(chemin: std::path::PathBuf) -> PyResult<Self> {
+        Ok(RegistreMigrations { inner: migration::RegistreMigrations::charger(&chemin).map_err(err)? })
+    }
+
+    fn enregistrer(&self, chemin: std::path::PathBuf) -> PyResult<()> {
+        self.inner.enregistrer(&chemin).map_err(err)
+    }
+
+    /// Consigne une migration vérifiée (le dict rendu par `verifier_migration`).
+    fn consigner(&mut self, migration: &Bound<'_, PyAny>) -> PyResult<()> {
+        let m: Migration = depuis(migration, "migration")?;
+        self.inner.consigner(&m).map_err(err)
+    }
+
+    /// Identifiant v2 vers lequel cette clé v1 a migré, ou `None`.
+    fn migree_vers(&self, ancienne: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+        Ok(self.inner.migree_vers(&depuis(ancienne, "clé")?).map(str::to_string))
+    }
+}
+
 // ---------------------------------------------------------------- transport
 
 /// Paramètres de vérification du pair, copiés pour le fil réseau.
@@ -683,6 +769,7 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
         ("MessageRefuse", py.get_type::<MessageRefuse>()),
         ("ErreurCle", py.get_type::<ErreurCle>()),
         ("ErreurEntreeSortie", py.get_type::<ErreurEntreeSortie>()),
+        ("MigrationRefusee", py.get_type::<MigrationRefusee>()),
     ] {
         m.add(nom, t)?;
     }
@@ -695,6 +782,7 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Ecouteur>()?;
     m.add_class::<Entrante>()?;
     m.add_class::<Session>()?;
+    m.add_class::<RegistreMigrations>()?;
     m.add_function(wrap_pyfunction!(canonique, m)?)?;
     m.add_function(wrap_pyfunction!(identifiant, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_signature_brute, m)?)?;
@@ -709,5 +797,8 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(encoder_message, m)?)?;
     m.add_function(wrap_pyfunction!(decoder_message, m)?)?;
     m.add_function(wrap_pyfunction!(connecter, m)?)?;
+    m.add_function(wrap_pyfunction!(preparer_migration, m)?)?;
+    m.add_function(wrap_pyfunction!(ancienne_annoncee, m)?)?;
+    m.add_function(wrap_pyfunction!(verifier_migration, m)?)?;
     Ok(())
 }

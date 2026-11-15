@@ -9,6 +9,7 @@
 //! - [`objet`]       : objets signés déposés sur un stockage partagé, anti-rejeu.
 //! - [`appairage`]   : engagement préalable et code vocal à 6 chiffres.
 //! - [`certificat`]  : certificats de rôle et liste de révocation.
+//! - [`migration`]   : passage de la v1 à la v2 sans nouvel appairage.
 //! - [`messages`]    : liste fermée des messages du canal.
 //! - [`transport`]   : session Noise XX authentifiée par certificat.
 
@@ -18,6 +19,7 @@ pub mod cles;
 pub mod erreur;
 pub mod jcs;
 pub mod messages;
+pub mod migration;
 pub mod objet;
 pub mod transport;
 

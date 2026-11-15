@@ -22,6 +22,8 @@ pub enum Erreur {
     Appairage(String),
     #[error("transport : {0}")]
     Transport(String),
+    #[error("migration refusée : {0}")]
+    Migration(String),
     #[error("message refusé : {0}")]
     Message(String),
     #[error("clé : {0}")]

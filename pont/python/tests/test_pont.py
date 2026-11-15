@@ -340,3 +340,112 @@ def test_pair_muet_ne_bloque_pas_la_poignee_de_main():
                       True, delai_sec=0.5)
     assert time.time() - debut < 3
     ecoute.close()
+
+
+# ------------------------------------------------------------------ migration v1 → v2
+
+def charger_v1():
+    """Le module du pont v1, tel qu'il tourne aujourd'hui (bibliothèque cryptography)."""
+    pytest.importorskip("cryptography")
+    import importlib.util
+    chemin = Path(__file__).resolve().parents[3] / "bridge" / "pont_protocole.py"
+    spec = importlib.util.spec_from_file_location("pont_protocole_v1", chemin)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_migration_complete_depuis_de_vraies_cles_v1(tmp_path):
+    import socket
+    v1 = charger_v1()
+    # Parc v1 existant : chaque côté a sa cle.pem et connaît la clé publique de l'autre.
+    cle_pi = v1.load_or_create_key(str(tmp_path / "pi" / "cle.pem"))
+    cle_mac = v1.load_or_create_key(str(tmp_path / "mac" / "cle.pem"))
+    fiche_pi_vue_du_mac = {"alg": "ed25519", "pub": v1.public_b64(cle_pi)}
+    fiche_mac_vue_du_pi = {"alg": "ed25519", "pub": v1.public_b64(cle_mac)}
+    a, b = socket.socketpair()
+    canal_pi, canal_mac = v1.Channel(a, cle_pi), v1.Channel(b, cle_mac)
+
+    # 1. L'ordonnateur annonce sa clé v2, contresignée par sa clé v1, sur le canal v1.
+    ancien_pi = np_.Coffre.ouvrir(tmp_path / "pi" / "cle.pem")
+    assert ancien_pi.cle_publique() == fiche_pi_vue_du_mac  # la v2 relit bien la clé v1
+    ord_v2 = np_.Coffre.generer("p256")
+    parc = ord_v2.id
+    canal_pi.send({"type": "migration", "objet": np_.preparer_migration(ancien_pi, ord_v2, parc, "deepspace9")})
+
+    # 2. La machine vérifie avec la clé v1 du Pi qu'elle connaît, et épingle la v2.
+    recu = canal_mac.receive(fiche_pi_vue_du_mac["pub"])
+    m_ord = np_.verifier_migration(recu["objet"], recu["objet"]["charge"]["parc"], fiche_pi_vue_du_mac)
+    assert np_.identifiant(m_ord["identite"]) == recu["objet"]["charge"]["parc"]  # parc = id de l'ordonnateur
+    cle_ord_epinglee = m_ord["identite"]
+
+    # 3. La machine annonce à son tour sa clé v2 et sa clé de transport.
+    mac_v2, transport_mac = np_.Coffre.generer("p256"), np_.CleTransport()
+    ancien_mac = np_.Coffre.ouvrir(tmp_path / "mac" / "cle.pem")
+    canal_mac.send({"type": "migration",
+                    "objet": np_.preparer_migration(ancien_mac, mac_v2, parc, "Mac mini", transport_mac.public)})
+
+    # 4. L'ordonnateur retrouve la fiche v1, vérifie, consigne, délivre le certificat.
+    recu = canal_pi.receive(fiche_mac_vue_du_pi["pub"])
+    assert np_.ancienne_annoncee(recu["objet"]) == fiche_mac_vue_du_pi
+    registre, migrations = np_.RegistreNonces(), np_.RegistreMigrations()
+    m = np_.verifier_migration(recu["objet"], parc, fiche_mac_vue_du_pi, registre)
+    migrations.consigner(m)
+    assert migrations.migree_vers(fiche_mac_vue_du_pi) == mac_v2.id
+    cert_mac = np_.emettre_certificat(ord_v2, parc, m["nom"], m["identite"], m["niveau"],
+                                      base64.b64decode(m["transport"]), ["travailleur"], ["whisper"], 1, True)
+    canal_pi.send({"type": "certificat", "objet": cert_mac})
+    cert_recu = canal_mac.receive(fiche_pi_vue_du_mac["pub"])["objet"]
+    canal_pi.close()
+    canal_mac.close()
+
+    # 5. Bascule sur le port v2 : session Noise avec la clé de l'ordonnateur épinglée.
+    t_ord = np_.CleTransport()
+    cert_ord = np_.emettre_certificat(ord_v2, parc, "deepspace9", cle_ord_epinglee, "logiciel", t_ord.public,
+                                      ["ordonnateur"], [], 2, True)
+    ecouteur = np_.Ecouteur("127.0.0.1:0")
+    recus = []
+
+    def servir():
+        s = ecouteur.accepter().repondre(parc, t_ord, cert_ord, ord_v2.cle_publique(), np_.Revocations(), True)
+        recus.append((s.pair["nom"], s.recevoir()))
+        s.fermer()
+
+    fil = threading.Thread(target=servir, daemon=True)
+    fil.start()
+    s = np_.connecter(f"127.0.0.1:{ecouteur.port}", parc, transport_mac, cert_recu, cle_ord_epinglee,
+                      np_.Revocations(), True)
+    s.envoyer(BATTEMENT)
+    fil.join(5)
+    assert recus == [("Mac mini", BATTEMENT)]
+    assert s.recevoir() is None
+
+
+def test_migration_refusee_si_la_cle_v1_ne_correspond_pas_ou_a_deja_migre(tmp_path):
+    v1 = np_.Coffre.charger_ou_creer(tmp_path / "cle.pem", "ed25519")
+    autre_v1 = np_.Coffre.generer("ed25519")
+    v2, vole = np_.Coffre.generer(), np_.Coffre.generer()
+    o = np_.preparer_migration(v1, v2, PARC, "Mac mini")
+    with pytest.raises(np_.SignataireInconnu):
+        np_.verifier_migration(o, PARC, autre_v1.cle_publique())
+    migrations = np_.RegistreMigrations()
+    migrations.consigner(np_.verifier_migration(o, PARC, v1.cle_publique()))
+    migrations.enregistrer(tmp_path / "migrations.json")
+    relu = np_.RegistreMigrations.charger(tmp_path / "migrations.json")
+    m2 = np_.verifier_migration(np_.preparer_migration(v1, vole, PARC, "Mac mini"), PARC, v1.cle_publique())
+    with pytest.raises(np_.MigrationRefusee):
+        relu.consigner(m2)
+
+
+def test_migration_detournee_par_un_intrus(tmp_path):
+    v1, v2, intrus = np_.Coffre.generer("ed25519"), np_.Coffre.generer(), np_.Coffre.generer()
+    o = np_.preparer_migration(v1, v2, PARC, "Mac mini")
+    charge = dict(o["charge"], identite=intrus.cle_publique(), id=f"migration-{intrus.id}")
+    with pytest.raises(np_.MigrationRefusee):
+        np_.verifier_migration(intrus.signer_objet(charge), PARC, v1.cle_publique())
+
+
+def test_ouvrir_ne_cree_jamais_de_cle(tmp_path):
+    with pytest.raises(np_.ErreurEntreeSortie):
+        np_.Coffre.ouvrir(tmp_path / "absente.pem")
+    assert not (tmp_path / "absente.pem").exists()
