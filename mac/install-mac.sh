@@ -16,11 +16,31 @@ AGENTS="$HOME_DIR/Library/LaunchAgents"
 NAS_USER="${NFA_NAS_USER:-pi}"                       # compte Samba du NAS (pas l'utilisateur du Mac)
 NAS_HOST="${NFA_NAS_HOST:-raspberrypi.local}"
 
-echo "=== 1/5  venv Python + dépendances ==="
+echo "=== 1/5  venv Python 3.11 + dépendances ==="
+# 2026-11-16 : Python 3.11 (les correctifs de sécurité de pillow, torch, urllib3… exigent
+# 3.10 ou plus ; DeepFilterLib s'arrête à 3.11). Le Python 3.9 des outils macOS ne suffit
+# plus. Source, dans l'ordre : le conda de nearfield (~/.nearfield-bridge/conda, conda-forge),
+# un python3.11 déjà installé, sinon on s'arrête en disant quoi faire.
 mkdir -p "$APP"
-[ -d "$VENV" ] || /usr/bin/python3 -m venv "$VENV"
-"$VENV/bin/pip" -q install --upgrade pip
-"$VENV/bin/pip" -q install -r "$HERE/requirements.txt"
+CONDA="${NFA_CONDA:-$HOME_DIR/.nearfield-bridge/conda}"
+if [ -x "$VENV/bin/python" ] && ! "$VENV/bin/python" -c 'import sys; sys.exit(sys.version_info[:2] != (3, 11))'; then
+  ANCIEN="$APP/venv-ancien-$(date +%Y%m%d)"
+  echo "-- ancien venv ($("$VENV/bin/python" --version 2>&1)) gardé dans $ANCIEN --"
+  mv "$VENV" "$ANCIEN"
+fi
+if [ ! -x "$VENV/bin/python" ]; then
+  if [ -x "$CONDA/bin/mamba" ] || [ -x "$CONDA/bin/conda" ]; then
+    OUTIL="$CONDA/bin/mamba"; [ -x "$OUTIL" ] || OUTIL="$CONDA/bin/conda"
+    "$OUTIL" create -y -q -p "$VENV" python=3.11 pip
+  elif command -v python3.11 >/dev/null 2>&1; then
+    python3.11 -m venv "$VENV"
+  else
+    echo "!! Python 3.11 introuvable : installe le conda de nearfield (Nearfield Bridge) ou python.org 3.11, puis relance."
+    exit 1
+  fi
+fi
+"$VENV/bin/python" -m pip -q install --upgrade pip
+"$VENV/bin/python" -m pip -q install -r "$HERE/requirements.txt"
 
 echo "=== 2/5  modèles (PANNs CNN14 + labels) ==="
 mkdir -p "$PANNS"

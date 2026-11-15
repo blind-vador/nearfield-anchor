@@ -8,16 +8,20 @@ ambigus (noisereduce + **DeepFilterNet**), et dépose des propositions dans
 `radio_log/propositions.json` (console Pi : commande « journal proposition »).
 
 ## Reproduire l'installation
-Python 3.9 (CLT macOS), venv dédié hors dépôt :
+Python **3.11** (conda-forge, par le conda de nearfield), venv dédié hors dépôt :
 
 ```
-python3 -m venv ~/pcw-analyse/venv
-~/pcw-analyse/venv/bin/pip install -r requirements.txt
+~/.nearfield-bridge/conda/bin/mamba create -y -p ~/pcw-analyse/venv python=3.11 pip
+~/pcw-analyse/venv/bin/python -m pip install -r requirements.txt
 cp analyse.py ~/pcw-analyse/analyse.py
 ```
 
-`requirements.txt` épingle **numpy < 2** (compat torch 2.2.2) + torch/torchaudio
-2.2.2 + panns-inference + deepfilternet + noisereduce + soundfile/scipy.
+Pourquoi 3.11 (2026-11-16) : le Python 3.9 des outils macOS ne reçoit plus les correctifs
+de sécurité de pillow, torch, urllib3, requests… (119 failles connues dans l'ancien venv,
+aucune dans celui-ci selon `pip-audit -r requirements.txt`) ; DeepFilterLib n'a pas encore
+de roue 3.12. `requirements.txt` épingle tout ; **numpy < 2** et **packaging < 24** viennent
+de DeepFilterNet, dont l'import de `torchaudio.backend` (retiré de torchaudio 2.1+) est
+remplacé par un petit module dans `analyse.py`.
 
 ### Modèles (téléchargés une fois)
 - PANNs CNN14 : `~/panns_data/Cnn14_mAP=0.431.pth`

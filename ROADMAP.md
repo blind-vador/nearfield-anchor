@@ -6779,7 +6779,19 @@ consequence, couvrant les besoins des radioamateurs.
 - Conflits deja presents, non lies : scipy Debian 1.10 contre numpy 2.4 (pip)
   sur le Pi ; ruamel-yaml dans conda sur le Mac.
 
-## A faire : migrer le venv d'analyse du Mac (securite)
+## 2026-11-16 : venv d'analyse du Mac migre en Python 3.11 (fait)
+
+- ~/pcw-analyse/venv refait en Python 3.11 (conda-forge, par le conda de nearfield) ;
+  l'ancien est garde dans ~/pcw-analyse/venv-py39-ancien. torch 2.15, pillow 13, urllib3,
+  requests, fsspec, msgpack, filelock a jour : pip-audit ne trouve plus rien (119 failles
+  connues avant). DeepFilterLib s'arrete a 3.11 (pas de roue 3.12).
+- DeepFilterNet 0.5.6 importe torchaudio.backend, retire de torchaudio 2.1+ : analyse.py
+  fournit un module de remplacement (_compat_torchaudio). Essai reel : examen d'un clip VHF
+  marine, PANNs + DeepFilterNet + propositions, sans erreur.
+- install-mac.sh cree le venv 3.11 tout seul (et met l'ancien de cote) ; Dependabot ne bloque
+  plus que numpy 2 et packaging 24 pour /mac, et suit aussi les crates du pont.
+
+## (fait le 2026-11-16, voir ci-dessus) migrer le venv d'analyse du Mac (securite)
 
 ~/pcw-analyse/venv tourne en Python 3.9 (outils macOS) avec torch 2.2.2 : faille
 critique de torch.load (code arbitraire a partir d'un fichier de poids) et les

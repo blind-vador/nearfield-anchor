@@ -26,7 +26,7 @@ Flux (2026-11-11 : lance par l'agent du pont, plus par launchd) :
      niveaux (brut + traitements). Cas "rejet mais voix probable" -> proposition
      de faux rejet.
 
-Dependances (venv ~/pcw-analyse/venv) : numpy, scipy, soundfile, noisereduce.
+Dependances (venv ~/pcw-analyse/venv, Python 3.11 de conda-forge) : numpy, scipy, soundfile, noisereduce.
 Usage : analyse.py --clip SRC --sortie DIR [--nom NOM] | --lot [--base B] --sortie DIR [--hours 24] [--max 300]
 """
 import argparse
@@ -189,12 +189,33 @@ def clean(y, sr, method, param):
         return y, sr
 
 
+def _compat_torchaudio():
+    """DeepFilterNet 0.5.6 importe torchaudio.backend.common (AudioMetaData, pour ses
+    annotations de df.io), retire de torchaudio 2.1+. On ne passe que des tenseurs :
+    un module de remplacement suffit (2026-11-16, venv en Python 3.11, torch a jour)."""
+    import sys
+    import types
+    try:
+        import torchaudio.backend.common  # noqa: F401
+        return
+    except ImportError:
+        pass
+    import torchaudio
+    common = types.ModuleType("torchaudio.backend.common")
+    common.AudioMetaData = getattr(torchaudio, "AudioMetaData", type("AudioMetaData", (), {}))
+    backend = types.ModuleType("torchaudio.backend")
+    backend.common = common
+    sys.modules.setdefault("torchaudio.backend", backend)
+    sys.modules.setdefault("torchaudio.backend.common", common)
+
+
 def clean_df(y, sr):
     """Debruitage NEURONAL DeepFilterNet (discriminatif, pas de son genere).
     Fonctionne a 48 kHz : on resample vers 48k, on debruite, on retourne a 48k.
     Repli : audio inchange si DeepFilterNet indisponible."""
     try:
         import torch
+        _compat_torchaudio()
         from df.enhance import enhance, init_df
         if _df["model"] is None:
             _df["model"], _df["state"], _ = init_df()

@@ -15,16 +15,24 @@ updates:
       day: "sunday"
     open-pull-requests-limit: 5
     labels: ["dependances", "mac"]
-    # Bloques par Python 3.9 tant que le venv d'analyse n'est pas migre (ROADMAP) :
-    # leurs versions corrigees ne s'installent pas en 3.9, et torch/numpy cassent
-    # DeepFilterNet 0.5.6 au-dela de torch 2.2 / numpy 1.x.
+    # Venv d'analyse en Python 3.11 depuis le 2026-11-16 : plus de blocage, sauf
+    # numpy (< 2) et packaging (< 24), exiges par DeepFilterNet 0.5.6.
     ignore:
-      - dependency-name: "torch"
-      - dependency-name: "torchaudio"
       - dependency-name: "numpy"
-      - dependency-name: "pillow"
-      - dependency-name: "urllib3"
-      - dependency-name: "requests"
-      - dependency-name: "fsspec"
-      - dependency-name: "msgpack"
-      - dependency-name: "filelock"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: "packaging"
+        update-types: ["version-update:semver-major"]
+  - package-ecosystem: "cargo"
+    directory: "/pont"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+    open-pull-requests-limit: 5
+    labels: ["dependances", "pont"]
+  - package-ecosystem: "cargo"
+    directory: "/pont/python"
+    schedule:
+      interval: "weekly"
+      day: "sunday"
+    open-pull-requests-limit: 5
+    labels: ["dependances", "pont"]
