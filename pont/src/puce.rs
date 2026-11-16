@@ -217,7 +217,7 @@ impl CoffreExterne {
             _ => p256::ecdsa::Signature::from_der(&brute),
         }
         .map_err(|_| Erreur::Cle("signature de la puce mal formée".into()))?;
-        let sig = sig.normalize_s().unwrap_or(sig);
+        let sig = sig.normalize_s();
         let octets = sig.to_bytes().to_vec();
         // Une puce défaillante (ou un programme remplacé) ne fait pas passer une signature fausse.
         self.publique.verifier(message, &octets)?;

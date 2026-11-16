@@ -34,7 +34,7 @@ Spécification complète : `specs/protocole-v2.md` dans le dossier de conception
 cargo test
 ```
 
-65 tests unitaires et 9 d'intégration (parc, puce) : vecteurs fixes (`vecteurs.json`, recalculés indépendamment en Python),
+66 tests unitaires et 9 d'intégration (parc, puce) : vecteurs fixes (`vecteurs.json`, recalculés indépendamment en Python),
 et les attaques que la v2 doit repousser (charge modifiée, rejeu, objet trop vieux, autre
 parc, faux ordonnateur, clé Noise différente du certificat, intermédiaire pendant
 l'appairage, type de message inconnu, chemin `../`, liste de révocation plus ancienne…).

@@ -149,11 +149,24 @@ pub struct CoffreLogiciel {
     prive: Prive,
 }
 
+/// Clé P-256 tirée de l'aléa du système (32 octets ; un tirage hors de l'intervalle
+/// valide, probabilité de l'ordre de 2^-128, est simplement refait).
+fn p256_aleatoire() -> p256::ecdsa::SigningKey {
+    loop {
+        let mut octets = crate::aleatoire::<32>();
+        let k = p256::ecdsa::SigningKey::from_slice(&octets);
+        zeroize::Zeroize::zeroize(&mut octets);
+        if let Ok(k) = k {
+            return k;
+        }
+    }
+}
+
 impl CoffreLogiciel {
     pub fn generer(alg: Alg) -> Self {
         let prive = match alg {
             Alg::Ed25519 => Prive::Ed25519(ed25519_dalek::SigningKey::generate(&mut rand_core::OsRng)),
-            Alg::P256 => Prive::P256(p256::ecdsa::SigningKey::random(&mut rand_core::OsRng)),
+            Alg::P256 => Prive::P256(p256_aleatoire()),
         };
         CoffreLogiciel { prive }
     }
@@ -163,6 +176,7 @@ impl CoffreLogiciel {
         if let Ok(k) = ed25519_dalek::SigningKey::from_pkcs8_pem(pem) {
             return Ok(CoffreLogiciel { prive: Prive::Ed25519(k) });
         }
+        use p256::pkcs8::DecodePrivateKey as _;
         if let Ok(k) = p256::SecretKey::from_pkcs8_pem(pem) {
             return Ok(CoffreLogiciel { prive: Prive::P256(k.into()) });
         }
@@ -170,17 +184,19 @@ impl CoffreLogiciel {
     }
 
     pub fn en_pem(&self) -> Resultat<String> {
-        let pem = match &self.prive {
+        match &self.prive {
             Prive::Ed25519(k) => {
                 use ed25519_dalek::pkcs8::EncodePrivateKey as _;
-                k.to_pkcs8_pem(Default::default()).map(|z| z.to_string())
+                k.to_pkcs8_pem(Default::default()).map(|z| z.to_string()).map_err(|e| Erreur::Cle(e.to_string()))
             }
             Prive::P256(k) => {
                 use p256::pkcs8::EncodePrivateKey as _;
-                p256::SecretKey::from(k).to_pkcs8_pem(Default::default()).map(|z| z.to_string())
+                p256::SecretKey::from(k)
+                    .to_pkcs8_pem(Default::default())
+                    .map(|z| z.to_string())
+                    .map_err(|e| Erreur::Cle(e.to_string()))
             }
-        };
-        pem.map_err(|e| Erreur::Cle(e.to_string()))
+        }
     }
 
     /// Charge la clé du fichier, ou la crée (droits 0600, création exclusive).
@@ -214,7 +230,7 @@ impl Coffre for CoffreLogiciel {
             Prive::Ed25519(k) => CleIdentite { alg: Alg::Ed25519, public: b64(k.verifying_key().as_bytes()) },
             Prive::P256(k) => CleIdentite {
                 alg: Alg::P256,
-                public: b64(k.verifying_key().to_encoded_point(false).as_bytes()),
+                public: b64(k.verifying_key().to_sec1_point(false).as_bytes()),
             },
         }
     }
@@ -284,4 +300,23 @@ mod tests {
         let c = CleIdentite { alg: Alg::P256, public: b64(&[1u8; 32]) };
         assert!(c.id().is_err());
     }
+
+    /// Clé et signature produites par p256 0.13 (avant la migration du 2026-11-16, clé
+    /// d'essai jetable) : la 0.14 relit la même clé et vérifie la même signature. Les
+    /// identités P-256 déjà en service (fichiers identite.pem) restent donc valables.
+    #[test]
+    fn compatible_avec_les_cles_de_p256_0_13() {
+        const PEM: &str = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgLJXEdOyi7CgyVOMM\nky4aLY2Ayj8EREb8/QJTV8aEcO2hRANCAAQhAay32OVlq0ZyKSuO2mUX+9wxjB8o\nJNgA2Iu0B00GjfD0gojPkdCsARtzvoVqqhYqKGx5WjkIzDBd6nxsnq0f\n-----END PRIVATE KEY-----\n";
+        const PUB: &str = "BCEBrLfY5WWrRnIpK47aZRf73DGMHygk2ADYi7QHTQaN8PSCiM+R0KwBG3O+hWqqFioobHlaOQjMMF3qfGyerR8=";
+        const SIG: &str = "P7sbDSay3BueQwVQo6FDJpa52Yvgt8PvfsIo9+A52xHve4KIMKqqf/AX/1eBwPB98sNoqV0qM5389Lcbh4OckA==";
+        let c = CoffreLogiciel::depuis_pem(PEM).unwrap();
+        assert_eq!(c.cle_publique(), CleIdentite { alg: Alg::P256, public: PUB.into() });
+        let sig = crate::de_b64(SIG).unwrap();
+        c.cle_publique().verifier(b"compatibilite p256 0.13 vers 0.14", &sig).unwrap();
+        // Et la nouvelle version signe d'une façon que la clé publique accepte.
+        let neuve = c.signer(b"x").unwrap();
+        c.cle_publique().verifier(b"x", &neuve).unwrap();
+        assert_eq!(CoffreLogiciel::depuis_pem(&c.en_pem().unwrap()).unwrap().cle_publique(), c.cle_publique());
+    }
+
 }
