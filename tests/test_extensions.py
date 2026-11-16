@@ -395,5 +395,63 @@ class PointExtensions(unittest.TestCase):
                          "erreur")
 
 
+    # --- interface de l'IDE (lot 3) ------------------------------------------------------
+
+    def test_relais_de_l_interface(self):
+        import base64
+
+        class FausseSession:
+            def __init__(self):
+                self.recus = []
+
+            def envoyer(self, msg):
+                np_.encoder_message(msg)  # la liste fermee v2 doit l'accepter
+                self.recus.append(msg)
+        coquille = FausseSession()
+        self.v2._sessions["coquille-essai"] = coquille
+        self.addCleanup(self.v2._sessions.pop, "coquille-essai", None)
+        carte = {"nom": "Coquille", "role": "interface"}
+        requete = {"type": "interface_requete", "id": "r1", "methode": "GET", "chemin": "/"}
+        # Pas de front : 503.
+        self.ext.recevoir_requete_interface("coquille-essai", carte, requete)
+        self.assertEqual(coquille.recus[-1]["statut"], 503)
+        # Une extension sans la capacite "interface" ne peut pas servir.
+        cl, _ = self.client()
+        self.assertEqual(cl.requete("interface_servir")["type"], "erreur")
+        # Le front (capacite interface) recoit la requete et repond ; gros corps en morceaux.
+        cle_front = np_.Coffre.generer()
+        self.assertEqual(self.ext.Client(cle_front).enroler("ide-front", ["interface"])["type"], "enrole")
+        front, _ = self.client(cle_front)
+        self.assertEqual(front.requete("interface_servir")["type"], "reponse")
+        self.ext.recevoir_requete_interface("coquille-essai", carte, dict(requete, id="r2", chemin="/api/tickets"))
+        evt = front.recevoir()
+        self.assertEqual((evt["genre"], evt["chemin"], evt["appareil"]["id"]),
+                         ("interface_requete", "/api/tickets", "coquille-essai"))
+        corps = ("x" * 80000).encode()
+        r = front.requete("interface_reponse", requete=evt["requete"], statut=200, type_contenu="text/plain",
+                          corps=base64.b64encode(corps).decode())
+        self.assertEqual(r["type"], "reponse", r)
+        morceaux = [m for m in coquille.recus if m["reponse_a"] == "r2"]
+        self.assertEqual([m["n"] for m in morceaux], [0, 1, 2])
+        self.assertEqual([m["fin"] for m in morceaux], [False, False, True])
+        self.assertEqual(b"".join(base64.b64decode(m["corps"]) for m in morceaux), corps)
+        # Une reponse a une requete inconnue (ou deja servie) : refusee.
+        self.assertEqual(front.requete("interface_reponse", requete=evt["requete"], statut=200, corps="")["type"],
+                         "erreur")
+        # Front parti : 503 de nouveau.
+        front.fermer()
+        time.sleep(0.2)
+        self.ext.recevoir_requete_interface("coquille-essai", carte, dict(requete, id="r3"))
+        self.assertEqual(coquille.recus[-1]["statut"], 503)
+
+    def test_liste_des_tickets(self):
+        cl, _ = self.client()
+        self.ticket_emis(cl, "liste-1")
+        r = cl.requete("tickets_lister")
+        self.assertIn("liste-1", [t["id"] for t in r["tickets"]])
+        t = next(t for t in r["tickets"] if t["id"] == "liste-1")
+        self.assertEqual((t["mode"], t["clos"], t["pause"]), ("lax", False, False))
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

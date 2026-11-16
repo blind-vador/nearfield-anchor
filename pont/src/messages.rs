@@ -133,6 +133,30 @@ pub enum Message {
     },
     /// Un appareil annonce sa clé humaine : objet `humain` signé par elle (lot 2 §1).
     HumainAnnonce { id: String, objet: ObjetSigne },
+    /// Un appareil d'interface demande une ressource de l'interface servie par
+    /// l'ordonnateur (lot 3) : page, script, ou appel de son API. Jamais une commande.
+    InterfaceRequete {
+        id: String,
+        /// `GET` ou `POST`.
+        methode: String,
+        /// Chemin absolu de l'interface (`/`, `/api/tickets`…), 1 024 octets au plus.
+        chemin: String,
+        /// Corps d'un `POST` (JSON en texte), 32 Kio au plus.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        corps: Option<String>,
+    },
+    /// Réponse, en morceaux numérotés (`n` à partir de 0, `fin` sur le dernier) : le corps
+    /// en base64, 48 000 caractères au plus par morceau.
+    InterfaceReponse {
+        id: String,
+        reponse_a: String,
+        n: u32,
+        fin: bool,
+        statut: u16,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        type_contenu: Option<String>,
+        corps: String,
+    },
     /// Décodage TETRA en direct. La machine se connecte au flux radio de
     /// l'ordonnateur (son adresse, jamais une adresse reçue) sur `port`.
     TetraDemande {
@@ -298,6 +322,8 @@ fn fini(nom: &str, v: f64, min: f64, max: f64) -> Resultat<()> {
 /// Charge à valider (un brouillon de ticket et son plan) : objet JSON de 32 Kio au plus,
 /// profondeur bornée.
 pub const MAX_CHARGE: usize = 32_768;
+/// Corps d'un morceau de réponse d'interface (base64) : tient dans une trame Noise.
+pub const MAX_INTERFACE_B64: usize = 48_000;
 
 fn charge_bornee(v: &Value) -> Resultat<()> {
     fn profondeur(v: &Value, p: usize) -> bool {
@@ -365,6 +391,8 @@ impl Message {
             | Message::ValidationDemande { id, .. }
             | Message::ValidationReponse { id, .. }
             | Message::HumainAnnonce { id, .. }
+            | Message::InterfaceRequete { id, .. }
+            | Message::InterfaceReponse { id, .. }
             | Message::TravailFini { id, .. }
             | Message::Tickets { id, .. }
             | Message::DireFin { id, .. }
@@ -496,6 +524,28 @@ impl Message {
                 simple("sujet", sujet)?;
                 charge_bornee(charge)
             }
+            Message::InterfaceRequete { methode, chemin, corps, .. } => {
+                if methode != "GET" && methode != "POST" {
+                    return Err(Erreur::Message("méthode : GET ou POST".into()));
+                }
+                if !chemin.starts_with('/') || chemin.len() > 1024 || chemin.chars().any(char::is_control) {
+                    return Err(Erreur::Message("chemin d'interface invalide".into()));
+                }
+                if corps.as_ref().map_or(false, |c| c.len() > MAX_CHARGE) {
+                    return Err(Erreur::Message("corps trop long".into()));
+                }
+                Ok(())
+            }
+            Message::InterfaceReponse { reponse_a, statut, type_contenu, corps, .. } => {
+                court("reponse_a", reponse_a)?;
+                if !(100..=599).contains(statut) || corps.len() > MAX_INTERFACE_B64 {
+                    return Err(Erreur::Message("réponse d'interface invalide".into()));
+                }
+                if let Some(t) = type_contenu {
+                    court("type_contenu", t)?;
+                }
+                Ok(())
+            }
             Message::ValidationReponse { reponse_a, erreur, objet, .. } => {
                 court("reponse_a", reponse_a)?;
                 texte_opt("erreur", erreur)?;
@@ -619,5 +669,25 @@ mod tests {
         let gros = format!(r#"{{"type":"validation_demande","id":"v1","sujet":"ticket","charge":{{"plan":"{}"}}}}"#, "a".repeat(40_000));
         assert!(Message::decoder(gros.as_bytes()).is_err());
         assert!(Message::decoder(br#"{"type":"validation_demande","id":"v1","sujet":"ticket","charge":[1]}"#).is_err());
+    }
+
+    #[test]
+    fn messages_d_interface() {
+        let r = r#"{"type":"interface_requete","id":"i1","methode":"GET","chemin":"/api/tickets"}"#;
+        let m = Message::decoder(r.as_bytes()).unwrap();
+        assert_eq!(Message::decoder(&m.encoder().unwrap()).unwrap(), m);
+        let p = r#"{"type":"interface_reponse","id":"i2","reponse_a":"i1","n":0,"fin":true,"statut":200,"type_contenu":"application/json","corps":"e30="}"#;
+        Message::decoder(p.as_bytes()).unwrap();
+        for faux in [
+            r#"{"type":"interface_requete","id":"i1","methode":"DELETE","chemin":"/"}"#,
+            r#"{"type":"interface_requete","id":"i1","methode":"GET","chemin":"api"}"#,
+            r#"{"type":"interface_requete","id":"i1","methode":"GET","chemin":"/a
+b"}"#,
+            r#"{"type":"interface_reponse","id":"i2","reponse_a":"i1","n":0,"fin":true,"statut":42,"corps":""}"#,
+        ] {
+            assert!(Message::decoder(faux.as_bytes()).is_err(), "{faux}");
+        }
+        let gros = format!(r#"{{"type":"interface_reponse","id":"i2","reponse_a":"i1","n":0,"fin":true,"statut":200,"corps":"{}"}}"#, "A".repeat(48_004));
+        assert!(Message::decoder(gros.as_bytes()).is_err());
     }
 }

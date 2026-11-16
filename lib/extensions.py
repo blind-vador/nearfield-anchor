@@ -22,6 +22,8 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
   ticket_proposer  {brouillon}             controle, garde le brouillon ; rend son empreinte
   ticket_valider   {ticket}                validation humaine puis ticket signe par l'ordonnateur
   ticket_lire      {ticket}                ticket, nombre d'entrees, clos ou non
+  tickets_lister   {}                      resume de chaque ticket emis (titre, mode, parent,
+                                           entrees, clos, pause), du plus recent au plus ancien
   journal_ecrire   {entree}                entree signee PAR L'EXTENSION, chainee et verifiee
   journal_lire     {ticket, depuis}        entrees verifiees
   travail_deposer  {ticket, capacite, params}  travail d'un type connu, dans ce qu'autorise le ticket
@@ -29,6 +31,12 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
                                            autre machine que l'auteur (ou, seule machine, a un
                                            agent en contexte neutre), notee au journal
   evenements       {}                      s'abonner : {"type": "evenement", "genre": ...}
+  interface_servir {}                      (capacite "interface") devenir le front de l'IDE : les
+                                           requetes des coquilles arrivent en evenements
+                                           {"type": "interface_requete", requete, appareil,
+                                           methode, chemin, corps}
+  interface_reponse {requete, statut, type_contenu, corps (base64)}  la reponse, relayee a
+                                           la coquille par sa session Noise (morceaux)
 
 Modes (lot2 §6) : un ticket est "lax" (sa validation couvre ses sous-tickets, dans ses
 bornes) ou "strict" (chaque sous-ticket, c.-a-d. chaque bloc, est valide par l'humain).
@@ -382,6 +390,29 @@ def ticket_lire(cx, req):
     return {"ticket": t, "entrees": len(e), "clos": _clos(e), "pause": _en_pause(e)}
 
 
+def tickets_lister(cx, req):
+    try:
+        noms = [n for n in os.listdir(_dossier("tickets")) if n != "brouillons" and NOM_SUR.match(n)]
+    except OSError:
+        noms = []
+    sortie = []
+    for tid in noms:
+        t = _lire_json(_dossier("tickets", tid, "ticket.json"))
+        if not t:
+            continue
+        try:
+            e = _journal_verifie(t, _entrees(tid))
+        except np_.ErreurPont:
+            continue  # journal invalide : pas montre (incident deja journalise ailleurs)
+        c = t["charge"]
+        sortie.append({"id": tid, "titre": c.get("titre"), "mode": c.get("mode"),
+                       "parent": (c.get("parent") or {}).get("ticket"), "emis": c.get("emis"),
+                       "entrees": len(e), "clos": _clos(e), "pause": _en_pause(e),
+                       "dernier": (e[-1].get("texte") if e else None)})
+    sortie.sort(key=lambda x: x.get("emis") or 0, reverse=True)
+    return {"tickets": sortie[:200]}
+
+
 def _ticket_verifie(tid):
     """Ticket emis et verifie (avec son parent pour un bloc) : rend son brouillon."""
     t = _ticket(tid)
@@ -590,15 +621,87 @@ def evenements(cx, req):
     return {}
 
 
+# --- interface de l'IDE (lot 3) : le front est une extension -----------------------------
+
+INTERFACE_DELAI_SEC = 30
+MAX_INTERFACE = 192 * 1024       # corps d'une reponse (base64) : tient dans une trame de la prise
+_front = [None]                  # connexion de l'extension qui sert l'interface
+_requetes_interface = {}         # requete -> {"cid", "id", "t"}
+
+
+def interface_servir(cx, req):
+    if "interface" not in (cx.fiche or {}).get("capacites", []):
+        raise Refus("cette extension n'a pas la capacite interface")
+    _front[0] = cx
+    print(f"[extensions] {cx.fiche['nom']} sert l'interface de l'IDE", flush=True)
+    return {}
+
+
+def recevoir_requete_interface(cid, card, msg):
+    """Requete d'une coquille (session Noise, role interface) : au front, ou 503."""
+    front = _front[0]
+    if front is None:
+        for m in pont_v2.reponse_interface(msg["id"], 503, "text/plain; charset=utf-8",
+                                           "L'interface de l'IDE n'est pas démarrée.".encode()):
+            pont_v2.envoyer_brut(cid, m)
+        return
+    rid = uuid.uuid4().hex[:16]
+    _requetes_interface[rid] = {"cid": cid, "id": msg["id"], "t": time.time()}
+    try:
+        front.envoyer({"type": "evenement", "genre": "interface_requete", "requete": rid,
+                       "appareil": {"id": cid, "nom": card.get("nom") or cid},
+                       "methode": msg["methode"], "chemin": msg["chemin"], "corps": msg.get("corps")})
+    except OSError:
+        _front[0] = None
+        _requetes_interface.pop(rid, None)
+        for m in pont_v2.reponse_interface(msg["id"], 503, "text/plain; charset=utf-8", b"front injoignable"):
+            pont_v2.envoyer_brut(cid, m)
+
+
+def interface_reponse(cx, req):
+    if cx is not _front[0]:
+        raise Refus("cette extension ne sert pas l'interface")
+    attente = _requetes_interface.pop(req.get("requete"), None)
+    if not attente:
+        raise Refus("requete d'interface inconnue ou expiree")
+    statut = req.get("statut")
+    if not isinstance(statut, int) or not 100 <= statut <= 599:
+        raise Refus("statut invalide")
+    type_contenu = str(req.get("type_contenu") or "application/octet-stream")[:128]
+    corps_b64 = req.get("corps") or ""
+    if not isinstance(corps_b64, str) or len(corps_b64) > MAX_INTERFACE:
+        raise Refus("corps trop gros")
+    try:
+        corps = base64.b64decode(corps_b64, validate=True)
+    except ValueError:
+        raise Refus("corps : base64 attendu")
+    for m in pont_v2.reponse_interface(attente["id"], statut, type_contenu, corps):
+        if not pont_v2.envoyer_brut(attente["cid"], m):
+            raise Refus("la coquille n'est plus connectee")
+    return {}
+
+
+def _expirer_interface():
+    """Requetes sans reponse du front : 504 a la coquille."""
+    for rid, a in list(_requetes_interface.items()):
+        if time.time() - a["t"] > INTERFACE_DELAI_SEC:
+            _requetes_interface.pop(rid, None)
+            for m in pont_v2.reponse_interface(a["id"], 504, "text/plain; charset=utf-8", b"pas de reponse du front"):
+                pont_v2.envoyer_brut(a["cid"], m)
+
+
 REQUETES = {
     "ticket_proposer": ticket_proposer,
     "ticket_valider": ticket_valider,
     "ticket_lire": ticket_lire,
+    "tickets_lister": tickets_lister,
     "journal_ecrire": journal_ecrire,
     "journal_lire": journal_lire,
     "travail_deposer": travail_deposer,
     "contre_epreuve": contre_epreuve,
     "evenements": evenements,
+    "interface_servir": interface_servir,
+    "interface_reponse": interface_reponse,
 }
 LONGUES = {"ticket_valider"}  # attendent l'humain : traitees a part, la connexion continue
 
@@ -724,6 +827,8 @@ def _servir(conn):
         pass
     finally:
         _abonnes.discard(cx)
+        if _front[0] is cx:
+            _front[0] = None
         if cx.fiche:
             print(f"[extensions] {cx.fiche['nom']} deconnectee", flush=True)
         conn.close()
@@ -733,6 +838,7 @@ def _surveiller():
     """Previent les abonnes quand un travail depose par une extension est fini."""
     while True:
         time.sleep(SURVEILLANCE_SEC)
+        _expirer_interface()
         if not _travaux:
             continue
         try:
@@ -769,6 +875,7 @@ def demarrer():
             except OSError:
                 return  # prise fermee (arret du service, fin d'essai)
             threading.Thread(target=_servir, args=(conn,), daemon=True).start()
+    pont_v2._interface[0] = recevoir_requete_interface
     threading.Thread(target=boucle, daemon=True, name="extensions").start()
     threading.Thread(target=_surveiller, daemon=True, name="extensions-travaux").start()
     print(f"[extensions] point d'acces ouvert : {prise}", flush=True)

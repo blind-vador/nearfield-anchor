@@ -56,6 +56,8 @@ _presence_v2 = {}    # id v1 de la machine -> {depuis, vu, battements}
 _sessions = {}       # id v1 de la machine -> session v2 ouverte
 _recu = [None]       # rappel du pont (compagnon_serveur) : (cid, fiche, message v1)
 _evenement = [None]  # rappel du pont : ("arrivee" | "depart", cid, fiche, adresse IP)
+_interface = [None]  # rappel du point d'acces (lib/extensions.py) : (cid, fiche, interface_requete)
+MORCEAU_INTERFACE = 36_000  # octets bruts par morceau (48 000 en base64, messages v2)
 _refus_vus = set()   # types deja journalises comme passes par la v1
 
 
@@ -194,6 +196,28 @@ def envoyer(cid, msg):
     except np_.ErreurPont as exc:
         print(f"[pont v2] envoi a {cid} impossible ({exc}) : la v1 prend le relais", flush=True)
         return False
+
+
+def envoyer_brut(cid, msg):
+    """Envoie un message v2 (deja dans la liste fermee) a cette machine ; False sans session."""
+    session = _sessions.get(cid)
+    if session is None:
+        return False
+    try:
+        session.envoyer(msg)
+        return True
+    except np_.ErreurPont as exc:
+        print(f"[pont v2] envoi a {cid} impossible : {exc}", flush=True)
+        return False
+
+
+def reponse_interface(reponse_a, statut, type_contenu, corps):
+    """Les morceaux interface_reponse d'une reponse (corps : octets)."""
+    import base64
+    morceaux = [corps[i:i + MORCEAU_INTERFACE] for i in range(0, len(corps), MORCEAU_INTERFACE)] or [b""]
+    return [{"type": "interface_reponse", "id": uuid.uuid4().hex[:16], "reponse_a": reponse_a, "n": n,
+             "fin": n == len(morceaux) - 1, "statut": int(statut), "type_contenu": type_contenu,
+             "corps": base64.b64encode(m).decode()} for n, m in enumerate(morceaux)]
 
 
 def en_v2(cid):
@@ -339,6 +363,16 @@ def _servir(entrante):
                     _presence_v2[cid]["vu"] = time.time()
                     _presence_v2[cid]["battements"] += 1
                     _ecrire_presence()
+            if msg["type"] == "interface_requete":
+                if _roles(card) != ["interface"] or not _interface[0]:
+                    envoyer_brut(cid, reponse_interface(msg["id"], 503, "text/plain; charset=utf-8",
+                                                        "L'interface de l'IDE n'est pas disponible.".encode())[0])
+                else:
+                    try:
+                        _interface[0](cid, card, msg)
+                    except Exception as exc:
+                        print(f"[pont v2] {pair['nom']} : requete d'interface : {exc!r}", flush=True)
+                continue
             if msg["type"] in ("validation_reponse", "humain_annonce"):
                 try:
                     _validation_recue(cid, card, msg) if msg["type"] == "validation_reponse" else _humain_annonce(cid, card, msg)
