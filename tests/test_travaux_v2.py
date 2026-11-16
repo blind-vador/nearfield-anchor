@@ -162,8 +162,7 @@ class TravauxV2(unittest.TestCase):
     def test_travail_rejoue_pas_refait(self):
         job_id, folder = self.deposer()
         self.travailler()
-        for n in ("resultat.json", "resultat.v2.json"):
-            os.remove(os.path.join(folder, n))
+        os.remove(os.path.join(folder, "resultat.v2.json"))
         os.rename(os.path.join(folder, "travail.pris.json"), os.path.join(folder, "travail.json"))
         self.travailler()
         self.assertEqual(len(self.vus), 1)
@@ -172,8 +171,43 @@ class TravauxV2(unittest.TestCase):
     def test_resultat_v1_seul_refuse_pour_une_machine_migree(self):
         job_id, folder = self.deposer()
         self.travailler()
+        self.assertFalse(os.path.exists(os.path.join(folder, "resultat.json")), "plus de resultat v1")
         os.remove(os.path.join(folder, "resultat.v2.json"))
+        # Un resultat v1 en regle (signe par la cle v1 du Mac) ne vaut plus pour une machine migree.
+        self.c._write(os.path.join(folder, "resultat.json"), self.proto.sign(self.nb.key(), {
+            "type": "resultat", "travail": job_id, "compagnon": self.mac_id, "etat": "fait", "message": "",
+            "duree": 1, "sorties": {}}))
         self.assertNotIn(job_id, self.finis())
+
+    def test_le_pi_lit_le_travail_signe_pas_la_copie(self):
+        job_id, folder = self.deposer({"langue": "fr"})
+        copie = self.c._read(os.path.join(folder, "travail.json"))
+        self.c._write(os.path.join(folder, "travail.json"), dict(copie, params={"langue": "xx"}))
+        self.assertEqual(self.c.lire_travail(folder)["params"], {"langue": "fr"})
+        self.travailler()
+        self.assertTrue(self.c.termine(job_id))
+        self.assertEqual(self.c.pending_count(), 0)
+        objet = self.c._read(os.path.join(folder, "travail.v2.json"))
+        objet["charge"]["contenu"] = objet["charge"]["contenu"].replace('"fr"', '"xx"')
+        self.c._write(os.path.join(folder, "travail.v2.json"), objet)
+        self.assertIsNone(self.c.lire_travail(folder), "objet signe modifie : rien, pas la copie")
+        self.assertNotIn(job_id, self.finis())
+
+    def test_battement_nas_signe_en_v2(self):
+        from unittest import mock
+        nb = self.nb
+        with mock.patch.object(nb, "network_identity", lambda: ("00:11:22:33:44:55", ["127.0.0.1"])), \
+                mock.patch.object(nb, "power", lambda etat=None: {"puissance": 100.5}), \
+                mock.patch.object(nb, "session_state", lambda: {}), \
+                mock.patch.object(self.c, "PRESENCE", os.path.join(TMP, "presence.json")):
+            nb._nas_beat(self.pi_id, {})
+            chemin = os.path.join(self.c.BRIDGE_DIR, "compagnons", self.mac_id + ".battement.json")
+            self.assertEqual(self.c._read(chemin)["charge"]["type"], "battement_nas")
+            self.assertEqual(self.c.connected()[self.mac_id]["par"], "nas")
+            intrus = nearfield_pont.Coffre.generer("p256")
+            objet = self.c._read(chemin)
+            self.c._write(chemin, intrus.signer_objet(objet["charge"]))
+            self.assertNotIn(self.mac_id, self.c.connected())
 
     def test_fichier_rendu_modifie_refuse(self):
         job_id, folder = self.deposer()
@@ -212,6 +246,34 @@ class TravauxV2(unittest.TestCase):
         self.assertEqual(len(self.vus), 1)
         self.assertFalse(os.path.exists(os.path.join(folder, "resultat.v2.json")))
         self.assertEqual(self.finis()[job_id]["etat"], "fait")
+
+
+    def test_cles_de_reception_et_enveloppe_pour_le_parc(self):
+        import cles_reception
+        nb, v2 = self.nb, self.v2
+        partage = self.c.BRIDGE_DIR
+        mac_coffre = nearfield_pont.Coffre.ouvrir(os.path.join(nb.V2_DIR, "identite.pem"))
+        self.assertTrue(v2.publier_reception())
+        self.assertFalse(v2.publier_reception(), "deja publiee aujourd'hui")
+        # Avant que le Mac publie : enveloppe pour le Pi seul.
+        env = v2.sceller_pour_le_parc(b"secret 1", "essai")
+        self.assertEqual([d["id"] for d in env["destinataires"]], [v2.coffre().id])
+        nb._publier_reception(self.pi_id, {})
+        env = v2.sceller_pour_le_parc(b"secret 2", "essai")
+        self.assertEqual({d["id"] for d in env["destinataires"]}, {v2.coffre().id, mac_coffre.id})
+        self.assertEqual(nb.ouvrir_enveloppe(self.pi_id, env), b"secret 2")
+        self.assertEqual(v2.ouvrir_enveloppe(env, v2.coffre().id), b"secret 2")
+        # Publication remplacee par un intrus (sa cle, signee par lui) : ignoree.
+        intrus = nearfield_pont.Coffre.generer("p256")
+        faux = nearfield_pont.CleReception.generer().publier(intrus, v2.parc())
+        cles_reception._ecrire(os.path.join(partage, "cles_reception", mac_coffre.id + ".json"), faux)
+        env = v2.sceller_pour_le_parc(b"secret 3", "essai")
+        self.assertNotIn(mac_coffre.id, {d["id"] for d in env["destinataires"]})
+        # Cles gardees 0600 dans un dossier 0700.
+        d = os.path.join(nb.V2_DIR, "reception")
+        self.assertEqual(os.stat(d).st_mode & 0o777, 0o700)
+        for n in os.listdir(d):
+            self.assertEqual(os.stat(os.path.join(d, n)).st_mode & 0o777, 0o600)
 
 
 if __name__ == "__main__":

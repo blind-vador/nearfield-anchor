@@ -32,13 +32,29 @@ def moi():
     return compagnon.pi_id()
 
 
+def _v2():
+    """Module pont_v2 s'il est actif (parc migre) : les tickets se signent alors en v2."""
+    return compagnon._pont_v2()
+
+
 def cle():
+    v2 = _v2()
+    if v2:
+        return tp.CleV2(v2.coffre(), v2.parc())
     return compagnon.key()
 
 
 def cles():
-    found = {cid: c["cle"] for cid, c in compagnon.trusted().items() if c.get("cle")}
-    found[moi()] = proto.public_b64(cle())
+    """{machine: cle publique} des signataires admis : cle v2 pour une machine migree,
+    cle v1 sinon ; le Pi lui-meme avec la cle qui signe ses tickets."""
+    v2 = _v2()
+    found = {}
+    for cid, c in compagnon.trusted().items():
+        if v2 and c.get("v2"):
+            found[cid] = tp.cle_v2(c["v2"]["identite"], v2.parc())
+        elif c.get("cle"):
+            found[cid] = c["cle"]
+    found[moi()] = tp.cle_v2(v2.coffre().cle_publique(), v2.parc()) if v2 else proto.public_b64(compagnon.key())
     return found
 
 

@@ -303,9 +303,19 @@ def _tickets_boucle():
         conf = config()
         for pi, card in bridges().items():
             link = _links.get(pi)
-            if not link or not link.direct or not card.get("cle"):
-                continue  # tickets du lot 1 : signes par les cles v1 (le lot 2 les passera en v2)
-            cles = {pi: card["cle"], conf["id"]: proto.public_b64(key())}
+            if not link or not link.direct:
+                continue
+            epingle = _epingle(pi) if pont2 is not None else None
+            if epingle and _identite_existe():  # parc migre : tickets signes en v2 (notre puce)
+                moi = _mon_coffre()
+                cle = tp.CleV2(moi, epingle["parc"])
+                cles = {pi: tp.cle_v2(epingle["ordonnateur"], epingle["parc"]),
+                        conf["id"]: tp.cle_v2(moi.cle_publique(), epingle["parc"])}
+            elif card.get("cle"):
+                cle = key()
+                cles = {pi: card["cle"], conf["id"]: proto.public_b64(key())}
+            else:
+                continue
             try:
                 share = find_share(card)
                 if not share:
@@ -316,7 +326,7 @@ def _tickets_boucle():
                     for tid in sorted(set(tp.ouverts(share)) | set(_tickets_attendus)):
                         if tp.existe(share, tid):
                             _tickets_attendus.pop(tid, None)
-                        fait = tp.travailler(share, tid, conf["id"], conf["nom"], key(), cles, outils,
+                        fait = tp.travailler(share, tid, conf["id"], conf["nom"], cle, cles, outils,
                                              _part_de_tickets(), priorite=("nice", "-n", "10"))
                         if fait:
                             encore = True
@@ -945,6 +955,27 @@ def _wake_workers(pi):
             q.put(pi)
 
 
+def _publier_reception(pi, card):
+    """Notre cle de reception de la semaine, signee par notre identite v2, sur le NAS de
+    ce Pi (protocole v2 §6.2) : de quoi nous chiffrer un contenu sensible."""
+    epingle = _epingle(pi)
+    share = find_share(card)
+    if not epingle or not share or not _identite_existe():
+        return
+    try:
+        import cles_reception
+        if cles_reception.publier(V2_DIR, _mon_coffre(), epingle["parc"], share):
+            log("%s : cle de reception publiee" % pi)
+    except Exception as exc:
+        log("%s : cle de reception non publiee (%r)" % (pi, exc))
+
+
+def ouvrir_enveloppe(pi, enveloppe):
+    """Ouvre une enveloppe que le Pi (son identite epinglee) nous a scellee."""
+    import cles_reception
+    return cles_reception.ouvrir(V2_DIR, _mon_coffre().id, _epingle(pi)["parc"], enveloppe)
+
+
 def _nas_beat(pi, card):
     """Signe de vie signe sur le NAS : le Pi sait que la machine est la meme
     sans liaison directe (macOS peut refuser le reseau local a l'application,
@@ -954,10 +985,18 @@ def _nas_beat(pi, card):
         return
     conf = config()
     mac, ips = network_identity()
-    _write(os.path.join(share, "compagnons", "%s.battement.json" % conf["id"]),
-           proto.sign(key(), {"type": "battement", "compagnon": conf["id"], "pi": pi, "nom": conf["nom"],
-                              "capacites": capabilities(), "adresse_materielle": mac, "ips": ips,
-                              "puissance": power(session_state())}))
+    contenu = {"compagnon": conf["id"], "pi": pi, "nom": conf["nom"], "capacites": capabilities(),
+               "adresse_materielle": mac, "ips": ips, "puissance": power(session_state())}
+    epingle = _epingle(pi) if pont2 is not None else None
+    if epingle and _identite_existe():  # Pi migre : signe par notre cle v2 (la puce)
+        # Sans la puissance : ses nombres a virgule ne se signent pas (JCS, entiers seuls),
+        # et le Pi ne lit du battement NAS que l'heure et les capacites.
+        v2 = {k: v for k, v in contenu.items() if k != "puissance"}
+        objet = _mon_coffre().signer_objet(dict(v2, type="battement_nas", parc=epingle["parc"],
+                                                id="battement-%s" % conf["id"]))
+    else:
+        objet = proto.sign(key(), dict(contenu, type="battement"))
+    _write(os.path.join(share, "compagnons", "%s.battement.json" % conf["id"]), objet)
 
 
 class Link(threading.Thread):
@@ -1731,7 +1770,8 @@ def _requeue_interrupted():
         for job_id in names:
             taken = os.path.join(folder, job_id, "travail.pris.json")
             job = _read(taken)
-            if job and job.get("pris_par") == me and not os.path.exists(os.path.join(folder, job_id, "resultat.json")):
+            fini = any(os.path.exists(os.path.join(folder, job_id, n)) for n in (RESULTAT_V2, "resultat.json"))
+            if job and job.get("pris_par") == me and not fini:
                 job.pop("pris_par", None)
                 job.pop("pris_le", None)
                 _write(os.path.join(folder, job_id, "travail.json"), job)
@@ -1800,16 +1840,20 @@ def _work(pi, fast):
                 awake.terminate()
         duration = round(time.time() - started)
         conf = config()
-        if empreinte:  # avant resultat.json : le Pi tient pour fini un travail qui a un resultat.json
+        if empreinte:
+            # Pi migre : resultat.v2.json seul, signe par notre cle v2 (la puce). S'il ne peut
+            # pas etre signe, rien n'est rendu : le travail repart en file au redemarrage.
             try:
                 _rendre_v2(pi, folder, job_id, empreinte, state, message, duration, outputs)
             except Exception as exc:
                 log("%s : resultat v2 de %s non signe : %s" % (pi, job_id, exc))
                 state, message = "echec", "resultat v2 non signe : %s" % exc
-        result = proto.sign(key(), {
-            "type": "resultat", "travail": job_id, "compagnon": conf["id"], "etat": state, "message": message,
-            "duree": duration, "sorties": {name: proto.file_digest(os.path.join(folder, name)) for name in outputs}})
-        _write(os.path.join(folder, "resultat.json"), result)
+        else:  # Pi encore en v1
+            result = proto.sign(key(), {
+                "type": "resultat", "travail": job_id, "compagnon": conf["id"], "etat": state, "message": message,
+                "duree": duration,
+                "sorties": {name: proto.file_digest(os.path.join(folder, name)) for name in outputs}})
+            _write(os.path.join(folder, "resultat.json"), result)
         ok = state == "fait"
         with _stats_lock:  # deux files peuvent finir en meme temps
             data = stats(pi)
@@ -1845,7 +1889,7 @@ def service():
         threading.Thread(target=worker, args=(name,), daemon=True).start()
     if "tickets" in capabilities():
         threading.Thread(target=_tickets_boucle, daemon=True).start()
-    last_scan = last_beat = 0
+    last_scan = last_beat = last_reception = 0
     while True:
         current = bridges()
         for pi in current:
@@ -1863,6 +1907,10 @@ def service():
             last_scan = time.time()
             for pi in current:
                 _wake_workers(pi)
+        if pont2 is not None and time.time() - last_reception > 3600:
+            last_reception = time.time()
+            for pi, card in current.items():
+                _publier_reception(pi, card)
         if len(direct) < len(current) and time.time() - last_beat > NAS_FALLBACK_SEC:
             last_beat = time.time()
             for pi, card in current.items():

@@ -71,6 +71,7 @@ SOURCES = Etiquettes("voix.source", {
     "imprimante": "veille imprimante",
     "plantes": "plantes",
     "systeme": "système : USB, machine compagne",
+    "tickets": "tickets et journal des extensions",
 }, "source de voix, dans la commande voix")
 ANNONCES = [s for s in SOURCES if s not in ("console", "touches")]
 
@@ -80,7 +81,7 @@ SCRIPTS = {"radio_watch": "radio", "sncf_watch": "trains", "meteo_watch": "alert
            "imprimante_watch": "imprimante", "veille_terrain": "terrain", "usb_watch": "systeme",
            "compagnon_watch": "systeme", "veille_systeme": "systeme"}
 TAGS = {"meteo_capteurs": "capteurs", "plantes": "plantes", "veille_terrain": "terrain", "terrain": "terrain", "helicos": "helicos",
-        "compagnon": "systeme", "usb": "systeme"}
+        "compagnon": "systeme", "usb": "systeme", "tickets": "tickets"}
 
 _cache = {"t": 0.0, "data": None}
 

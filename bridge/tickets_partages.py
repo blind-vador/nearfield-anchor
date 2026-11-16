@@ -34,6 +34,12 @@ qui ecoute et qui tranche ("contre": false dans les infos du ticket).
 Le choix entre plusieurs propositions n'est PAS fait ici : juges_watch garde sa
 regle (rendus multiples au journal, confiance par bande, empreintes de rejet).
 
+Signatures (2026-11-16) : en v2 quand le parc a migre. `cle` est alors une CleV2 (coffre
+d'identite v2 et parc) et chaque valeur de `cles` une cle publique v2 (`cle_v2`) ; le
+fichier est un objet signe {type: ticket_partage | avis_ticket | clos_ticket, parc, id,
+contenu: texte JSON} (le contenu porte des nombres a virgule, que JCS ne signe pas). Les
+cles v1 (base64) restent comprises pour un parc pas encore migre.
+
 Python 3.9 et plus ; numpy seulement pour les epreuves de donnees."""
 import json
 import os
@@ -48,6 +54,11 @@ import wave
 
 import juges_radio
 import pont_protocole as proto
+
+try:
+    import nearfield_pont as _np
+except ImportError:  # parc v1 seulement
+    _np = None
 
 VERSION = 2
 DOSSIER = "tickets"
@@ -112,6 +123,70 @@ def impossibles(epreuves, outils):
 
 # --- fichiers ----------------------------------------------------------------------------
 
+# --- signatures v1 ou v2 ------------------------------------------------------------------
+
+TYPES_V2 = {"ticket": "ticket_partage", "avis": "avis_ticket", "clos": "clos_ticket"}
+
+
+class CleV2:
+    """Cle de signature v2 : le coffre d'identite (puce ou fichier) et le parc."""
+
+    def __init__(self, coffre, parc):
+        self.coffre, self.parc = coffre, parc
+
+
+def cle_v2(identite, parc):
+    """Cle publique v2 d'un signataire, pour `cles` : {alg, pub, parc}."""
+    return dict(identite, parc=parc)
+
+
+def _ident_v2(data):
+    t = data["type"]
+    if t == "ticket":
+        return data["id"]
+    if t == "avis":
+        return "avis-%s-%s" % (data["ticket"], data["machine"])
+    return "clos-%s" % data["ticket"]
+
+
+def _signer(cle, data):
+    if isinstance(cle, CleV2):
+        return cle.coffre.signer_objet({"type": TYPES_V2[data["type"]], "parc": cle.parc, "id": _ident_v2(data),
+                                        "contenu": json.dumps(data, ensure_ascii=False, sort_keys=True)})
+    return proto.sign(cle, data)
+
+
+def _contenu(obj):
+    """Contenu d'un fichier SANS verification (ses propres avis, dates de nettoyage)."""
+    if isinstance(obj, dict) and "charge" in obj and "sig" in obj:
+        try:
+            return json.loads(obj["charge"]["contenu"])
+        except (KeyError, TypeError, ValueError):
+            return None
+    return obj
+
+
+def _verifie(cle_pub, obj, type_):
+    """Contenu verifie par cette cle (v1 : base64 ; v2 : cle_v2), ou None."""
+    if not isinstance(obj, dict):
+        return None
+    if isinstance(cle_pub, dict):
+        if _np is None or "charge" not in obj:
+            return None
+        cle = {k: v for k, v in cle_pub.items() if k != "parc"}
+        try:
+            c = _np.verifier_objet(obj, cle, TYPES_V2[type_], cle_pub["parc"])
+            data = json.loads(c["contenu"])
+        except (_np.ErreurPont, KeyError, TypeError, ValueError):
+            return None
+        if not isinstance(data, dict) or data.get("type") != type_ or _ident_v2(data) != c.get("id"):
+            return None
+        return data
+    if "charge" in obj or obj.get("type") != type_:
+        return None
+    return obj if proto.verify(cle_pub, obj, max_age=None) else None
+
+
 def _lire(chemin):
     try:
         with open(chemin, encoding="utf-8") as f:
@@ -162,7 +237,7 @@ def ouvrir(racine, cle, pi, sons, infos, epreuves):
     for nom, chemin in sons.items():
         shutil.copyfile(chemin, os.path.join(d, nom))
         empreintes[nom] = proto.file_digest(os.path.join(d, nom))
-    _ecrire(os.path.join(d, "ticket.json"), proto.sign(cle, {
+    _ecrire(os.path.join(d, "ticket.json"), _signer(cle, {
         "type": "ticket", "version": VERSION, "id": tid, "pi": pi, "cree": time.time(),
         "sons": empreintes, "epreuves": list(epreuves), "infos": infos}))
     return tid
@@ -174,9 +249,10 @@ def lire(racine, tid, cles, strict=True):
     seulement a ne pas refaire ce qu'un autre a pris (machine compagne qui ne
     connait pas les cles des autres compagnes)."""
     d = _dossier(racine, tid)
-    ticket = _lire(os.path.join(d, "ticket.json"))
-    if not ticket or ticket.get("id") != tid or ticket.get("pi") not in cles \
-            or not proto.verify(cles[ticket["pi"]], ticket, max_age=None):
+    brut = _lire(os.path.join(d, "ticket.json"))
+    pi = (_contenu(brut) or {}).get("pi")
+    ticket = _verifie(cles[pi], brut, "ticket") if pi in cles else None
+    if not ticket or ticket.get("id") != tid:
         return None, {}
     avis = {}
     try:
@@ -186,25 +262,28 @@ def lire(racine, tid, cles, strict=True):
     for nom in noms:
         if not (nom.startswith("avis-") and nom.endswith(".json")):
             continue
-        a = _lire(os.path.join(d, nom))
+        brut = _lire(os.path.join(d, nom))
+        a = _contenu(brut)
         m = (a or {}).get("machine")
         if not a or a.get("ticket") != tid or nom != "avis-%s.json" % m:
             continue
-        verifie = m in cles and proto.verify(cles[m], a, max_age=None)
+        sur = _verifie(cles[m], brut, "avis") if m in cles else None
+        verifie = sur is not None
         if strict and not verifie:
             continue
+        a = dict(sur or a)
         a["verifie"] = verifie
         avis[m] = a
     return ticket, avis
 
 
 def clos(racine, tid):
-    return _lire(os.path.join(_dossier(racine, tid), "clos.json"))
+    return _contenu(_lire(os.path.join(_dossier(racine, tid), "clos.json")))
 
 
 def clore(racine, tid, cle, pi, conclusion):
     _ecrire(os.path.join(_dossier(racine, tid), "clos.json"),
-            proto.sign(cle, dict(conclusion, type="clos", ticket=tid, pi=pi)))
+            _signer(cle, dict(conclusion, type="clos", ticket=tid, pi=pi)))
 
 
 def nettoyer(racine, garde_sec, abandon_sec=24 * 3600):
@@ -216,8 +295,8 @@ def nettoyer(racine, garde_sec, abandon_sec=24 * 3600):
         return
     for nom in noms:
         d = os.path.join(racine, DOSSIER, nom)
-        c = _lire(os.path.join(d, "clos.json"))
-        t = (c or {}).get("t") or (_lire(os.path.join(d, "ticket.json")) or {}).get("cree")
+        c = _contenu(_lire(os.path.join(d, "clos.json")))
+        t = (c or {}).get("t") or (_contenu(_lire(os.path.join(d, "ticket.json"))) or {}).get("cree")
         if t is None:
             try:
                 t = os.path.getmtime(d)
@@ -261,12 +340,12 @@ def a_prendre(ticket, avis, machine, n, outils, pour_moi=None):
 
 
 def _avis_propre(racine, tid, machine):
-    a = _lire(os.path.join(_dossier(racine, tid), "avis-%s.json" % machine)) or {}
+    a = _contenu(_lire(os.path.join(_dossier(racine, tid), "avis-%s.json" % machine))) or {}
     return {"prises": a.get("prises") or {}, "verdicts": a.get("verdicts") or {}, "rendus": a.get("rendus") or {}}
 
 
 def _publier(racine, tid, machine, nom, cle, a):
-    _ecrire(os.path.join(_dossier(racine, tid), "avis-%s.json" % machine), proto.sign(cle, {
+    _ecrire(os.path.join(_dossier(racine, tid), "avis-%s.json" % machine), _signer(cle, {
         "type": "avis", "version": VERSION, "ticket": tid, "machine": machine, "nom": nom,
         "prises": a["prises"], "verdicts": a["verdicts"], "rendus": a["rendus"]}))
 

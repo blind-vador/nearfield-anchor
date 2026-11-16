@@ -802,6 +802,7 @@ def run():
     with _lock:
         _save_presence()  # personne de connecte au demarrage
     last_poll = 0
+    derniere_reception = 0
     while True:
         if time.time() - derniere_verif > V1_VERIF_SEC:
             derniere_verif = time.time()
@@ -810,6 +811,10 @@ def run():
             _drain_force_notify()
             _signal_tickets()
             _dispatch()
+            if v2 and time.time() - derniere_reception > 3600:
+                derniere_reception = time.time()
+                if pont_v2.publier_reception():
+                    print("[pont v2] cle de reception publiee", flush=True)
             if _results_ready.is_set() or time.time() - last_poll > POLL_SEC:
                 _results_ready.clear()
                 last_poll = time.time()

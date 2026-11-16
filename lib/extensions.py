@@ -30,6 +30,10 @@ Aucune commande arbitraire, aucun acces aux cles de l'ordonnateur ; enroler une 
 et lancer un plan exigent une validation humaine de moins de 5 minutes. Retirer une
 extension se fait sur le Pi : python3 lib/extensions.py retirer <nom>.
 
+Voix (lot 2 §3) : le Pi dit le texte de chaque entree de journal, tel qu'il est enregistre,
+et annonce les validations demandees, les tickets lances ou refuses, les enrolements
+(source de voix « tickets », reglable par la commande voix).
+
 Etat (carte SD) : LOCAL_DIR/v2/extensions/fiches.json, LOCAL_DIR/v2/tickets/.
 """
 import base64
@@ -58,6 +62,35 @@ _enrolement = threading.Lock()
 _abonnes = set()        # connexions abonnees aux evenements
 _travaux = {}           # id du travail -> (ticket, id de l'extension), en attente de fin
 _nonces = None
+ANNONCES = True         # les essais les coupent
+
+
+def _dire(cle, **variables):
+    try:
+        from phrases import dire
+        return dire(cle, **variables)
+    except Exception:
+        return None
+
+
+def _annoncer(texte):
+    """Dit ce texte sur le Pi (source « tickets »), sans attendre."""
+    if not ANNONCES or not texte:
+        return
+
+    def parler():
+        try:
+            import speak
+            speak.speak(texte, source="tickets")
+        except Exception as exc:
+            print(f"[extensions] annonce impossible : {exc!r}", flush=True)
+    threading.Thread(target=parler, daemon=True).start()
+
+
+def _valider(sujet, charge, quoi):
+    """Validation humaine annoncee sur le Pi (« le Mac te demande… ») puis demandee."""
+    _annoncer(_dire("extensions.validation_demandee", quoi=quoi))
+    return pont_v2.demander_validation(sujet, charge)
 
 
 def _dossier(*parts):
@@ -216,9 +249,13 @@ def ticket_valider(cx, req):
     b = _lire_json(_dossier("tickets", "brouillons", tid + ".json"))
     if not b or b.pop("_par", None) != cx.id:
         raise Refus("pas de brouillon de cette extension pour ce ticket")
-    validation = pont_v2.demander_validation("ticket", b)
-    if np_.verifier_validation(validation, validation_cle(validation), pont_v2.parc(), b) != "accepte":
-        raise Refus("ticket refuse par l'humain")
+    try:
+        validation = _valider("ticket", b, _dire("extensions.ticket_quoi", titre=b.get("titre", tid)))
+        if np_.verifier_validation(validation, validation_cle(validation), pont_v2.parc(), b) != "accepte":
+            raise Refus("ticket refuse par l'humain")
+    except (Refus, np_.ErreurPont) as exc:
+        _annoncer(_dire("extensions.ticket_refuse", titre=b.get("titre", tid), raison=str(exc)))
+        raise
     ticket = np_.emettre_ticket(pont_v2.coffre(), b, validation, _humaines())
     _ecrire_json(_dossier("tickets", tid, "ticket.json"), ticket, exclusif=True)
     try:
@@ -226,6 +263,7 @@ def ticket_valider(cx, req):
     except OSError:
         pass
     _evenement("ticket_emis", ticket=tid, titre=b.get("titre"))
+    _annoncer(_dire("extensions.ticket_emis", titre=b.get("titre", tid)))
     return {"ticket": ticket}
 
 
@@ -259,6 +297,7 @@ def journal_ecrire(cx, req):
             raise Refus("entree %d deja ecrite (fourche refusee)" % n)
     c = entree["charge"]
     _evenement("journal", ticket=tid, n=n, journal_genre=c.get("genre"), texte=c.get("texte"))
+    _annoncer(c.get("texte"))  # l'utilisateur entend exactement ce qui est enregistre
     return {"n": n}
 
 
@@ -362,7 +401,7 @@ def _enroler(cx, msg):
     try:
         charge = {"type": "extension", "parc": pont_v2.parc(), "id": "extension-" + nom, "nom": nom,
                   "identite": identite, "capacites": sorted(set(caps)), "empreinte": eid}
-        validation = pont_v2.demander_validation("extension", charge)
+        validation = _valider("extension", charge, _dire("extensions.extension_quoi", nom=nom))
         if np_.verifier_validation(validation, validation_cle(validation), pont_v2.parc(), charge) != "accepte":
             raise Refus("enrolement refuse par l'humain")
         with _verrou:
@@ -372,6 +411,7 @@ def _enroler(cx, msg):
             _ecrire_json(_dossier("extensions", "fiches.json"), f)
         print(f"[extensions] {nom} enrolee ({eid}), capacites : {', '.join(charge['capacites']) or 'aucune'}",
               flush=True)
+        _annoncer(_dire("extensions.enrolee", nom=nom))
         return eid
     finally:
         _enrolement.release()

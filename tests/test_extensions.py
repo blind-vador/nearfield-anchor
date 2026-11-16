@@ -55,6 +55,9 @@ class PointExtensions(unittest.TestCase):
         pont_v2.V2_DIR = os.path.join(d, "v2")
         pont_v2._coffre[0] = None
         extensions.SURVEILLANCE_SEC = 0.2
+        cls.dits = []
+        extensions.ANNONCES = True
+        extensions._annoncer = lambda texte: texte and cls.dits.append(texte)
         # Une machine du parc qui sait faire "whisper".
         compagnon._write(os.path.join(compagnon.TRUST_DIR, "macessai.json"),
                          {"nom": "Mac mini", "capacites": ["whisper"], "stats": {},
@@ -189,6 +192,9 @@ class PointExtensions(unittest.TestCase):
         self.assertEqual(cl.requete("journal_ecrire", entree=fourche)["type"], "erreur")
         autre = np_.ecrire_journal(np_.Coffre.generer(), p, ticket, e1, "note", "Intrus.")
         self.assertEqual(cl.requete("journal_ecrire", entree=autre)["type"], "erreur")
+        self.assertIn("Je prends le ticket.", self.dits, "le Pi dit le texte du journal")
+        # Validation demandee et ticket lance annonces aussi (texte selon les phrases installees).
+        self.assertGreaterEqual(len(self.dits), 3)
         lu = cl.requete("journal_lire", ticket="guide-1")
         self.assertEqual([e["charge"]["n"] for e in lu["entrees"]], [0, 1])
         etat = cl.requete("ticket_lire", ticket="guide-1")

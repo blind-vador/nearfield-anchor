@@ -369,6 +369,33 @@ def _servir(entrante):
                 _signaler("depart", cid, compagnon.trusted().get(cid) or {}, entrante.adresse)
 
 
+# --- cles de reception (spec §6.2) : chiffrer pour les machines du parc --------------------
+
+def _identites_du_parc():
+    """{id v2: identite} que l'on croit : nos machines migrees, et nous-memes."""
+    ids = {c["v2"]["id"]: c["v2"]["identite"] for c in compagnon.trusted().values() if c.get("v2")}
+    moi = coffre()
+    ids[moi.id] = moi.cle_publique()
+    return ids
+
+
+def publier_reception(forcer=False):
+    """Publie notre cle de reception de la semaine sur le NAS (au plus une fois par jour)."""
+    import cles_reception
+    return cles_reception.publier(V2_DIR, coffre(), parc(), compagnon.BRIDGE_DIR, forcer)
+
+
+def sceller_pour_le_parc(donnees, contexte):
+    """Enveloppe lisible par toutes les machines du parc qui ont publie leur cle (et nous)."""
+    import cles_reception
+    return cles_reception.sceller(compagnon.BRIDGE_DIR, parc(), _identites_du_parc(), coffre().id, contexte, donnees)
+
+
+def ouvrir_enveloppe(enveloppe, de):
+    import cles_reception
+    return cles_reception.ouvrir(V2_DIR, coffre().id, de, enveloppe)
+
+
 # --- cles humaines et validations (lot 2 §1) --------------------------------------------
 
 VALIDATION_SEC = 240        # temps laisse a l'humain pour lire et valider
@@ -509,6 +536,19 @@ def signer_travail(job, dossier):
     objet = coffre().signer_objet(charge)
     compagnon._write(os.path.join(dossier, TRAVAIL_V2), objet)
     return objet
+
+
+def travail_signe(dossier):
+    """Le travail tel que NOUS l'avons signe (travail.v2.json) : seule source du contenu
+    d'un travail cote Pi ; travail.json n'est qu'une copie non signee (file d'attente)."""
+    objet = compagnon._read(os.path.join(dossier, TRAVAIL_V2))
+    if not objet:
+        raise np_.ErreurPont("travail v2 absent")
+    t = np_.verifier_objet(objet, coffre().cle_publique(), "travail", parc())
+    job = json.loads(t["contenu"])
+    if not isinstance(job, dict) or job.get("id") != t["id"] or t["id"] != os.path.basename(dossier.rstrip("/")):
+        raise np_.ErreurPont("contenu d'un autre travail")
+    return job
 
 
 def resultat_signe(card, job_id, dossier):

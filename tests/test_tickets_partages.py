@@ -87,5 +87,72 @@ class Tickets(unittest.TestCase):
         self.assertEqual(tp.a_prendre(t, a, "mac", 9, {"dsd": "x"}), ["dsd-fa", "dsd-fs"])
 
 
+
+try:
+    import nearfield_pont as _np
+except ImportError:
+    _np = None
+
+
+@unittest.skipUnless(_np, "module nearfield_pont absent")
+class TicketsV2(Tickets):
+    """Les memes scenarios, parc migre : tickets, avis et conclusion signes en v2."""
+    PARC = "parc-essai"
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.racine = self.tmp.name
+        self.pi = tp.CleV2(_np.Coffre.generer(), self.PARC)
+        self.mac = tp.CleV2(_np.Coffre.generer(), self.PARC)
+        self.cles = {"pi": tp.cle_v2(self.pi.coffre.cle_publique(), self.PARC),
+                     "mac": tp.cle_v2(self.mac.coffre.cle_publique(), self.PARC)}
+        son = os.path.join(self.racine, "b.wav")
+        with wave.open(son, "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(48000)
+            w.writeframes(b"\0\0" * 4800)
+        self.tid = tp.ouvrir(self.racine, self.pi, "pi", {"son.wav": son}, {"origine": "brut"}, EPS)
+        tp.PRISE_ATTENTE_SEC = 0
+
+    def test_faux_retour_ignore(self):
+        faux = tp.CleV2(_np.Coffre.generer(), self.PARC)
+        tp.rendre(self.racine, self.tid, "mac", "Mac", faux, {"dsd-fa": ({"propose": True}, None)})
+        _, a = self.lire()
+        self.assertEqual(a, {})
+
+    def test_objets_signes_v2_avec_nombres_a_virgule(self):
+        tp.rendre(self.racine, self.tid, "mac", "Mac", self.mac,
+                  {"dsd-fs": ({"propose": True, "propres": 20, "rms": 340.5, "protocole": "DMR"}, None)})
+        brut = tp._lire(os.path.join(self.racine, "tickets", self.tid, "avis-mac.json"))
+        self.assertEqual(brut["charge"]["type"], "avis_ticket")
+        _, a = self.lire()
+        self.assertEqual(a["mac"]["verdicts"]["dsd-fs"]["rms"], 340.5)
+        self.assertTrue(a["mac"]["verifie"])
+
+    def test_cle_v1_ne_vaut_pas_pour_un_objet_v2_ni_l_inverse(self):
+        v1 = Ed25519PrivateKey.generate()
+        tp.rendre(self.racine, self.tid, "mac", "Mac", v1, {"dsd-fa": ({"propose": True}, None)})
+        _, a = self.lire()  # avis v1 alors que la cle connue du Mac est v2 : ignore
+        self.assertEqual(a, {})
+        cles = dict(self.cles, pi=proto.public_b64(v1))
+        self.assertEqual(tp.lire(self.racine, self.tid, cles), (None, {}))
+
+    def test_ticket_d_un_autre_parc_refuse(self):
+        cles = {k: dict(v, parc="autre") for k, v in self.cles.items()}
+        self.assertEqual(tp.lire(self.racine, self.tid, cles), (None, {}))
+
+    def test_avis_deplace_vers_une_autre_machine_refuse(self):
+        tp.rendre(self.racine, self.tid, "mac", "Mac", self.mac, {"dsd-fa": ({"propose": True}, None)})
+        d = os.path.join(self.racine, "tickets", self.tid)
+        os.rename(os.path.join(d, "avis-mac.json"), os.path.join(d, "avis-pi.json"))
+        _, a = self.lire()
+        self.assertEqual(a, {})
+
+    def test_clos_lisible(self):
+        tp.clore(self.racine, self.tid, self.pi, "pi", {"t": 12.5, "fini": True})
+        self.assertEqual(tp.clos(self.racine, self.tid)["t"], 12.5)
+
+
 if __name__ == "__main__":
     unittest.main()

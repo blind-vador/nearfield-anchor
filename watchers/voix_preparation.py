@@ -188,9 +188,8 @@ def _compagnon_en_cours():
     import compagnon
     for name in compagnon._list("travaux"):
         folder = compagnon._path("travaux", name)
-        job = compagnon._read(os.path.join(folder, "travail.json")) or \
-            compagnon._read(os.path.join(folder, "travail.pris.json"))
-        if job and job.get("type") == "voix" and not os.path.exists(os.path.join(folder, "resultat.json")):
+        job = compagnon.lire_travail(folder)
+        if job and job.get("type") == "voix" and not compagnon.termine(name):
             if time.time() - job.get("cree", 0) < COMPAGNON_ATTENTE_SEC:
                 return True
     return False

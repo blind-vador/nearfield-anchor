@@ -15,8 +15,12 @@ Donnees : le disque partage du NAS (BRIDGE_DIR, partage "server").
                                 (signe par elle) : le Pi accepte tout seul
   appairage/refus-<id>.json     la personne a dit non sur la machine
   revocations/<id>.json         la machine retire le pont (message signe)
-  travaux/<id>/travail.json     travail depose par le Pi (+ ses fichiers)
-  travaux/<id>/resultat.json    resultat signe par la machine
+  travaux/<id>/travail.json     file d'attente : copie NON signee du travail, que les machines
+                                renomment en travail.pris.json pour le prendre ; son contenu
+                                n'est jamais cru (lire_travail lit travail.v2.json, signe)
+  travaux/<id>/travail.v2.json  le travail, signe par le Pi (protocole v2 §6.1)
+  travaux/<id>/resultat.v2.json resultat signe par la cle v2 de la machine
+  travaux/<id>/resultat.json    resultat v1 (machine pas encore migree seulement)
 
 Liaison directe : la machine se connecte au Pi (lib/compagnon_serveur.py) ;
 le Pi lui pousse les travaux, la reveille si elle dort, et elle previent
@@ -175,11 +179,33 @@ def connected():
     for cid, card in cards.items():
         if cid in found:
             continue
-        beat = _read(_path("compagnons", f"{cid}.battement.json")) if card.get("cle") else None
-        if (beat and beat.get("compagnon") == cid and beat.get("pi") == pi_id()
-                and proto.verify(card["cle"], beat, max_age=NAS_BEAT_MAX_SEC)):
+        beat = _battement_nas(cid, card)
+        if beat:
             found[cid] = {"vu": beat["t"], "par": "nas", "capacites": beat.get("capacites", [])}
     return found
+
+
+def _battement_nas(cid, card):
+    """Signe de vie de la machine sur le NAS, verifie : en v2 (objet "battement_nas" signe
+    par sa cle v2, moins de NAS_BEAT_MAX_SEC) pour une machine migree, sinon en v1."""
+    beat = _read(_path("compagnons", f"{cid}.battement.json"))
+    if not beat:
+        return None
+    if card.get("v2"):
+        v2 = _pont_v2()
+        if not v2 or "charge" not in beat:
+            return None
+        try:
+            c = v2.np_.verifier_objet(beat, card["v2"]["identite"], "battement_nas", v2.parc())
+        except Exception:
+            return None
+        if c.get("compagnon") != cid or time.time() - c.get("emis", 0) > NAS_BEAT_MAX_SEC:
+            return None
+        return dict(c, t=c["emis"])
+    if (card.get("cle") and beat.get("compagnon") == cid and beat.get("pi") == pi_id()
+            and proto.verify(card["cle"], beat, max_age=NAS_BEAT_MAX_SEC)):
+        return beat
+    return None
 
 
 def companions():
@@ -299,7 +325,7 @@ def jobs_per_machine():
     """{id: travaux pris et pas finis + travaux qui lui sont confies et pas encore pris}."""
     count = {}
     for job_id in _list("travaux"):
-        if os.path.exists(_path("travaux", job_id, "resultat.json")):
+        if termine(job_id):
             continue
         taken = _read(_path("travaux", job_id, "travail.pris.json"))
         if taken and taken.get("pris_par"):
@@ -528,38 +554,71 @@ def open_jobs():
 
 
 _refus_resultat = set()  # travaux dont le resultat a ete refuse (journalise une fois)
+RESULTATS = ("resultat.v2.json", "resultat.json")
+
+
+def termine(job_id):
+    """Un resultat est depose (v2, ou v1 d'une machine pas migree) : le travail n'attend plus."""
+    return any(os.path.exists(_path("travaux", job_id, n)) for n in RESULTATS)
+
+
+def lire_travail(folder):
+    """Le travail tel que le Pi l'a SIGNE (travail.v2.json, verifie avec notre cle v2) ;
+    sans v2 seulement, la copie non signee (travail.json, puis travail.pris.json).
+    Un travail.v2.json present mais invalide rend None : jamais de repli sur la copie."""
+    v2 = _pont_v2()
+    if v2 and os.path.exists(os.path.join(folder, "travail.v2.json")):
+        try:
+            return v2.travail_signe(folder)
+        except Exception as exc:
+            print(f"[compagnon] travail {os.path.basename(folder)} : objet signe refuse ({exc})")
+            return None
+    return _read(os.path.join(folder, "travail.json")) or _read(os.path.join(folder, "travail.pris.json"))
+
+
+def _machine_v2(signataire, cards):
+    for cid, card in cards.items():
+        if (card.get("v2") or {}).get("id") == signataire:
+            return cid, card
+    return None, None
 
 
 def finished_jobs():
     """Travaux termines, signes par une machine de confiance : [(travail, resultat, dossier)].
-    La signature couvre l'etat et l'empreinte de chaque fichier rendu."""
+    La signature couvre l'etat et l'empreinte de chaque fichier rendu. Une machine migree
+    ne rend que resultat.v2.json (signe par sa cle v2, lie a CE travail signe par nous)."""
     cards = trusted()
     found = []
     for job_id in sorted(_list("travaux")):
         folder = _path("travaux", job_id)
-        result = _read(os.path.join(folder, "resultat.json"))
-        job = _read(os.path.join(folder, "travail.json")) or _read(os.path.join(folder, "travail.pris.json"))
-        if not result or not job or result.get("travail") != job_id:
-            continue
-        card = cards.get(result.get("compagnon"))
-        if not card or (not card.get("v2") and not proto.verify(card["cle"], result, max_age=None)):
-            continue  # pas d'une machine appairee : ignore (une machine migree : resultat v2 ci-dessous)
-        if card.get("v2"):
-            # Machine migree : seul son resultat v2 compte (signe par sa cle v2, lie a CE
-            # travail) ; le resultat.json v1 ne sert plus qu'au code qui teste sa presence.
+        objet = _read(os.path.join(folder, "resultat.v2.json"))
+        if objet:
+            cid, card = _machine_v2(objet.get("signataire"), cards)
             v2 = _pont_v2()
             try:
+                if not card:
+                    raise RuntimeError("signe par une machine inconnue")
                 if not v2:
                     raise RuntimeError("module nearfield_pont absent")
                 r = v2.resultat_signe(card, job_id, folder)
+                job = lire_travail(folder)
+                if not job:
+                    raise RuntimeError("travail signe illisible")
             except Exception as exc:
                 if job_id not in _refus_resultat:
                     _refus_resultat.add(job_id)
                     print(f"[compagnon] resultat de {job_id} refuse : {exc}")
                 continue
-            result = dict(result, etat=r["etat"], message=r["message"], duree=r["duree"], sorties=r["fichiers"])
-            found.append((job, result, folder))
+            found.append((job, {"type": "resultat", "travail": job_id, "compagnon": cid, "etat": r["etat"],
+                                "message": r["message"], "duree": r["duree"], "sorties": r["fichiers"]}, folder))
             continue
+        result = _read(os.path.join(folder, "resultat.json"))
+        job = _read(os.path.join(folder, "travail.json")) or _read(os.path.join(folder, "travail.pris.json"))
+        if not result or not job or result.get("travail") != job_id:
+            continue
+        card = cards.get(result.get("compagnon"))
+        if not card or card.get("v2") or not card.get("cle") or not proto.verify(card["cle"], result, max_age=None):
+            continue  # pas d'une machine appairee, ou machine migree (seul son resultat v2 vaut)
         try:
             if any(proto.file_digest(os.path.join(folder, name)) != digest
                    for name, digest in result.get("sorties", {}).items()):
@@ -575,7 +634,7 @@ def drop_stale(max_age):
     machine coupee en plein calcul) : ce sont de gros fichiers I/Q."""
     for job_id in _list("travaux"):
         folder = _path("travaux", job_id)
-        if os.path.exists(os.path.join(folder, "resultat.json")):
+        if termine(job_id):
             continue
         job = _read(os.path.join(folder, "travail.json")) or _read(os.path.join(folder, "travail.pris.json"))
         try:
@@ -588,7 +647,7 @@ def drop_stale(max_age):
 
 
 def pending_count():
-    return sum(1 for j in _list("travaux") if not os.path.exists(_path("travaux", j, "resultat.json")))
+    return sum(1 for j in _list("travaux") if not termine(j))
 
 
 def _hm(t):
