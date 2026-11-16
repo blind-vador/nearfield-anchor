@@ -513,7 +513,11 @@ def demander_arbitrage(charge, options, delai=VALIDATION_SEC):
 
 def _demander(sujet, charge, delai):
     connus = humains()
+    fiches = compagnon.trusted()
     machines = [(hid, h) for hid, h in connus.items() if h.get("machine") in _sessions]
+    # L'application Prismaforge (role interface) d'abord : son dialogue est fait pour le
+    # lecteur d'ecran ; le dialogue systeme du pont nearfield ne sert que faute de mieux.
+    machines.sort(key=lambda m: (fiches.get(m[1]["machine"]) or {}).get("role") != "interface")
     if not machines:
         raise np_.ErreurPont("aucun appareil avec une cle humaine n'est connecte")
     hid, h = machines[0]

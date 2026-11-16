@@ -147,10 +147,11 @@ if [ "$(uname)" = "Darwin" ]; then
     # Protocole ferme lu par le crate nearfield-pont (module puce). Reconstruit seulement
     # si la source change ; sans Secure Enclave, le pont garde sa cle logicielle.
     ENCLAVE="$DEST/bin/pf-enclave"
-    ESTAMP="$(shasum "$HERE/pf_enclave.swift" | cut -d' ' -f1)"
+    ESTAMP="$(cat "$HERE/pf_enclave.swift" "$HERE/pf_enclave.plist" | shasum | cut -d' ' -f1)"
     if [ ! -x "$ENCLAVE" ] || [ "$(cat "$DEST/bin/.pf-enclave.sha1" 2>/dev/null)" != "$ESTAMP" ]; then
         mkdir -p "$DEST/bin"
-        if swiftc -O -sdk "$SDK" -o "$ENCLAVE.neuf" "$HERE/pf_enclave.swift"; then
+        if swiftc -O -sdk "$SDK" -o "$ENCLAVE.neuf" "$HERE/pf_enclave.swift" \
+            -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist -Xlinker "$HERE/pf_enclave.plist"; then
             chmod 755 "$ENCLAVE.neuf"
             mv -f "$ENCLAVE.neuf" "$ENCLAVE"
             echo "$ESTAMP" > "$DEST/bin/.pf-enclave.sha1"

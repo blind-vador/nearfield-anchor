@@ -50,9 +50,9 @@ Aucune commande arbitraire, aucun acces aux cles de l'ordonnateur ; enroler une 
 et lancer un plan exigent une validation humaine de moins de 5 minutes. Retirer une
 extension se fait sur le Pi : python3 lib/extensions.py retirer <nom>.
 
-Voix (lot 2 §3) : le Pi dit le texte de chaque entree de journal, tel qu'il est enregistre,
-et annonce les validations demandees, les tickets lances ou refuses, les enrolements
-(source de voix « tickets », reglable par la commande voix).
+Sons (2026-11-16) : le Pi sonne (validation qui attend, ticket lance ou arrete, entree de
+journal) ; la parole est sur l'appareil de l'utilisateur (application Prismaforge, VoiceOver),
+qui montre le texte exact du journal.
 
 Etat (carte SD) : LOCAL_DIR/v2/extensions/fiches.json, LOCAL_DIR/v2/tickets/.
 """
@@ -93,23 +93,24 @@ def _dire(cle, **variables):
         return None
 
 
-def _annoncer(texte):
-    """Dit ce texte sur le Pi (source « tickets »), sans attendre."""
-    if not ANNONCES or not texte:
+def _annoncer(texte, son="journal_entree"):
+    """Le Pi SONNE (2026-11-16 : la parole est sur l'appareil de l'utilisateur, avec son
+    lecteur d'écran ; deux voix qui se chevauchent sont incompréhensibles). Le texte est
+    journalisé ; l'application Prismaforge le montre et l'annonce (fenêtre IDE, validations)."""
+    if not ANNONCES:
         return
-
-    def parler():
-        try:
-            import speak
-            speak.speak(texte, source="tickets")
-        except Exception as exc:
-            print(f"[extensions] annonce impossible : {exc!r}", flush=True)
-    threading.Thread(target=parler, daemon=True).start()
+    if texte:
+        print(f"[extensions] {texte}", flush=True)
+    try:
+        import sons
+        sons.jouer(son)
+    except Exception as exc:
+        print(f"[extensions] son {son} : {exc!r}", flush=True)
 
 
 def _valider(sujet, charge, quoi):
     """Validation humaine annoncee sur le Pi (« le Mac te demande… ») puis demandee."""
-    _annoncer(_dire("extensions.validation_demandee", quoi=quoi))
+    _annoncer(_dire("extensions.validation_demandee", quoi=quoi), "validation_attente")
     return pont_v2.demander_validation(sujet, charge)
 
 
@@ -278,7 +279,7 @@ def _ecrire_ordonnateur(tid, genre, texte, donnees=None):
         n = e["charge"]["n"]
         _ecrire_json(_dossier("tickets", tid, "journal", "%d.json" % n), e, exclusif=True)
     _evenement("journal", ticket=tid, n=n, journal_genre=genre, texte=texte)
-    _annoncer(texte)
+    _annoncer(texte, "ticket_arrete" if genre == "cloture" else "journal_entree")
     return n
 
 
@@ -354,16 +355,16 @@ def ticket_valider(cx, req):
             pass
         _evenement("ticket_emis", ticket=tid, titre=b.get("titre"), parent=b["parent"]["ticket"])
         if "couvert_par" in ticket["charge"]:
-            _annoncer(_dire("extensions.bloc_lance", titre=b.get("titre", tid)))
+            _annoncer(_dire("extensions.bloc_lance", titre=b.get("titre", tid)), "ticket_lance")
         else:
-            _annoncer(_dire("extensions.ticket_emis", titre=b.get("titre", tid)))
+            _annoncer(_dire("extensions.ticket_emis", titre=b.get("titre", tid)), "ticket_lance")
         return {"ticket": ticket}
     try:
         validation = _valider("ticket", b, _dire("extensions.ticket_quoi", titre=b.get("titre", tid)))
         if np_.verifier_validation(validation, validation_cle(validation), pont_v2.parc(), b) != "accepte":
             raise Refus("ticket refuse par l'humain")
     except (Refus, np_.ErreurPont) as exc:
-        _annoncer(_dire("extensions.ticket_refuse", titre=b.get("titre", tid), raison=str(exc)))
+        _annoncer(_dire("extensions.ticket_refuse", titre=b.get("titre", tid), raison=str(exc)), "ticket_arrete")
         raise
     ticket = np_.emettre_ticket(pont_v2.coffre(), b, validation, _humaines())
     _ecrire_json(_dossier("tickets", tid, "ticket.json"), ticket, exclusif=True)
@@ -372,7 +373,7 @@ def ticket_valider(cx, req):
     except OSError:
         pass
     _evenement("ticket_emis", ticket=tid, titre=b.get("titre"))
-    _annoncer(_dire("extensions.ticket_emis", titre=b.get("titre", tid)))
+    _annoncer(_dire("extensions.ticket_emis", titre=b.get("titre", tid)), "ticket_lance")
     return {"ticket": ticket}
 
 
@@ -489,7 +490,7 @@ def _arbitrer(tid, n, entree):
               "points": d.get("points") or [], "impact": d.get("impact") or ""}
     try:
         _annoncer(_dire("extensions.validation_demandee",
-                        quoi=_dire("extensions.arbitrage_quoi", titre=charge["titre"])))
+                        quoi=_dire("extensions.arbitrage_quoi", titre=charge["titre"])), "validation_attente")
         validation, choix = pont_v2.demander_arbitrage(charge, ARBITRAGES)
     except np_.ErreurPont as exc:
         _evenement("arbitrage", ticket=tid, choix=None, raison=str(exc))
@@ -745,7 +746,7 @@ def _enroler(cx, msg):
             _ecrire_json(_dossier("extensions", "fiches.json"), f)
         print(f"[extensions] {nom} enrolee ({eid}), capacites : {', '.join(charge['capacites']) or 'aucune'}",
               flush=True)
-        _annoncer(_dire("extensions.enrolee", nom=nom))
+        _annoncer(_dire("extensions.enrolee", nom=nom), "appairage_reussi")
         return eid
     finally:
         _enrolement.release()

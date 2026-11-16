@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Intégré dans pf-enclave (section __TEXT,__info_plist) : sans lui, l'outil n'a pas de langue
+     déclarée et la demande Touch ID ou mot de passe était lue avec une voix anglaise. -->
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>local.nearfield.pf-enclave</string>
+  <key>CFBundleName</key><string>nearfield</string>
+  <key>CFBundleDisplayName</key><string>nearfield</string>
+  <key>CFBundleDevelopmentRegion</key><string>fr</string>
+  <key>CFBundleLocalizations</key><array><string>fr</string></array>
+  <key>CFBundleVersion</key><string>1</string>
+</dict>
+</plist>

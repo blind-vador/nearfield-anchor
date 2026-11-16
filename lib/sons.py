@@ -108,7 +108,40 @@ SONS = {
     "disque_secteurs": "systeme/disque_secteurs.mp3",         # secteurs abimes : rappel toutes les 2 h
     "disque_erreurs": "systeme/disque_erreurs.mp3",           # erreurs d'E/S, lecture seule : rappel toutes les heures
     "disque_chaud": "systeme/disque_chaud.mp3",               # disque a 55 degres ou plus : rappel toutes les 30 min
+    # Prismaforge et appairage v2 (2026-11-16) : le Pi SONNE, la parole est sur le Mac (VoiceOver).
+    # Sons d'attente generes (notes simples), a remplacer par les tiens sous server/prismaforge/.
+    "appairage_ouvert": "prismaforge/appairage_ouvert.mp3",   # le Pi attend un appareil
+    "appairage_code": "prismaforge/appairage_code.mp3",       # le code est sur l'appareil : le taper ici
+    "appairage_touche": "prismaforge/appairage_touche.mp3",   # un chiffre tape
+    "appairage_reussi": "prismaforge/appairage_reussi.mp3",
+    "appairage_erreur": "prismaforge/appairage_erreur.mp3",   # code faux, ou pas encore de code
+    "appairage_annule": "prismaforge/appairage_annule.mp3",   # Echap, delai depasse, refus
+    "validation_attente": "prismaforge/validation_attente.mp3",  # une validation t'attend sur ton appareil
+    "ticket_lance": "prismaforge/ticket_lance.mp3",
+    "ticket_arrete": "prismaforge/ticket_arrete.mp3",
+    "journal_entree": "prismaforge/journal_entree.mp3",       # nouvelle entree de journal d'un ticket
 }
+
+
+def jouer(evenement):
+    """Joue le son de cet evenement sans bloquer (fil a part, verrou audio) ; rien s'il manque."""
+    import threading
+
+    def lire():
+        try:
+            import audio_lock
+            from sound_player import play_sound_effect
+            c = chemin(evenement)
+            if not c:
+                return
+            verrou = audio_lock.acquire()
+            try:
+                play_sound_effect(c, timeout_sec=20, label=evenement)
+            finally:
+                audio_lock.release(verrou)
+        except Exception as exc:
+            print(f"[sons] {evenement} : {exc!r}", flush=True)
+    threading.Thread(target=lire, daemon=True).start()
 
 
 def _variantes(rel):

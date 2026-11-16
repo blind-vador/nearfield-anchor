@@ -722,13 +722,19 @@ def _accord(pending):
     return "ok"
 
 
+def _francais(script):
+    """Le dialogue est affiché par « System Events », qui est en français : affiché par
+    osascript (sans traduction), VoiceOver le lisait avec une voix anglaise (2026-11-16)."""
+    return 'tell application "System Events"\n%s\nend tell' % script
+
+
 def _ask(question, wait_while):
     """Question Oui / Non dans un dialogue systeme (langue du systeme, lu par
     VoiceOver). Le dialogue est ferme tout seul si wait_while() rend False
     (l'autre machine a deja tranche) : rend "Oui", "Non" ou None."""
     script = ('activate\ndisplay dialog %s with title "Appairage" buttons {"Non", "Oui"} default button "Oui"'
               % json.dumps(question, ensure_ascii=False))
-    proc = subprocess.Popen(["osascript", "-e", script], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    proc = subprocess.Popen(["osascript", "-e", _francais(script)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                             text=True)
     while proc.poll() is None:
         if not wait_while():
@@ -864,8 +870,9 @@ def _pairing_decide_v2(conf, pending):
     share, n, ouvert = pending["partage"], pending["n"], pending["ouvert"]
     dossier = os.path.join(share, "appairage", "v2")
     try:
-        answer = _ask("Pi trouvé : %s.\nCode : %s.\n\nSi le Pi dit le même code, valide ici, puis appuie sur "
-                      "Entrée sur la console du Pi." % (ouvert.get("pi", "inconnu"), pont2.code_parle(pending["code"])),
+        answer = _ask("Pi trouvé : %s.\nCode : %s.\n\nTape ce code sur le clavier du Pi, puis Entrée (le Pi "
+                      "sonne trois notes montantes s'il est juste). Ensuite, choisis Oui ici."
+                      % (ouvert.get("pi", "inconnu"), pont2.code_parle(pending["code"])),
                       lambda: True)
         if answer != "Oui":
             _write(os.path.join(dossier, "refus-%s.json" % n), {"t": time.time()})
@@ -1348,7 +1355,7 @@ def _dialogue_validation(texte, bouton="Valider"):
               % (json.dumps(texte, ensure_ascii=False), json.dumps(bouton, ensure_ascii=False),
                  VALIDATION_DIALOGUE_SEC))
     try:
-        sortie = subprocess.run(["osascript", "-e", script], capture_output=True, text=True,
+        sortie = subprocess.run(["osascript", "-e", _francais(script)], capture_output=True, text=True,
                                 timeout=VALIDATION_DIALOGUE_SEC + 20).stdout
     except subprocess.TimeoutExpired:
         return False
@@ -1372,7 +1379,7 @@ def _choisir_arbitrage(texte, options):
               'if r is false then return ""\nreturn item 1 of r'
               % ("{" + ", ".join(json.dumps(x, ensure_ascii=False) for x in libelles) + "}"))
     try:
-        sortie = subprocess.run(["osascript", "-e", script], capture_output=True, text=True,
+        sortie = subprocess.run(["osascript", "-e", _francais(script)], capture_output=True, text=True,
                                 timeout=VALIDATION_DIALOGUE_SEC + 20).stdout.strip()
     except subprocess.TimeoutExpired:
         return None

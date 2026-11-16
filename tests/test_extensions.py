@@ -57,7 +57,7 @@ class PointExtensions(unittest.TestCase):
         extensions.SURVEILLANCE_SEC = 0.2
         cls.dits = []
         extensions.ANNONCES = True
-        extensions._annoncer = lambda texte: texte and cls.dits.append(texte)
+        extensions._annoncer = lambda texte, son="journal_entree": texte and cls.dits.append(texte)
         # Deux machines du parc qui savent faire "whisper" ; seul le Mac est present au depart.
         compagnon.PRESENCE = os.path.join(TMP, "presence.json")
         cls.mac, cls.pc = np_.Coffre.generer(), np_.Coffre.generer()

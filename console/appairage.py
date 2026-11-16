@@ -8,6 +8,8 @@ Oui sur la machine ; l'autre suit tout seul. Echap annule.
 """
 import sys
 import threading
+
+import flash_info as flash
 import time
 
 
@@ -91,17 +93,19 @@ def run(key_source, say, out):
 
 
 def _run_v2(pont_v2, key_source, say, out):
-    """Appairage v2 (protocole-v2 §3) : code de 6 chiffres dit en 3 paires, que la
-    personne valide sur les DEUX machines (ici : Entree, apres la machine)."""
+    """Appairage v2 (protocole-v2 §3), SANS PAROLE sur le Pi (2026-11-16) : le Pi sonne, la
+    machine qui rejoint (coquille Prismaforge, Nearfield Bridge) dit et affiche le code ; la
+    personne le TAPE ici puis Entree. Le Pi compare au sien : meme securite que la
+    comparaison a l'oreille (un intermediaire ne peut pas faire le meme code des deux cotes),
+    sans deux voix qui se chevauchent. F1 : la consigne, a voix haute (seule parole, demandee)."""
+    import sons
     app = pont_v2.AppairageV2()
     app.ouvrir()
     keys.drain_wake()
     found = {}
     stop = threading.Event()
-
-    def tell(text):
-        out(f"[{text}]\n")
-        say(text)
+    saisie = []
+    essais = [0]
 
     def surveiller():
         deadline = time.time() + pont_v2.APPAIRAGE_SEC
@@ -109,9 +113,8 @@ def _run_v2(pont_v2, key_source, say, out):
             etat = app.etat()
             if etat == "code" and "code" not in found:
                 found["code"] = app.code
-                caps = ", ".join(app.machine["capacites"]) or dire("appairage.aucune_capacite")
-                tell(dire("appairage.reponse_v2", nom=app.machine["nom"], code=pont_v2.np_.code_parle(app.code),
-                          capacites=caps))
+                out(f"[{dire('appairage.code_sur_l_appareil', nom=app.machine['nom'])}]\n")
+                sons.jouer("appairage_code")
             elif etat in ("refus", "erreur"):
                 found["fin"] = etat
                 keys.wake()
@@ -119,37 +122,52 @@ def _run_v2(pont_v2, key_source, say, out):
             stop.wait(1)
         if not stop.is_set() and "code" not in found:
             found["timeout"] = True
-            tell(dire("appairage.delai"))
+            keys.wake()
 
-    consigne = dire("appairage.consigne_v2")
-    tell(conseils.intro("appairage", dire("appairage.titre"), consigne) + " " + dire("appairage.attente"))
+    out(f"[{dire('appairage.titre')}]\n")
+    sons.jouer("appairage_ouvert")
     threading.Thread(target=surveiller, daemon=True).start()
     accepte = False
+    fin = flash.son("appairage_annule")
     try:
         for key in key_source:
             if key == keys.WAKE:
-                if found.get("fin") == "refus":
-                    return dire("appairage.refus")
-                if found.get("fin") == "erreur":
-                    return dire("appairage.erreur_v2", raison=app.erreur)
+                if found.get("fin") or found.get("timeout"):
+                    return fin
                 continue
             if key == "\x1b":
-                return dire("appairage.annule")
+                return fin
+            if conseils.is_help(key):
+                say(dire("appairage.consigne_v3"))
+                continue
+            if key in ("\x7f", "\x08"):
+                if saisie:
+                    saisie.pop()
+                    sons.jouer("appairage_touche")
+                continue
+            if key.isdigit():
+                if len(saisie) < 6:
+                    saisie.append(key)
+                    sons.jouer("appairage_touche")
+                continue
             if key in ("\r", "\n"):
-                if found.get("code"):
-                    try:
-                        nom = app.accepter()
-                    except pont_v2.np_.ErreurPont as exc:
-                        return dire("appairage.erreur_v2", raison=str(exc))
-                    accepte = True
-                    return dire("appairage.reussi", nom=nom)
-                text = dire("appairage.pas_reponse" if not found.get("timeout") else "appairage.personne")
-            elif conseils.is_help(key):
-                text = consigne
-            else:
-                text = dire("appairage.aide_courte")
-            tell(text)
-        return dire("appairage.ferme")
+                code = found.get("code")
+                if not code or "".join(saisie) != "".join(c for c in code if c.isdigit()):
+                    saisie.clear()
+                    if code:
+                        essais[0] += 1
+                    if essais[0] >= 3:
+                        return flash.son("appairage_erreur")  # trois codes faux : on ferme
+                    sons.jouer("appairage_erreur")
+                    continue
+                try:
+                    app.accepter()
+                except pont_v2.np_.ErreurPont as exc:
+                    out(f"[{exc}]\n")
+                    return flash.son("appairage_erreur")
+                accepte = True
+                return flash.son("appairage_reussi")
+        return fin
     finally:
         stop.set()
         if not accepte:
