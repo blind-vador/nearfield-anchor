@@ -1341,6 +1341,9 @@ def _texte_validation(sujet, charge):
         if charge.get("impact"):
             lignes.append("\nImpact : %s" % charge["impact"])
         return "\n".join(lignes)[:7000]
+    if sujet == "arret":
+        return ("Arrêter le ticket « %s » ?\n\nRaison : %s\n\nSes blocs en cours seront arrêtés aussi. "
+                "Un ticket arrêté ne reprend pas." % (charge.get("titre", ""), charge.get("raison", "")))
     if sujet == "extension":
         return ("Enrôler l'extension « %s » sur nearfield ?\n\nCapacités : %s.\nEmpreinte de sa clé : %s."
                 % (charge.get("nom", ""), ", ".join(charge.get("capacites") or []) or "aucune",
@@ -1408,7 +1411,8 @@ def valider_humain(parc, sujet, charge):
             raise RuntimeError("refuse par l'humain (ou pas de reponse)")
         humain = pont2.Coffre.ouvrir_dans_la_puce(prog, HUMAIN, True)
         titre = str(charge.get("titre") or charge.get("nom") or sujet)[:120]
-        raison = re.sub(r"[\x00-\x1f]", " ", "valider « %s » pour nearfield" % titre)
+        verbe = "arrêter" if sujet == "arret" else "valider"
+        raison = re.sub(r"[\x00-\x1f]", " ", "%s « %s » pour nearfield" % (verbe, titre))
         return pont2.preparer_validation(humain, parc, charge, "accepte", None, raison)
 
 

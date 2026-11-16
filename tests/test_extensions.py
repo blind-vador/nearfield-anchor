@@ -354,6 +354,48 @@ class PointExtensions(unittest.TestCase):
         self.assertIn("deuxieme", cl.requete("journal_ecrire", entree=e2)["arrete"])
         self.assertTrue(cl.requete("ticket_lire", ticket="debat-1")["clos"])
 
+    def test_arret_valide_par_l_humain(self):
+        cl, _ = self.client()
+        parent = self.emettre(cl, self.brouillon("arret-1", zones=["docs/"]))["ticket"]
+        self.assertEqual(self.emettre(cl, self.bloc(parent, "arret-1-a", ["docs/guide.md"]))["type"], "reponse")
+        self.assertEqual(cl.requete("ticket_arreter", ticket="arret-1", raison=" ")["type"], "erreur")
+        self.decision[0] = None
+        self.assertEqual(cl.requete("ticket_arreter", ticket="arret-1", raison="plus utile")["type"], "erreur")
+        self.assertFalse(cl.requete("ticket_lire", ticket="arret-1")["clos"])
+        self.decision[0] = "accepte"
+        self.assertTrue(cl.requete("ticket_arreter", ticket="arret-1", raison="plus utile")["arrete"])
+        self.assertEqual(self.demandes[-1][0], "arret")
+        self.assertEqual(self.demandes[-1][1]["raison"], "plus utile")
+        v = self.dernier(cl, "arret-1")
+        self.assertEqual((v["charge"]["genre"], v["signataire"]), ("cloture", self.v2.coffre().id))
+        self.assertEqual(v["charge"]["donnees"]["validation"]["signataire"], self.humain.id)
+        self.assertTrue(cl.requete("ticket_lire", ticket="arret-1-a")["clos"], "bloc arrete avec son parent")
+        self.assertIn("clos", cl.requete("ticket_arreter", ticket="arret-1", raison="encore")["raison"])
+
+    def test_arbitrage_redemande(self):
+        cl, _ = self.client()
+        t = self.ticket_emis(cl, "redemande-1")
+        self.ticket_emis(cl, "redemande-2")
+        self.assertEqual(cl.requete("arbitrage_demander", ticket="redemande-2")["type"], "erreur", "pas en pause")
+        arbitrer = self.v2.demander_arbitrage
+
+        def absent(charge, options, delai=None):
+            raise np_.ErreurPont("aucun appareil avec une cle humaine n'est connecte")
+        self.v2.demander_arbitrage = absent
+        try:
+            e0 = np_.ecrire_journal(self.cle, self.v2.parc(), t, None, "desaccord", "Avis contraires.")
+            self.assertTrue(cl.requete("journal_ecrire", entree=e0)["pause"])
+            fin = time.time() + 5
+            while "redemande-1" in self.ext._arbitrages and time.time() < fin:
+                time.sleep(0.05)
+            self.assertTrue(cl.requete("ticket_lire", ticket="redemande-1")["pause"])
+            self.assertEqual(cl.requete("arbitrage_demander", ticket="redemande-1")["type"], "erreur")
+        finally:
+            self.v2.demander_arbitrage = arbitrer
+        self.choix[0] = "redacteur"
+        self.assertEqual(cl.requete("arbitrage_demander", ticket="redemande-1")["choix"], "redacteur")
+        self.assertFalse(cl.requete("ticket_lire", ticket="redemande-1")["pause"])
+
     def rendu_par(self, coffre, job_id):
         """Resultat v2 de ce travail, signe par cette machine (comme bridge/_rendre_v2)."""
         dossier = self.c._path("travaux", job_id)

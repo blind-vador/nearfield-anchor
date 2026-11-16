@@ -22,6 +22,11 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
   ticket_proposer  {brouillon}             controle, garde le brouillon ; rend son empreinte
   ticket_valider   {ticket}                validation humaine puis ticket signe par l'ordonnateur
   ticket_lire      {ticket}                ticket, nombre d'entrees, clos ou non
+  ticket_arreter   {ticket, raison}        arret demande par l'humain (validation sur son
+                                           appareil) : entree "cloture" signee par l'ordonnateur,
+                                           et ses blocs en cours arretes aussi
+  arbitrage_demander {ticket}              redemande l'arbitrage du desaccord en attente (par
+                                           exemple quand l'appareil etait absent) ; rend le choix
   parc_lire        {}                      parc et capacites des machines de confiance (pour
                                            proposer un ticket dans ce que le parc sait faire)
   tickets_lister   {}                      resume de chaque ticket emis (titre, mode, parent,
@@ -259,6 +264,10 @@ def _clos(entrees_verifiees):
     return bool(entrees_verifiees) and entrees_verifiees[-1].get("genre") == "cloture"
 
 
+def _est_clos(tid):
+    return _clos(_journal_verifie(_ticket(tid), _entrees(tid)))
+
+
 def _en_pause(entrees_verifiees):
     """Un desaccord pas encore tranche (aucune entree "validation" d'arbitrage apres)."""
     pause = False
@@ -489,27 +498,84 @@ def journal_ecrire(cx, req):
 ARBITRAGES = ("redacteur", "verificateur", "troisieme_avis", "arreter")
 
 
-def _arbitrer(tid, n, entree):
+_arbitrages = set()  # tickets dont l'arbitrage est demande en ce moment
+
+
+def _arbitrer(tid, n, entree, lever=False):
     """Le premier desaccord : l'architecte tranche, avec les points, les raisons de chacun
-    et l'impact. Sa validation (le choix compris) est gardee au journal."""
-    t = _ticket(tid)
-    d = entree.get("donnees") or {}
-    charge = {"type": "arbitrage", "parc": pont_v2.parc(), "id": "arbitrage-%s-%d" % (tid, n), "ticket": tid,
-              "titre": t["charge"].get("titre", tid), "desaccord": entree.get("texte") or "",
-              "points": d.get("points") or [], "impact": d.get("impact") or ""}
+    et l'impact. Sa validation (le choix compris) est gardee au journal. Rend le choix."""
+    with _verrou:
+        if tid in _arbitrages:
+            if lever:
+                raise Refus("un arbitrage de ce ticket attend deja l'architecte")
+            return None
+        _arbitrages.add(tid)
     try:
-        _annoncer(_dire("extensions.validation_demandee",
-                        quoi=_dire("extensions.arbitrage_quoi", titre=charge["titre"])), "validation_attente")
-        validation, choix = pont_v2.demander_arbitrage(charge, ARBITRAGES)
-    except np_.ErreurPont as exc:
-        _evenement("arbitrage", ticket=tid, choix=None, raison=str(exc))
-        print(f"[extensions] arbitrage de {tid} non donne : {exc}", flush=True)
-        return  # le ticket reste en pause ; l'extension peut redemander par un nouveau desaccord
-    _ecrire_ordonnateur(tid, "validation", _dire("extensions.arbitrage_" + choix) or choix,
-                        {"arbitrage": n, "choix": choix, "validation": validation})
-    _evenement("arbitrage", ticket=tid, choix=choix)
-    if choix == "arreter":
-        _arreter(tid, "décision de l'architecte")
+        t = _ticket(tid)
+        d = entree.get("donnees") or {}
+        charge = {"type": "arbitrage", "parc": pont_v2.parc(), "id": "arbitrage-%s-%d" % (tid, n), "ticket": tid,
+                  "titre": t["charge"].get("titre", tid), "desaccord": entree.get("texte") or "",
+                  "points": d.get("points") or [], "impact": d.get("impact") or ""}
+        try:
+            _annoncer(_dire("extensions.validation_demandee",
+                            quoi=_dire("extensions.arbitrage_quoi", titre=charge["titre"])), "validation_attente")
+            validation, choix = pont_v2.demander_arbitrage(charge, ARBITRAGES)
+        except np_.ErreurPont as exc:
+            _evenement("arbitrage", ticket=tid, choix=None, raison=str(exc))
+            print(f"[extensions] arbitrage de {tid} non donne : {exc}", flush=True)
+            if lever:
+                raise
+            return None  # le ticket reste en pause ; arbitrage_demander le redemande
+        e = _journal_verifie(t, _entrees(tid))
+        if _clos(e) or not _en_pause(e):
+            raise Refus("le ticket n'attend plus cet arbitrage")
+        _ecrire_ordonnateur(tid, "validation", _dire("extensions.arbitrage_" + choix) or choix,
+                            {"arbitrage": n, "choix": choix, "validation": validation})
+        _evenement("arbitrage", ticket=tid, choix=choix)
+        if choix == "arreter":
+            _arreter(tid, "décision de l'architecte")
+        return choix
+    finally:
+        with _verrou:
+            _arbitrages.discard(tid)
+
+
+def arbitrage_demander(cx, req):
+    tid = _nom_sur(req.get("ticket"), "ticket")
+    e = _journal_verifie(_ticket(tid), _entrees(tid))
+    if _clos(e) or not _en_pause(e):
+        raise Refus("aucun desaccord n'attend d'arbitrage sur ce ticket")
+    dernier = [x for x in e if x.get("genre") == "desaccord"][-1]
+    return {"choix": _arbitrer(tid, dernier["n"], dernier, lever=True)}
+
+
+def ticket_arreter(cx, req):
+    tid = _nom_sur(req.get("ticket"), "ticket")
+    raison = req.get("raison")
+    if not isinstance(raison, str) or not raison.strip() or len(raison) > 500 or any(
+            ord(c) < 32 and c not in "\n\t" for c in raison):
+        raise Refus("raison : texte de 500 caracteres au plus")
+    t = _ticket(tid)
+    if _clos(_journal_verifie(t, _entrees(tid))):
+        raise Refus("ticket deja clos")
+    titre = t["charge"].get("titre", tid)
+    charge = {"type": "arret", "parc": pont_v2.parc(), "id": "arret-%s-%d" % (tid, len(_entrees(tid))),
+              "ticket": tid, "titre": titre, "raison": raison.strip()}
+    validation = _valider("arret", charge, _dire("extensions.arret_quoi", titre=titre))
+    if np_.verifier_validation(validation, validation_cle(validation), pont_v2.parc(), charge) != "accepte":
+        raise Refus("arret refuse par l'humain")
+    if _est_clos(tid):
+        raise Refus("ticket deja clos")
+    print(f"[extensions] ticket {tid} arrete par l'humain : {charge['raison']}", flush=True)
+    _ecrire_ordonnateur(tid, "cloture", "Ticket arrêté par l'architecte : %s" % charge["raison"],
+                        {"arret": charge["raison"], "validation": validation})
+    for bloc in _lire_json(_dossier("tickets", tid, "blocs.json"), []) or []:
+        try:
+            if not _est_clos(bloc["id"]):
+                _arreter(bloc["id"], "ticket parent arrêté")
+        except (Refus, np_.ErreurPont, OSError) as exc:
+            print(f"[extensions] bloc {bloc['id']} non arrete : {exc}", flush=True)
+    return {"arrete": True}
 
 
 def journal_lire(cx, req):
@@ -759,6 +825,8 @@ REQUETES = {
     "ticket_lire": ticket_lire,
     "tickets_lister": tickets_lister,
     "parc_lire": parc_lire,
+    "ticket_arreter": ticket_arreter,
+    "arbitrage_demander": arbitrage_demander,
     "journal_ecrire": journal_ecrire,
     "journal_lire": journal_lire,
     "travail_deposer": travail_deposer,
@@ -769,7 +837,7 @@ REQUETES = {
     "interface_servir": interface_servir,
     "interface_reponse": interface_reponse,
 }
-LONGUES = {"ticket_valider"}  # attendent l'humain : traitees a part, la connexion continue
+LONGUES = {"ticket_valider", "ticket_arreter", "arbitrage_demander"}  # attendent l'humain : traitees a part, la connexion continue
 
 
 # --- ouverture ----------------------------------------------------------------------------
