@@ -445,6 +445,26 @@ def demander_validation(sujet, charge, delai=VALIDATION_SEC):
     """Fait valider `charge` par un humain, sur un appareil connecte qui porte une cle
     humaine. Rend l'objet "validation" verifie (decision "accepte" ou "refuse").
     Leve ErreurPont : pas d'appareil, annule, delai depasse, validation invalide."""
+    objet, h = _demander(sujet, charge, delai)
+    np_.verifier_validation(objet, h["identite"], parc(), charge)
+    return objet
+
+
+def demander_arbitrage(charge, options, delai=VALIDATION_SEC):
+    """L'architecte choisit une des `options` ; il signe la charge AVEC son choix
+    (champ "choix"). Rend (validation, choix) apres verification."""
+    objet, h = _demander("arbitrage", dict(charge, options=list(options)), delai)
+    for choix in options:
+        try:
+            if np_.verifier_validation(objet, h["identite"], parc(),
+                                       dict(charge, options=list(options), choix=choix)) == "accepte":
+                return objet, choix
+        except np_.ErreurPont:
+            continue
+    raise np_.ErreurPont("arbitrage signe pour aucun des choix proposes")
+
+
+def _demander(sujet, charge, delai):
     connus = humains()
     machines = [(hid, h) for hid, h in connus.items() if h.get("machine") in _sessions]
     if not machines:
@@ -461,9 +481,7 @@ def demander_validation(sujet, charge, delai=VALIDATION_SEC):
         r = attente["reponse"]
         if r.get("erreur"):
             raise np_.ErreurPont("validation non donnee : " + str(r["erreur"])[:200])
-        objet = r["objet"]
-        np_.verifier_validation(objet, h["identite"], parc(), charge)
-        return objet
+        return r["objet"], h
     finally:
         _validations.pop(demande, None)
 

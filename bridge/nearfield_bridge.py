@@ -1321,6 +1321,19 @@ def _texte_validation(sujet, charge):
                     charge.get("titre", ""), plan, int(b.get("secondes", 0)) // 60, int(b.get("cout_centimes", 0)),
                     ", ".join(charge.get("capacites") or []) or "aucune",
                     ", ".join(charge.get("zones") or []) or "aucune"))
+    if sujet == "arbitrage":
+        lignes = ["Désaccord sur le ticket « %s »." % charge.get("titre", "")]
+        if charge.get("desaccord"):
+            lignes.append(str(charge["desaccord"]))
+        for i, p in enumerate(charge.get("points") or [], 1):
+            if not isinstance(p, dict):
+                continue
+            lignes.append("\nPoint %d : %s" % (i, p.get("sujet", "")))
+            lignes.append("Rédacteur : %s" % p.get("redacteur", ""))
+            lignes.append("Vérificateur : %s" % p.get("verificateur", ""))
+        if charge.get("impact"):
+            lignes.append("\nImpact : %s" % charge["impact"])
+        return "\n".join(lignes)[:7000]
     if sujet == "extension":
         return ("Enrôler l'extension « %s » sur nearfield ?\n\nCapacités : %s.\nEmpreinte de sa clé : %s."
                 % (charge.get("nom", ""), ", ".join(charge.get("capacites") or []) or "aucune",
@@ -1328,17 +1341,45 @@ def _texte_validation(sujet, charge):
     return "Valider ceci (%s) ?\n\n%s" % (sujet, json.dumps(charge, ensure_ascii=False, indent=1)[:6000])
 
 
-def _dialogue_validation(texte):
-    """Dialogue systeme lu par VoiceOver ; « Refuser » par defaut. Rend True si « Valider »."""
-    script = ('activate\ndisplay dialog %s with title "nearfield : validation" buttons {"Refuser", "Valider"} '
+def _dialogue_validation(texte, bouton="Valider"):
+    """Dialogue systeme lu par VoiceOver ; « Refuser » par defaut. Rend True si `bouton`."""
+    script = ('activate\ndisplay dialog %s with title "nearfield : validation" buttons {"Refuser", %s} '
               'default button "Refuser" cancel button "Refuser" with icon caution giving up after %d'
-              % (json.dumps(texte, ensure_ascii=False), VALIDATION_DIALOGUE_SEC))
+              % (json.dumps(texte, ensure_ascii=False), json.dumps(bouton, ensure_ascii=False),
+                 VALIDATION_DIALOGUE_SEC))
     try:
         sortie = subprocess.run(["osascript", "-e", script], capture_output=True, text=True,
                                 timeout=VALIDATION_DIALOGUE_SEC + 20).stdout
     except subprocess.TimeoutExpired:
         return False
-    return "button returned:Valider" in sortie and "gave up:true" not in sortie
+    return ("button returned:%s" % bouton) in sortie and "gave up:true" not in sortie
+
+
+CHOIX_ARBITRAGE = {"redacteur": "Garder la version du rédacteur",
+                   "verificateur": "Suivre l'avis du vérificateur",
+                   "troisieme_avis": "Demander un troisième avis",
+                   "arreter": "Arrêter le ticket"}
+
+
+def _choisir_arbitrage(texte, options):
+    """Le dossier du desaccord (lu par VoiceOver), puis la liste des choix. Rend le code
+    choisi, ou None (annule, ou pas de reponse)."""
+    if not _dialogue_validation(texte, "Trancher"):
+        return None
+    libelles = [CHOIX_ARBITRAGE.get(o, o) for o in options]
+    script = ('activate\nset r to choose from list %s with title "nearfield : arbitrage" with prompt '
+              '"Que décides-tu ?" OK button name "Choisir" cancel button name "Annuler"\n'
+              'if r is false then return ""\nreturn item 1 of r'
+              % ("{" + ", ".join(json.dumps(x, ensure_ascii=False) for x in libelles) + "}"))
+    try:
+        sortie = subprocess.run(["osascript", "-e", script], capture_output=True, text=True,
+                                timeout=VALIDATION_DIALOGUE_SEC + 20).stdout.strip()
+    except subprocess.TimeoutExpired:
+        return None
+    for o, lib in zip(options, libelles):
+        if sortie == lib:
+            return o
+    return None
 
 
 def valider_humain(parc, sujet, charge):
@@ -1350,7 +1391,13 @@ def valider_humain(parc, sujet, charge):
     if not isinstance(sujet, str) or not re.fullmatch(r"[a-z0-9_-]{1,64}", sujet):
         raise RuntimeError("sujet de validation invalide")
     with _verrou_validation:  # une question a la fois
-        if not _dialogue_validation(_texte_validation(sujet, charge)):
+        if sujet == "arbitrage":
+            options = [o for o in (charge.get("options") or []) if isinstance(o, str)]
+            choix = _choisir_arbitrage(_texte_validation(sujet, charge), options)
+            if not choix:
+                raise RuntimeError("arbitrage non donne (annule ou pas de reponse)")
+            charge = dict(charge, choix=choix)
+        elif not _dialogue_validation(_texte_validation(sujet, charge)):
             raise RuntimeError("refuse par l'humain (ou pas de reponse)")
         humain = pont2.Coffre.ouvrir_dans_la_puce(prog, HUMAIN, True)
         titre = str(charge.get("titre") or charge.get("nom") or sujet)[:120]
@@ -1629,6 +1676,7 @@ def _pending_for(share, fast):
             continue  # objet signe refuse : rien a attendre de ce travail
         job = _read(os.path.join(folder, job_id, "travail.json"))
         if (job and job.get("type") in caps and (job.get("type") in FAST) == fast
+                and config()["id"] not in (job.get("exclure") or [])
                 and not _attributed_elsewhere(os.path.join(folder, job_id))):
             return True
     return False
@@ -1731,6 +1779,8 @@ def _claim(share, fast, pi=None):
                 job, empreinte = signe
                 if job.get("type") not in caps or (job.get("type") in FAST) != fast:
                     continue
+                if config()["id"] in (job.get("exclure") or []):
+                    continue  # contre-epreuve de notre propre travail : a une autre machine
         dst = os.path.join(folder, job_id, "travail.pris.json")
         try:
             os.rename(src, dst)

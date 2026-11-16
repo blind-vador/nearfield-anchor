@@ -25,7 +25,19 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
   journal_ecrire   {entree}                entree signee PAR L'EXTENSION, chainee et verifiee
   journal_lire     {ticket, depuis}        entrees verifiees
   travail_deposer  {ticket, capacite, params}  travail d'un type connu, dans ce qu'autorise le ticket
+  contre_epreuve   {ticket, travail, capacite, params}  verification confiee par l'ORDONNATEUR a une
+                                           autre machine que l'auteur (ou, seule machine, a un
+                                           agent en contexte neutre), notee au journal
   evenements       {}                      s'abonner : {"type": "evenement", "genre": ...}
+
+Modes (lot2 §6) : un ticket est "lax" (sa validation couvre ses sous-tickets, dans ses
+bornes) ou "strict" (chaque sous-ticket, c.-a-d. chaque bloc, est valide par l'humain).
+Controle mecanique : une entree "progression" ou "resultat" peut declarer
+donnees.fichiers (chemins touches) et donnees.consomme {secondes, cout_centimes} ; hors
+des zones ou au-dela du budget, l'ordonnateur arrete le ticket (entree "cloture" signee
+par lui). Desaccord : le premier met le ticket en pause et demande l'arbitrage de
+l'architecte (points, raisons de chacun, impact ; il choisit redacteur, verificateur,
+troisieme avis ou arret) ; le second de suite arrete le ticket.
 Aucune commande arbitraire, aucun acces aux cles de l'ordonnateur ; enroler une extension
 et lancer un plan exigent une validation humaine de moins de 5 minutes. Retirer une
 extension se fait sur le Pi : python3 lib/extensions.py retirer <nom>.
@@ -229,12 +241,52 @@ def _clos(entrees_verifiees):
     return bool(entrees_verifiees) and entrees_verifiees[-1].get("genre") == "cloture"
 
 
+def _en_pause(entrees_verifiees):
+    """Un desaccord pas encore tranche (aucune entree "validation" d'arbitrage apres)."""
+    pause = False
+    for e in entrees_verifiees:
+        if e.get("genre") == "desaccord":
+            pause = True
+        elif e.get("genre") == "validation" and (e.get("donnees") or {}).get("arbitrage") is not None:
+            pause = False
+    return pause
+
+
+def _brouillon_de(ticket):
+    """Le brouillon porte par un ticket emis (charge sans les champs de l'objet)."""
+    c = dict(ticket["charge"])
+    for k in ("v", "emis", "nonce", "validation", "couvert_par"):
+        c.pop(k, None)
+    return c
+
+
+def _ecrire_ordonnateur(tid, genre, texte, donnees=None):
+    """Entree de journal signee par l'ordonnateur lui-meme (contre-epreuve, arbitrage, arret)."""
+    t = _ticket(tid)
+    with _verrou:
+        anciennes = _entrees(tid)
+        e = np_.ecrire_journal(pont_v2.coffre(), pont_v2.parc(), t, anciennes[-1] if anciennes else None,
+                               genre, texte, donnees)
+        n = e["charge"]["n"]
+        _ecrire_json(_dossier("tickets", tid, "journal", "%d.json" % n), e, exclusif=True)
+    _evenement("journal", ticket=tid, n=n, journal_genre=genre, texte=texte)
+    _annoncer(texte)
+    return n
+
+
+def _arreter(tid, raison):
+    print(f"[extensions] ticket {tid} arrete : {raison}", flush=True)
+    return _ecrire_ordonnateur(tid, "cloture", "Ticket arrêté : %s" % raison, {"arret": raison[:500]})
+
+
 def ticket_proposer(cx, req):
     b = req.get("brouillon")
     if not isinstance(b, dict) or b.get("type") != "ticket" or b.get("parc") != pont_v2.parc():
         raise Refus("brouillon de ticket de ce parc attendu")
     _nom_sur(b.get("id"), "ticket")
     empreinte = np_.controler_brouillon(b)
+    if b.get("parent"):
+        _controler_bloc(b)
     hors = set(b.get("capacites") or []) - set(_capacites_du_parc())
     if hors:
         raise Refus("capacites inconnues du parc : %s" % ", ".join(sorted(hors)))
@@ -244,11 +296,60 @@ def ticket_proposer(cx, req):
     return {"empreinte": empreinte}
 
 
+def _controler_bloc(b):
+    """Sous-ticket : parent emis, ni clos ni en pause, bornes (crate), et budget cumule des
+    blocs deja emis au plus celui du parent."""
+    ptid = _nom_sur((b.get("parent") or {}).get("ticket"), "ticket parent")
+    parent = _ticket(ptid)
+    if (b["parent"] or {}).get("empreinte") != np_.empreinte_objet(parent):
+        raise Refus("empreinte du ticket parent")
+    e = _journal_verifie(parent, _entrees(ptid))
+    if _clos(e) or _en_pause(e):
+        raise Refus("ticket parent clos ou en pause")
+    pb = _brouillon_de(parent)
+    np_.controler_sous_ticket(pb, b)
+    blocs = _lire_json(_dossier("tickets", ptid, "blocs.json"), []) or []
+    for cle in ("secondes", "cout_centimes"):
+        total = sum(x["budget"][cle] for x in blocs if x["id"] != b["id"]) + b["budget"][cle]
+        if total > pb["budget"][cle]:
+            raise Refus("budget des blocs au-dela de celui du ticket parent (%s)" % cle)
+    return parent, pb
+
+
+def _valider_bloc(tid, b):
+    parent, pb = _controler_bloc(b)
+    validation = None
+    if pb["mode"] == "strict" or b["mode"] == "strict":
+        quoi = _dire("extensions.bloc_quoi", titre=b.get("titre", tid), parent=pb.get("titre", ""))
+        validation = _valider("ticket", b, quoi)
+        if np_.verifier_validation(validation, validation_cle(validation), pont_v2.parc(), b) != "accepte":
+            raise Refus("bloc refuse par l'humain")
+    ticket = np_.emettre_sous_ticket(pont_v2.coffre(), b, parent, validation, _humaines())
+    with _verrou:
+        blocs = _lire_json(_dossier("tickets", pb["id"], "blocs.json"), []) or []
+        blocs.append({"id": tid, "budget": b["budget"], "valide": validation is not None})
+        _ecrire_json(_dossier("tickets", pb["id"], "blocs.json"), blocs)
+    return ticket
+
+
 def ticket_valider(cx, req):
     tid = _nom_sur(req.get("ticket"), "ticket")
     b = _lire_json(_dossier("tickets", "brouillons", tid + ".json"))
     if not b or b.pop("_par", None) != cx.id:
         raise Refus("pas de brouillon de cette extension pour ce ticket")
+    if b.get("parent"):
+        ticket = _valider_bloc(tid, b)
+        _ecrire_json(_dossier("tickets", tid, "ticket.json"), ticket, exclusif=True)
+        try:
+            os.remove(_dossier("tickets", "brouillons", tid + ".json"))
+        except OSError:
+            pass
+        _evenement("ticket_emis", ticket=tid, titre=b.get("titre"), parent=b["parent"]["ticket"])
+        if "couvert_par" in ticket["charge"]:
+            _annoncer(_dire("extensions.bloc_lance", titre=b.get("titre", tid)))
+        else:
+            _annoncer(_dire("extensions.ticket_emis", titre=b.get("titre", tid)))
+        return {"ticket": ticket}
     try:
         validation = _valider("ticket", b, _dire("extensions.ticket_quoi", titre=b.get("titre", tid)))
         if np_.verifier_validation(validation, validation_cle(validation), pont_v2.parc(), b) != "accepte":
@@ -278,7 +379,35 @@ def validation_cle(validation):
 def ticket_lire(cx, req):
     t = _ticket(req.get("ticket"))
     e = _journal_verifie(t, _entrees(req["ticket"]))
-    return {"ticket": t, "entrees": len(e), "clos": _clos(e)}
+    return {"ticket": t, "entrees": len(e), "clos": _clos(e), "pause": _en_pause(e)}
+
+
+def _ticket_verifie(tid):
+    """Ticket emis et verifie (avec son parent pour un bloc) : rend son brouillon."""
+    t = _ticket(tid)
+    c = t["charge"]
+    if c.get("parent"):
+        return np_.verifier_sous_ticket(t, _ticket(c["parent"]["ticket"]), pont_v2.coffre().cle_publique(),
+                                        pont_v2.parc(), _humaines())
+    return np_.verifier_ticket(t, pont_v2.coffre().cle_publique(), pont_v2.parc(), _humaines())
+
+
+def _controle_mecanique(b, charge):
+    """Fichiers touches dans les zones, consommation dans le budget ; rend la raison d'un
+    depassement, ou None."""
+    d = charge.get("donnees") or {}
+    fichiers = d.get("fichiers") or []
+    if not isinstance(fichiers, list):
+        return "liste de fichiers illisible"
+    for f in fichiers:
+        if not isinstance(f, str) or not np_.dans_les_zones(b["zones"], f):
+            return "fichier hors des zones du ticket : %s" % str(f)[:200]
+    c = d.get("consomme") or {}
+    for cle, nom in (("secondes", "temps"), ("cout_centimes", "coût")):
+        v = c.get(cle, 0)
+        if not isinstance(v, (int, float)) or v > b["budget"][cle]:
+            return "budget dépassé (%s)" % nom
+    return None
 
 
 def journal_ecrire(cx, req):
@@ -298,7 +427,48 @@ def journal_ecrire(cx, req):
     c = entree["charge"]
     _evenement("journal", ticket=tid, n=n, journal_genre=c.get("genre"), texte=c.get("texte"))
     _annoncer(c.get("texte"))  # l'utilisateur entend exactement ce qui est enregistre
-    return {"n": n}
+    reponse = {"n": n}
+    if c.get("genre") in ("progression", "resultat"):
+        raison = _controle_mecanique(_ticket_verifie(tid), c)
+        if raison:
+            _arreter(tid, raison)
+            reponse["arrete"] = raison
+    elif c.get("genre") == "desaccord":
+        e = _journal_verifie(t, _entrees(tid))
+        desaccords = [x for x in e if x.get("genre") == "desaccord"]
+        if len(desaccords) >= 2:
+            _arreter(tid, "deuxième désaccord sur ce ticket")
+            reponse["arrete"] = "deuxieme desaccord"
+        else:
+            reponse["pause"] = True
+            threading.Thread(target=_arbitrer, args=(tid, n, c), daemon=True).start()
+    return reponse
+
+
+ARBITRAGES = ("redacteur", "verificateur", "troisieme_avis", "arreter")
+
+
+def _arbitrer(tid, n, entree):
+    """Le premier desaccord : l'architecte tranche, avec les points, les raisons de chacun
+    et l'impact. Sa validation (le choix compris) est gardee au journal."""
+    t = _ticket(tid)
+    d = entree.get("donnees") or {}
+    charge = {"type": "arbitrage", "parc": pont_v2.parc(), "id": "arbitrage-%s-%d" % (tid, n), "ticket": tid,
+              "titre": t["charge"].get("titre", tid), "desaccord": entree.get("texte") or "",
+              "points": d.get("points") or [], "impact": d.get("impact") or ""}
+    try:
+        _annoncer(_dire("extensions.validation_demandee",
+                        quoi=_dire("extensions.arbitrage_quoi", titre=charge["titre"])))
+        validation, choix = pont_v2.demander_arbitrage(charge, ARBITRAGES)
+    except np_.ErreurPont as exc:
+        _evenement("arbitrage", ticket=tid, choix=None, raison=str(exc))
+        print(f"[extensions] arbitrage de {tid} non donne : {exc}", flush=True)
+        return  # le ticket reste en pause ; l'extension peut redemander par un nouveau desaccord
+    _ecrire_ordonnateur(tid, "validation", _dire("extensions.arbitrage_" + choix) or choix,
+                        {"arbitrage": n, "choix": choix, "validation": validation})
+    _evenement("arbitrage", ticket=tid, choix=choix)
+    if choix == "arreter":
+        _arreter(tid, "décision de l'architecte")
 
 
 def journal_lire(cx, req):
@@ -335,24 +505,84 @@ def _params_bornes(p):
         raise Refus("params trop profonds ou de type inconnu")
 
 
-def travail_deposer(cx, req):
-    tid = req.get("ticket")
+def _ticket_actif(tid):
     t = _ticket(tid)
-    if _clos(_journal_verifie(t, _entrees(tid))):
+    e = _journal_verifie(t, _entrees(tid))
+    if _clos(e):
         raise Refus("ticket clos")
-    capacite = _nom_sur(req.get("capacite"), "capacite")
+    if _en_pause(e):
+        raise Refus("ticket en pause : un desaccord attend l'arbitrage de l'architecte")
+    return t
+
+
+def _deposer(cx, tid, t, capacite, params, extra=None):
     if capacite not in (t["charge"].get("capacites") or []):
         raise Refus("le ticket n'autorise pas la capacite %s" % capacite)
     if capacite not in _capacites_du_parc():
         raise Refus("aucune machine du parc ne sait faire %s" % capacite)
-    params = req.get("params") or {}
     _params_bornes(params)
     job_id, _dossier_travail, job = compagnon.new_job(capacite, params)
     job["ticket"] = tid
     job["extension"] = cx.id
+    job.update(extra or {})
     compagnon.submit(job)
     _travaux[job_id] = (tid, cx.id)
-    return {"travail": job_id}
+    with _verrou:
+        liste = _lire_json(_dossier("tickets", tid, "travaux.json"), []) or []
+        liste.append({"id": job_id, "capacite": capacite, "t": time.time()})
+        _ecrire_json(_dossier("tickets", tid, "travaux.json"), liste)
+    return job_id
+
+
+def travail_deposer(cx, req):
+    tid = req.get("ticket")
+    t = _ticket_actif(tid)
+    capacite = _nom_sur(req.get("capacite"), "capacite")
+    return {"travail": _deposer(cx, tid, t, capacite, req.get("params") or {})}
+
+
+def _auteur(job_id):
+    """(id, fiche) de la machine qui a rendu ce travail : signataire de son resultat v2,
+    VERIFIE (signature, lien au travail, fichiers) ; (None, None) sinon."""
+    dossier = compagnon._path("travaux", job_id)
+    objet = compagnon._read(os.path.join(dossier, "resultat.v2.json")) or {}
+    cid, fiche = compagnon._machine_v2(objet.get("signataire"), compagnon.trusted())
+    if not fiche:
+        return None, None
+    try:
+        pont_v2.resultat_signe(fiche, job_id, dossier)
+    except np_.ErreurPont:
+        return None, None
+    return cid, fiche
+
+
+def contre_epreuve(cx, req):
+    """L'ORDONNATEUR choisit qui verifie : une autre machine que l'auteur (la plus tot
+    disponible) ; seule machine capable : la meme, en contexte neutre (nouvel agent, sans
+    canal vers le redacteur). Le choix est signe au journal."""
+    tid = req.get("ticket")
+    t = _ticket_actif(tid)
+    travail = _nom_sur(req.get("travail"), "travail")
+    if travail not in {x["id"] for x in _lire_json(_dossier("tickets", tid, "travaux.json"), []) or []}:
+        raise Refus("ce travail n'appartient pas a ce ticket")
+    auteur, fiche = _auteur(travail)
+    if not auteur:
+        raise Refus("travail sans resultat signe : rien a contre-eprouver")
+    capacite = _nom_sur(req.get("capacite"), "capacite")
+    autres = [c for c in compagnon.rank(capacite) if c["id"] != auteur]
+    meme = not autres
+    nom = (autres[0].get("nom") if autres else fiche.get("nom")) or "?"
+    params = dict(req.get("params") or {}, contre_epreuve_de=travail, contexte_neutre=True)
+    extra = {"contre_epreuve": travail}
+    if not meme:
+        extra["exclure"] = [auteur]
+    job_id = _deposer(cx, tid, t, capacite, params, extra)
+    texte = (_dire("extensions.contre_epreuve_meme", nom=nom) if meme
+             else _dire("extensions.contre_epreuve_autre", nom=nom))
+    n = _ecrire_ordonnateur(tid, "contre_epreuve", texte,
+                            {"travail": travail, "verification": job_id, "verificateur": nom,
+                             "meme_machine": meme})
+    return {"travail": job_id, "verificateur": nom, "meme_machine": meme, "n": n}
 
 
 def evenements(cx, req):
@@ -367,6 +597,7 @@ REQUETES = {
     "journal_ecrire": journal_ecrire,
     "journal_lire": journal_lire,
     "travail_deposer": travail_deposer,
+    "contre_epreuve": contre_epreuve,
     "evenements": evenements,
 }
 LONGUES = {"ticket_valider"}  # attendent l'humain : traitees a part, la connexion continue

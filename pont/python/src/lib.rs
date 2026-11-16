@@ -1091,6 +1091,53 @@ fn verifier_ticket(py: Python<'_>, objet: &Bound<'_, PyAny>, ordonnateur: &Bound
     vers_py(py, &ticket::verifier(&t, &depuis(ordonnateur, "clé")?, parc, &cles_humaines(humains)?).map_err(err)?)
 }
 
+/// Sous-ticket : bornes vérifiées face au parent émis ; `validation` (dict ou None) :
+/// obligatoire en mode strict, absente en lax (couvert par la validation du parent).
+#[pyfunction]
+#[pyo3(signature = (ordonnateur, sous, parent, validation_, humains))]
+fn emettre_sous_ticket(
+    py: Python<'_>,
+    ordonnateur: &Coffre,
+    sous: &Bound<'_, PyAny>,
+    parent: &Bound<'_, PyAny>,
+    validation_: Option<&Bound<'_, PyAny>>,
+    humains: &Bound<'_, PyAny>,
+) -> PyResult<PyObject> {
+    let b: ticket::Brouillon = depuis(sous, "sous-ticket")?;
+    let p: ObjetSigne = depuis(parent, "ticket parent")?;
+    let v: Option<ObjetSigne> = validation_.map(|v| depuis(v, "validation")).transpose()?;
+    vers_py(py, &ticket::emettre_sous_ticket(&ordonnateur.inner, &b, &p, v.as_ref(), &cles_humaines(humains)?).map_err(err)?)
+}
+
+/// Vérifie un sous-ticket avec son parent ; rend son brouillon.
+#[pyfunction]
+fn verifier_sous_ticket(
+    py: Python<'_>,
+    sous: &Bound<'_, PyAny>,
+    parent: &Bound<'_, PyAny>,
+    ordonnateur: &Bound<'_, PyAny>,
+    parc: &str,
+    humains: &Bound<'_, PyAny>,
+) -> PyResult<PyObject> {
+    let s: ObjetSigne = depuis(sous, "sous-ticket")?;
+    let p: ObjetSigne = depuis(parent, "ticket parent")?;
+    vers_py(py, &ticket::verifier_sous_ticket(&s, &p, &depuis(ordonnateur, "clé")?, parc, &cles_humaines(humains)?).map_err(err)?)
+}
+
+/// Bornes d'un sous-ticket face au brouillon du parent (sans rien signer).
+#[pyfunction]
+fn controler_sous_ticket(parent: &Bound<'_, PyAny>, sous: &Bound<'_, PyAny>) -> PyResult<()> {
+    let p: ticket::Brouillon = depuis(parent, "brouillon parent")?;
+    let s: ticket::Brouillon = depuis(sous, "sous-ticket")?;
+    ticket::controler_sous_ticket(&p, &s).map_err(err)
+}
+
+/// Ce chemin (fichier, ou dossier avec « / » final) est-il dans ces zones ?
+#[pyfunction]
+fn dans_les_zones(zones: Vec<String>, chemin: &str) -> bool {
+    ticket::dans_les_zones(&zones, chemin)
+}
+
 /// Nouvelle entrée de journal, à la suite de `precedente` (None : la première).
 #[pyfunction]
 #[pyo3(signature = (auteur, parc, ticket_objet, precedente, genre, texte = None, donnees = None))]
@@ -1173,6 +1220,10 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_function(wrap_pyfunction!(type_de_preuve, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_rotation, m)?)?;
     m.add_function(wrap_pyfunction!(controler_brouillon, m)?)?;
+    m.add_function(wrap_pyfunction!(emettre_sous_ticket, m)?)?;
+    m.add_function(wrap_pyfunction!(verifier_sous_ticket, m)?)?;
+    m.add_function(wrap_pyfunction!(controler_sous_ticket, m)?)?;
+    m.add_function(wrap_pyfunction!(dans_les_zones, m)?)?;
     m.add_function(wrap_pyfunction!(identifiant, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_signature_brute, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_signature, m)?)?;

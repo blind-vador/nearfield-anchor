@@ -553,7 +553,7 @@ def test_session_normale_pas_perimee_avec_grace_et_preuve_de_renouvellement():
 def _ticket():
     ordo, humain, mac = np_.Coffre.generer(), np_.Coffre.generer(), np_.Coffre.generer()
     brouillon = {"type": "ticket", "parc": PARC, "id": "t42", "titre": "Corriger la doc",
-                 "plan": "1. lire\n2. corriger", "budget": {"secondes": 600, "cout_centimes": 50},
+                 "plan": "1. lire\n2. corriger", "mode": "lax", "budget": {"secondes": 600, "cout_centimes": 50},
                  "capacites": ["agent:code"], "zones": ["pont/"]}
     v = np_.preparer_validation(humain, PARC, brouillon, "accepte")
     assert np_.verifier_validation(v, humain.cle_publique(), PARC, brouillon) == "accepte"
@@ -626,7 +626,7 @@ def test_rotation_vers_une_nouvelle_cle():
 
 def test_controle_du_brouillon():
     b = {"type": "ticket", "parc": PARC, "id": "essai-1", "titre": "Essai", "plan": "Faire.",
-         "budget": {"secondes": 60, "cout_centimes": 0}, "capacites": ["agent-code"], "zones": ["src/"]}
+         "mode": "lax", "budget": {"secondes": 60, "cout_centimes": 0}, "capacites": ["agent-code"], "zones": ["src/"]}
     e = np_.controler_brouillon(b)
     assert len(e) == 64
     with pytest.raises(np_.ErreurPont):
@@ -649,3 +649,25 @@ def test_vraie_puce(tmp_path):
     p = np_.preparer_rotation(ancien, c, PARC, t)
     r = np_.verifier_rotation(p, ancien.cle_publique(), "logiciel", PARC, base64.b64encode(t).decode())
     assert r["niveau"] == "materiel"
+
+
+def test_sous_tickets_lax_et_strict():
+    ordo, humain, mac, brouillon, parent = _ticket()  # parent en mode lax
+    h = [humain.cle_publique()]
+    rattache = {"ticket": brouillon["id"], "empreinte": np_.empreinte_objet(parent)}
+    zone = brouillon["zones"][0]
+    sous = dict(brouillon, id="t42-1", titre="Bloc 1", parent=rattache,
+                budget={"secondes": 60, "cout_centimes": 1})
+    np_.controler_sous_ticket(brouillon, sous)
+    t = np_.emettre_sous_ticket(ordo, sous, parent, None, h)
+    assert np_.verifier_sous_ticket(t, parent, ordo.cle_publique(), PARC, h) == sous
+    with pytest.raises(np_.ErreurPont):
+        np_.emettre_sous_ticket(ordo, dict(sous, id="t42-2", zones=["ailleurs/"]), parent, None, h)
+    assert np_.dans_les_zones([zone], zone + "x.py") == zone.endswith("/")
+    # Strict : chaque bloc exige sa validation.
+    strict = dict(sous, id="t42-3", mode="strict")
+    with pytest.raises(np_.ErreurPont):
+        np_.emettre_sous_ticket(ordo, strict, parent, None, h)
+    v = np_.preparer_validation(humain, PARC, strict, "accepte")
+    t = np_.emettre_sous_ticket(ordo, strict, parent, v, h)
+    assert np_.verifier_sous_ticket(t, parent, ordo.cle_publique(), PARC, h)["mode"] == "strict"

@@ -520,7 +520,8 @@ class PassageV1V2(unittest.TestCase):
         self.assertTrue(attendre(lambda: any(h["machine"] == self.mac_id for h in v2.humains().values()), 10))
         # Validation demandee par le Pi : dialogue accepte, signature par la cle humaine.
         brouillon = {"type": "ticket", "parc": v2.parc(), "id": "essai-1", "titre": "Essai", "plan": "Faire.",
-                     "budget": {"secondes": 60, "cout_centimes": 0}, "capacites": ["whisper"], "zones": ["src/"]}
+                     "mode": "strict", "budget": {"secondes": 60, "cout_centimes": 0}, "capacites": ["whisper"],
+                     "zones": ["src/"]}
         with mock.patch.object(nb, "_dialogue_validation", lambda texte: "Essai" in texte):
             validation = v2.demander_validation("ticket", brouillon, 20)
         hid, h = next(iter(v2.humains().items()))
@@ -530,6 +531,21 @@ class PassageV1V2(unittest.TestCase):
             self.assertIn("Essai", f.read())
         ticket = nearfield_pont.emettre_ticket(v2.coffre(), brouillon, validation, [h["identite"]])
         self.assertEqual(ticket["charge"]["titre"], "Essai")
+        # Arbitrage d'un desaccord : le dossier est montre, l'architecte choisit, sa signature
+        # couvre son choix.
+        dossier = {"type": "arbitrage", "parc": v2.parc(), "id": "arbitrage-essai-1-0", "ticket": "essai-1",
+                   "titre": "Essai", "desaccord": "Cache contesté.", "impact": "un fichier",
+                   "points": [{"sujet": "cache", "redacteur": "plus rapide", "verificateur": "fuite mémoire"}]}
+        vus = []
+
+        def choisir(texte, options):
+            vus.append(texte)
+            return "troisieme_avis"
+        with mock.patch.object(nb, "_choisir_arbitrage", choisir):
+            arbitrage, choix = v2.demander_arbitrage(dossier, ("redacteur", "verificateur", "troisieme_avis"), 20)
+        self.assertEqual(choix, "troisieme_avis")
+        self.assertIn("fuite mémoire", vus[0])
+        self.assertIn("Impact : un fichier", vus[0])
         # Dialogue refuse : pas de validation.
         with mock.patch.object(nb, "_dialogue_validation", lambda texte: False):
             with self.assertRaises(nearfield_pont.ErreurPont):

@@ -58,10 +58,14 @@ class PointExtensions(unittest.TestCase):
         cls.dits = []
         extensions.ANNONCES = True
         extensions._annoncer = lambda texte: texte and cls.dits.append(texte)
-        # Une machine du parc qui sait faire "whisper".
-        compagnon._write(os.path.join(compagnon.TRUST_DIR, "macessai.json"),
-                         {"nom": "Mac mini", "capacites": ["whisper"], "stats": {},
-                          "v2": {"id": "x", "identite": np_.Coffre.generer().cle_publique(), "niveau": "materiel"}})
+        # Deux machines du parc qui savent faire "whisper" ; seul le Mac est present au depart.
+        compagnon.PRESENCE = os.path.join(TMP, "presence.json")
+        cls.mac, cls.pc = np_.Coffre.generer(), np_.Coffre.generer()
+        for cid, nom, c in (("macessai", "Mac mini", cls.mac), ("pcessai", "PC essai", cls.pc)):
+            compagnon._write(os.path.join(compagnon.TRUST_DIR, cid + ".json"),
+                             {"nom": nom, "capacites": ["whisper"], "stats": {},
+                              "v2": {"id": c.id, "identite": c.cle_publique(), "niveau": "materiel"}})
+        cls.presents(["macessai"])
         # Cle humaine (simulee) et validation sans appareil.
         cls.humain = np_.Coffre.generer()
         hid = cls.humain.id
@@ -77,10 +81,23 @@ class PointExtensions(unittest.TestCase):
                 raise np_.ErreurPont("refuse par l'humain")
             return np_.preparer_validation(cls.humain, pont_v2.parc(), charge, cls.decision[0])
         pont_v2.demander_validation = demander
+        cls.choix = ["redacteur"]
+        cls.arbitrage_libre = threading.Event()
+        cls.arbitrage_libre.set()
+
+        def arbitrer(charge, options, delai=None):
+            cls.arbitrage_libre.wait(10)
+            c = dict(charge, options=list(options), choix=cls.choix[0])
+            return np_.preparer_validation(cls.humain, pont_v2.parc(), c, "accepte"), cls.choix[0]
+        pont_v2.demander_arbitrage = arbitrer
         cls.serveur = extensions.demarrer()
         cls.cle = np_.Coffre.generer()
         r = extensions.Client(cls.cle).enroler("prismalab-ia", ["agent-code", "whisper"])
         assert r["type"] == "enrole", r
+
+    @classmethod
+    def presents(cls, ids):
+        cls.c._write(cls.c.PRESENCE, {i: {"vu": time.time(), "depuis": time.time()} for i in ids})
 
     @classmethod
     def tearDownClass(cls):
@@ -97,7 +114,8 @@ class PointExtensions(unittest.TestCase):
 
     def brouillon(self, tid, **autres):
         b = {"type": "ticket", "parc": self.v2.parc(), "id": tid, "titre": "Corriger le guide",
-             "plan": "Relire docs/guide.md et corriger les fautes.", "budget": {"secondes": 600, "cout_centimes": 50},
+             "plan": "Relire docs/guide.md et corriger les fautes.", "mode": "lax",
+             "budget": {"secondes": 600, "cout_centimes": 50},
              "capacites": ["whisper"], "zones": ["docs/guide.md"]}
         b.update(autres)
         return b
@@ -242,6 +260,139 @@ class PointExtensions(unittest.TestCase):
         lache.set()
         r = cl.recevoir()
         self.assertEqual((r["type"], r["reponse_a"]), ("reponse", rid))
+
+
+    # --- modes, controle mecanique, desaccords, contre-epreuve ----------------------------
+
+    def bloc(self, parent, tid, zones, secondes=200, mode="lax"):
+        return self.brouillon(tid, titre="Bloc " + tid, zones=zones, mode=mode,
+                              budget={"secondes": secondes, "cout_centimes": 10},
+                              parent={"ticket": parent["charge"]["id"], "empreinte": np_.empreinte_objet(parent)})
+
+    def emettre(self, cl, b):
+        self.assertEqual(cl.requete("ticket_proposer", brouillon=b)["type"], "reponse")
+        return cl.requete("ticket_valider", ticket=b["id"])
+
+    def test_blocs_en_mode_lax(self):
+        cl, _ = self.client()
+        parent = self.emettre(cl, self.brouillon("projet-lax", zones=["docs/"]))["ticket"]
+        avant = len(self.demandes)
+        r = self.emettre(cl, self.bloc(parent, "projet-lax-a", ["docs/guide.md"]))
+        self.assertEqual(r["type"], "reponse", r)
+        self.assertIn("couvert_par", r["ticket"]["charge"])
+        self.assertEqual(len(self.demandes), avant, "lax : pas de nouvelle validation")
+        # Budget cumule au-dela du parent, zone hors du parent : refuses.
+        b = self.bloc(parent, "projet-lax-b", ["docs/x.md"], secondes=500)
+        self.assertEqual(cl.requete("ticket_proposer", brouillon=b)["type"], "erreur")
+        b = self.bloc(parent, "projet-lax-c", ["src/"])
+        self.assertEqual(cl.requete("ticket_proposer", brouillon=b)["type"], "erreur")
+
+    def test_blocs_en_mode_strict(self):
+        cl, _ = self.client()
+        parent = self.emettre(cl, self.brouillon("projet-strict", zones=["src/"], mode="strict"))["ticket"]
+        avant = len(self.demandes)
+        r = self.emettre(cl, self.bloc(parent, "projet-strict-a", ["src/a.py"], mode="strict"))
+        self.assertEqual(r["type"], "reponse", r)
+        self.assertIn("validation", r["ticket"]["charge"])
+        self.assertEqual(len(self.demandes), avant + 1, "strict : chaque bloc est valide")
+        # Un bloc lax sous un parent strict : refuse.
+        b = self.bloc(parent, "projet-strict-b", ["src/b.py"], mode="lax")
+        self.assertEqual(cl.requete("ticket_proposer", brouillon=b)["type"], "erreur")
+        self.decision[0] = "refuse"
+        r = self.emettre(cl, self.bloc(parent, "projet-strict-c", ["src/c.py"], mode="strict"))
+        self.assertEqual(r["type"], "erreur")
+
+    def test_controle_mecanique_arrete_le_ticket(self):
+        cl, _ = self.client()
+        t = self.ticket_emis(cl, "meca-1")
+        p = self.v2.parc()
+        e0 = np_.ecrire_journal(self.cle, p, t, None, "prise", "Je commence.")
+        cl.requete("journal_ecrire", entree=e0)
+        e1 = np_.ecrire_journal(self.cle, p, t, e0, "progression", "Fait.",
+                                {"fichiers": ["docs/guide.md"], "consomme": {"secondes": 100, "cout_centimes": 5}})
+        self.assertNotIn("arrete", cl.requete("journal_ecrire", entree=e1))
+        e2 = np_.ecrire_journal(self.cle, p, t, e1, "resultat", "Fini.", {"fichiers": ["src/secret.py"]})
+        r = cl.requete("journal_ecrire", entree=e2)
+        self.assertIn("hors des zones", r["arrete"])
+        etat = cl.requete("ticket_lire", ticket="meca-1")
+        self.assertTrue(etat["clos"])
+        self.assertTrue(any("arrêté" in d for d in self.dits))
+
+    def test_budget_depasse_arrete_le_ticket(self):
+        cl, _ = self.client()
+        t = self.ticket_emis(cl, "meca-2")
+        e0 = np_.ecrire_journal(self.cle, self.v2.parc(), t, None, "progression", "Long.",
+                                {"consomme": {"secondes": 601}})
+        self.assertIn("budget", cl.requete("journal_ecrire", entree=e0)["arrete"])
+
+    def dernier(self, cl, tid):
+        return cl.requete("journal_lire", ticket=tid)["entrees"][-1]
+
+    def test_desaccord_pause_arbitrage_puis_arret(self):
+        cl, _ = self.client()
+        t = self.ticket_emis(cl, "debat-1")
+        p = self.v2.parc()
+        self.arbitrage_libre.clear()
+        self.addCleanup(self.arbitrage_libre.set)
+        self.choix[0] = "verificateur"
+        e0 = np_.ecrire_journal(self.cle, p, t, None, "desaccord", "Le vérificateur conteste le cache.",
+                                {"points": [{"sujet": "cache", "redacteur": "plus rapide", "verificateur": "fuite"}],
+                                 "impact": "un fichier"})
+        self.assertTrue(cl.requete("journal_ecrire", entree=e0)["pause"])
+        self.assertTrue(cl.requete("ticket_lire", ticket="debat-1")["pause"])
+        r = cl.requete("travail_deposer", ticket="debat-1", capacite="whisper")
+        self.assertIn("pause", r["raison"])
+        self.arbitrage_libre.set()
+        fin = time.time() + 5
+        while cl.requete("ticket_lire", ticket="debat-1")["pause"] and time.time() < fin:
+            time.sleep(0.05)
+        v = self.dernier(cl, "debat-1")
+        self.assertEqual((v["charge"]["genre"], v["charge"]["donnees"]["choix"]), ("validation", "verificateur"))
+        self.assertEqual(v["signataire"], self.v2.coffre().id, "arbitrage ecrit par l'ordonnateur")
+        # Deuxieme desaccord : le ticket s'arrete.
+        e2 = np_.ecrire_journal(self.cle, p, t, v, "desaccord", "Encore un désaccord.")
+        self.assertIn("deuxieme", cl.requete("journal_ecrire", entree=e2)["arrete"])
+        self.assertTrue(cl.requete("ticket_lire", ticket="debat-1")["clos"])
+
+    def rendu_par(self, coffre, job_id):
+        """Resultat v2 de ce travail, signe par cette machine (comme bridge/_rendre_v2)."""
+        dossier = self.c._path("travaux", job_id)
+        travail = self.c._read(os.path.join(dossier, "travail.v2.json"))
+        self.c._write(os.path.join(dossier, "resultat.v2.json"), coffre.signer_objet({
+            "type": "resultat", "parc": self.v2.parc(), "id": "resultat-" + job_id, "travail": job_id,
+            "objet_travail": self.v2.empreinte_charge(travail["charge"]), "etat": "fait", "message": "",
+            "duree": 1, "fichiers": {}}))
+
+    def test_contre_epreuve_choisie_par_l_ordonnateur(self):
+        cl, _ = self.client()
+        self.ticket_emis(cl, "verif-1")
+        job = cl.requete("travail_deposer", ticket="verif-1", capacite="whisper", params={"x": 1})["travail"]
+        self.assertEqual(cl.requete("contre_epreuve", ticket="verif-1", travail=job, capacite="whisper")["type"],
+                         "erreur", "pas de resultat signe")
+        # Resultat signe par une cle inconnue : refuse aussi.
+        self.rendu_par(np_.Coffre.generer(), job)
+        self.assertEqual(cl.requete("contre_epreuve", ticket="verif-1", travail=job, capacite="whisper")["type"],
+                         "erreur")
+        self.rendu_par(self.mac, job)
+        # Seul le Mac est la : meme machine, contexte neutre.
+        r = cl.requete("contre_epreuve", ticket="verif-1", travail=job, capacite="whisper")
+        self.assertEqual((r["type"], r["meme_machine"]), ("reponse", True), r)
+        verif = self.c._read(self.c._path("travaux", r["travail"], "travail.json"))
+        self.assertTrue(verif["params"]["contexte_neutre"])
+        self.assertNotIn("exclure", verif)
+        e = self.dernier(cl, "verif-1")
+        self.assertEqual((e["charge"]["genre"], e["signataire"]), ("contre_epreuve", self.v2.coffre().id))
+        # Le PC revient : la contre-epreuve lui est confiee, l'auteur est exclu.
+        self.presents(["macessai", "pcessai"])
+        self.addCleanup(self.presents, ["macessai"])
+        r = cl.requete("contre_epreuve", ticket="verif-1", travail=job, capacite="whisper")
+        self.assertEqual((r["meme_machine"], r["verificateur"]), (False, "PC essai"), r)
+        signe = self.c.lire_travail(self.c._path("travaux", r["travail"]))
+        self.assertEqual(signe["exclure"], ["macessai"])
+        # Un travail d'un autre ticket : refuse.
+        self.ticket_emis(cl, "verif-2")
+        self.assertEqual(cl.requete("contre_epreuve", ticket="verif-2", travail=job, capacite="whisper")["type"],
+                         "erreur")
 
 
 if __name__ == "__main__":

@@ -404,7 +404,8 @@ def _dispatch():
         if channel:
             channel.close()  # la liaison tombe tout de suite
     for job in compagnon.open_jobs():
-        able = [c for c in compagnon.companions() if job["type"] in c.get("capacites", [])]
+        exclues = set(job.get("exclure") or [])  # contre-epreuve : jamais l'auteur
+        able = [c for c in compagnon.companions() if job["type"] in c.get("capacites", []) and c["id"] not in exclues]
         # LoRa : seule une liaison DIRECTE repond assez vite ; en differe, le Pi decode.
         if job["type"] == "lora" and lora_messages.needs_local(job, any(c.get("directe") for c in able)):
             # Secours : aucune machine capable ne repond, le Pi decode lui-meme.
@@ -441,7 +442,8 @@ def _attribute(job):
         return True
     tried = (a or {}).get("essayees", [])
     size = compagnon.job_size_mb(job_id)
-    direct = [c for c in compagnon.rank(job["type"], size, exclude=tried) if c.get("directe")]
+    exclues = list(tried) + list(job.get("exclure") or [])
+    direct = [c for c in compagnon.rank(job["type"], size, exclude=exclues) if c.get("directe")]
     if not direct:
         if a:
             compagnon.release(job_id)

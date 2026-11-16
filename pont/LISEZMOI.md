@@ -20,7 +20,7 @@ Spécification complète : `specs/protocole-v2.md` dans le dossier de conception
 | `objet` | Objets signés pour le NAS : vérification, empreintes des fichiers joints, noms sûrs, registre anti-rejeu de 7 jours |
 | `enveloppe` | Chiffrement à destinataires multiples (spec §6.2) : clé de réception X25519 publiée chaque semaine (objet signé), X25519 éphémère + HKDF-SHA256 + ChaCha20-Poly1305, contenu en blocs de 64 Kio liés à l'entête ; octets ou fichiers |
 | `validation` | Validations humaines (protocole-v2 §7) : liées à l'empreinte d'une charge, 5 minutes, `accepte` ou `refuse` |
-| `ticket` | Manifeste de ticket (lot 2) : brouillon borné (plan, budget, capacités, zones), validé par l'humain puis signé par l'ordonnateur ; les machines revérifient la validation |
+| `ticket` | Manifeste de ticket (lot 2) : brouillon borné (plan, mode `lax` ou `strict`, budget, capacités, zones), validé par l'humain puis signé par l'ordonnateur ; les machines revérifient la validation. Sous-tickets (blocs) bornés par leur parent : en `lax`, couverts par la validation du parent ; en `strict`, validés un par un |
 | `journal` | Journal chaîné d'un ticket (lot 2) : entrées signées, numérotées, chacune liée à la précédente (la première au ticket) ; trou, échange, fourche ou ajout après clôture refusés |
 | `appairage` | Engagement préalable et code vocal à 6 chiffres, dit en 3 paires |
 | `certificat` | Certificats de 12 h (rôles, capacités, niveau), liste de révocation qui ne recule jamais |
@@ -34,7 +34,7 @@ Spécification complète : `specs/protocole-v2.md` dans le dossier de conception
 cargo test
 ```
 
-62 tests unitaires et 9 d'intégration (parc, puce) : vecteurs fixes (`vecteurs.json`, recalculés indépendamment en Python),
+65 tests unitaires et 9 d'intégration (parc, puce) : vecteurs fixes (`vecteurs.json`, recalculés indépendamment en Python),
 et les attaques que la v2 doit repousser (charge modifiée, rejeu, objet trop vieux, autre
 parc, faux ordonnateur, clé Noise différente du certificat, intermédiaire pendant
 l'appairage, type de message inconnu, chemin `../`, liste de révocation plus ancienne…).
@@ -77,7 +77,7 @@ Ce qu'il offre :
 | Rotation | `preparer_rotation(ancien, nouveau, parc, transport)`, `type_de_preuve(preuve)`, `verifier_rotation(preuve, identite, niveau, parc, transport_b64, registre)` |
 | Objets signés | `verifier_objet(objet, cle, type, parc, registre)`, `RegistreNonces.charger/enregistrer`, `verifier_fichiers`, `empreinte_fichier`, `nom_sur` |
 | Enveloppe | `CleReception.charger_ou_creer(chemin)`, `.public`, `.empreinte`, `.publier(coffre, parc)`, `verifier_cle_reception(objet, identite, parc)`, `sceller([(id, cle)], de, contexte, octets)`, `ouvrir(env, moi, de, [cles])`, `sceller_fichier(...)`, `ouvrir_fichier(...)` |
-| Lot 2 | `preparer_validation(humain, parc, charge, "accepte", motif, raison)`, `controler_brouillon(brouillon)`, `verifier_validation(...)`, `emettre_ticket(ordonnateur, brouillon, validation, [humains])`, `verifier_ticket(ticket, ordonnateur, parc, [humains])`, `ecrire_journal(auteur, parc, ticket, precedente, genre, texte, donnees)`, `verifier_journal(ticket, entrees, parc, {id: cle})`, `empreinte_objet(objet)` |
+| Lot 2 | `preparer_validation(humain, parc, charge, "accepte", motif, raison)`, `controler_brouillon(brouillon)`, `emettre_sous_ticket(ordonnateur, sous, parent, validation_ou_None, [humains])`, `verifier_sous_ticket(sous, parent, ordonnateur, parc, [humains])`, `controler_sous_ticket`, `dans_les_zones(zones, chemin)`, `verifier_validation(...)`, `emettre_ticket(ordonnateur, brouillon, validation, [humains])`, `verifier_ticket(ticket, ordonnateur, parc, [humains])`, `ecrire_journal(auteur, parc, ticket, precedente, genre, texte, donnees)`, `verifier_journal(ticket, entrees, parc, {id: cle})`, `empreinte_objet(objet)` |
 | Renouvellement | `CleTransport.charger / .enregistrer`, `preparer_renouvellement(identite, parc, transport)`, `verifier_renouvellement(preuve, identite, parc, transport_b64, registre)`, `Entrante.repondre(..., grace_sec=...)`, `Session.perime` |
 | Appairage | `Rejoignant(identite, transport).engagement / .recevoir(pres)`, `Accueil(engagement, identite, transport).presentation / .verifier(pres)`, `code_parle` |
 | Certificats | `CleTransport()`, `emettre_certificat(...)`, `verifier_certificat(...)`, `Revocations().publier / .recevoir / .est_revoque` |
@@ -93,7 +93,7 @@ dernier message de la poignée de main. Si l'ordonnateur le refuse, `connecter` 
 quand même côté machine, mais la connexion est aussitôt fermée : le premier
 `recevoir` rend `None`.
 
-39 tests Python reprennent le scénario des tests Rust (l'un, avec une vraie puce si `PF_PUCE_PROGRAMME` est donné) ; l'un fait une migration complète à partir de vraies clés générées par `bridge/pont_protocole.py` (v1), transmise sur un vrai canal v1, jusqu'à la session Noise v2 (il faut `cryptography` dans l'environnement de test).
+40 tests Python reprennent le scénario des tests Rust (l'un, avec une vraie puce si `PF_PUCE_PROGRAMME` est donné) ; l'un fait une migration complète à partir de vraies clés générées par `bridge/pont_protocole.py` (v1), transmise sur un vrai canal v1, jusqu'à la session Noise v2 (il faut `cryptography` dans l'environnement de test).
 
 ## Branchement dans nearfield
 
