@@ -469,6 +469,34 @@ class PassageV1V2(unittest.TestCase):
         self.assertNotIn("pcneuf0002", self.compagnon.trusted())
 
 
+    def test_12b_appairage_d_un_appareil_d_interface(self):
+        """La coquille Prismaforge s'appaire avec role "interface" : certificat a ce role,
+        sans capacite (aucun travail), role garde au renouvellement."""
+        def tricher():
+            vrai = self.nb._write
+
+            def ecrire(chemin, data):
+                if os.path.basename(chemin).startswith("engagement-"):
+                    data = dict(data, role="interface")
+                return vrai(chemin, data)
+            p = mock.patch.object(self.nb, "_write", ecrire)
+            p.start()
+            self.addCleanup(p.stop)
+        app, r = self.appairer("coquille-essai", tricher)
+        self.assertEqual(app.etat(), "code")
+        self.assertEqual(app.machine["role"], "interface")
+        self.assertEqual(app.machine["capacites"], [])
+        app.accepter()
+        fiche = self.compagnon.trusted()["coquille-essai"]
+        self.assertEqual(fiche["role"], "interface")
+        dossier = os.path.join(self.compagnon.BRIDGE_DIR, "appairage", "v2")
+        cert = self.compagnon._read(os.path.join(dossier, "certificat-%s.json" % app.n))["objet"]
+        self.assertEqual(cert["charge"]["roles"], ["interface"])
+        self.assertEqual(cert["charge"]["capacites"], [])
+        self.assertEqual(self.pont_v2._roles(fiche), ["interface"])
+        self.assertEqual(self.pont_v2._capacites(dict(fiche, capacites=["whisper"])), [])
+
+
     # --- coffre materiel, cle humaine, validation -------------------------------------
 
     def fausse_puce(self):

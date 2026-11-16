@@ -209,6 +209,22 @@ def presence():
         return {}
 
 
+ROLES_MACHINE = ("travailleur", "interface")
+
+
+def _roles(card):
+    """Role certifie d'une machine : celui de sa fiche (interface : appareil d'interface,
+    coquille Prismaforge ; sinon travailleur)."""
+    role = card.get("role")
+    return [role if role in ROLES_MACHINE else "travailleur"]
+
+
+def _capacites(card):
+    if _roles(card) == ["interface"]:
+        return []
+    return [c for c in card.get("capacites") or [] if isinstance(c, str) and c][:64]
+
+
 def _rotation(cid, card, msg, pair):
     """La machine passe a une nouvelle identite (sa puce) : objet "rotation" contresigne
     par l'identite de CETTE session. La fiche garde l'ancienne en "precedente"."""
@@ -228,9 +244,7 @@ def _rotation(cid, card, msg, pair):
     compagnon.update_card(cid, v2={k: v for k, v in nouvelle.items() if v is not None})
     print(f"[pont v2] {card.get('nom')} : identite passee a {nouvelle['id']} ({r['niveau']})", flush=True)
     return np_.emettre_certificat(coffre(), p, card.get("nom") or nouvelle["id"], r["identite"], r["niveau"],
-                                  r["transport"], ["travailleur"],
-                                  [c for c in card.get("capacites") or [] if isinstance(c, str) and c][:64],
-                                  serie, TOLERANCE_LOGICIELLE)
+                                  r["transport"], _roles(card), _capacites(card), serie, TOLERANCE_LOGICIELLE)
 
 
 def _renouveler(card, msg, cid=None, pair=None):
@@ -250,8 +264,7 @@ def _renouveler(card, msg, cid=None, pair=None):
         nonces.enregistrer(_chemin("nonces.json"))
         serie = _serie_suivante()
     return np_.emettre_certificat(coffre(), p, card.get("nom") or card["v2"]["id"], card["v2"]["identite"],
-                                  card["v2"]["niveau"], transport, ["travailleur"],
-                                  [c for c in card.get("capacites") or [] if isinstance(c, str) and c][:64],
+                                  card["v2"]["niveau"], transport, _roles(card), _capacites(card),
                                   serie, TOLERANCE_LOGICIELLE)
 
 
@@ -653,8 +666,10 @@ class AppairageV2:
                     continue
                 self.n = n
                 nom_machine = str(e.get("nom") or e["compagnon"])[:64]
-                caps = [c for c in e.get("capacites") or [] if isinstance(c, str) and 0 < len(c) <= 128][:64]
-                self.machine = {"nom": nom_machine, "compagnon": e["compagnon"], "capacites": caps,
+                role = "interface" if e.get("role") == "interface" else "travailleur"
+                caps = [] if role == "interface" else \
+                    [c for c in e.get("capacites") or [] if isinstance(c, str) and 0 < len(c) <= 128][:64]
+                self.machine = {"nom": nom_machine, "compagnon": e["compagnon"], "capacites": caps, "role": role,
                                 "niveau": "materiel" if e.get("niveau") == "materiel" else "logiciel"}
                 compagnon._write(os.path.join(_dossier_appairage(), f"presentation-{n}.json"),
                                  {"presentation": self.accueil.presentation, "parc": parc()})
@@ -688,8 +703,9 @@ class AppairageV2:
         with _verrou:
             serie = _serie_suivante()
         cert = np_.emettre_certificat(coffre(), parc(), m["nom"], ident, m["niveau"], base64.b64decode(pres["transport"]),
-                                      ["travailleur"], m["capacites"], serie, TOLERANCE_LOGICIELLE)
-        fiche = dict(existante or {}, nom=m["nom"], capacites=m["capacites"], appaire=time.time(), vu=time.time(),
+                                      [m["role"]], m["capacites"], serie, TOLERANCE_LOGICIELLE)
+        fiche = dict(existante or {}, nom=m["nom"], capacites=m["capacites"], role=m["role"], appaire=time.time(),
+                     vu=time.time(),
                      v2={"id": vid, "identite": ident, "niveau": m["niveau"], "appaire": time.time()})
         fiche.setdefault("stats", {})
         os.makedirs(compagnon.TRUST_DIR, exist_ok=True)
