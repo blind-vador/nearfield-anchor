@@ -26,6 +26,12 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
                                            entrees, clos, pause), du plus recent au plus ancien
   journal_ecrire   {entree}                entree signee PAR L'EXTENSION, chainee et verifiee
   journal_lire     {ticket, depuis}        entrees verifiees
+  artefact_deposer {ticket, nom, contenu}  fichier attache au ticket (un diff par exemple), 180 Kio
+                                           au plus, jamais reecrit ; rend son empreinte, qu'une
+                                           entree de journal SIGNEE reference (donnees.artefacts
+                                           {nom: empreinte}) pour qu'il fasse foi
+  artefact_lire    {ticket, nom}           contenu, empreinte, et l'entree de journal qui le
+                                           reference (n) ou null
   travail_deposer  {ticket, capacite, params}  travail d'un type connu, dans ce qu'autorise le ticket
   contre_epreuve   {ticket, travail, capacite, params}  verification confiee par l'ORDONNATEUR a une
                                            autre machine que l'auteur (ou, seule machine, a un
@@ -57,6 +63,7 @@ qui montre le texte exact du journal.
 Etat (carte SD) : LOCAL_DIR/v2/extensions/fiches.json, LOCAL_DIR/v2/tickets/.
 """
 import base64
+import hashlib
 import json
 import os
 import re
@@ -512,6 +519,55 @@ def journal_lire(cx, req):
     return {"entrees": _entrees(req["ticket"])[depuis:depuis + 200]}
 
 
+MAX_ARTEFACT = 180 * 1024
+NOM_ARTEFACT = re.compile(r"^[a-z0-9][a-z0-9._-]{0,63}$")
+
+
+def _nom_artefact(nom):
+    if not isinstance(nom, str) or not NOM_ARTEFACT.match(nom) or ".." in nom:
+        raise Refus("nom d'artefact : minuscules, chiffres, . _ et -, 64 au plus")
+    return nom
+
+
+def artefact_deposer(cx, req):
+    tid = req.get("ticket")
+    _ticket_actif(tid)
+    nom = _nom_artefact(req.get("nom"))
+    try:
+        contenu = base64.b64decode(req.get("contenu") or "", validate=True)
+    except ValueError:
+        raise Refus("contenu : base64 attendu")
+    if len(contenu) > MAX_ARTEFACT:
+        raise Refus("artefact trop gros (180 Kio au plus)")
+    chemin = _dossier("tickets", tid, "artefacts", nom)
+    os.makedirs(os.path.dirname(chemin), mode=0o700, exist_ok=True)
+    try:
+        fd = os.open(chemin, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    except FileExistsError:
+        raise Refus("cet artefact existe deja (jamais reecrit)")
+    with os.fdopen(fd, "wb") as f:
+        f.write(contenu)
+    return {"empreinte": hashlib.sha256(contenu).hexdigest(), "taille": len(contenu)}
+
+
+def artefact_lire(cx, req):
+    tid = req.get("ticket")
+    t = _ticket(tid)
+    nom = _nom_artefact(req.get("nom"))
+    try:
+        with open(_dossier("tickets", tid, "artefacts", nom), "rb") as f:
+            contenu = f.read(MAX_ARTEFACT + 1)
+    except OSError:
+        raise Refus("artefact inconnu")
+    empreinte = hashlib.sha256(contenu).hexdigest()
+    reference = None
+    for e in _journal_verifie(t, _entrees(tid)):
+        if ((e.get("donnees") or {}).get("artefacts") or {}).get(nom) == empreinte:
+            reference = e["n"]
+    return {"nom": nom, "contenu": base64.b64encode(contenu).decode(), "empreinte": empreinte,
+            "reference": reference}
+
+
 def _capacites_du_parc():
     caps = set()
     for card in compagnon.trusted().values():
@@ -699,6 +755,8 @@ REQUETES = {
     "journal_ecrire": journal_ecrire,
     "journal_lire": journal_lire,
     "travail_deposer": travail_deposer,
+    "artefact_deposer": artefact_deposer,
+    "artefact_lire": artefact_lire,
     "contre_epreuve": contre_epreuve,
     "evenements": evenements,
     "interface_servir": interface_servir,

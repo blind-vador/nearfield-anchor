@@ -453,5 +453,30 @@ class PointExtensions(unittest.TestCase):
         self.assertEqual((t["mode"], t["clos"], t["pause"]), ("lax", False, False))
 
 
+    def test_artefacts_references_par_le_journal(self):
+        import base64
+        import hashlib
+        cl, _ = self.client()
+        t = self.ticket_emis(cl, "art-1")
+        diff = b"--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -1,2 +1,2 @@\n-Bonjour\n+Bonsoir\n fin\n"
+        r = cl.requete("artefact_deposer", ticket="art-1", nom="diff-1.patch",
+                       contenu=base64.b64encode(diff).decode())
+        self.assertEqual(r["empreinte"], hashlib.sha256(diff).hexdigest())
+        # Jamais reecrit ; noms surs seulement ; taille bornee.
+        self.assertEqual(cl.requete("artefact_deposer", ticket="art-1", nom="diff-1.patch", contenu="")["type"],
+                         "erreur")
+        for nom in ("../x", "Diff", ".cache", "a/b"):
+            self.assertEqual(cl.requete("artefact_deposer", ticket="art-1", nom=nom, contenu="")["type"], "erreur")
+        gros = base64.b64encode(b"x" * (180 * 1024 + 1)).decode()
+        self.assertEqual(cl.requete("artefact_deposer", ticket="art-1", nom="gros", contenu=gros)["type"], "erreur")
+        lu = cl.requete("artefact_lire", ticket="art-1", nom="diff-1.patch")
+        self.assertEqual((base64.b64decode(lu["contenu"]), lu["reference"]), (diff, None))
+        # Une entree signee le reference : il fait foi.
+        e0 = np_.ecrire_journal(self.cle, self.v2.parc(), t, None, "resultat", "Diff du guide.",
+                                {"fichiers": ["docs/guide.md"], "artefacts": {"diff-1.patch": r["empreinte"]}})
+        self.assertEqual(cl.requete("journal_ecrire", entree=e0)["n"], 0)
+        self.assertEqual(cl.requete("artefact_lire", ticket="art-1", nom="diff-1.patch")["reference"], 0)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
