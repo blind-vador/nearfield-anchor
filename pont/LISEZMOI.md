@@ -14,7 +14,9 @@ Spécification complète : `specs/protocole-v2.md` dans le dossier de conception
 | Module | Rôle |
 |---|---|
 | `jcs` | Forme canonique JSON (RFC 8785, entiers seulement) : ce qui est signé |
-| `cles` | Clés Ed25519 et P-256, coffres (fichier aujourd'hui, puces ensuite), identifiants de machine. Relit la `cle.pem` de la v1 |
+| `cles` | Clés Ed25519 et P-256, coffres, identifiants de machine. Relit la `cle.pem` de la v1 |
+| `puce` | Coffres matériels par un programme local au protocole fermé : `pf-enclave` (Secure Enclave du Mac, `bridge/pf_enclave.swift`), `pf-tpm` (TPM 2.0 sous Linux, `tools/pf-tpm`). Choix de l'identité : la puce si elle existe, sinon le fichier ; une identité neuve va dans la puce si elle répond, sinon repli logiciel (Raspberry Pi). Programme vérifié (chemin absolu, à nous ou à root, non modifiable par d'autres), environnement réduit, chaque signature revérifiée |
+| `rotation` | Passage d'une identité v2 à une autre (logiciel → puce) sans nouvel appairage : nouvelle clé contresignée par l'ancienne, liée à la clé de transport ; jamais de la puce vers le logiciel |
 | `objet` | Objets signés pour le NAS : vérification, empreintes des fichiers joints, noms sûrs, registre anti-rejeu de 7 jours |
 | `enveloppe` | Chiffrement à destinataires multiples (spec §6.2) : clé de réception X25519 publiée chaque semaine (objet signé), X25519 éphémère + HKDF-SHA256 + ChaCha20-Poly1305, contenu en blocs de 64 Kio liés à l'entête ; octets ou fichiers |
 | `validation` | Validations humaines (protocole-v2 §7) : liées à l'empreinte d'une charge, 5 minutes, `accepte` ou `refuse` |
@@ -23,7 +25,7 @@ Spécification complète : `specs/protocole-v2.md` dans le dossier de conception
 | `appairage` | Engagement préalable et code vocal à 6 chiffres, dit en 3 paires |
 | `certificat` | Certificats de 12 h (rôles, capacités, niveau), liste de révocation qui ne recule jamais |
 | `migration` | Passage de la v1 à la v2 sans nouvel appairage : nouvelle identité signée par la nouvelle clé et contresignée par la clé v1 ; une ancienne clé ne migre qu'une fois |
-| `messages` | Liste fermée des messages du canal, limites de taille |
+| `messages` | Liste fermée des messages du canal, limites de taille (dont `validation_demande`, `validation_reponse`, `humain_annonce` du lot 2) |
 | `transport` | Session Noise XX (`Noise_XX_25519_ChaChaPoly_SHA256`) authentifiée par certificat, port 47812. Une session TCP se sépare en une moitié qui envoie et une qui reçoit (`separer`), pour deux fils d'exécution |
 
 ## Tests
@@ -32,13 +34,24 @@ Spécification complète : `specs/protocole-v2.md` dans le dossier de conception
 cargo test
 ```
 
-58 tests : vecteurs fixes (`vecteurs.json`, recalculés indépendamment en Python),
+62 tests unitaires et 9 d'intégration (parc, puce) : vecteurs fixes (`vecteurs.json`, recalculés indépendamment en Python),
 et les attaques que la v2 doit repousser (charge modifiée, rejeu, objet trop vieux, autre
 parc, faux ordonnateur, clé Noise différente du certificat, intermédiaire pendant
 l'appairage, type de message inconnu, chemin `../`, liste de révocation plus ancienne…).
 
 Pour ne pas remplir le NAS, compiler avec un dossier de sortie local :
 `CARGO_TARGET_DIR=~/.cache/cible-pont cargo test`.
+
+Les coffres matériels sont essayés avec une fausse puce (exemple `puce_factice`, construit
+par `cargo test`). Pour une vraie puce : `PF_PUCE_PROGRAMME=<chemin du programme> cargo test`
+(et de même pour `pytest` côté Python). Sans TPM, un TPM simulé suffit :
+
+```
+sudo apt install tpm2-tools swtpm swtpm-tools
+mkdir -p /tmp/tpm && swtpm socket --tpmstate dir=/tmp/tpm --tpm2 --server type=tcp,port=2321 \
+  --ctrl type=tcp,port=2322 --flags not-need-init,startup-clear --daemon
+TPM2TOOLS_TCTI=swtpm:port=2321 PF_PUCE_PROGRAMME=$PWD/../tools/pf-tpm cargo test --test puce
+```
 
 ## Liaison Python (`python/`)
 
@@ -59,10 +72,12 @@ Ce qu'il offre :
 
 | Domaine | Python |
 |---|---|
-| Clés | `Coffre.charger_ou_creer(chemin, "p256")`, `.cle_publique()`, `.id`, `.signer_objet(charge)`, `identifiant(cle)`, `canonique(valeur)` |
+| Clés | `Coffre.identite(dossier, programme)` (puce ou repli logiciel), `Coffre.charger_ou_creer(chemin, "p256")`, `.cle_publique()`, `.id`, `.niveau`, `.signer_objet(charge, raison)`, `identifiant(cle)`, `canonique(valeur)` |
+| Puce | `Coffre.puce_disponible(programme)`, `Coffre.creer_dans_la_puce(programme, poignee, presence)`, `Coffre.ouvrir_dans_la_puce(programme, poignee, presence)` ; `presence=True` : clé humaine (Touch ID ou mot de passe à chaque signature, `raison` affichée) |
+| Rotation | `preparer_rotation(ancien, nouveau, parc, transport)`, `type_de_preuve(preuve)`, `verifier_rotation(preuve, identite, niveau, parc, transport_b64, registre)` |
 | Objets signés | `verifier_objet(objet, cle, type, parc, registre)`, `RegistreNonces.charger/enregistrer`, `verifier_fichiers`, `empreinte_fichier`, `nom_sur` |
 | Enveloppe | `CleReception.charger_ou_creer(chemin)`, `.public`, `.empreinte`, `.publier(coffre, parc)`, `verifier_cle_reception(objet, identite, parc)`, `sceller([(id, cle)], de, contexte, octets)`, `ouvrir(env, moi, de, [cles])`, `sceller_fichier(...)`, `ouvrir_fichier(...)` |
-| Lot 2 | `preparer_validation(humain, parc, charge, "accepte")`, `verifier_validation(...)`, `emettre_ticket(ordonnateur, brouillon, validation, [humains])`, `verifier_ticket(ticket, ordonnateur, parc, [humains])`, `ecrire_journal(auteur, parc, ticket, precedente, genre, texte, donnees)`, `verifier_journal(ticket, entrees, parc, {id: cle})`, `empreinte_objet(objet)` |
+| Lot 2 | `preparer_validation(humain, parc, charge, "accepte", motif, raison)`, `controler_brouillon(brouillon)`, `verifier_validation(...)`, `emettre_ticket(ordonnateur, brouillon, validation, [humains])`, `verifier_ticket(ticket, ordonnateur, parc, [humains])`, `ecrire_journal(auteur, parc, ticket, precedente, genre, texte, donnees)`, `verifier_journal(ticket, entrees, parc, {id: cle})`, `empreinte_objet(objet)` |
 | Renouvellement | `CleTransport.charger / .enregistrer`, `preparer_renouvellement(identite, parc, transport)`, `verifier_renouvellement(preuve, identite, parc, transport_b64, registre)`, `Entrante.repondre(..., grace_sec=...)`, `Session.perime` |
 | Appairage | `Rejoignant(identite, transport).engagement / .recevoir(pres)`, `Accueil(engagement, identite, transport).presentation / .verifier(pres)`, `code_parle` |
 | Certificats | `CleTransport()`, `emettre_certificat(...)`, `verifier_certificat(...)`, `Revocations().publier / .recevoir / .est_revoque` |
@@ -78,7 +93,7 @@ dernier message de la poignée de main. Si l'ordonnateur le refuse, `connecter` 
 quand même côté machine, mais la connexion est aussitôt fermée : le premier
 `recevoir` rend `None`.
 
-35 tests Python reprennent le scénario des tests Rust ; l'un fait une migration complète à partir de vraies clés générées par `bridge/pont_protocole.py` (v1), transmise sur un vrai canal v1, jusqu'à la session Noise v2 (il faut `cryptography` dans l'environnement de test).
+39 tests Python reprennent le scénario des tests Rust (l'un, avec une vraie puce si `PF_PUCE_PROGRAMME` est donné) ; l'un fait une migration complète à partir de vraies clés générées par `bridge/pont_protocole.py` (v1), transmise sur un vrai canal v1, jusqu'à la session Noise v2 (il faut `cryptography` dans l'environnement de test).
 
 ## Branchement dans nearfield
 

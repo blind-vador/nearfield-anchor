@@ -590,3 +590,62 @@ def test_journal_chaine_et_refus():
         np_.verifier_journal(t, [a, b, c], PARC, {mac.id: mac.cle_publique()})  # signataire inconnu
     with pytest.raises(np_.ErreurFormat):
         np_.ecrire_journal(mac, PARC, t, a, "commande")       # genre hors liste
+
+
+# ------------------------------------------------------------------ coffres matériels, rotation
+
+def test_identite_repli_logiciel_et_puce_obligatoire(tmp_path):
+    c = np_.Coffre.identite(tmp_path)
+    assert c.niveau == "logiciel"
+    assert (tmp_path / "identite.pem").exists()
+    assert np_.Coffre.identite(tmp_path).id == c.id
+    (tmp_path / "identite.puce").write_bytes(b"x")
+    with pytest.raises(np_.ErreurCle):
+        np_.Coffre.identite(tmp_path)  # jamais de repli silencieux quand la puce manque
+    assert not np_.Coffre.puce_disponible("/nexiste/pas")
+
+
+def test_rotation_vers_une_nouvelle_cle():
+    ancien, nouveau = np_.Coffre.generer(), np_.Coffre.generer()
+    t = os.urandom(32)
+    preuve = np_.preparer_rotation(ancien, nouveau, PARC, t)
+    assert np_.type_de_preuve(preuve) == "rotation"
+    reg = np_.RegistreNonces()
+    t64 = base64.b64encode(t).decode()
+    r = np_.verifier_rotation(preuve, ancien.cle_publique(), "logiciel", PARC, t64, reg)
+    assert r["identite"] == nouveau.cle_publique() and r["transport"] == t
+    with pytest.raises(np_.Rejeu):
+        np_.verifier_rotation(preuve, ancien.cle_publique(), "logiciel", PARC, t64, reg)
+    with pytest.raises(np_.ErreurPont):
+        np_.verifier_rotation(preuve, np_.Coffre.generer().cle_publique(), "logiciel", PARC, t64)
+    with pytest.raises(np_.ErreurPont):  # pas de retour d'une puce vers du logiciel
+        np_.verifier_rotation(preuve, ancien.cle_publique(), "materiel", PARC, t64)
+    renouv = np_.preparer_renouvellement(ancien, PARC, t)
+    assert np_.type_de_preuve(renouv) == "renouvellement"
+
+
+def test_controle_du_brouillon():
+    b = {"type": "ticket", "parc": PARC, "id": "essai-1", "titre": "Essai", "plan": "Faire.",
+         "budget": {"secondes": 60, "cout_centimes": 0}, "capacites": ["agent-code"], "zones": ["src/"]}
+    e = np_.controler_brouillon(b)
+    assert len(e) == 64
+    with pytest.raises(np_.ErreurPont):
+        np_.controler_brouillon(dict(b, zones=["../etc/"]))
+    with pytest.raises(np_.ErreurPont):
+        np_.controler_brouillon(dict(b, commande="rm -rf /"))
+
+
+@pytest.mark.skipif(not os.environ.get("PF_PUCE_PROGRAMME"), reason="pas de vraie puce demandée")
+def test_vraie_puce(tmp_path):
+    prog = os.environ["PF_PUCE_PROGRAMME"]
+    assert np_.Coffre.puce_disponible(prog)
+    c = np_.Coffre.identite(tmp_path, prog)
+    assert c.niveau == "materiel" and (tmp_path / "identite.puce").exists()
+    o = c.signer_objet({"type": "essai", "parc": PARC, "id": "x"})
+    np_.verifier_objet(o, c.cle_publique(), "essai", PARC)
+    # Rotation d'une clé logicielle vers la puce.
+    ancien = np_.Coffre.generer()
+    t = os.urandom(32)
+    p = np_.preparer_rotation(ancien, c, PARC, t)
+    r = np_.verifier_rotation(p, ancien.cle_publique(), "logiciel", PARC, base64.b64encode(t).decode())
+    assert r["niveau"] == "materiel"

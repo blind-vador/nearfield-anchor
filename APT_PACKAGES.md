@@ -133,6 +133,12 @@ cp build/librnnoise.so /home/<user>/autopilot/pi_console/rnnoise_lib/
 - Console : `python3-evdev`, `python3-fuzzywuzzy`, `python3-levenshtein`.
 - `wget` : téléchargement du modèle RNNoise pendant sa compilation.
 
+## Paquet conditionnel
+
+- `tpm2-tools` : seulement sur une machine Linux avec un TPM 2.0 (`/dev/tpmrm0`) ; la clé
+  d'identité v2 y est créée par `tools/pf-tpm`. Le Raspberry Pi n'a pas de TPM : clé
+  logicielle (`install.sh` ne l'installe que si le TPM est présent).
+
 ## Dépendances Python (pip)
 
 Voir `requirements.txt` à la racine. `pip3 install -r requirements.txt`.

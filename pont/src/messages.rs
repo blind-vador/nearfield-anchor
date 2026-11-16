@@ -112,6 +112,27 @@ pub enum Message {
         taux: Option<u32>,
     },
     Oubli { id: String, objet: ObjetSigne },
+    /// L'ordonnateur demande une validation humaine de `charge` (lot 2 §1) à l'appareil
+    /// qui porte la clé humaine. L'appareil montre la charge elle-même et calcule son
+    /// empreinte : il ne signe jamais une empreinte qu'il n'a pas vue.
+    ValidationDemande {
+        id: String,
+        /// Ce qui est validé : nom simple (`ticket`, `extension`…).
+        sujet: String,
+        charge: Value,
+    },
+    /// Réponse : l'objet `validation` signé (accepte ou refuse), ou une erreur
+    /// (annulé, pas de clé humaine, délai dépassé).
+    ValidationReponse {
+        id: String,
+        reponse_a: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        objet: Option<ObjetSigne>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        erreur: Option<String>,
+    },
+    /// Un appareil annonce sa clé humaine : objet `humain` signé par elle (lot 2 §1).
+    HumainAnnonce { id: String, objet: ObjetSigne },
     /// Décodage TETRA en direct. La machine se connecte au flux radio de
     /// l'ordonnateur (son adresse, jamais une adresse reçue) sur `port`.
     TetraDemande {
@@ -274,6 +295,25 @@ fn fini(nom: &str, v: f64, min: f64, max: f64) -> Resultat<()> {
 }
 
 /// Données descriptives bornées (§8.2).
+/// Charge à valider (un brouillon de ticket et son plan) : objet JSON de 32 Kio au plus,
+/// profondeur bornée.
+pub const MAX_CHARGE: usize = 32_768;
+
+fn charge_bornee(v: &Value) -> Resultat<()> {
+    fn profondeur(v: &Value, p: usize) -> bool {
+        p <= PROFONDEUR_DONNEES
+            && match v {
+                Value::Array(a) => a.len() <= MAX_LISTE && a.iter().all(|x| profondeur(x, p + 1)),
+                Value::Object(o) => o.len() <= MAX_LISTE && o.values().all(|x| profondeur(x, p + 1)),
+                _ => true,
+            }
+    }
+    if !v.is_object() || !profondeur(v, 0) || serde_json::to_vec(v)?.len() > MAX_CHARGE {
+        return Err(Erreur::Message("charge à valider invalide ou trop grosse".into()));
+    }
+    Ok(())
+}
+
 pub(crate) fn donnees(nom: &str, v: &Option<Value>) -> Resultat<()> {
     fn parcourir(v: &Value, prof: usize) -> bool {
         if prof > PROFONDEUR_DONNEES {
@@ -322,6 +362,9 @@ impl Message {
             | Message::Dire { id, .. }
             | Message::Morceau { id, .. }
             | Message::Oubli { id, .. }
+            | Message::ValidationDemande { id, .. }
+            | Message::ValidationReponse { id, .. }
+            | Message::HumainAnnonce { id, .. }
             | Message::TravailFini { id, .. }
             | Message::Tickets { id, .. }
             | Message::DireFin { id, .. }
@@ -449,7 +492,23 @@ impl Message {
                 }
                 Ok(())
             }
-            Message::Certificat { .. } | Message::Revocations { .. } | Message::Resultat { .. } | Message::Oubli { .. } => {
+            Message::ValidationDemande { sujet, charge, .. } => {
+                simple("sujet", sujet)?;
+                charge_bornee(charge)
+            }
+            Message::ValidationReponse { reponse_a, erreur, objet, .. } => {
+                court("reponse_a", reponse_a)?;
+                texte_opt("erreur", erreur)?;
+                if objet.is_none() == erreur.is_none() {
+                    return Err(Erreur::Message("validation_reponse : un objet ou une erreur".into()));
+                }
+                Ok(())
+            }
+            Message::Certificat { .. }
+            | Message::Revocations { .. }
+            | Message::Resultat { .. }
+            | Message::Oubli { .. }
+            | Message::HumainAnnonce { .. } => {
                 Ok(()) // l'objet signé est vérifié par le destinataire, avec la bonne clé
             }
         }
@@ -544,5 +603,21 @@ mod tests {
         assert!(Message::decoder(br#"{"type":"progression","id":"x","travail":"t","etape":"e","pourcentage":101}"#).is_err());
         let long = format!(r#"{{"type":"dire","id":"x","texte":"{}"}}"#, "a".repeat(MAX_TEXTE + 1));
         assert!(Message::decoder(long.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn messages_de_validation() {
+        let d = r#"{"type":"validation_demande","id":"v1","sujet":"ticket","charge":{"type":"ticket","titre":"Essai","plan":"x"}}"#;
+        let m = Message::decoder(d.as_bytes()).unwrap();
+        assert_eq!(Message::decoder(&m.encoder().unwrap()).unwrap(), m);
+        let e = r#"{"type":"validation_reponse","id":"v2","reponse_a":"v1","erreur":"annulé"}"#;
+        Message::decoder(e.as_bytes()).unwrap();
+        // Ni objet ni erreur : refusé ; sujet qui n'est pas un nom simple : refusé.
+        assert!(Message::decoder(br#"{"type":"validation_reponse","id":"v2","reponse_a":"v1"}"#).is_err());
+        assert!(Message::decoder(br#"{"type":"validation_demande","id":"v1","sujet":"Ticket !","charge":{}}"#).is_err());
+        // Charge trop grosse ou pas un objet : refusée.
+        let gros = format!(r#"{{"type":"validation_demande","id":"v1","sujet":"ticket","charge":{{"plan":"{}"}}}}"#, "a".repeat(40_000));
+        assert!(Message::decoder(gros.as_bytes()).is_err());
+        assert!(Message::decoder(br#"{"type":"validation_demande","id":"v1","sujet":"ticket","charge":[1]}"#).is_err());
     }
 }

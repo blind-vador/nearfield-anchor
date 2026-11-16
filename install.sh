@@ -67,6 +67,13 @@ apt-get install -y \
     python3-evdev python3-fuzzywuzzy python3-levenshtein python3-pil \
     python3-cryptography python3-serial libssl-dev smartmontools \
     welle.io usbutils iw   # DAB+ (welle-cli), usbreset du dongle fige (usb-repare reinit), Wi-Fi (veille systeme)
+# Coffre materiel (protocole v2) : sur une machine avec TPM 2.0, la cle d'identite v2 est
+# creee dans le TPM (tools/pf-tpm). Le Raspberry Pi n'en a pas : cle logicielle, rien a faire.
+if [ -c /dev/tpmrm0 ]; then
+    apt-get install -y tpm2-tools
+    usermod -aG tss "$RUN_USER"   # acces a /dev/tpmrm0 (gestionnaire de ressources du noyau)
+    chmod 755 "$(dirname "$0")/tools/pf-tpm" 2>/dev/null || true
+fi
 # smartd (service de smartmontools) : remplace par sante-disques.timer, qui lit les memes mesures
 systemctl disable --now smartmontools.service 2>/dev/null || true
 

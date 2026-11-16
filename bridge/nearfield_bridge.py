@@ -19,6 +19,8 @@ Commandes (utilisees par l'application Nearfield Bridge, ou a la main) :
                           suffit (Oui ici, ou Entree sur le Pi), l'autre suit
   ponts                   liste des ponts (id, tabulation, description)
   oublier <pi>            supprime le pont avec ce Pi (le Pi est prevenu)
+  humain                  cree la cle humaine dans la Secure Enclave (Touch ID ou mot
+                          de passe a chaque validation) et l'annonce aux Pi en v2
   service-pause / service-reprise / service-etat
 
 Compatible Python 3.9 (celui d'Apple).
@@ -70,7 +72,10 @@ NAS_FALLBACK_SEC = 12 * 3600
 LOOP_SEC = 5
 PAIRING_WAIT_SEC = 180
 RECONNECT_SEC = (10, 120)
-V2_DIR = os.path.join(HOME, "v2")            # identite.pem (cle v2), ponts/<pi>.json (cle v2 du Pi epinglee)
+V2_DIR = os.path.join(HOME, "v2")            # identite.puce|pem (cle v2), ponts/<pi>.json (cle v2 du Pi epinglee)
+PUCE = os.path.join(HOME, "bin", "pf-enclave")  # Secure Enclave (bridge/pf_enclave.swift, construit par installer.sh)
+HUMAIN = os.path.join(V2_DIR, "humain.puce")    # cle humaine : Touch ID ou mot de passe a CHAQUE signature
+ANNONCES_HUMAIN = os.path.join(V2_DIR, "humain-annonces")  # <pi>.json : objet "humain" signe, a remettre au Pi
 CERT_MI_VIE_SEC = 6 * 3600  # certificat v2 de 12 h : renouvele a mi-vie, dans la session
 
 
@@ -771,6 +776,35 @@ def pairing_decide():
 # Code de 6 chiffres, dit en 3 paires ; la personne valide sur LES DEUX machines. On
 # s'engage sur notre cle avant de connaitre l'alea du Pi.
 
+def _programme_puce():
+    """Programme de la Secure Enclave, ou None (repli : cle logicielle).
+    NEARFIELD_PUCE=non : jamais de puce ; NEARFIELD_PUCE=<chemin> : ce programme."""
+    choix = os.environ.get("NEARFIELD_PUCE", "")
+    if choix.lower() in ("non", "0", "logiciel"):
+        return None
+    if choix:
+        return choix
+    return PUCE if os.path.isfile(PUCE) else None
+
+
+def _identite_existe():
+    return any(os.path.lexists(os.path.join(V2_DIR, n)) for n in ("identite.puce", "identite.pem"))
+
+
+def _mon_coffre():
+    """Notre identite v2 : la Secure Enclave (identite.puce) quand elle existe, sinon la
+    cle logicielle (identite.pem) ; une identite neuve va dans la puce si elle repond."""
+    os.makedirs(V2_DIR, mode=0o700, exist_ok=True)
+    return pont2.Coffre.identite(V2_DIR, _programme_puce())
+
+
+def _rotation_voulue():
+    """Identite encore logicielle alors que la Secure Enclave repond : a faire passer."""
+    prog = _programme_puce()
+    return bool(prog and not os.path.lexists(os.path.join(V2_DIR, "identite.puce"))
+                and _identite_existe() and pont2.Coffre.puce_disponible(prog))
+
+
 def _pairing_wait_v2(conf, share):
     dossier = os.path.join(share, "appairage", "v2")
     deadline = time.time() + PAIRING_WAIT_SEC
@@ -787,7 +821,7 @@ def _pairing_wait_v2(conf, share):
     if not ouvert or not ouvert.get("parc"):
         return _pairing_wait_v1(conf, share)
     os.makedirs(V2_DIR, mode=0o700, exist_ok=True)
-    moi = pont2.Coffre.charger_ou_creer(os.path.join(V2_DIR, "identite.pem"), "p256")
+    moi = _mon_coffre()
     transport = pont2.CleTransport()
     rejoignant = pont2.Rejoignant(moi.cle_publique(), transport.public)
     n = uuid.uuid4().hex[:12]
@@ -842,7 +876,7 @@ def _pairing_decide_v2(conf, pending):
         cert = reponse.get("objet")
         try:
             c = pont2.verifier_certificat(cert, parc, reponse["parc"], pont2.Revocations(), True)
-            moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))
+            moi = _mon_coffre()
             if c["identite"] != moi.cle_publique() or base64.b64decode(c["transport"]) != transport.public:
                 raise pont2.CertificatRefuse("ce certificat n'est pas le mien")
         except pont2.ErreurPont as exc:
@@ -878,8 +912,8 @@ def forget(pi):
         return "ERREUR", "Pas de pont avec %s." % pi
     share = find_share(card)
     epingle = _read(os.path.join(V2_DIR, "ponts", "%s.json" % pi))
-    if share and pont2 is not None and epingle and os.path.exists(os.path.join(V2_DIR, "identite.pem")):
-        moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))  # retrait signe en v2
+    if share and pont2 is not None and epingle and _identite_existe():
+        moi = _mon_coffre()  # retrait signe en v2
         _write(os.path.join(share, "revocations", conf["id"] + ".json"),
                moi.signer_objet({"type": "oubli", "parc": epingle["parc"], "id": "oubli-" + conf["id"],
                                  "compagnon": conf["id"], "pi": card.get("nom") or pi}))
@@ -1080,7 +1114,7 @@ class Link(threading.Thread):
                     return
                 cert = msg.get("objet")
                 c = pont2.verifier_certificat(cert, epingle["ordonnateur"], epingle["parc"], pont2.Revocations(), True)
-                moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))
+                moi = _mon_coffre()
                 import base64
                 if c["identite"] != moi.cle_publique() or base64.b64decode(c["transport"]) != self.transport_v2.public:
                     raise pont2.CertificatRefuse("ce certificat n'est pas le mien")
@@ -1103,7 +1137,7 @@ class Link(threading.Thread):
         """Notre objet "migration" (cle v2 contresignee par la cle v1), par la v1 :
         le Pi rend un certificat v2 de 12 h pour une cle de transport neuve."""
         os.makedirs(V2_DIR, mode=0o700, exist_ok=True)
-        moi = pont2.Coffre.charger_ou_creer(os.path.join(V2_DIR, "identite.pem"), "p256")
+        moi = _mon_coffre()
         self.transport_v2 = pont2.CleTransport()
         objet = pont2.preparer_migration(pont2.Coffre.ouvrir(KEY_PATH), moi, parc, config()["nom"],
                                          self.transport_v2.public)
@@ -1181,7 +1215,7 @@ def _etat_v2(pi):
     epingle = _read(os.path.join(V2_DIR, "ponts", "%s.json" % pi))
     c = _read(os.path.join(_dossier_session(pi), "certificat.json"))
     chemin = os.path.join(_dossier_session(pi), "transport.cle")
-    if not epingle or not c or not os.path.exists(chemin) or not os.path.exists(os.path.join(V2_DIR, "identite.pem")):
+    if not epingle or not c or not os.path.exists(chemin) or not _identite_existe():
         return None
     try:
         return epingle, pont2.CleTransport.charger(chemin), c["objet"], int(c.get("port") or 47812)
@@ -1230,6 +1264,102 @@ class LiaisonV2(Link):
             delay = min(delay * 2, RECONNECT_SEC[1])
 
 
+# --- cle humaine et validations (lot 2 §1) ----------------------------------------------
+
+_verrou_validation = threading.Lock()
+VALIDATION_DIALOGUE_SEC = 200
+
+
+def _texte_validation(sujet, charge):
+    """Ce que l'humain lit (VoiceOver) avant de valider : la charge elle-meme."""
+    if sujet == "ticket":
+        b = charge.get("budget") or {}
+        plan = str(charge.get("plan") or "")
+        if len(plan) > 6000:
+            plan = plan[:6000] + "\n(plan coupé ici : %d caractères de plus)" % (len(plan) - 6000)
+        return ("Valider le ticket « %s » ?\n\nPlan :\n%s\n\nBudget : %d minutes, %d centimes.\n"
+                "Capacités : %s.\nZones : %s." % (
+                    charge.get("titre", ""), plan, int(b.get("secondes", 0)) // 60, int(b.get("cout_centimes", 0)),
+                    ", ".join(charge.get("capacites") or []) or "aucune",
+                    ", ".join(charge.get("zones") or []) or "aucune"))
+    if sujet == "extension":
+        return ("Enrôler l'extension « %s » sur nearfield ?\n\nCapacités : %s.\nEmpreinte de sa clé : %s."
+                % (charge.get("nom", ""), ", ".join(charge.get("capacites") or []) or "aucune",
+                   charge.get("empreinte", "")))
+    return "Valider ceci (%s) ?\n\n%s" % (sujet, json.dumps(charge, ensure_ascii=False, indent=1)[:6000])
+
+
+def _dialogue_validation(texte):
+    """Dialogue systeme lu par VoiceOver ; « Refuser » par defaut. Rend True si « Valider »."""
+    script = ('activate\ndisplay dialog %s with title "nearfield : validation" buttons {"Refuser", "Valider"} '
+              'default button "Refuser" cancel button "Refuser" with icon caution giving up after %d'
+              % (json.dumps(texte, ensure_ascii=False), VALIDATION_DIALOGUE_SEC))
+    try:
+        sortie = subprocess.run(["osascript", "-e", script], capture_output=True, text=True,
+                                timeout=VALIDATION_DIALOGUE_SEC + 20).stdout
+    except subprocess.TimeoutExpired:
+        return False
+    return "button returned:Valider" in sortie and "gave up:true" not in sortie
+
+
+def valider_humain(parc, sujet, charge):
+    """L'humain lit la charge, choisit, puis signe avec sa cle humaine (Secure Enclave :
+    Touch ID ou mot de passe, demande par macOS). Rend l'objet "validation"."""
+    prog = _programme_puce()
+    if not prog or not os.path.exists(HUMAIN):
+        raise RuntimeError("pas de cle humaine sur ce Mac (commande « humain » du pont)")
+    if not isinstance(sujet, str) or not re.fullmatch(r"[a-z0-9_-]{1,64}", sujet):
+        raise RuntimeError("sujet de validation invalide")
+    with _verrou_validation:  # une question a la fois
+        if not _dialogue_validation(_texte_validation(sujet, charge)):
+            raise RuntimeError("refuse par l'humain (ou pas de reponse)")
+        humain = pont2.Coffre.ouvrir_dans_la_puce(prog, HUMAIN, True)
+        titre = str(charge.get("titre") or charge.get("nom") or sujet)[:120]
+        raison = re.sub(r"[\x00-\x1f]", " ", "valider « %s » pour nearfield" % titre)
+        return pont2.preparer_validation(humain, parc, charge, "accepte", None, raison)
+
+
+def humain_creer():
+    """Cree (ou reprend) la cle humaine dans la Secure Enclave et prepare son annonce
+    pour chaque Pi en v2. macOS demande Touch ID ou le mot de passe une fois."""
+    if pont2 is None:
+        return "ERREUR", "Module nearfield_pont absent."
+    prog = _programme_puce()
+    if not prog or not pont2.Coffre.puce_disponible(prog):
+        return "ERREUR", "Pas de Secure Enclave utilisable (programme pf-enclave absent ?)."
+    os.makedirs(V2_DIR, mode=0o700, exist_ok=True)
+    try:
+        humain = (pont2.Coffre.ouvrir_dans_la_puce(prog, HUMAIN, True) if os.path.exists(HUMAIN)
+                  else pont2.Coffre.creer_dans_la_puce(prog, HUMAIN, True))
+        pis = []
+        for nom in sorted(os.listdir(os.path.join(V2_DIR, "ponts"))):
+            epingle = _read(os.path.join(V2_DIR, "ponts", nom))
+            if not nom.endswith(".json") or not epingle:
+                continue
+            objet = humain.signer_objet({"type": "humain", "parc": epingle["parc"], "id": "humain-" + humain.id,
+                                         "identite": humain.cle_publique(), "nom": config().get("nom", "Mac")},
+                                        "enregistrer la clé humaine de ce Mac pour nearfield")
+            os.makedirs(ANNONCES_HUMAIN, mode=0o700, exist_ok=True)
+            _write(os.path.join(ANNONCES_HUMAIN, nom), {"objet": objet, "t": time.time()})
+            pis.append(nom[:-5])
+    except (pont2.ErreurPont, OSError) as exc:
+        return "ERREUR", "Clé humaine non créée : %s" % exc
+    if not pis:
+        return "ERREUR", "Clé humaine créée (%s), mais aucun Pi en v2 à qui l'annoncer." % humain.id
+    _wake_service()
+    return "OK", ("Clé humaine %s prête, dans la Secure Enclave. Elle sera annoncée à %s à la prochaine "
+                  "connexion du service." % (humain.id, ", ".join(pis)))
+
+
+def _wake_service():
+    """Relance le service pour qu'il remette tout de suite l'annonce (sinon : prochaine session)."""
+    try:
+        subprocess.run(["launchctl", "kickstart", "-k", "gui/%d/%s" % (os.getuid(), LABEL)],
+                       capture_output=True, timeout=20)
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+
+
 class PiloteV2(threading.Thread):
     """Session v2 (Noise, port 47812) a cote de la liaison v1. Tout le trafic y
     passe (Link.send essaie la v2 d'abord) ; la v1 garde l'amorce, ses battements
@@ -1247,6 +1377,9 @@ class PiloteV2(threading.Thread):
         self.etablie = False
         self.renouvele = False   # certificat neuf recu : se reconnecter tout de suite avec lui
         self.demande = None      # cle de transport neuve en attente de son certificat
+        self.demande_t = 0
+        self.rotation = None     # coffre de la puce propose au Pi (rotation d'identite)
+        self.rotation_tentee = False
         try:
             self.expire = int(certificat["charge"]["expire"])
         except (KeyError, TypeError, ValueError):
@@ -1289,9 +1422,27 @@ class PiloteV2(threading.Thread):
         notre cle d'identite (spec §4.1). A mi-vie, ou tout de suite s'il a expire."""
         import base64
         neuve = pont2.CleTransport()
-        moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))
-        preuve = pont2.preparer_renouvellement(moi, self.epingle["parc"], neuve.public)
+        moi = _mon_coffre()
+        preuve = None
+        self.rotation = None
+        if not self.rotation_tentee and _rotation_voulue():
+            # Notre cle est encore logicielle et la Secure Enclave repond : on y passe,
+            # l'ancienne cle contresigne (aucun nouvel appairage).
+            self.rotation_tentee = True
+            try:
+                prog = _programme_puce()
+                chemin = os.path.join(V2_DIR, "identite.puce.neuve")
+                puce = (pont2.Coffre.ouvrir_dans_la_puce(prog, chemin) if os.path.lexists(chemin)
+                        else pont2.Coffre.creer_dans_la_puce(prog, chemin))
+                preuve = pont2.preparer_rotation(moi, puce, self.epingle["parc"], neuve.public)
+                self.rotation = puce
+                log("%s : identite v2 proposee dans la Secure Enclave (%s)" % (self.pi, puce.id))
+            except pont2.ErreurPont as exc:
+                log("%s : Secure Enclave indisponible (%s), cle logicielle gardee" % (self.pi, exc))
+        if preuve is None:
+            preuve = pont2.preparer_renouvellement(moi, self.epingle["parc"], neuve.public)
         self.demande = neuve
+        self.demande_t = time.time()
         self.session.envoyer({"type": "certificat_demande", "id": uuid.uuid4().hex[:16],
                               "transport": base64.b64encode(neuve.public).decode(), "preuve": preuve})
         log("%s : certificat v2 demande (expire %s)" % (self.pi, time.strftime("%d/%m %H:%M", time.localtime(self.expire))))
@@ -1303,10 +1454,16 @@ class PiloteV2(threading.Thread):
             return
         cert = msg.get("objet")
         c = pont2.verifier_certificat(cert, self.epingle["ordonnateur"], self.epingle["parc"], pont2.Revocations(), True)
-        moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))
+        moi = self.rotation or _mon_coffre()
         if c["identite"] != moi.cle_publique() or base64.b64decode(c["transport"]) != neuve.public:
             raise pont2.CertificatRefuse("ce certificat n'est pas le mien")
         _garder_v2(self.pi, neuve, cert, self.port)
+        if self.rotation is not None:
+            # Le Pi a accepte : la puce devient notre identite, la cle logicielle disparait.
+            os.replace(os.path.join(V2_DIR, "identite.puce.neuve"), os.path.join(V2_DIR, "identite.puce"))
+            _remove(os.path.join(V2_DIR, "identite.pem"))
+            log("%s : identite v2 dans la Secure Enclave (%s), cle logicielle effacee" % (self.pi, moi.id))
+            self.rotation = None
         log("%s : certificat v2 renouvele, reconnexion avec lui" % self.pi)
         self.renouvele = True
         self.arreter(voulu=False)
@@ -1347,9 +1504,13 @@ class PiloteV2(threading.Thread):
         update_stats(self.pi, v2=True, v2_depuis=time.time(), erreur_v2=None, connecte=True, depuis=time.time(),
                      erreur=None)
         _wake_workers(self.pi)  # ce qui attendait
+        self._remettre_annonce_humain()
         try:
             while not self.fin.is_set():
-                if self.demande is None and self.expire and self.expire - time.time() < CERT_MI_VIE_SEC:
+                if self.demande is not None and time.time() - self.demande_t > 120:
+                    self.demande = None  # demande restee sans reponse (refusee) : on pourra redemander
+                if self.demande is None and ((self.expire and self.expire - time.time() < CERT_MI_VIE_SEC)
+                                             or (not self.rotation_tentee and _rotation_voulue())):
                     try:
                         self._demander_certificat()
                     except pont2.ErreurPont as exc:
@@ -1364,6 +1525,34 @@ class PiloteV2(threading.Thread):
             if not self.voulu:
                 self.link.v2_terminee(True)
 
+    def _remettre_annonce_humain(self):
+        """Remet au Pi l'annonce de notre cle humaine (signee une fois, avec presence)."""
+        chemin = os.path.join(ANNONCES_HUMAIN, "%s.json" % self.pi)
+        a = _read(chemin)
+        if not a or a.get("remise"):
+            return
+        try:
+            self.session.envoyer({"type": "humain_annonce", "id": uuid.uuid4().hex[:16], "objet": a["objet"]})
+            a["remise"] = time.time()
+            _write(chemin, a)
+            log("%s : cle humaine annoncee" % self.pi)
+        except pont2.ErreurPont as exc:
+            log("%s : annonce de la cle humaine impossible (%s)" % (self.pi, exc))
+
+    def _valider(self, msg):
+        reponse = {"type": "validation_reponse", "id": uuid.uuid4().hex[:16], "reponse_a": msg.get("id", "")}
+        try:
+            reponse["objet"] = valider_humain(self.epingle["parc"], msg.get("sujet"), msg.get("charge") or {})
+            log("%s : validation humaine donnee (%s)" % (self.pi, msg.get("sujet")))
+        except Exception as exc:  # refus, annulation, pas de cle : le Pi est prevenu
+            reponse["erreur"] = str(exc)[:300] or "refus"
+            log("%s : validation non donnee (%s)" % (self.pi, reponse["erreur"]))
+        try:
+            if self.session is not None:
+                self.session.envoyer(reponse)
+        except pont2.ErreurPont as exc:
+            log("%s : reponse de validation non envoyee (%s)" % (self.pi, exc))
+
     def _lire(self):
         try:
             while not self.fin.is_set():
@@ -1375,6 +1564,9 @@ class PiloteV2(threading.Thread):
                         self._certificat_recu(msg)
                     except pont2.ErreurPont as exc:
                         log("%s : certificat v2 refuse : %s" % (self.pi, exc))
+                    continue
+                if msg.get("type") == "validation_demande":
+                    threading.Thread(target=self._valider, args=(msg,), daemon=True).start()
                     continue
                 try:
                     self.link.recu(trad.depuis_v2(msg, hote=self.hote))
@@ -1460,7 +1652,7 @@ def _travail_signe(pi, folder, job_id):
 def _rendre_v2(pi, folder, job_id, empreinte, state, message, duration, outputs):
     """resultat.v2.json, signe par notre cle v2, lie au travail par l'empreinte de sa charge."""
     epingle = _epingle(pi)
-    moi = pont2.Coffre.ouvrir(os.path.join(V2_DIR, "identite.pem"))
+    moi = _mon_coffre()
     objet = moi.signer_objet({
         "type": "resultat", "parc": epingle["parc"], "id": "resultat-" + job_id, "travail": job_id,
         "objet_travail": empreinte, "etat": state, "message": str(message)[:4000], "duree": int(duration),
@@ -1786,6 +1978,8 @@ if __name__ == "__main__":
         sys.exit(_print(pairing_wait()))
     elif command == "appairage-code":
         sys.exit(_print(pairing_decide()))
+    elif command == "humain":
+        sys.exit(_print(humain_creer()))
     elif command == "oublier" and len(sys.argv) > 2:
         sys.exit(_print(forget(sys.argv[2])))
     elif command in ("service-pause", "service-reprise"):

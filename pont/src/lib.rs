@@ -6,6 +6,8 @@
 //!
 //! - [`jcs`]         : forme canonique JSON (RFC 8785, entiers seulement).
 //! - [`cles`]        : clés d'identité, coffres, identifiants de machine.
+//! - [`puce`]        : coffres matériels (Secure Enclave, TPM) par un programme local.
+//! - [`rotation`]    : passage d'une identité à une autre (par exemple vers la puce).
 //! - [`objet`]       : objets signés déposés sur un stockage partagé, anti-rejeu.
 //! - [`enveloppe`]   : chiffrement à destinataires multiples (clés de réception X25519).
 //! - [`validation`]  : validations humaines (biométrie), 5 minutes, liées à une charge.
@@ -27,6 +29,8 @@ pub mod journal;
 pub mod messages;
 pub mod migration;
 pub mod objet;
+pub mod puce;
+pub mod rotation;
 pub mod ticket;
 pub mod transport;
 pub mod validation;

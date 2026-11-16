@@ -791,6 +791,11 @@ def run():
             v2 = True
         except Exception as exc:
             print(f"[pont v2] ecoute impossible, la v1 continue seule : {exc!r}")
+        try:  # point d'acces local des extensions (logiciel IA de PrismaLab…), lot 2 §5
+            import extensions
+            extensions.demarrer()
+        except Exception as exc:
+            print(f"[extensions] point d'acces impossible : {exc!r}")
     ecoute_v1 = [None]
     _ecoute_v1(ecoute_v1, v2)
     derniere_verif = time.time()

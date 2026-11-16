@@ -90,8 +90,17 @@ on service()
 	end if
 end service
 
+on cle_humaine()
+	try
+		display dialog "Créer ta clé humaine dans la puce de ce Mac (Secure Enclave)." & return & return & "Elle sert à valider ce que le Pi te demande : lancer un ticket, enrôler une extension. À chaque validation, ce Mac te montre ce qui est demandé, puis macOS demande Touch ID ou ton mot de passe." & return & return & "Après Continuer, macOS va te demander Touch ID ou ton mot de passe une première fois, pour annoncer la clé au Pi." with title "Clé humaine" buttons {"Annuler", "Continuer"} default button "Continuer" cancel button "Annuler"
+	on error
+		return
+	end try
+	my resultat(my commande("humain"), "Clé humaine")
+end cle_humaine
+
 on run
-	set actions to {"État des ponts et statistiques", "Appairer avec un Pi (créer un pont)", "Supprimer un pont", "Service de fond : pause ou reprise", "Quitter"}
+	set actions to {"État des ponts et statistiques", "Appairer avec un Pi (créer un pont)", "Supprimer un pont", "Service de fond : pause ou reprise", "Clé humaine (Touch ID ou mot de passe)", "Quitter"}
 	repeat
 		set choix to choose from list actions with title titre with prompt "Que veux-tu faire ?" default items {item 1 of actions} OK button name "Choisir" cancel button name "Quitter"
 		if choix is false then exit repeat
@@ -104,6 +113,8 @@ on run
 			my supprimer()
 		else if action_ is item 4 of actions then
 			my service()
+		else if action_ is item 5 of actions then
+			my cle_humaine()
 		else
 			exit repeat
 		end if

@@ -19,7 +19,9 @@ use serde_json::Value;
 
 use pont::appairage::{self, Presentation};
 use pont::certificat::{self, Certificat, Demande, ListeRevocations, Role};
-use pont::cles::{Alg, CleIdentite, Coffre as _, CoffreLogiciel, Niveau};
+use pont::cles::{Alg, AvecRaison, CleIdentite, Coffre as CoffreRust, CoffreLogiciel, Niveau};
+use pont::puce::{self, CoffreExterne};
+use pont::rotation;
 use pont::enveloppe;
 use pont::{journal, ticket, validation};
 use pont::messages::Message;
@@ -111,11 +113,18 @@ fn roles(noms: &[String]) -> PyResult<Vec<Role>> {
 
 // ---------------------------------------------------------------- clés
 
-/// Coffre logiciel : clé d'identité dans un fichier PKCS#8 (droits 0600).
+/// Coffre : clé d'identité dans la puce de la machine (Secure Enclave, TPM, par son
+/// programme local) ou, en repli, dans un fichier PKCS#8 (droits 0600).
 /// La clé privée ne peut pas être relue depuis Python.
 #[pyclass(frozen, module = "nearfield_pont")]
 struct Coffre {
-    inner: CoffreLogiciel,
+    inner: Box<dyn CoffreRust>,
+}
+
+impl Coffre {
+    fn de(c: impl CoffreRust + 'static) -> Self {
+        Coffre { inner: Box::new(c) }
+    }
 }
 
 #[pymethods]
@@ -124,21 +133,53 @@ impl Coffre {
     #[staticmethod]
     #[pyo3(signature = (alg_nom = "p256"))]
     fn generer(alg_nom: &str) -> PyResult<Self> {
-        Ok(Coffre { inner: CoffreLogiciel::generer(alg(alg_nom)?) })
+        Ok(Coffre::de(CoffreLogiciel::generer(alg(alg_nom)?)))
     }
 
     /// Relit la clé du fichier (y compris la `cle.pem` Ed25519 de la v1), ou la crée.
     #[staticmethod]
     #[pyo3(signature = (chemin, alg_nom = "p256"))]
     fn charger_ou_creer(chemin: std::path::PathBuf, alg_nom: &str) -> PyResult<Self> {
-        Ok(Coffre { inner: CoffreLogiciel::charger_ou_creer(&chemin, alg(alg_nom)?).map_err(err)? })
+        Ok(Coffre::de(CoffreLogiciel::charger_ou_creer(&chemin, alg(alg_nom)?).map_err(err)?))
     }
 
     /// Ouvre une clé existante sans jamais en créer (par exemple la `cle.pem` v1).
     #[staticmethod]
     fn ouvrir(chemin: std::path::PathBuf) -> PyResult<Self> {
         let pem = std::fs::read_to_string(&chemin).map_err(es)?;
-        Ok(Coffre { inner: CoffreLogiciel::depuis_pem(&pem).map_err(err)? })
+        Ok(Coffre::de(CoffreLogiciel::depuis_pem(&pem).map_err(err)?))
+    }
+
+    /// Identité de la machine dans `dossier` : `identite.puce` (la puce, obligatoire),
+    /// sinon `identite.pem`, sinon une clé neuve dans la puce si `programme` répond,
+    /// sinon en logiciel (repli).
+    #[staticmethod]
+    #[pyo3(signature = (dossier, programme = None))]
+    fn identite(dossier: std::path::PathBuf, programme: Option<std::path::PathBuf>) -> PyResult<Self> {
+        Ok(Coffre { inner: puce::identite_machine(&dossier, programme.as_deref()).map_err(err)? })
+    }
+
+    /// La puce de ce programme répond-elle ?
+    #[staticmethod]
+    fn puce_disponible(py: Python<'_>, programme: std::path::PathBuf) -> bool {
+        py.allow_threads(|| CoffreExterne::disponible(&programme))
+    }
+
+    /// Crée une clé dans la puce. `presence` : chaque signature exigera l'humain
+    /// (Touch ID ou mot de passe) ; c'est la clé humaine.
+    #[staticmethod]
+    #[pyo3(signature = (programme, poignee, presence = false))]
+    fn creer_dans_la_puce(py: Python<'_>, programme: std::path::PathBuf, poignee: std::path::PathBuf, presence: bool) -> PyResult<Self> {
+        let c = py.allow_threads(|| CoffreExterne::creer(&programme, &poignee, presence)).map_err(err)?;
+        Ok(Coffre::de(c))
+    }
+
+    /// Ouvre une clé de la puce. `presence` : ses signatures attendent l'humain.
+    #[staticmethod]
+    #[pyo3(signature = (programme, poignee, presence = false))]
+    fn ouvrir_dans_la_puce(py: Python<'_>, programme: std::path::PathBuf, poignee: std::path::PathBuf, presence: bool) -> PyResult<Self> {
+        let c = py.allow_threads(|| CoffreExterne::ouvrir(&programme, &poignee)).map_err(err)?;
+        Ok(Coffre::de(if presence { c.avec_presence() } else { c }))
     }
 
     /// Clé publique d'identité : `{"alg": ..., "pub": ...}`.
@@ -162,12 +203,21 @@ impl Coffre {
 
     /// Signature brute de 64 octets.
     fn signer<'py>(&self, py: Python<'py>, message: &[u8]) -> PyResult<Bound<'py, PyBytes>> {
-        Ok(PyBytes::new(py, &self.inner.signer(message).map_err(err)?))
+        let sig = py.allow_threads(|| self.inner.signer(message)).map_err(err)?;
+        Ok(PyBytes::new(py, &sig))
     }
 
     /// Signe une charge (`type`, `parc`, `id` obligatoires) ; rend l'objet signé.
-    fn signer_objet(&self, py: Python<'_>, charge: &Bound<'_, PyAny>) -> PyResult<PyObject> {
-        let o = ObjetSigne::signer(&self.inner, valeur(charge)?).map_err(err)?;
+    /// `raison` : ce qu'affiche (et dit) la demande de présence d'une clé humaine.
+    #[pyo3(signature = (charge, raison = None))]
+    fn signer_objet(&self, py: Python<'_>, charge: &Bound<'_, PyAny>, raison: Option<&str>) -> PyResult<PyObject> {
+        let v = valeur(charge)?;
+        let o = py
+            .allow_threads(|| match raison {
+                Some(r) => ObjetSigne::signer(&AvecRaison { coffre: &*self.inner, raison: r }, v),
+                None => ObjetSigne::signer(&self.inner, v),
+            })
+            .map_err(err)?;
         vers_py(py, &o)
     }
 
@@ -368,6 +418,46 @@ impl CleTransport {
 #[pyfunction]
 fn preparer_renouvellement(py: Python<'_>, identite: &Coffre, parc: &str, transport: &[u8]) -> PyResult<PyObject> {
     vers_py(py, &certificat::preparer_renouvellement(&identite.inner, parc, transport).map_err(err)?)
+}
+
+/// Rotation d'identité (par exemple vers la puce) pour une nouvelle clé de transport :
+/// se joint à `certificat_demande` à la place de la preuve de renouvellement.
+#[pyfunction]
+fn preparer_rotation(py: Python<'_>, ancien: &Coffre, nouveau: &Coffre, parc: &str, transport: &[u8]) -> PyResult<PyObject> {
+    let o = py.allow_threads(|| rotation::preparer(&ancien.inner, &nouveau.inner, parc, transport)).map_err(err)?;
+    vers_py(py, &o)
+}
+
+/// Type d'une preuve jointe à une demande de certificat (« renouvellement », « rotation »).
+#[pyfunction]
+fn type_de_preuve(objet: &Bound<'_, PyAny>) -> PyResult<Option<String>> {
+    let o: ObjetSigne = depuis(objet, "preuve")?;
+    Ok(rotation::type_de(&o).map(str::to_string))
+}
+
+/// Vérifie une rotation avec l'identité et le niveau connus de la machine ; rend
+/// `{"identite", "niveau", "transport" (octets)}`.
+#[pyfunction]
+#[pyo3(signature = (preuve, identite, niveau_nom, parc, transport_demande, registre = None))]
+fn verifier_rotation(
+    py: Python<'_>,
+    preuve: &Bound<'_, PyAny>,
+    identite: &Bound<'_, PyAny>,
+    niveau_nom: &str,
+    parc: &str,
+    transport_demande: &str,
+    registre: Option<PyRefMut<'_, RegistreNonces>>,
+) -> PyResult<PyObject> {
+    let o: ObjetSigne = depuis(preuve, "preuve")?;
+    let mut registre = registre;
+    let r = rotation::verifier(&o, parc, &depuis(identite, "clé")?, niveau(niveau_nom)?, transport_demande,
+                               registre.as_mut().map(|r| &mut r.inner))
+        .map_err(err)?;
+    let d = pyo3::types::PyDict::new(py);
+    d.set_item("identite", vers_py(py, &r.identite)?)?;
+    d.set_item("niveau", vers_py(py, &r.niveau)?)?;
+    d.set_item("transport", PyBytes::new(py, &r.transport))?;
+    Ok(d.into_any().unbind())
 }
 
 /// Vérifie une preuve de renouvellement ; rend la clé de transport certifiée (32 octets).
@@ -943,10 +1033,37 @@ fn cles_humaines(humains: &Bound<'_, PyAny>) -> PyResult<Vec<CleIdentite>> {
 
 /// L'humain valide (ou refuse) exactement cette charge ; rend l'objet `validation`.
 #[pyfunction]
-#[pyo3(signature = (humain, parc, charge, decision_nom, motif = None))]
-fn preparer_validation(py: Python<'_>, humain: &Coffre, parc: &str, charge: &Bound<'_, PyAny>, decision_nom: &str, motif: Option<&str>) -> PyResult<PyObject> {
-    let o = validation::preparer(&humain.inner, parc, &valeur(charge)?, decision(decision_nom)?, motif).map_err(err)?;
+/// `raison` : texte de la demande de présence (Touch ID, mot de passe) d'une clé humaine.
+#[pyo3(signature = (humain, parc, charge, decision_nom, motif = None, raison = None))]
+#[allow(clippy::too_many_arguments)]
+fn preparer_validation(
+    py: Python<'_>,
+    humain: &Coffre,
+    parc: &str,
+    charge: &Bound<'_, PyAny>,
+    decision_nom: &str,
+    motif: Option<&str>,
+    raison: Option<&str>,
+) -> PyResult<PyObject> {
+    let c = valeur(charge)?;
+    let d = decision(decision_nom)?;
+    let o = py
+        .allow_threads(|| match raison {
+            Some(r) => validation::preparer(&AvecRaison { coffre: &*humain.inner, raison: r }, parc, &c, d, motif),
+            None => validation::preparer(&humain.inner, parc, &c, d, motif),
+        })
+        .map_err(err)?;
     vers_py(py, &o)
+}
+
+/// Contrôle un brouillon de ticket (tailles, noms, zones) sans rien signer ;
+/// rend son empreinte (ce que la validation humaine portera).
+#[pyfunction]
+fn controler_brouillon(brouillon: &Bound<'_, PyAny>) -> PyResult<String> {
+    let v = valeur(brouillon)?;
+    let b: ticket::Brouillon = serde_json::from_value(v.clone()).map_err(|e| ErreurFormat::new_err(e.to_string()))?;
+    b.controler().map_err(err)?;
+    validation::empreinte_valeur(&v).map_err(err)
 }
 
 /// Vérifie une validation (5 minutes, cette charge, cette clé) ; rend « accepte » ou « refuse ».
@@ -1052,6 +1169,10 @@ fn nearfield_pont(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<RegistreMigrations>()?;
     m.add_class::<CleReception>()?;
     m.add_function(wrap_pyfunction!(canonique, m)?)?;
+    m.add_function(wrap_pyfunction!(preparer_rotation, m)?)?;
+    m.add_function(wrap_pyfunction!(type_de_preuve, m)?)?;
+    m.add_function(wrap_pyfunction!(verifier_rotation, m)?)?;
+    m.add_function(wrap_pyfunction!(controler_brouillon, m)?)?;
     m.add_function(wrap_pyfunction!(identifiant, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_signature_brute, m)?)?;
     m.add_function(wrap_pyfunction!(verifier_signature, m)?)?;

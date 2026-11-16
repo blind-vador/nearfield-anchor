@@ -1,7 +1,7 @@
 //! Clés d'identité, coffres et identifiants de machine (spec §2).
 //!
 //! Une clé d'identité vit dans un [`Coffre`] : la puce de sécurité quand la machine
-//! en a une (Secure Enclave, TPM — implémentations à venir), sinon un fichier
+//! en a une (Secure Enclave, TPM : [`crate::puce`]), sinon un fichier
 //! (`CoffreLogiciel`, niveau [`Niveau::Logiciel`]).
 
 use std::path::Path;
@@ -98,6 +98,44 @@ pub trait Coffre: Send + Sync {
     /// Signature de 64 octets (`r||s` pour P-256).
     fn signer(&self, message: &[u8]) -> Resultat<Vec<u8>>;
     fn niveau(&self) -> Niveau;
+    /// Signature demandée à l'humain : une puce qui exige sa présence (biométrie ou mot
+    /// de passe) affiche `raison`. Les autres coffres l'ignorent.
+    fn signer_avec_raison(&self, message: &[u8], _raison: &str) -> Resultat<Vec<u8>> {
+        self.signer(message)
+    }
+}
+
+impl<T: Coffre + ?Sized> Coffre for Box<T> {
+    fn cle_publique(&self) -> CleIdentite {
+        (**self).cle_publique()
+    }
+    fn signer(&self, message: &[u8]) -> Resultat<Vec<u8>> {
+        (**self).signer(message)
+    }
+    fn niveau(&self) -> Niveau {
+        (**self).niveau()
+    }
+    fn signer_avec_raison(&self, message: &[u8], raison: &str) -> Resultat<Vec<u8>> {
+        (**self).signer_avec_raison(message, raison)
+    }
+}
+
+/// Un coffre dont chaque signature est demandée à l'humain avec cette raison.
+pub struct AvecRaison<'a> {
+    pub coffre: &'a dyn Coffre,
+    pub raison: &'a str,
+}
+
+impl Coffre for AvecRaison<'_> {
+    fn cle_publique(&self) -> CleIdentite {
+        self.coffre.cle_publique()
+    }
+    fn signer(&self, message: &[u8]) -> Resultat<Vec<u8>> {
+        self.coffre.signer_avec_raison(message, self.raison)
+    }
+    fn niveau(&self) -> Niveau {
+        self.coffre.niveau()
+    }
 }
 
 enum Prive {

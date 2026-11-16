@@ -268,6 +268,28 @@ statistiques, suppression, pause. Les images des satellites meteo ne sont
 ecoutees que si une machine compagne est appairee. Details : ROADMAP.md,
 section du 2026-10-01 sur le pont.
 
+### Cles dans la puce, cle humaine (protocole v2)
+
+- **Identite des machines** : sur un Mac, elle est gardee par la Secure Enclave
+  (`bridge/pf_enclave.swift`, construit par l'installateur) ; une machine deja appairee
+  avec une cle logicielle y passe toute seule au renouvellement suivant de son certificat,
+  sans nouvel appairage. Sous Linux avec un TPM 2.0, `tools/pf-tpm`. Sans puce (Raspberry
+  Pi), la cle reste dans un fichier 0600 : c'est le repli prevu.
+- **Cle humaine** : `python3 ~/.nearfield-bridge/nearfield_bridge.py humain` cree, dans la
+  Secure Enclave du Mac, une cle qui exige Touch ID ou le mot de passe de la session a
+  chaque signature, et l'annonce au Pi. Quand le Pi demande une validation (lancer un
+  ticket, enroler une extension), le Mac affiche ce qui est a valider dans un dialogue lu
+  par VoiceOver (« Refuser » par defaut), puis macOS demande Touch ID ou le mot de passe.
+
+### Point d'acces des extensions
+
+Un logiciel tiers (par exemple le logiciel IA distribue par PrismaLab) se branche sur le
+Pi par une prise Unix locale (`lib/extensions.py`) : liste fermee de requetes (proposer et
+faire valider un ticket, ecrire et lire son journal signe, deposer un travail autorise par
+le ticket, recevoir les evenements). Aucun acces reseau, aucune commande arbitraire ;
+l'enrolement d'une extension et chaque ticket exigent la validation humaine. Retirer une
+extension : `python3 lib/extensions.py retirer <nom>` (sur le Pi).
+
 ## Licence
 
 Copyright (C) 2026 blind-vador et les contributeurs de nearfield_anchor.

@@ -142,6 +142,25 @@ bash "$HERE/construire_dsd_neo.sh"
 bash "$HERE/construire_decodeurs_mac.sh"
 rm -rf "$BUILD"
 
+if [ "$(uname)" = "Darwin" ]; then
+    echo "-- pf-enclave (cle d'identite et cle humaine dans la Secure Enclave) --"
+    # Protocole ferme lu par le crate nearfield-pont (module puce). Reconstruit seulement
+    # si la source change ; sans Secure Enclave, le pont garde sa cle logicielle.
+    ENCLAVE="$DEST/bin/pf-enclave"
+    ESTAMP="$(shasum "$HERE/pf_enclave.swift" | cut -d' ' -f1)"
+    if [ ! -x "$ENCLAVE" ] || [ "$(cat "$DEST/bin/.pf-enclave.sha1" 2>/dev/null)" != "$ESTAMP" ]; then
+        mkdir -p "$DEST/bin"
+        if swiftc -O -sdk "$SDK" -o "$ENCLAVE.neuf" "$HERE/pf_enclave.swift"; then
+            chmod 755 "$ENCLAVE.neuf"
+            mv -f "$ENCLAVE.neuf" "$ENCLAVE"
+            echo "$ESTAMP" > "$DEST/bin/.pf-enclave.sha1"
+        else
+            echo "!! pf-enclave non construit : la cle reste logicielle"
+        fi
+    fi
+    "$ENCLAVE" disponible && echo "Secure Enclave : prete" || echo "Secure Enclave : absente (cle logicielle)"
+fi
+
 echo "-- service --"
 if [ "$(uname)" = "Darwin" ]; then
     # Le service tourne dans une application invisible, "Nearfield Bridge

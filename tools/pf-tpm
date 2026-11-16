@@ -1,0 +1,111 @@
+#!/bin/sh
+# pf-tpm : clé d'identité P-256 gardée par le TPM 2.0 d'une machine Linux.
+#
+# Même protocole fermé que pf-enclave (crate nearfield-pont, module `puce`) :
+#   pf-tpm disponible                      code 0 si un TPM 2.0 répond
+#   pf-tpm creer <poignee> [--presence]    crée la clé ; affiche la clé publique (base64, SEC1 65 octets)
+#   pf-tpm publique <poignee>              affiche la clé publique
+#   pf-tpm signer <poignee> [--raison <t>] signe l'entrée standard (ECDSA P-256/SHA-256), base64
+#
+# La « poignée » est un dossier (0700) : la clé privée y est enveloppée par le TPM
+# (cle.priv), inutilisable sur une autre machine. La clé primaire de stockage est
+# recalculée à chaque fois depuis la graine du TPM (même gabarit, même clé).
+# --presence n'a pas d'équivalent ici (pas de biométrie) : refusé.
+#
+# Dépend de tpm2-tools (paquet Debian « tpm2-tools ») et d'openssl. Sans TPM (Raspberry
+# Pi), nearfield garde sa clé logicielle : ce programme n'est pas utilisé.
+set -eu
+umask 077
+
+echec() { echo "$2" >&2; exit "$1"; }
+
+tpm_present() {
+    command -v tpm2_createprimary >/dev/null 2>&1 || return 1
+    command -v openssl >/dev/null 2>&1 || return 1
+    if [ -z "${TPM2TOOLS_TCTI:-}" ]; then
+        [ -c /dev/tpmrm0 ] || return 1
+        [ -r /dev/tpmrm0 ] && [ -w /dev/tpmrm0 ] || return 1
+    fi
+    tpm2_getcap properties-fixed >/dev/null 2>&1
+}
+
+poignee_sure() {
+    case "$1" in /*) ;; *) echec 2 "poignee : chemin absolu exige" ;; esac
+    [ -L "$1" ] && echec 2 "poignee : lien symbolique refuse"
+    return 0
+}
+
+# Sans gestionnaire de ressources (TPM simulé, /dev/tpm0), les objets restent chargés :
+# on vide les objets transitoires après chaque étape (sans effet avec /dev/tpmrm0).
+vider() { tpm2_flushcontext -t >/dev/null 2>&1 || true; }
+
+TRAVAIL=""
+nettoyer() { vider; if [ -n "$TRAVAIL" ]; then rm -rf "$TRAVAIL"; fi; }
+trap 'etat=$?; nettoyer; exit $etat' EXIT
+trap 'exit 130' INT TERM
+
+# Charge la clé de la poignée $1 dans le TPM ; contexte dans $TRAVAIL/cle.ctx.
+charger() {
+    TRAVAIL="$(mktemp -d)"
+    tpm2_createprimary -Q -C o -g sha256 -G ecc256 -c "$TRAVAIL/primaire.ctx" \
+        || echec 2 "cle primaire du TPM indisponible"
+    vider
+    tpm2_load -Q -C "$TRAVAIL/primaire.ctx" -u "$1/cle.pub" -r "$1/cle.priv" -c "$TRAVAIL/cle.ctx" \
+        || echec 2 "poignee refusee par le TPM"
+}
+
+# Clé publique du contexte chargé : point SEC1 non compressé (65 octets), en base64.
+publique() {
+    tpm2_readpublic -Q -c "$TRAVAIL/cle.ctx" -f der -o "$TRAVAIL/pub.der" || echec 2 "lecture de la cle publique"
+    openssl ec -pubin -inform DER -in "$TRAVAIL/pub.der" -outform DER -conv_form uncompressed 2>/dev/null \
+        | tail -c 65 | openssl base64 -A
+    echo
+}
+
+[ $# -ge 1 ] || echec 64 "usage : pf-tpm disponible|creer|publique|signer ..."
+case "$1" in
+disponible)
+    tpm_present
+    ;;
+creer)
+    [ $# -ge 2 ] || echec 64 "creer <poignee>"
+    poignee_sure "$2"
+    [ "${3:-}" = "--presence" ] && echec 2 "presence humaine non prise en charge par le TPM ici"
+    tpm_present || echec 1 "aucun TPM 2.0"
+    [ -e "$2" ] && echec 2 "une cle existe deja a cet endroit"
+    mkdir -m 700 "$2"
+    TRAVAIL="$(mktemp -d)"
+    tpm2_createprimary -Q -C o -g sha256 -G ecc256 -c "$TRAVAIL/primaire.ctx" || { rmdir "$2"; echec 2 "cle primaire"; }
+    vider
+    tpm2_create -Q -C "$TRAVAIL/primaire.ctx" -G ecc256:ecdsa-sha256 -u "$2/cle.pub" -r "$2/cle.priv" \
+        -a "fixedtpm|fixedparent|sensitivedataorigin|userwithauth|sign" \
+        || { rm -rf "$2"; echec 2 "creation refusee par le TPM"; }
+    vider
+    tpm2_load -Q -C "$TRAVAIL/primaire.ctx" -u "$2/cle.pub" -r "$2/cle.priv" -c "$TRAVAIL/cle.ctx" || echec 2 "chargement"
+    publique
+    ;;
+publique)
+    [ $# -ge 2 ] || echec 64 "publique <poignee>"
+    poignee_sure "$2"
+    [ -d "$2" ] || echec 2 "poignee introuvable"
+    charger "$2"
+    publique
+    ;;
+signer)
+    [ $# -ge 2 ] || echec 64 "signer <poignee>"
+    poignee_sure "$2"
+    [ -d "$2" ] || echec 2 "poignee introuvable"
+    charger "$2"
+    head -c 1048577 > "$TRAVAIL/message"
+    [ "$(wc -c < "$TRAVAIL/message")" -le 1048576 ] || echec 2 "message trop long"
+    openssl dgst -sha256 -binary -out "$TRAVAIL/empreinte" "$TRAVAIL/message"
+    tpm2_sign -Q -c "$TRAVAIL/cle.ctx" -g sha256 -d -f plain -o "$TRAVAIL/sig" "$TRAVAIL/empreinte" \
+        || echec 2 "signature refusee par le TPM"
+    # « plain » : r||s ou DER selon la version des outils ; le crate accepte les deux.
+    openssl base64 -A -in "$TRAVAIL/sig"
+    echo
+    ;;
+*)
+    echec 64 "commande inconnue"
+    ;;
+esac

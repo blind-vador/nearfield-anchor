@@ -20,6 +20,9 @@ Ce que fait la v2 (2026-11-15) :
 Etat local (carte SD, comme les fiches de confiance) : LOCAL_DIR/v2/
   identite.pem      cle d'identite v2 (logicielle sur le Pi : ordonnateur
                     TOLERE, annonce au demarrage)
+  identite.puce     ... ou poignee de la cle gardee par le TPM (machine Linux avec
+                    TPM 2.0 : tools/pf-tpm ; choisie a la creation, jamais de repli)
+  humains.json      cles humaines connues (appareils a biometrie), lot 2 §1
   migrations.json   cles v1 deja migrees -> identifiant v2
   nonces.json       registre anti-rejeu
   serie.json        dernier numero de serie de certificat
@@ -47,6 +50,7 @@ TOLERANCE_LOGICIELLE = True    # pas de puce sur le Pi : ordonnateur logiciel to
 GRACE_SEC = 30 * 86400         # certificat expire (machine en veille) : session de renouvellement seulement
 
 _verrou = threading.Lock()
+_verrou_coffre = threading.Lock()
 _moi = {}            # transport et certificat du Pi
 _presence_v2 = {}    # id v1 de la machine -> {depuis, vu, battements}
 _sessions = {}       # id v1 de la machine -> session v2 ouverte
@@ -63,9 +67,31 @@ def _chemin(nom):
     return os.path.join(V2_DIR, nom)
 
 
+def programme_puce():
+    """Programme de la puce de cette machine, ou None (repli logiciel).
+    NEARFIELD_PUCE=non : jamais de puce ; NEARFIELD_PUCE=<chemin> : ce programme."""
+    choix = os.environ.get("NEARFIELD_PUCE", "")
+    if choix.lower() in ("non", "0", "logiciel"):
+        return None
+    if choix:
+        return choix
+    if os.path.exists("/dev/tpmrm0"):
+        p = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "tools", "pf-tpm")
+        if os.path.isfile(p):
+            return p
+    return None
+
+
+_coffre = [None]
+
+
 def coffre():
-    os.makedirs(V2_DIR, mode=0o700, exist_ok=True)
-    return np_.Coffre.charger_ou_creer(_chemin("identite.pem"), "p256")
+    """Cle d'identite du Pi : dans le TPM s'il y en a un a la creation, sinon logicielle."""
+    with _verrou_coffre:
+        if _coffre[0] is None or _coffre[0][0] != V2_DIR:
+            os.makedirs(V2_DIR, mode=0o700, exist_ok=True)
+            _coffre[0] = (V2_DIR, np_.Coffre.identite(V2_DIR, programme_puce()))
+        return _coffre[0][1]
 
 
 def parc():
@@ -133,9 +159,12 @@ def _mon_certificat():
 
 
 def _machine_de(sujet):
-    """(id v1, fiche) de la machine migree vers cet identifiant v2, ou (None, None)."""
+    """(id v1, fiche) de la machine migree vers cet identifiant v2, ou (None, None).
+    Apres une rotation, l'identite precedente vaut encore jusqu'a la premiere session
+    avec la nouvelle (la machine a pu tomber entre les deux)."""
     for cid, card in compagnon.trusted().items():
-        if (card.get("v2") or {}).get("id") == sujet:
+        v2 = card.get("v2") or {}
+        if v2.get("id") == sujet or (v2.get("precedente") or {}).get("id") == sujet:
             return cid, card
     return None, None
 
@@ -180,13 +209,40 @@ def presence():
         return {}
 
 
-def _renouveler(card, msg):
+def _rotation(cid, card, msg, pair):
+    """La machine passe a une nouvelle identite (sa puce) : objet "rotation" contresigne
+    par l'identite de CETTE session. La fiche garde l'ancienne en "precedente"."""
+    p = parc()
+    v2 = card["v2"]
+    if pair is None or pair["identite"] not in (v2["identite"], (v2.get("precedente") or {}).get("identite")):
+        raise np_.CertificatRefuse("rotation hors d'une session de la machine")
+    with _verrou:
+        nonces = np_.RegistreNonces.charger(_chemin("nonces.json"))
+        r = np_.verifier_rotation(msg["preuve"], pair["identite"], pair.get("niveau") or v2["niveau"], p,
+                                  msg["transport"], nonces)
+        nonces.enregistrer(_chemin("nonces.json"))
+        serie = _serie_suivante()
+    nouvelle = {"id": np_.identifiant(r["identite"]), "identite": r["identite"], "niveau": r["niveau"],
+                "migre": v2.get("migre"), "appaire": v2.get("appaire"), "tourne": time.time(),
+                "precedente": {"id": np_.identifiant(pair["identite"]), "identite": pair["identite"]}}
+    compagnon.update_card(cid, v2={k: v for k, v in nouvelle.items() if v is not None})
+    print(f"[pont v2] {card.get('nom')} : identite passee a {nouvelle['id']} ({r['niveau']})", flush=True)
+    return np_.emettre_certificat(coffre(), p, card.get("nom") or nouvelle["id"], r["identite"], r["niveau"],
+                                  r["transport"], ["travailleur"],
+                                  [c for c in card.get("capacites") or [] if isinstance(c, str) and c][:64],
+                                  serie, TOLERANCE_LOGICIELLE)
+
+
+def _renouveler(card, msg, cid=None, pair=None):
     """Certificat neuf pour la nouvelle cle de transport de la machine. Exige la preuve
     signee par sa cle d'identite v2 (celle de sa fiche) : une cle de transport volee
-    ne suffit pas a se faire certifier (spec §4.1)."""
+    ne suffit pas a se faire certifier (spec §4.1). Une preuve "rotation" fait passer
+    la machine a une nouvelle identite (sa puce), sans nouvel appairage."""
     import base64
     if not msg.get("preuve"):
         raise np_.CertificatRefuse("demande de certificat sans preuve signee")
+    if np_.type_de_preuve(msg["preuve"]) == "rotation":
+        return _rotation(cid, card, msg, pair)
     p = parc()
     with _verrou:
         nonces = np_.RegistreNonces.charger(_chemin("nonces.json"))
@@ -206,7 +262,7 @@ def _servir_perime(session, cid, card, adresse):
         if msg is None or msg["type"] != "certificat_demande":
             print(f"[pont v2] {card.get('nom')} : certificat expire, seul un renouvellement est permis", flush=True)
             return
-        nouveau = _renouveler(card, msg)
+        nouveau = _renouveler(card, msg, cid, session.pair)
         session.envoyer({"type": "certificat", "id": uuid.uuid4().hex[:16], "objet": nouveau})
         print(f"[pont v2] {card.get('nom')} : certificat expire renouvele ({adresse})", flush=True)
     except np_.ErreurPont as exc:
@@ -241,6 +297,13 @@ def _servir(entrante):
             _servir_perime(session, cid, card, entrante.adresse)
             cid = None  # session de renouvellement : ni presence ni depart
             return
+        if (card["v2"].get("precedente") and pair["sujet"] == card["v2"].get("id")):
+            # Premiere session avec la nouvelle identite : l'ancienne ne vaut plus rien.
+            v2 = dict(card["v2"])
+            v2.pop("precedente", None)
+            compagnon.update_card(cid, v2=v2)
+            card = compagnon.trusted().get(cid) or card
+            print(f"[pont v2] {pair['nom']} : ancienne identite retiree", flush=True)
         print(f"[pont v2] {pair['nom']} connectee en v2 depuis {entrante.adresse}", flush=True)
         with _verrou:
             _presence_v2[cid] = {"depuis": time.time(), "vu": time.time(), "battements": 0}
@@ -263,6 +326,12 @@ def _servir(entrante):
                     _presence_v2[cid]["vu"] = time.time()
                     _presence_v2[cid]["battements"] += 1
                     _ecrire_presence()
+            if msg["type"] in ("validation_reponse", "humain_annonce"):
+                try:
+                    _validation_recue(cid, card, msg) if msg["type"] == "validation_reponse" else _humain_annonce(cid, card, msg)
+                except np_.ErreurPont as exc:
+                    print(f"[pont v2] {pair['nom']} : {msg['type']} refuse : {exc}", flush=True)
+                continue
             if msg["type"] != "certificat_demande":
                 try:
                     v1 = trad.depuis_v2(msg)
@@ -276,7 +345,7 @@ def _servir(entrante):
                         print(f"[pont v2] {pair['nom']} : traitement de {msg['type']} : {exc!r}", flush=True)
             else:
                 try:
-                    nouveau = _renouveler(card, msg)
+                    nouveau = _renouveler(card, msg, cid, pair)
                 except np_.ErreurPont as exc:
                     print(f"[pont v2] {pair['nom']} : renouvellement refuse : {exc}", flush=True)
                     continue
@@ -298,6 +367,78 @@ def _servir(entrante):
                     parti = True
             if parti and arrivee:
                 _signaler("depart", cid, compagnon.trusted().get(cid) or {}, entrante.adresse)
+
+
+# --- cles humaines et validations (lot 2 §1) --------------------------------------------
+
+VALIDATION_SEC = 240        # temps laisse a l'humain pour lire et valider
+_validations = {}           # id de la demande -> {"cid", "evenement", "reponse"}
+
+
+def humains():
+    """{id: {"identite", "machine", "nom", "ajoute"}} des cles humaines connues."""
+    try:
+        with open(_chemin("humains.json")) as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return {}
+
+
+def _humain_annonce(cid, card, msg):
+    """Un appareil de confiance (session v2 authentifiee) annonce sa cle humaine : objet
+    "humain" signe par elle. Une seule cle humaine par machine (la nouvelle remplace)."""
+    objet = msg.get("objet") or {}
+    charge = objet.get("charge") or {}
+    identite = charge.get("identite")
+    if not isinstance(identite, dict) or identite == card["v2"]["identite"]:
+        raise np_.ErreurFormat("cle humaine absente ou egale a l'identite de la machine")
+    with _verrou:
+        nonces = np_.RegistreNonces.charger(_chemin("nonces.json"))
+        np_.verifier_objet(objet, identite, "humain", parc(), nonces)
+        nonces.enregistrer(_chemin("nonces.json"))
+        h = {k: v for k, v in humains().items() if v.get("machine") != cid}
+        hid = np_.identifiant(identite)
+        h[hid] = {"identite": identite, "machine": cid, "nom": card.get("nom") or cid, "ajoute": time.time()}
+        tmp = _chemin("humains.json.tmp")
+        with open(tmp, "w") as f:
+            json.dump(h, f, indent=1)
+        os.replace(tmp, _chemin("humains.json"))
+    print(f"[pont v2] {card.get('nom')} : cle humaine {hid} enregistree", flush=True)
+
+
+def _validation_recue(cid, card, msg):
+    attente = _validations.get(msg.get("reponse_a"))
+    if not attente or attente["cid"] != cid:
+        raise np_.ErreurFormat("reponse a une demande inconnue")
+    attente["reponse"] = msg
+    attente["evenement"].set()
+
+
+def demander_validation(sujet, charge, delai=VALIDATION_SEC):
+    """Fait valider `charge` par un humain, sur un appareil connecte qui porte une cle
+    humaine. Rend l'objet "validation" verifie (decision "accepte" ou "refuse").
+    Leve ErreurPont : pas d'appareil, annule, delai depasse, validation invalide."""
+    connus = humains()
+    machines = [(hid, h) for hid, h in connus.items() if h.get("machine") in _sessions]
+    if not machines:
+        raise np_.ErreurPont("aucun appareil avec une cle humaine n'est connecte")
+    hid, h = machines[0]
+    session = _sessions.get(h["machine"])
+    demande = uuid.uuid4().hex[:16]
+    attente = {"cid": h["machine"], "evenement": threading.Event(), "reponse": None}
+    _validations[demande] = attente
+    try:
+        session.envoyer({"type": "validation_demande", "id": demande, "sujet": sujet, "charge": charge})
+        if not attente["evenement"].wait(delai):
+            raise np_.ErreurPont("pas de reponse de l'humain a temps")
+        r = attente["reponse"]
+        if r.get("erreur"):
+            raise np_.ErreurPont("validation non donnee : " + str(r["erreur"])[:200])
+        objet = r["objet"]
+        np_.verifier_validation(objet, h["identite"], parc(), charge)
+        return objet
+    finally:
+        _validations.pop(demande, None)
 
 
 def demarrer(adresse="0.0.0.0", port=PORT, recu=None, evenement=None):

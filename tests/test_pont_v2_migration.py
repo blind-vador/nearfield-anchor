@@ -20,7 +20,11 @@ On verifie :
   - une demande TETRA v2 vise l'hote de la session, jamais une adresse recue ;
   - un message que la liste fermee refuse n'est pas envoye (plus de v1 en secours) ;
   - appairage v2 d'une nouvelle machine par le NAS : meme code des deux cotes, fiche
-    v2 seule, session etablie ; un engagement non tenu est refuse.
+    v2 seule, session etablie ; un engagement non tenu est refuse ;
+  - coffre materiel (puce simulee, meme protocole que pf-enclave) : l'identite logicielle
+    du Mac passe dans la puce par une rotation contresignee, sans nouvel appairage, et
+    l'ancienne ne vaut plus rien ; la cle humaine est annoncee, et une validation demandee
+    par le Pi revient signee par elle (dialogue accepte), ou refusee.
 
 Tout l'etat est dans un dossier temporaire (NFA_HOME, HOME du pont) : aucun
 fichier du Pi en service n'est touche. Saute si nearfield_pont ou
@@ -100,6 +104,10 @@ class PassageV1V2(unittest.TestCase):
         nb.session_state = lambda: {"verrouille": False}
         nb.network_identity = lambda: ("00:11:22:33:44:55", ["127.0.0.1"])
         nb._wake_workers = lambda pi: None
+        nb._wake_service = lambda: None
+        nb.PUCE = os.path.join(mac_dir, "bin", "pf-enclave")  # absent : pas de puce par defaut
+        nb.HUMAIN = os.path.join(nb.V2_DIR, "humain.puce")
+        nb.ANNONCES_HUMAIN = os.path.join(nb.V2_DIR, "humain-annonces")
 
         # --- Parc v1 deja appaire : les deux fiches, comme apres un appairage
         cls.pi_id = compagnon.pi_id()
@@ -230,8 +238,10 @@ class PassageV1V2(unittest.TestCase):
 
     def test_06_cle_v2_du_pi_changee_refusee_par_le_mac(self):
         ident = os.path.join(self.pont_v2.V2_DIR, "identite.pem")
+        self.addCleanup(self.pont_v2._coffre.__setitem__, 0, None)  # apres la remise en place
         os.replace(ident, ident + ".vraie")
         self.addCleanup(os.replace, ident + ".vraie", ident)
+        self.pont_v2._coffre[0] = None
         self.pont_v2._moi.clear()
         self.addCleanup(self.pont_v2._moi.clear)
         self.lancer_mac()
@@ -457,6 +467,73 @@ class PassageV1V2(unittest.TestCase):
         app, _ = self.appairer("pcneuf0002", tricher)
         self.assertTrue(attendre(lambda: app.etat() == "erreur", 10), app.etat())
         self.assertNotIn("pcneuf0002", self.compagnon.trusted())
+
+
+    # --- coffre materiel, cle humaine, validation -------------------------------------
+
+    def fausse_puce(self):
+        """Programme au protocole de pf-enclave ; la cle est un PEM (essai seulement)."""
+        import stat
+        site = os.path.dirname(os.path.dirname(os.path.abspath(nearfield_pont.__file__)))
+        chemin = os.path.join(TMP, "bin", "pf-faux")
+        os.makedirs(os.path.dirname(chemin), exist_ok=True)
+        with open(chemin, "w") as f:
+            f.write("#!%s\n" % sys.executable + "\n".join([
+                "import base64, os, sys",
+                "sys.path.insert(0, %r)" % site,
+                "import nearfield_pont as n",
+                "a = sys.argv",
+                "if a[1] == 'disponible': sys.exit(0)",
+                "if a[1] == 'creer':",
+                "    if os.path.exists(a[2]): sys.exit(2)",
+                "    print(n.Coffre.charger_ou_creer(a[2], 'p256').cle_publique()['pub'])",
+                "elif a[1] == 'publique': print(n.Coffre.ouvrir(a[2]).cle_publique()['pub'])",
+                "elif a[1] == 'signer':",
+                "    if '--raison' in a: open(a[2] + '.raison', 'w').write(a[a.index('--raison') + 1])",
+                "    print(base64.b64encode(n.Coffre.ouvrir(a[2]).signer(sys.stdin.buffer.read())).decode())",
+                "else: sys.exit(64)", ""]))
+        os.chmod(chemin, stat.S_IRWXU | stat.S_IRGRP | stat.S_IXGRP | stat.S_IROTH | stat.S_IXOTH)
+        p = mock.patch.object(self.nb, "_programme_puce", lambda: chemin)
+        p.start()
+        self.addCleanup(p.stop)
+        return chemin
+
+    def test_13_identite_passe_dans_la_puce_puis_validation_humaine(self):
+        nb, v2 = self.nb, self.pont_v2
+        avant = dict(self.fiche()["v2"])
+        self.assertEqual(avant["niveau"], "logiciel")
+        self.fausse_puce()
+        r = nb.humain_creer()
+        self.assertEqual(r[0], "OK", r)
+        self.connecte_en_v2()
+        # Rotation : la fiche passe a la nouvelle identite, materielle ; le Mac efface sa cle logicielle.
+        self.assertTrue(attendre(lambda: self.fiche()["v2"]["niveau"] == "materiel", 20), "rotation acceptee")
+        self.assertNotEqual(self.fiche()["v2"]["id"], avant["id"])
+        self.assertTrue(attendre(lambda: os.path.exists(os.path.join(nb.V2_DIR, "identite.puce"))
+                                 and not os.path.exists(os.path.join(nb.V2_DIR, "identite.pem")), 10))
+        # Reconnecte avec la nouvelle identite : l'ancienne est retiree de la fiche.
+        self.assertTrue(attendre(lambda: "precedente" not in self.fiche()["v2"] and v2.en_v2(self.mac_id), 20),
+                        "session avec la nouvelle identite")
+        self.assertEqual(self.certificat_garde()["charge"]["niveau"], "materiel")
+        self.assertIsNone(v2._machine_de(avant["id"])[1], "l'ancienne identite ne vaut plus rien")
+        # Cle humaine annoncee au Pi.
+        self.assertTrue(attendre(lambda: any(h["machine"] == self.mac_id for h in v2.humains().values()), 10))
+        # Validation demandee par le Pi : dialogue accepte, signature par la cle humaine.
+        brouillon = {"type": "ticket", "parc": v2.parc(), "id": "essai-1", "titre": "Essai", "plan": "Faire.",
+                     "budget": {"secondes": 60, "cout_centimes": 0}, "capacites": ["whisper"], "zones": ["src/"]}
+        with mock.patch.object(nb, "_dialogue_validation", lambda texte: "Essai" in texte):
+            validation = v2.demander_validation("ticket", brouillon, 20)
+        hid, h = next(iter(v2.humains().items()))
+        self.assertEqual(validation["signataire"], hid)
+        self.assertEqual(nearfield_pont.verifier_validation(validation, h["identite"], v2.parc(), brouillon), "accepte")
+        with open(nb.HUMAIN + ".raison") as f:
+            self.assertIn("Essai", f.read())
+        ticket = nearfield_pont.emettre_ticket(v2.coffre(), brouillon, validation, [h["identite"]])
+        self.assertEqual(ticket["charge"]["titre"], "Essai")
+        # Dialogue refuse : pas de validation.
+        with mock.patch.object(nb, "_dialogue_validation", lambda texte: False):
+            with self.assertRaises(nearfield_pont.ErreurPont):
+                v2.demander_validation("ticket", brouillon, 20)
 
 
 if __name__ == "__main__":
