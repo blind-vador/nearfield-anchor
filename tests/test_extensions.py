@@ -452,6 +452,12 @@ class PointExtensions(unittest.TestCase):
         t = next(t for t in r["tickets"] if t["id"] == "liste-1")
         self.assertEqual((t["mode"], t["clos"], t["pause"]), ("lax", False, False))
 
+    def test_parc_lire(self):
+        cl, _ = self.client()
+        r = cl.requete("parc_lire")
+        self.assertEqual(r["parc"], self.v2.parc())
+        self.assertIn("whisper", r["capacites"])
+
 
     def test_artefacts_references_par_le_journal(self):
         import base64

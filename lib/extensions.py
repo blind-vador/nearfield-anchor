@@ -22,6 +22,8 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
   ticket_proposer  {brouillon}             controle, garde le brouillon ; rend son empreinte
   ticket_valider   {ticket}                validation humaine puis ticket signe par l'ordonnateur
   ticket_lire      {ticket}                ticket, nombre d'entrees, clos ou non
+  parc_lire        {}                      parc et capacites des machines de confiance (pour
+                                           proposer un ticket dans ce que le parc sait faire)
   tickets_lister   {}                      resume de chaque ticket emis (titre, mode, parent,
                                            entrees, clos, pause), du plus recent au plus ancien
   journal_ecrire   {entree}                entree signee PAR L'EXTENSION, chainee et verifiee
@@ -575,6 +577,10 @@ def _capacites_du_parc():
     return sorted(caps)
 
 
+def parc_lire(cx, req):
+    return {"parc": pont_v2.parc(), "capacites": _capacites_du_parc()}
+
+
 def _params_bornes(p):
     if not isinstance(p, dict):
         raise Refus("params : objet attendu")
@@ -752,6 +758,7 @@ REQUETES = {
     "ticket_valider": ticket_valider,
     "ticket_lire": ticket_lire,
     "tickets_lister": tickets_lister,
+    "parc_lire": parc_lire,
     "journal_ecrire": journal_ecrire,
     "journal_lire": journal_lire,
     "travail_deposer": travail_deposer,
