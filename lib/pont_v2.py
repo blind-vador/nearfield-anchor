@@ -498,7 +498,7 @@ def demander_validation(sujet, charge, delai=VALIDATION_SEC):
 
 
 def demander_arbitrage(charge, options, delai=VALIDATION_SEC):
-    """L'architecte choisit une des `options` ; il signe la charge AVEC son choix
+    """L'utilisateur choisit une des `options` ; il signe la charge AVEC son choix
     (champ "choix"). Rend (validation, choix) apres verification."""
     objet, h = _demander("arbitrage", dict(charge, options=list(options)), delai)
     for choix in options:

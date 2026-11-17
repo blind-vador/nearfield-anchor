@@ -36,20 +36,24 @@ def contexte_scanneur():
 
 
 def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT, mime="image/jpeg", audio=None,
-        audio_mime="audio/ogg", scanneur=False):
+        audio_mime="audio/ogg", scanneur=False, recherche=False):
     """jpeg : image (octets ; type mime, JPEG par defaut) jointe a la question.
     audio : son (octets, type audio_mime) joint, pour transcrire une voix captee
     (ATIS...). json_mode : Gemini rend du JSON strict (responseMimeType).
     scanneur : la question porte sur ce que le scanner a capte ; le contexte
-    (contexte_scanneur) passe devant."""
+    (contexte_scanneur) passe devant.
+    recherche (2026-11-17) : Gemini cherche sur le web avant de repondre (outil google_search),
+    pour une veille a jour ; les autres services, qui ne cherchent pas, sont sautes. Le texte
+    est rendu tel quel (le JSON strict de Gemini ne se combine pas avec la recherche)."""
     if scanneur:
         prompt = contexte_scanneur() + "\n\n" + prompt
-    texte_seul = jpeg is None and audio is None
+    texte_seul = jpeg is None and audio is None and not recherche
     if texte_seul:
         texte = connecteurs_ia.demander(prompt, temperature, json_mode, timeout)
         if texte:
             return texte, None
-    texte, raison = _demander_gemini(prompt, temperature, jpeg, json_mode, timeout, mime, audio, audio_mime)
+    texte, raison = _demander_gemini(prompt, temperature, jpeg, json_mode, timeout, mime, audio, audio_mime,
+                                     recherche)
     if texte:
         connecteurs_ia.compter("gemini")
         return texte, None
@@ -60,7 +64,7 @@ def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT, mi
     return None, raison
 
 
-def _demander_gemini(prompt, temperature, jpeg, json_mode, timeout, mime, audio, audio_mime):
+def _demander_gemini(prompt, temperature, jpeg, json_mode, timeout, mime, audio, audio_mime, recherche=False):
     import base64
     key = reglages.cle("gemini")
     if not key:
@@ -71,9 +75,11 @@ def _demander_gemini(prompt, temperature, jpeg, json_mode, timeout, mime, audio,
     if audio is not None:
         parts.append({"inline_data": {"mime_type": audio_mime, "data": base64.b64encode(audio).decode()}})
     config = {"temperature": temperature}
-    if json_mode:
+    if json_mode and not recherche:
         config["responseMimeType"] = "application/json"
     body = {"contents": [{"parts": parts}], "generationConfig": config}
+    if recherche:
+        body["tools"] = [{"google_search": {}}]
     reason = dire("gemini.gemini_repond")
     for model in MODELS:
         repos = f"gemini:{model}"
@@ -103,8 +109,10 @@ def _demander_gemini(prompt, temperature, jpeg, json_mode, timeout, mime, audio,
         except (KeyError, IndexError, ValueError):
             reason = dire("gemini.reponse_gemini_inutilisable")
             continue
-        if json_mode:
-            return text, None
+        if json_mode or recherche:
+            if text.strip():
+                return text, None
+            continue
         text = " ".join(text.replace("*", "").replace("#", "").split())
         if text:
             return text, None

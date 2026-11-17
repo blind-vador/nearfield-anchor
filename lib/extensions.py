@@ -72,7 +72,7 @@ Controle mecanique : une entree "progression" ou "resultat" peut declarer
 donnees.fichiers (chemins touches) et donnees.consomme {secondes, cout_centimes} ; hors
 des zones ou au-dela du budget, l'ordonnateur arrete le ticket (entree "cloture" signee
 par lui). Desaccord : le premier met le ticket en pause et demande l'arbitrage de
-l'architecte (points, raisons de chacun, impact ; il choisit redacteur, verificateur,
+l'utilisateur (points, raisons de chacun, impact ; il choisit redacteur, verificateur,
 troisieme avis ou arret) ; le second de suite arrete le ticket.
 Aucune commande arbitraire, aucun acces aux cles de l'ordonnateur ; enroler une extension
 et lancer un plan exigent une validation humaine de moins de 5 minutes. Retirer une
@@ -520,12 +520,12 @@ _arbitrages = set()  # tickets dont l'arbitrage est demande en ce moment
 
 
 def _arbitrer(tid, n, entree, lever=False):
-    """Le premier desaccord : l'architecte tranche, avec les points, les raisons de chacun
+    """Le premier desaccord : l'utilisateur tranche, avec les points, les raisons de chacun
     et l'impact. Sa validation (le choix compris) est gardee au journal. Rend le choix."""
     with _verrou:
         if tid in _arbitrages:
             if lever:
-                raise Refus("un arbitrage de ce ticket attend deja l'architecte")
+                raise Refus("un arbitrage de ce ticket attend deja l'utilisateur")
             return None
         _arbitrages.add(tid)
     try:
@@ -551,7 +551,7 @@ def _arbitrer(tid, n, entree, lever=False):
                             {"arbitrage": n, "choix": choix, "validation": validation})
         _evenement("arbitrage", ticket=tid, choix=choix)
         if choix == "arreter":
-            _arreter(tid, "décision de l'architecte")
+            _arreter(tid, "décision de l'utilisateur")
         return choix
     finally:
         with _verrou:
@@ -585,7 +585,7 @@ def ticket_arreter(cx, req):
     if _est_clos(tid):
         raise Refus("ticket deja clos")
     print(f"[extensions] ticket {tid} arrete par l'humain : {charge['raison']}", flush=True)
-    _ecrire_ordonnateur(tid, "cloture", "Ticket arrêté par l'architecte : %s" % charge["raison"],
+    _ecrire_ordonnateur(tid, "cloture", "Ticket arrêté par l'utilisateur : %s" % charge["raison"],
                         {"arret": charge["raison"], "validation": validation})
     for bloc in _lire_json(_dossier("tickets", tid, "blocs.json"), []) or []:
         try:
@@ -689,7 +689,7 @@ def _ticket_actif(tid):
     if _clos(e):
         raise Refus("ticket clos")
     if _en_pause(e):
-        raise Refus("ticket en pause : un desaccord attend l'arbitrage de l'architecte")
+        raise Refus("ticket en pause : un desaccord attend l'arbitrage de l'utilisateur")
     return t
 
 
@@ -768,7 +768,7 @@ def travail_autoriser(cx, req):
     if np_.verifier_validation(validation, validation_cle(validation), pont_v2.parc(), charge) != "accepte":
         raise Refus("travail refuse par l'humain")
     t = _ticket_actif(tid)  # toujours ouvert apres l'attente de l'humain
-    n = _ecrire_ordonnateur(tid, "validation", "Travail autorisé par l'architecte : %s" % action.strip(),
+    n = _ecrire_ordonnateur(tid, "validation", "Travail autorisé par l'utilisateur : %s" % action.strip(),
                             {"autorisation": charge, "validation": validation})
     job_id = _deposer(cx, tid, t, capacite, params, artefacts=list(joints),
                       extra={"autorisation": {"n": n, "empreinte": pont_v2.empreinte_charge(charge),

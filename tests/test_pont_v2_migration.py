@@ -559,7 +559,7 @@ class PassageV1V2(unittest.TestCase):
             self.assertIn("Essai", f.read())
         ticket = nearfield_pont.emettre_ticket(v2.coffre(), brouillon, validation, [h["identite"]])
         self.assertEqual(ticket["charge"]["titre"], "Essai")
-        # Arbitrage d'un desaccord : le dossier est montre, l'architecte choisit, sa signature
+        # Arbitrage d'un desaccord : le dossier est montre, l'utilisateur choisit, sa signature
         # couvre son choix.
         dossier = {"type": "arbitrage", "parc": v2.parc(), "id": "arbitrage-essai-1-0", "ticket": "essai-1",
                    "titre": "Essai", "desaccord": "Cache contesté.", "impact": "un fichier",
