@@ -222,6 +222,10 @@ class PointExtensions(unittest.TestCase):
         self.assertEqual(r["type"], "reponse", r)
         job = self.c._read(os.path.join(self.c.BRIDGE_DIR, "travaux", r["travail"], "travail.json"))
         self.assertEqual((job["type"], job["ticket"], job["params"]), ("whisper", "guide-1", {"langue": "fr"}))
+        # Les bornes du ticket voyagent dans le travail signe.
+        self.assertEqual((job["bornes"]["plan"], job["bornes"]["zones"], job["bornes"]["capacites"]),
+                         ("Relire docs/guide.md et corriger les fautes.", ["docs/guide.md"], ["whisper"]))
+        self.assertEqual(job["bornes"]["empreinte"], self.v2.empreinte_charge(ticket["charge"]))
         self.assertEqual(cl.requete("travail_deposer", ticket="guide-1", capacite="agent-code")["type"], "erreur")
         self.assertEqual(cl.requete("travail_deposer", ticket="guide-1", capacite="whisper",
                                     params={"x": "a" * 20000})["type"], "erreur")

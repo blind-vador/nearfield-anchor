@@ -695,6 +695,12 @@ def _deposer(cx, tid, t, capacite, params, extra=None):
     job_id, _dossier_travail, job = compagnon.new_job(capacite, params)
     job["ticket"] = tid
     job["extension"] = cx.id
+    # Les bornes du ticket voyagent DANS le travail signe : la machine qui l'execute peut
+    # verifier que ses parametres restent dans ce que l'humain a valide (2026-11-17).
+    c = t["charge"]
+    job["bornes"] = {"empreinte": pont_v2.empreinte_charge(c), "titre": c.get("titre"), "plan": c.get("plan"),
+                     "mode": c.get("mode"), "capacites": c.get("capacites") or [], "zones": c.get("zones") or [],
+                     "budget": c.get("budget") or {}}
     job.update(extra or {})
     compagnon.submit(job)
     _travaux[job_id] = (tid, cx.id)

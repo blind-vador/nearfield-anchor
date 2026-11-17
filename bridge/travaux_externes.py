@@ -11,7 +11,9 @@ Contrat (ferme) avec le programme :
   programme --capacites          stdout : liste JSON de noms simples (ses capacites du
                                  moment ; il les sonde lui-meme), en 30 s au plus
   programme --travail <dossier>  stdin : le travail VERIFIE (signature de l'ordonnateur
-                                 controlee par le pont) {id, type, params, ticket} ;
+                                 controlee par le pont) {id, type, params, ticket,
+                                 bornes} ; bornes = titre, plan, mode, capacites, zones,
+                                 budget et empreinte du ticket valide par l'humain ;
                                  stdout : une ligne JSON par evenement
       {"etape": "<nom simple>", "phrase": "<texte>", "pourcentage": 0..100}
                                  relaye au Pi en message v2 "progression" (type ferme)
@@ -135,7 +137,7 @@ def executer(externe, job, dossier, relayer, journal=print):
     lecteur.start()
     fin, n = None, 0
     try:
-        p.stdin.write(json.dumps({k: job.get(k) for k in ("id", "type", "params", "ticket")}))
+        p.stdin.write(json.dumps({k: job.get(k) for k in ("id", "type", "params", "ticket", "bornes")}))
         p.stdin.close()
         for ligne in p.stdout:
             try:
