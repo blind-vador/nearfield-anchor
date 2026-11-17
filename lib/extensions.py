@@ -39,7 +39,10 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
                                            {nom: empreinte}) pour qu'il fasse foi
   artefact_lire    {ticket, nom}           contenu, empreinte, et l'entree de journal qui le
                                            reference (n) ou null
-  travail_deposer  {ticket, capacite, params}  travail d'un type connu, dans ce qu'autorise le ticket
+  travail_deposer  {ticket, capacite, params, artefacts}  travail d'un type connu, dans ce
+                                           qu'autorise le ticket ; artefacts : noms d'artefacts du
+                                           ticket qui font foi, copies dans le dossier du travail
+                                           (couverts par sa signature), 8 au plus
   contre_epreuve   {ticket, travail, capacite, params}  verification confiee par l'ORDONNATEUR a une
                                            autre machine que l'auteur (ou, seule machine, a un
                                            agent en contexte neutre), notee au journal
@@ -686,13 +689,38 @@ def _ticket_actif(tid):
     return t
 
 
-def _deposer(cx, tid, t, capacite, params, extra=None):
+def _artefacts_qui_font_foi(tid, t, noms):
+    """{nom: contenu} des artefacts du ticket references par une entree signee du journal."""
+    if not isinstance(noms, list) or len(noms) > 8:
+        raise Refus("artefacts : liste de 8 noms au plus")
+    references = {}
+    for e in _journal_verifie(t, _entrees(tid)):
+        references.update((e.get("donnees") or {}).get("artefacts") or {})
+    sortie = {}
+    for nom in noms:
+        nom = _nom_artefact(nom)
+        try:
+            with open(_dossier("tickets", tid, "artefacts", nom), "rb") as f:
+                contenu = f.read(MAX_ARTEFACT + 1)
+        except OSError:
+            raise Refus("artefact inconnu : %s" % nom)
+        if references.get(nom) != hashlib.sha256(contenu).hexdigest():
+            raise Refus("l'artefact %s ne fait pas foi (aucune entree signee ne le reference)" % nom)
+        sortie[nom] = contenu
+    return sortie
+
+
+def _deposer(cx, tid, t, capacite, params, extra=None, artefacts=None):
     if capacite not in (t["charge"].get("capacites") or []):
         raise Refus("le ticket n'autorise pas la capacite %s" % capacite)
     if capacite not in _capacites_du_parc():
         raise Refus("aucune machine du parc ne sait faire %s" % capacite)
     _params_bornes(params)
-    job_id, _dossier_travail, job = compagnon.new_job(capacite, params)
+    joints = _artefacts_qui_font_foi(tid, t, artefacts or [])
+    job_id, dossier_travail, job = compagnon.new_job(capacite, params)
+    for nom, contenu in joints.items():  # dans le dossier du travail : couverts par sa signature
+        with open(os.path.join(dossier_travail, nom), "wb") as f:
+            f.write(contenu)
     job["ticket"] = tid
     job["extension"] = cx.id
     # Les bornes du ticket voyagent DANS le travail signe : la machine qui l'execute peut
@@ -715,7 +743,7 @@ def travail_deposer(cx, req):
     tid = req.get("ticket")
     t = _ticket_actif(tid)
     capacite = _nom_sur(req.get("capacite"), "capacite")
-    return {"travail": _deposer(cx, tid, t, capacite, req.get("params") or {})}
+    return {"travail": _deposer(cx, tid, t, capacite, req.get("params") or {}, artefacts=req.get("artefacts"))}
 
 
 def _auteur(job_id):

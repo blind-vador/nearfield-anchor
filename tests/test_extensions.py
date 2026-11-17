@@ -528,6 +528,20 @@ class PointExtensions(unittest.TestCase):
                                 {"fichiers": ["docs/guide.md"], "artefacts": {"diff-1.patch": r["empreinte"]}})
         self.assertEqual(cl.requete("journal_ecrire", entree=e0)["n"], 0)
         self.assertEqual(cl.requete("artefact_lire", ticket="art-1", nom="diff-1.patch")["reference"], 0)
+        # Joint a un travail : copie dans son dossier, couverte par la signature du travail.
+        r = cl.requete("travail_deposer", ticket="art-1", capacite="whisper", params={}, artefacts=["diff-1.patch"])
+        self.assertEqual(r["type"], "reponse", r)
+        dossier = os.path.join(self.c.BRIDGE_DIR, "travaux", r["travail"])
+        with open(os.path.join(dossier, "diff-1.patch"), "rb") as f:
+            self.assertEqual(f.read(), diff)
+        objet = self.c._read(os.path.join(dossier, "travail.v2.json"))
+        np_.verifier_fichiers(objet, dossier)
+        self.assertIn("diff-1.patch", str(objet))
+        # Un artefact qui ne fait pas foi, ou inconnu : refuse.
+        cl.requete("artefact_deposer", ticket="art-1", nom="libre.txt", contenu=base64.b64encode(b"x").decode())
+        for noms in (["libre.txt"], ["absent.patch"], ["../x"], ["a"] * 9):
+            self.assertEqual(cl.requete("travail_deposer", ticket="art-1", capacite="whisper", params={},
+                                        artefacts=noms)["type"], "erreur", noms)
 
     def test_progression_et_sorties_d_un_travail(self):
         import base64
