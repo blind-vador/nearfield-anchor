@@ -193,5 +193,11 @@ def poll_once():
             compagnon.learn_duration(result["compagnon"], job.get("type"), result.get("duree", 0),
                                      a.get("taille_mo") if mine else compagnon.job_size_mb(job["id"]),
                                      a.get("part_libre") if mine else compagnon.free_share(card))
+        if job.get("ticket"):  # travail d'un ticket (extensions) : ses sorties verifiees vont au ticket
+            try:
+                import extensions
+                extensions.recueillir(job, result, folder)
+            except Exception as exc:
+                print(f"[compagnon] sorties du ticket de {job.get('id')} : {exc!r}")
         shutil.rmtree(folder, ignore_errors=True)  # le pont ne garde que l'en-cours
     compagnon.drop_stale(STALE_SEC)

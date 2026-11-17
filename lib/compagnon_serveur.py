@@ -284,6 +284,9 @@ def _traiter(cid, card, msg):
         print(f"[compagnon] travail {msg.get('travail')} pris par {card.get('nom')}")
     elif kind == "fini":
         _results_ready.set()
+    elif kind == "progression":  # phrase d'un travail externe en cours (extensions, 2026-11-17)
+        import extensions
+        extensions.progression(cid, card, msg)
 
 
 def _envoyer(cid, channel, msg):

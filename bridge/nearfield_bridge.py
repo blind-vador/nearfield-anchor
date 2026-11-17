@@ -42,6 +42,7 @@ import uuid
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, HERE)
 import pont_protocole as proto  # noqa: E402
+import travaux_externes  # noqa: E402
 
 try:  # protocole v2 (module Rust pont/python) : inactif s'il manque
     import nearfield_pont as pont2  # noqa: E402
@@ -72,6 +73,7 @@ NAS_FALLBACK_SEC = 12 * 3600
 LOOP_SEC = 5
 PAIRING_WAIT_SEC = 180
 RECONNECT_SEC = (10, 120)
+EXTERNES = os.path.join(HOME, "externes")    # <nom>.json : programmes installes a part (travaux_externes.py)
 V2_DIR = os.path.join(HOME, "v2")            # identite.puce|pem (cle v2), ponts/<pi>.json (cle v2 du Pi epinglee)
 PUCE = os.path.join(HOME, "bin", "pf-enclave")  # Secure Enclave (bridge/pf_enclave.swift, construit par installer.sh)
 HUMAIN = os.path.join(V2_DIR, "humain.puce")    # cle humaine : Touch ID ou mot de passe a CHAQUE signature
@@ -223,6 +225,10 @@ def capabilities():
             caps.append("banc")
     except Exception:
         pass
+    try:  # travaux externes (2026-11-17) : logiciels installes a part, ex. agents de Prismaforge
+        caps += [c for c in travaux_externes.capacites(EXTERNES) if c not in caps]
+    except Exception:
+        traceback.print_exc()
     return caps
 
 
@@ -1840,7 +1846,7 @@ def _requeue_interrupted():
                 log("%s : travail %s interrompu, remis en file" % (pi, job_id))
 
 
-def _process(job, folder):
+def _process(job, folder, pi=None):
     if job.get("type") == "lora":
         return _lora(job, folder)
     if job.get("type") == "meteor":
@@ -1860,6 +1866,14 @@ def _process(job, folder):
     if job.get("type") in ("examen", "examen_lot", "examen_serie"):
         import examen_mac
         return examen_mac.process(folder, job.get("params") or {})
+    externe = travaux_externes.pour(EXTERNES, job.get("type"))
+    if externe:
+        def relayer(etape, phrase, pourcentage):
+            link = _links.get(pi) if pi else None
+            if link:
+                link.send({"type": "progression", "travail": job["id"], "etape": etape,
+                           "pourcentage": pourcentage, "phrase": phrase})
+        return travaux_externes.executer(externe, job, folder, relayer, log)
     return "echec", [], "cette machine ne sait pas faire « %s »" % job.get("type")
 
 
@@ -1892,7 +1906,7 @@ def _work(pi, fast):
         if sys.platform == "darwin" and not fast:
             awake = subprocess.Popen(["caffeinate", "-i", "-w", str(os.getpid())])
         try:
-            state, outputs, message = _process(job, folder)
+            state, outputs, message = _process(job, folder, pi)
         except Exception:
             traceback.print_exc()
             state, outputs, message = "echec", [], "erreur de calcul sur la machine compagne"

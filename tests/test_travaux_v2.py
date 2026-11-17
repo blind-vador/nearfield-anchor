@@ -86,7 +86,7 @@ class TravauxV2(unittest.TestCase):
         self.c._refus_resultat.clear()
         self.vus = []
 
-        def calcul(job, folder):
+        def calcul(job, folder, pi=None):
             self.vus.append(job)
             with open(os.path.join(folder, "texte.json"), "w") as f:
                 json.dump({"texte": "bonjour"}, f)

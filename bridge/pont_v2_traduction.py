@@ -77,6 +77,12 @@ def _puissance_libre(puissance):
         return 0
 
 
+def _texte_borne(t, octets=3900):
+    """Texte sans caracteres de controle, tronque en octets UTF-8 (limite du module Rust)."""
+    t = "".join(c if c.isprintable() else " " for c in str(t or ""))
+    return t.encode("utf-8")[:octets].decode("utf-8", "ignore")
+
+
 def vers_v2(m):
     """Message v1 -> message v2 (dictionnaire pour nearfield_pont.Session.envoyer)."""
     t = m.get("type")
@@ -106,6 +112,11 @@ def vers_v2(m):
                     "jusqu_a": int(time.time()) + PRISE_SEC}
         if t == "fini":
             return {"type": "travail_fini", "id": _id(), "travail": m["travail"]}
+        if t == "progression":  # travaux externes (2026-11-17) : une phrase du travail en cours
+            pct = m.get("pourcentage")
+            return _sans_none({"type": "progression", "id": _id(), "travail": m["travail"], "etape": m["etape"],
+                               "pourcentage": pct if isinstance(pct, int) and 0 <= pct <= 100 else 0,
+                               "phrase": _texte_borne(m.get("phrase")) or None})
         if t == "son" or piste_valide(t):
             return _sans_none({"type": "morceau", "id": _id(), "flux": m["reponse_a"], "n": int(m.get("n") or 0),
                                "donnees": m.get("pcm") or "", "fin": False, "piste": t,
@@ -178,6 +189,9 @@ def depuis_v2(m, hote=None):
         return {"type": "pris", "travail": m["travail"]}
     if t == "travail_fini":
         return {"type": "fini", "travail": m["travail"]}
+    if t == "progression":
+        return {"type": "progression", "travail": m["travail"], "etape": m["etape"],
+                "pourcentage": m.get("pourcentage", 0), "phrase": m.get("phrase")}
     if t == "morceau":
         piste = m.get("piste") or ""
         if not piste_valide(piste):

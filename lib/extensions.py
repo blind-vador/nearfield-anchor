@@ -43,7 +43,15 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
   contre_epreuve   {ticket, travail, capacite, params}  verification confiee par l'ORDONNATEUR a une
                                            autre machine que l'auteur (ou, seule machine, a un
                                            agent en contexte neutre), notee au journal
-  evenements       {}                      s'abonner : {"type": "evenement", "genre": ...}
+  sortie_lire      {ticket, travail, nom}  une sortie d'un travail du ticket (fiche, rapport...),
+                                           recueillie sur la carte SD de l'ordonnateur des que son
+                                           resultat signe a ete verifie ; contenu, empreinte, etat
+  evenements       {}                      s'abonner : {"type": "evenement", "genre": ...} ;
+                                           genres : ticket_emis, journal, arbitrage,
+                                           travail_progression {ticket, travail, etape, pourcentage,
+                                           phrase} (en direct, relaye depuis la machine qui fait le
+                                           travail ; affichage seulement, rien n'y fait foi) et
+                                           travail_fini {ticket, travail, etat, message, sorties}
   interface_servir {}                      (capacite "interface") devenir le front de l'IDE : les
                                            requetes des coquilles arrivent en evenements
                                            {"type": "interface_requete", requete, appareil,
@@ -67,7 +75,8 @@ Sons (2026-11-16) : le Pi sonne (validation qui attend, ticket lance ou arrete, 
 journal) ; la parole est sur l'appareil de l'utilisateur (application Prismaforge, VoiceOver),
 qui montre le texte exact du journal.
 
-Etat (carte SD) : LOCAL_DIR/v2/extensions/fiches.json, LOCAL_DIR/v2/tickets/.
+Etat (carte SD) : LOCAL_DIR/v2/extensions/fiches.json, LOCAL_DIR/v2/tickets/ (dont
+tickets/<ticket>/sorties/<travail>/ : sorties verifiees des travaux du ticket).
 """
 import base64
 import hashlib
@@ -95,6 +104,8 @@ _verrou = threading.Lock()
 _enrolement = threading.Lock()
 _abonnes = set()        # connexions abonnees aux evenements
 _travaux = {}           # id du travail -> (ticket, id de l'extension), en attente de fin
+_progression_de = {}    # id du travail -> machine (cid) qui en envoie la progression
+MAX_SORTIES = 16
 _nonces = None
 ANNONCES = True         # les essais les coupent
 
@@ -745,6 +756,79 @@ def contre_epreuve(cx, req):
     return {"travail": job_id, "verificateur": nom, "meme_machine": meme, "n": n}
 
 
+def progression(cid, card, msg):
+    """Message "progression" d'une machine (session v2 ou liaison v1) : relaye aux abonnes
+    pour un travail depose par une extension. Seule la premiere machine qui parle d'un
+    travail est ecoutee ensuite (le travail n'a qu'un preneur). Affichage seulement."""
+    job_id = msg.get("travail")
+    if job_id not in _travaux:
+        return
+    if _progression_de.setdefault(job_id, cid) != cid:
+        return
+    etape = msg.get("etape")
+    if not isinstance(etape, str) or not NOM_SUR.match(etape):
+        return
+    pct = msg.get("pourcentage")
+    phrase = msg.get("phrase")
+    _evenement("travail_progression", ticket=_travaux[job_id][0], travail=job_id, etape=etape,
+               pourcentage=pct if isinstance(pct, int) and not isinstance(pct, bool) and 0 <= pct <= 100 else 0,
+               phrase=str(phrase)[:4000] if phrase else None, machine=card.get("nom"))
+
+
+def recueillir(job, resultat, dossier_travail):
+    """Appele par le ramassage des resultats (compagnon_resultats), resultat SIGNE ET
+    VERIFIE, avant que le dossier du NAS ne soit efface : les sorties d'un travail de ticket
+    sont copiees sur la carte SD (tickets/<ticket>/sorties/<travail>/), puis les abonnes
+    sont prevenus (travail_fini)."""
+    tid, job_id = job.get("ticket"), job.get("id")
+    if not isinstance(tid, str) or not NOM_SUR.match(tid) or not isinstance(job_id, str) or not NOM_SUR.match(job_id):
+        return
+    if not os.path.isdir(_dossier("tickets", tid)):
+        return
+    dest = _dossier("tickets", tid, "sorties", job_id)
+    fichiers = resultat.get("fichiers") or resultat.get("sorties") or {}
+    gardees = {}
+    for nom, empreinte in list(fichiers.items())[:MAX_SORTIES]:
+        if not isinstance(nom, str) or not NOM_ARTEFACT.match(nom) or ".." in nom:
+            continue
+        try:
+            with open(os.path.join(dossier_travail, nom), "rb") as f:
+                contenu = f.read(MAX_ARTEFACT + 1)
+        except OSError:
+            continue
+        if len(contenu) > MAX_ARTEFACT or hashlib.sha256(contenu).hexdigest() != str(empreinte).split(":")[-1]:
+            continue  # trop gros, ou autre chose que ce que la signature couvre
+        os.makedirs(dest, mode=0o700, exist_ok=True)
+        with open(os.path.join(dest, nom), "wb") as f:
+            f.write(contenu)
+        gardees[nom] = hashlib.sha256(contenu).hexdigest()
+    etat = {"etat": resultat.get("etat"), "message": str(resultat.get("message") or "")[:1000],
+            "duree": resultat.get("duree"), "sorties": gardees, "t": time.time()}
+    _ecrire_json(os.path.join(dest, "resultat.json"), etat)
+    _travaux.pop(job_id, None)
+    _progression_de.pop(job_id, None)
+    _evenement("travail_fini", ticket=tid, travail=job_id, etat=etat["etat"], message=etat["message"],
+               sorties=sorted(gardees))
+
+
+def sortie_lire(cx, req):
+    tid = req.get("ticket")
+    _ticket(tid)
+    job_id = _nom_sur(req.get("travail"), "travail")
+    nom = _nom_artefact(req.get("nom"))
+    dest = _dossier("tickets", tid, "sorties", job_id)
+    etat = _lire_json(os.path.join(dest, "resultat.json"))
+    if not etat or nom not in (etat.get("sorties") or {}):
+        raise Refus("sortie inconnue")
+    with open(os.path.join(dest, nom), "rb") as f:
+        contenu = f.read(MAX_ARTEFACT + 1)
+    empreinte = hashlib.sha256(contenu).hexdigest()
+    if empreinte != etat["sorties"][nom]:
+        raise Refus("sortie alteree")
+    return {"nom": nom, "contenu": base64.b64encode(contenu).decode(), "empreinte": empreinte,
+            "etat": etat.get("etat"), "message": etat.get("message"), "duree": etat.get("duree")}
+
+
 def evenements(cx, req):
     _abonnes.add(cx)
     return {}
@@ -832,6 +916,7 @@ REQUETES = {
     "travail_deposer": travail_deposer,
     "artefact_deposer": artefact_deposer,
     "artefact_lire": artefact_lire,
+    "sortie_lire": sortie_lire,
     "contre_epreuve": contre_epreuve,
     "evenements": evenements,
     "interface_servir": interface_servir,
@@ -969,20 +1054,11 @@ def _servir(conn):
 
 
 def _surveiller():
-    """Previent les abonnes quand un travail depose par une extension est fini."""
+    """Expire les requetes d'interface sans reponse. (La fin des travaux est annoncee par
+    recueillir(), appele au ramassage des resultats verifies.)"""
     while True:
         time.sleep(SURVEILLANCE_SEC)
         _expirer_interface()
-        if not _travaux:
-            continue
-        try:
-            for job, resultat, _dossier_travail in compagnon.finished_jobs():
-                if job.get("id") in _travaux:
-                    tid, _eid = _travaux.pop(job["id"])
-                    _evenement("travail_fini", ticket=tid, travail=job["id"], etat=resultat.get("etat"),
-                               message=str(resultat.get("message") or "")[:1000])
-        except Exception as exc:
-            print(f"[extensions] surveillance des travaux : {exc!r}", flush=True)
 
 
 def demarrer():

@@ -525,6 +525,49 @@ class PointExtensions(unittest.TestCase):
         self.assertEqual(cl.requete("journal_ecrire", entree=e0)["n"], 0)
         self.assertEqual(cl.requete("artefact_lire", ticket="art-1", nom="diff-1.patch")["reference"], 0)
 
+    def test_progression_et_sorties_d_un_travail(self):
+        import base64
+        import hashlib
+        cl, _ = self.client()
+        ab, _ = self.client()
+        ab.requete("evenements")
+        self.ticket_emis(cl, "analyse-1")
+        self.assertEqual(ab.recevoir()["genre"], "ticket_emis")
+        job_id = cl.requete("travail_deposer", ticket="analyse-1", capacite="whisper", params={})["travail"]
+        mac = self.c.trusted()["macessai"]
+        # Phrase en direct de la machine qui fait le travail ; une autre machine est ignoree.
+        self.ext.progression("macessai", mac, {"type": "progression", "travail": job_id, "etape": "action",
+                                               "pourcentage": 10, "phrase": "Lit a.py."})
+        self.ext.progression("pcessai", {"nom": "PC"}, {"type": "progression", "travail": job_id,
+                                                         "etape": "texte", "phrase": "Intrus."})
+        self.ext.progression("macessai", mac, {"type": "progression", "travail": "inconnu", "etape": "texte"})
+        evt = ab.recevoir()
+        self.assertEqual((evt["genre"], evt["ticket"], evt["etape"], evt["phrase"], evt["machine"]),
+                         ("travail_progression", "analyse-1", "action", "Lit a.py.", "Mac mini"))
+        # Fin : sorties couvertes par la signature recueillies sur la carte SD, puis annoncees.
+        dossier = os.path.join(TMP, "nas-travail-" + job_id)
+        os.makedirs(dossier)
+        fiche = "# Fiche d'architecture\n".encode()
+        for nom, contenu in (("fiche.md", fiche), ("autre.md", b"x"), ("trop.md", b"y")):
+            with open(os.path.join(dossier, nom), "wb") as f:
+                f.write(contenu)
+        resultat = {"etat": "fait", "message": "Fiche ecrite.", "duree": 8,
+                    "fichiers": {"fiche.md": hashlib.sha256(fiche).hexdigest(),
+                                 "autre.md": "sha256:" + hashlib.sha256(b"x").hexdigest(),
+                                 "trop.md": hashlib.sha256(b"autre chose").hexdigest(), "../x": "0"}}
+        self.ext.recueillir({"id": job_id, "ticket": "analyse-1", "type": "whisper"}, resultat, dossier)
+        evt = ab.recevoir()
+        self.assertEqual((evt["genre"], evt["etat"], evt["sorties"]), ("travail_fini", "fait", ["autre.md", "fiche.md"]))
+        lu = cl.requete("sortie_lire", ticket="analyse-1", travail=job_id, nom="fiche.md")
+        self.assertEqual((base64.b64decode(lu["contenu"]), lu["etat"]), (fiche, "fait"))
+        for nom in ("trop.md", "../x", "inconnu.md"):
+            self.assertEqual(cl.requete("sortie_lire", ticket="analyse-1", travail=job_id, nom=nom)["type"], "erreur")
+        with open(self.ext._dossier("tickets", "analyse-1", "sorties", job_id, "fiche.md"), "ab") as f:
+            f.write(b"ajout")
+        self.assertEqual(cl.requete("sortie_lire", ticket="analyse-1", travail=job_id, nom="fiche.md")["type"],
+                         "erreur")
+        self.ext.progression("macessai", mac, {"type": "progression", "travail": job_id, "etape": "texte"})
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
