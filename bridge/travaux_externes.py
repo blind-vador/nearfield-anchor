@@ -14,6 +14,8 @@ Contrat (ferme) avec le programme :
                                  controlee par le pont) {id, type, params, ticket,
                                  bornes} ; bornes = titre, plan, mode, capacites, zones,
                                  budget et empreinte du ticket valide par l'humain ;
+                                 autorisation = pour un travail sensible, l'autorisation
+                                 de l'humain (entree n du journal, empreinte, action) ;
                                  stdout : une ligne JSON par evenement
       {"etape": "<nom simple>", "phrase": "<texte>", "pourcentage": 0..100}
                                  relaye au Pi en message v2 "progression" (type ferme)
@@ -137,7 +139,7 @@ def executer(externe, job, dossier, relayer, journal=print):
     lecteur.start()
     fin, n = None, 0
     try:
-        p.stdin.write(json.dumps({k: job.get(k) for k in ("id", "type", "params", "ticket", "bornes")}))
+        p.stdin.write(json.dumps({k: job.get(k) for k in ("id", "type", "params", "ticket", "bornes", "autorisation")}))
         p.stdin.close()
         for ligne in p.stdout:
             try:

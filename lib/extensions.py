@@ -43,6 +43,10 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
                                            qu'autorise le ticket ; artefacts : noms d'artefacts du
                                            ticket qui font foi, copies dans le dossier du travail
                                            (couverts par sa signature), 8 au plus
+  travail_autoriser {ticket, capacite, params, artefacts, action}  travail SENSIBLE : l'humain
+                                           l'autorise sur son appareil (validation de la charge
+                                           "autorisation"), ecrite au journal ; le travail signe
+                                           porte l'autorisation (n, empreinte) ; long
   contre_epreuve   {ticket, travail, capacite, params}  verification confiee par l'ORDONNATEUR a une
                                            autre machine que l'auteur (ou, seule machine, a un
                                            agent en contexte neutre), notee au journal
@@ -739,6 +743,39 @@ def _deposer(cx, tid, t, capacite, params, extra=None, artefacts=None):
     return job_id
 
 
+def travail_autoriser(cx, req):
+    """Travail SENSIBLE (appliquer un diff au depot de l'humain...) : l'humain l'autorise sur
+    son appareil (action, capacite, parametres, empreintes des artefacts joints), l'ordonnateur
+    verifie sa signature, l'ecrit au journal, puis depose le travail avec l'autorisation
+    (numero de l'entree et empreinte de la charge) dans l'objet signe."""
+    tid = req.get("ticket")
+    t = _ticket_actif(tid)
+    capacite = _nom_sur(req.get("capacite"), "capacite")
+    if capacite not in (t["charge"].get("capacites") or []):
+        raise Refus("le ticket n'autorise pas la capacite %s" % capacite)
+    params = req.get("params") or {}
+    _params_bornes(params)
+    action = req.get("action")
+    if not isinstance(action, str) or not action.strip() or len(action) > 300 or any(
+            ord(c) < 32 for c in action):
+        raise Refus("action : une phrase de 300 caracteres au plus")
+    joints = _artefacts_qui_font_foi(tid, t, req.get("artefacts") or [])
+    titre = t["charge"].get("titre", tid)
+    charge = {"type": "autorisation", "parc": pont_v2.parc(), "id": "autorisation-%s-%d" % (tid, len(_entrees(tid))),
+              "ticket": tid, "titre": titre, "action": action.strip(), "capacite": capacite, "params": params,
+              "artefacts": {n: hashlib.sha256(c).hexdigest() for n, c in joints.items()}}
+    validation = _valider("travail", charge, "autoriser « %s » sur le ticket « %s »" % (action.strip(), titre))
+    if np_.verifier_validation(validation, validation_cle(validation), pont_v2.parc(), charge) != "accepte":
+        raise Refus("travail refuse par l'humain")
+    t = _ticket_actif(tid)  # toujours ouvert apres l'attente de l'humain
+    n = _ecrire_ordonnateur(tid, "validation", "Travail autorisé par l'architecte : %s" % action.strip(),
+                            {"autorisation": charge, "validation": validation})
+    job_id = _deposer(cx, tid, t, capacite, params, artefacts=list(joints),
+                      extra={"autorisation": {"n": n, "empreinte": pont_v2.empreinte_charge(charge),
+                                              "action": charge["action"], "artefacts": charge["artefacts"]}})
+    return {"travail": job_id, "n": n}
+
+
 def travail_deposer(cx, req):
     tid = req.get("ticket")
     t = _ticket_actif(tid)
@@ -948,6 +985,7 @@ REQUETES = {
     "journal_ecrire": journal_ecrire,
     "journal_lire": journal_lire,
     "travail_deposer": travail_deposer,
+    "travail_autoriser": travail_autoriser,
     "artefact_deposer": artefact_deposer,
     "artefact_lire": artefact_lire,
     "sortie_lire": sortie_lire,
@@ -956,7 +994,7 @@ REQUETES = {
     "interface_servir": interface_servir,
     "interface_reponse": interface_reponse,
 }
-LONGUES = {"ticket_valider", "ticket_arreter", "arbitrage_demander"}  # attendent l'humain : traitees a part, la connexion continue
+LONGUES = {"ticket_valider", "ticket_arreter", "arbitrage_demander", "travail_autoriser"}  # attendent l'humain : traitees a part, la connexion continue
 
 
 # --- ouverture ----------------------------------------------------------------------------

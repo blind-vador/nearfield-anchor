@@ -586,6 +586,41 @@ class PointExtensions(unittest.TestCase):
                          "erreur")
         self.ext.progression("macessai", mac, {"type": "progression", "travail": job_id, "etape": "texte"})
 
+    def test_travail_autorise_par_l_humain(self):
+        import base64
+        import hashlib
+        cl, _ = self.client()
+        t = self.ticket_emis(cl, "appli-1")
+        diff = b"--- a/docs/guide.md\n+++ b/docs/guide.md\n@@ -1 +1 @@\n-a\n+b\n"
+        r = cl.requete("artefact_deposer", ticket="appli-1", nom="modifs.patch", contenu=base64.b64encode(diff).decode())
+        e0 = np_.ecrire_journal(self.cle, self.v2.parc(), t, None, "resultat", "Diff.",
+                                {"fichiers": ["docs/guide.md"], "artefacts": {"modifs.patch": r["empreinte"]}})
+        cl.requete("journal_ecrire", entree=e0)
+        avant = len(self.demandes)
+        # Capacite hors du ticket : refuse sans deranger l'humain.
+        r = cl.requete("travail_autoriser", ticket="appli-1", capacite="agent-code", params={}, action="Appliquer.")
+        self.assertEqual((r["type"], len(self.demandes)), ("erreur", avant))
+        # Refuse par l'humain : aucun travail.
+        self.decision[0] = "refuse"
+        r = cl.requete("travail_autoriser", ticket="appli-1", capacite="whisper", params={"projet": "demo"},
+                       action="Appliquer le diff relu.", artefacts=["modifs.patch"])
+        self.assertEqual(r["type"], "erreur")
+        self.decision[0] = "accepte"
+        r = cl.requete("travail_autoriser", ticket="appli-1", capacite="whisper", params={"projet": "demo"},
+                       action="Appliquer le diff relu.", artefacts=["modifs.patch"])
+        self.assertEqual(r["type"], "reponse", r)
+        sujet, charge = self.demandes[-1]
+        self.assertEqual((sujet, charge["action"], charge["artefacts"]),
+                         ("travail", "Appliquer le diff relu.", {"modifs.patch": hashlib.sha256(diff).hexdigest()}))
+        dossier = os.path.join(self.c.BRIDGE_DIR, "travaux", r["travail"])
+        job = self.v2.travail_signe(dossier)
+        self.assertEqual((job["autorisation"]["n"], job["autorisation"]["empreinte"]),
+                         (r["n"], self.v2.empreinte_charge(charge)))
+        with open(os.path.join(dossier, "modifs.patch"), "rb") as f:
+            self.assertEqual(f.read(), diff)
+        entree = cl.requete("journal_lire", ticket="appli-1")["entrees"][r["n"]]["charge"]
+        self.assertEqual((entree["genre"], entree["donnees"]["autorisation"]["id"]), ("validation", charge["id"]))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

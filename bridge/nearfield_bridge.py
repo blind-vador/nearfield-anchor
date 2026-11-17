@@ -1350,6 +1350,13 @@ def _texte_validation(sujet, charge):
     if sujet == "arret":
         return ("Arrêter le ticket « %s » ?\n\nRaison : %s\n\nSes blocs en cours seront arrêtés aussi. "
                 "Un ticket arrêté ne reprend pas." % (charge.get("titre", ""), charge.get("raison", "")))
+    if sujet == "travail":
+        joints = charge.get("artefacts") or {}
+        return ("Autoriser ce travail sur le ticket « %s » ?\n\nAction : %s\nCapacité : %s.\n"
+                "Paramètres : %s\nFichiers joints : %s." % (
+                    charge.get("titre", ""), charge.get("action", ""), charge.get("capacite", ""),
+                    json.dumps(charge.get("params") or {}, ensure_ascii=False)[:2000],
+                    ", ".join("%s (empreinte %s…)" % (n, str(e)[:12]) for n, e in joints.items()) or "aucun"))
     if sujet == "extension":
         return ("Enrôler l'extension « %s » sur nearfield ?\n\nCapacités : %s.\nEmpreinte de sa clé : %s."
                 % (charge.get("nom", ""), ", ".join(charge.get("capacites") or []) or "aucune",
