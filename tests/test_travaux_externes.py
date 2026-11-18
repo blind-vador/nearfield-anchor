@@ -31,6 +31,9 @@ except ImportError:
 
 PROGRAMME = r'''
 import json, os, sys, time
+if sys.argv[1] == "--etat":
+    print(json.dumps({"charge": 0.3, "disque_libre_go": 12.5, "liste": [1, 2]}))
+    sys.exit(0)
 if sys.argv[1] == "--capacites":
     print(json.dumps(["agent-essai", "Pas Simple", "projet-demo", 3]))
     sys.exit(0)
@@ -99,6 +102,25 @@ class TravauxExternes(unittest.TestCase):
         with open(os.path.join(dossier, "env.json")) as f:
             env = json.load(f)
         self.assertNotIn("ANTHROPIC_API_KEY", env)
+
+    def test_etat_opaque_et_borne(self):
+        te._etats["t"] = 0
+        self.assertEqual(te.etats(self.decl), {"essai": {"charge": 0.3, "disque_libre_go": 12.5, "liste": [1, 2]}})
+        self.assertFalse(te._borne({"a": "x" * 3000}))
+        self.assertFalse(te._borne({"a": [[[[[[1]]]]]]}))
+        self.assertTrue(te._borne({"a": {"b": [1, "c", None, True]}}))
+
+    @unittest.skipUnless(np_, "module nearfield_pont absent")
+    def test_battement_avec_extensions(self):
+        b = {"type": "battement", "capacites": ["agent-essai"], "etat": None, "puissance": None,
+             "extensions": {"prismaforge": {"charge": 0.3}}}
+        m = trad.vers_v2(b)
+        self.assertEqual(m["extensions"], {"prismaforge": {"charge": 0.3}})
+        try:
+            retour = np_.decoder_message(np_.encoder_message(m))
+        except Exception as exc:  # module pas encore recompile avec le champ
+            self.skipTest("module nearfield_pont sans le champ extensions : %s" % exc)
+        self.assertEqual(trad.depuis_v2(retour)["extensions"], {"prismaforge": {"charge": 0.3}})
 
     def test_sans_fin_est_un_echec(self):
         job, dossier = self.travail("sans_fin")

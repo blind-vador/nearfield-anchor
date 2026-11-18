@@ -29,8 +29,8 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
                                            exemple quand l'appareil etait absent) ; rend le choix
   parc_lire        {}                      parc et capacites des machines de confiance (pour
                                            proposer un ticket dans ce que le parc sait faire)
-                                           ; machines : etat de chacune (en ligne, charge, chaleur,
-                                           memoire, disque, batterie, session) et de l ordonnateur
+                                           ; machines : presence de chacune et l etat joint par ses
+                                           logiciels installes a part (opaque, tel quel)
   tickets_lister   {}                      resume de chaque ticket emis (titre, mode, parent,
                                            entrees, clos, pause), du plus recent au plus ancien
   journal_ecrire   {entree}                entree signee PAR L'EXTENSION, chainee et verifiee
@@ -664,50 +664,25 @@ def _capacites_du_parc():
 
 
 EN_LIGNE_SEC = 180
-CHAMPS_MESURE = ("coeurs", "charge", "chaleur", "chaleur_c", "memoire_libre_mo", "disponible", "puissance", "t")
-CHAMPS_RESSOURCES = ("memoire_totale_mo", "disque_libre_go", "disque_total_go", "batterie_pct", "secteur")
-
-
-def _mesure_bornee(p):
-    """Liste fermee des champs d une mesure (envoyee par la machine : rien d autre ne passe)."""
-    if not isinstance(p, dict):
-        return None
-    m = {k: p[k] for k in CHAMPS_MESURE if isinstance(p.get(k), (int, float)) and not isinstance(p.get(k), bool)}
-    r = p.get("ressources") if isinstance(p.get("ressources"), dict) else {}
-    r = {k: r[k] for k in CHAMPS_RESSOURCES if isinstance(r.get(k), (int, float, bool))}
-    if r:
-        m["ressources"] = r
-    return m or None
 
 
 def _machines():
-    """Etat de chaque machine de confiance (2026-11-18, sonde des architectes de Prismaforge) :
-    ce qu elle a dit d elle a son dernier battement, et depuis quand."""
+    """Presence de chaque machine de confiance, et l etat que ses logiciels installes a part
+    ont joint a son dernier battement (travaux_externes : programme --etat), tel quel :
+    nearfield est un point de passage, il ne lit pas ces etats."""
     now, sortie = time.time(), []
     for cid, c in sorted(compagnon.trusted().items()):
         vu = c.get("vu") if isinstance(c.get("vu"), (int, float)) else None
-        etat = c.get("etat") if isinstance(c.get("etat"), dict) else {}
+        ext = c.get("extensions") if isinstance(c.get("extensions"), dict) else {}
         sortie.append({"id": cid, "nom": str(c.get("nom") or cid)[:120], "role": c.get("role") or "travailleur",
                        "en_ligne": bool(vu and now - vu < EN_LIGNE_SEC), "vu": vu,
-                       "session": {k: etat[k] for k in ("verrouille", "inactif_s", "session_ouverte") if k in etat},
-                       "mesure": _mesure_bornee(c.get("puissance"))})
+                       "extensions": ext.get("etats") if isinstance(ext.get("etats"), dict) else {},
+                       "extensions_recu": ext.get("recu")})
     return sortie
 
 
-def _ordonnateur():
-    try:
-        pont = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "bridge")
-        if pont not in sys.path:
-            sys.path.append(pont)
-        import puissance
-        return _mesure_bornee(puissance.etat_rapide(compagnon.LOCAL_DIR))
-    except Exception:
-        return None
-
-
 def parc_lire(cx, req):
-    return {"parc": pont_v2.parc(), "capacites": _capacites_du_parc(), "machines": _machines(),
-            "ordonnateur": _ordonnateur()}
+    return {"parc": pont_v2.parc(), "capacites": _capacites_du_parc(), "machines": _machines()}
 
 
 def _params_bornes(p):

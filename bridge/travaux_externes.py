@@ -22,6 +22,12 @@ Contrat (ferme) avec le programme :
       {"fin": {"etat": "fait"|"echec", "sorties": ["fiche.md"], "message": "..."}}
                                  les sorties sont des fichiers du dossier du travail ;
                                  le pont les signe dans le resultat v2 comme d'habitude.
+  programme --etat               stdout : UN objet JSON, l etat que le logiciel veut faire
+                                 connaitre de cette machine a sa partie sur l ordonnateur ;
+                                 nearfield ne le lit pas : il le joint au battement
+                                 (champ "extensions" {nom: etat}), au plus une fois par
+                                 minute, 8 Kio et 5 niveaux au plus, en 20 s au plus ; un
+                                 programme qui ne connait pas --etat n envoie rien.
 Le programme ne recoit aucune cle du pont ; il tourne avec un environnement reduit, dans son
 propre groupe de processus, arrete a l'echeance.
 """
@@ -41,7 +47,15 @@ MAX_EVENEMENTS = 3000    # par travail : au-dela, plus rien n'est relaye (le tra
 MAX_SECONDES = 6 * 3600
 GARDEES = ("HOME", "PATH", "USER", "LOGNAME", "SHELL", "LANG", "TMPDIR")
 
+ETAT_SEC = 60            # l etat se demande au plus une fois par minute
+MAX_ETAT = 8192
+MAX_TOTAL_ETATS = 20000  # le module du pont borne chaque donnee d un message a 24 000 octets
+PROFONDEUR_ETAT = 5
+MAX_LISTE_ETAT = 200
+MAX_TEXTE_ETAT = 2000
+
 _cache = {"t": 0.0, "externes": []}
+_etats = {"t": 0.0, "etats": {}}
 _verrou = threading.Lock()
 
 
@@ -94,6 +108,53 @@ def externes(dossier, force=False):
                                   for n, a in declarations(dossier)]
             _cache["t"] = time.time()
         return list(_cache["externes"])
+
+
+def _borne(v, prof=0):
+    """Memes bornes que le module du pont (donnees d un message) : sinon tout le
+    battement serait refuse."""
+    if prof > PROFONDEUR_ETAT:
+        return False
+    if isinstance(v, str):
+        return len(v.encode()) <= MAX_TEXTE_ETAT
+    if isinstance(v, list):
+        return len(v) <= MAX_LISTE_ETAT and all(_borne(x, prof + 1) for x in v)
+    if isinstance(v, dict):
+        return (len(v) <= MAX_LISTE_ETAT
+                and all(isinstance(k, str) and len(k.encode()) <= 128 and _borne(x, prof + 1) for k, x in v.items()))
+    return v is None or isinstance(v, (bool, int, float))
+
+
+def _etat(argv):
+    try:
+        r = subprocess.run(argv + ["--etat"], capture_output=True, text=True, timeout=20,
+                           env=environnement(), stdin=subprocess.DEVNULL)
+        if r.returncode != 0 or len(r.stdout.encode()) > MAX_ETAT:
+            return None
+        e = json.loads(r.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return None
+    return e if isinstance(e, dict) and _borne(e) else None
+
+
+def etats(dossier):
+    """{nom: etat} des logiciels externes qui en donnent un (opaque pour nearfield)."""
+    with _verrou:
+        if time.time() - _etats["t"] <= ETAT_SEC:
+            return dict(_etats["etats"])
+        _etats["t"] = time.time()
+    sortie, taille = {}, 0
+    for nom, argv in declarations(dossier):
+        e = _etat(argv)
+        if e is None:
+            continue
+        taille += len(json.dumps(e)) + len(nom) + 8
+        if taille > MAX_TOTAL_ETATS:  # le module du pont refuserait tout le battement
+            break
+        sortie[nom] = e
+    with _verrou:
+        _etats["etats"] = sortie
+    return dict(sortie)
 
 
 def capacites(dossier):

@@ -503,22 +503,17 @@ class PointExtensions(unittest.TestCase):
         r = cl.requete("parc_lire")
         self.assertEqual(r["parc"], self.v2.parc())
         self.assertIn("whisper", r["capacites"])
-        # Etat des machines (2026-11-18) : ce que dit le battement, liste fermee de champs.
+        # Presence et etat des logiciels externes (2026-11-18) : transportes tels quels.
         import compagnon
-        compagnon.update_card("macessai", vu=time.time(), etat={"verrouille": False, "inactif_s": 3, "secret": 1},
-                              puissance={"puissance": 100.0, "charge": 0.4, "chaleur": 0.9, "memoire_libre_mo": 5000,
-                                         "commande": "rm -rf /", "ressources": {"disque_libre_go": 120.5,
-                                                                                "batterie_pct": 80, "intrus": "x"}})
+        compagnon.note_battement("macessai", ["whisper"], [], None, None,
+                                 {"prismaforge": {"charge": 0.4, "disque_libre_go": 120.5}})
         r = cl.requete("parc_lire")
         mac = next(m for m in r["machines"] if m["id"] == "macessai")
         self.assertTrue(mac["en_ligne"])
-        self.assertEqual(mac["session"], {"verrouille": False, "inactif_s": 3})
-        self.assertEqual(mac["mesure"], {"puissance": 100.0, "charge": 0.4, "chaleur": 0.9, "memoire_libre_mo": 5000,
-                                         "ressources": {"disque_libre_go": 120.5, "batterie_pct": 80}})
+        self.assertEqual(mac["extensions"], {"prismaforge": {"charge": 0.4, "disque_libre_go": 120.5}})
         pc = next(m for m in r["machines"] if m["id"] == "pcessai")
-        self.assertEqual((pc["en_ligne"], pc["mesure"]), (False, None))
-        self.assertIn("coeurs", r["ordonnateur"])
-        self.assertIn("disque_libre_go", r["ordonnateur"]["ressources"])
+        self.assertEqual((pc["en_ligne"], pc["extensions"]), (False, {}))
+        self.assertNotIn("ordonnateur", r)
 
 
     def test_artefacts_references_par_le_journal(self):

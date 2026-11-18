@@ -263,7 +263,10 @@ ECRITURE_BATTEMENT_SEC = 60  # moins que PUISSANCE_FRAICHE_SEC, battement compri
 _battement_ecrit = {}
 
 
-def note_battement(cid, capacites, voix_mac, etat, puissance):
+MAX_ETAT_EXTENSIONS = 32 * 1024
+
+
+def note_battement(cid, capacites, voix_mac, etat, puissance, extensions=None):
     """Un battement : une seule ecriture, et au plus une par minute sauf changement
     utile (2026-11-06 : trois ecritures synchrones par battement sur la carte SD)."""
     now = time.time()
@@ -277,6 +280,9 @@ def note_battement(cid, capacites, voix_mac, etat, puissance):
             change = True
     if isinstance(puissance, dict) and puissance.get("puissance"):
         fields["puissance"] = dict(puissance, recu=now)
+    # Etat des logiciels installes a part (travaux_externes) : transporte, jamais lu ici.
+    if isinstance(extensions, dict) and extensions and len(json.dumps(extensions)) <= MAX_ETAT_EXTENSIONS:
+        fields["extensions"] = {"etats": extensions, "recu": now}
     if change or now - _battement_ecrit.get(cid, 0) >= ECRITURE_BATTEMENT_SEC:
         _battement_ecrit[cid] = now
         update_card(cid, **fields)

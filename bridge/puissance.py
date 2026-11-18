@@ -166,84 +166,6 @@ def memoire_libre_mo():
         return None
 
 
-def memoire_totale_mo():
-    try:
-        if sys.platform == "darwin":
-            out = subprocess.run(["sysctl", "-n", "hw.memsize"], capture_output=True, text=True, timeout=5).stdout
-            return int(out.strip()) // (1024 * 1024)
-        if sys.platform == "win32":
-            import ctypes
-
-            class Etat(ctypes.Structure):
-                _fields_ = [("taille", ctypes.c_ulong), ("charge", ctypes.c_ulong), ("total", ctypes.c_ulonglong),
-                            ("libre", ctypes.c_ulonglong), ("pt", ctypes.c_ulonglong), ("pl", ctypes.c_ulonglong),
-                            ("vt", ctypes.c_ulonglong), ("vl", ctypes.c_ulonglong), ("ve", ctypes.c_ulonglong)]
-            e = Etat()
-            e.taille = ctypes.sizeof(Etat)
-            ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(e))
-            return int(e.total // (1024 * 1024))
-        with open("/proc/meminfo") as f:
-            return int(re.search(r"MemTotal:\s*(\d+)", f.read()).group(1)) // 1024
-    except (OSError, AttributeError, ValueError, subprocess.TimeoutExpired):
-        return None
-
-
-def batterie():
-    """(pourcentage ou None, sur secteur : True/False/None). Sans batterie : (None, True)."""
-    try:
-        if sys.platform == "darwin":
-            out = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=5).stdout
-            m = re.search(r"(\d+)%", out)
-            secteur = "AC Power" in out if ("AC Power" in out or "Battery Power" in out) else None
-            return (int(m.group(1)) if m else None), (True if m is None and secteur is None else secteur)
-        if sys.platform == "win32":
-            import ctypes
-
-            class Etat(ctypes.Structure):
-                _fields_ = [("secteur", ctypes.c_ubyte), ("drapeaux", ctypes.c_ubyte), ("pct", ctypes.c_ubyte),
-                            ("r", ctypes.c_ubyte), ("vie", ctypes.c_ulong), ("pleine", ctypes.c_ulong)]
-            e = Etat()
-            if not ctypes.windll.kernel32.GetSystemPowerStatus(ctypes.byref(e)):
-                return None, None
-            sans = e.drapeaux == 128 or e.pct == 255
-            return (None if sans else int(e.pct)), ({0: False, 1: True}.get(e.secteur, None) if not sans else True)
-        import glob
-        bats = glob.glob("/sys/class/power_supply/BAT*/capacity")
-        if not bats:
-            return None, True
-        with open(bats[0]) as f:
-            pct = int(f.read().strip())
-        secteur = None
-        for chemin in glob.glob("/sys/class/power_supply/*/online"):
-            with open(chemin) as f:
-                secteur = f.read().strip() == "1"
-        return pct, secteur
-    except (OSError, ValueError, AttributeError, subprocess.TimeoutExpired):
-        return None, None
-
-
-def ressources(dossier=None):
-    """Ce que l architecte de Prismaforge surveille en plus (2026-11-18) : memoire totale,
-    disque du dossier personnel, batterie et secteur. Jamais bloquant."""
-    import shutil
-    r = {"memoire_totale_mo": memoire_totale_mo()}
-    try:
-        d = shutil.disk_usage(dossier or os.path.expanduser("~"))
-        r.update(disque_libre_go=round(d.free / 1e9, 1), disque_total_go=round(d.total / 1e9, 1))
-    except OSError:
-        pass
-    r["batterie_pct"], r["secteur"] = batterie()
-    return {k: v for k, v in r.items() if v is not None}
-
-
-def etat_rapide(dossier=None):
-    """Etat du moment sans mini-test de vitesse (pour l ordonnateur lui-meme)."""
-    fact, temp = chaleur()
-    r = {"coeurs": coeurs(), "charge": round(charge(), 2), "chaleur": round(fact, 2), "chaleur_c": temp,
-         "memoire_libre_mo": memoire_libre_mo(), "ressources": ressources(dossier), "t": time.time()}
-    return {k: v for k, v in r.items() if v is not None}
-
-
 def clavier_actif(etat):
     """etat : session_state() du pont (verrouille, inactif_s), ou None."""
     if not etat or etat.get("verrouille"):
@@ -268,8 +190,7 @@ def mesure(chemin_etalon, etat=None):
     return {"puissance": total, "puissance_coeur": coeur, "coeurs": coeurs(), "charge": round(ch, 2),
             "vitesse": round(vitesse, 2), "chaleur": round(fact_chaleur, 2), "chaleur_c": temp,
             "memoire_libre_mo": mem, "reserve": reserve,
-            "disponible": round(total * libre * fact_chaleur * fact_mem, 1), "ressources": ressources(),
-            "t": time.time()}
+            "disponible": round(total * libre * fact_chaleur * fact_mem, 1), "t": time.time()}
 
 
 if __name__ == "__main__":

@@ -1,4 +1,4 @@
-"""Gemini avec recherche web (2026-11-17, veille des modeles de Prismaforge) : l outil
+"""Gemini avec recherche web (2026-11-17) : l outil
 google_search part dans la requete, les autres services sont sautes, le texte revient tel quel."""
 import os
 import sys

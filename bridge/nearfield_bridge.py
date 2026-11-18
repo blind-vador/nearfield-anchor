@@ -622,6 +622,15 @@ def _attributed_elsewhere(folder):
     return bool(a and a.get("pour") not in (None, config()["id"]) and a.get("jusqu", 0) > time.time())
 
 
+def etats_externes():
+    """Etat que chaque logiciel installe a part veut faire connaitre (travaux_externes :
+    programme --etat) ; nearfield le transporte sans le lire. Jamais bloquant."""
+    try:
+        return travaux_externes.etats(EXTERNES) or None
+    except Exception:
+        return None
+
+
 def network_identity():
     """(adresse materielle, [ips]) de l'interface de la route par defaut."""
     iface, mac, ips = None, None, []
@@ -1525,7 +1534,7 @@ class PiloteV2(threading.Thread):
         mac, ips = network_identity()
         return {"type": "battement", "capacites": capabilities(), "etat": etat, "voix_mac": mac_voices(),
                 "puissance": power(etat), "occupe": bool(stats(self.pi).get("en_cours")),
-                "reseau": {"adresse_materielle": mac, "ips": ips}}
+                "reseau": {"adresse_materielle": mac, "ips": ips}, "extensions": etats_externes()}
 
     def _demander_certificat(self):
         """Certificat neuf pour une cle de transport neuve, avec la preuve signee par

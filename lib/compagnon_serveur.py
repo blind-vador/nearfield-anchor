@@ -251,7 +251,7 @@ def _traiter(cid, card, msg):
     kind = msg.get("type")
     if kind == "battement":
         compagnon.note_battement(cid, msg.get("capacites", []), msg.get("voix_mac") or [],
-                                 msg.get("etat"), msg.get("puissance"))
+                                 msg.get("etat"), msg.get("puissance"), msg.get("extensions"))
         reseau = msg.get("reseau")
         if isinstance(reseau, dict):  # v2 : de quoi la reveiller (Wake-on-LAN)
             ips = [i for i in reseau.get("ips") or [] if isinstance(i, str) and len(i) <= 64][:8]

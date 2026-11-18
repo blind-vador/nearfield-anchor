@@ -43,7 +43,7 @@ def ask(prompt, temperature=0.8, jpeg=None, json_mode=False, timeout=TIMEOUT, mi
     scanneur : la question porte sur ce que le scanner a capte ; le contexte
     (contexte_scanneur) passe devant.
     recherche (2026-11-17) : Gemini cherche sur le web avant de repondre (outil google_search),
-    pour une veille a jour ; les autres services, qui ne cherchent pas, sont sautes. Le texte
+    pour une reponse a jour ; les autres services, qui ne cherchent pas, sont sautes. Le texte
     est rendu tel quel (le JSON strict de Gemini ne se combine pas avec la recherche)."""
     if scanneur:
         prompt = contexte_scanneur() + "\n\n" + prompt

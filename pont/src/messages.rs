@@ -54,6 +54,10 @@ pub enum Message {
         /// Données : de quoi réveiller la machine (adresse matérielle, adresses IP).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         reseau: Option<Value>,
+        /// Données des logiciels installés à part sur la machine ({nom: état}) : nearfield
+        /// les transporte sans les lire (point de passage), bornées comme toute donnée.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        extensions: Option<Value>,
     },
     /// Nouvelle clé de transport ; `preuve` : objet `renouvellement` signé par la clé
     /// d'identité de la machine (obligatoire pour renouveler sans la v1, §4.1).
@@ -407,7 +411,7 @@ impl Message {
     pub fn valider(&self) -> Resultat<()> {
         court("id", self.id())?;
         match self {
-            Message::Battement { capacites, puissance_libre, voix, session, puissance, reseau, .. } => {
+            Message::Battement { capacites, puissance_libre, voix, session, puissance, reseau, extensions, .. } => {
                 if capacites.len() > 64 || *puissance_libre > 100 {
                     return Err(Erreur::Message("battement hors limites".into()));
                 }
@@ -417,6 +421,7 @@ impl Message {
                 }
                 donnees("session", session)?;
                 donnees("puissance", puissance)?;
+                donnees("extensions", extensions)?;
                 donnees("reseau", reseau)
             }
             Message::TravailFini { travail, .. } => nom_sur(travail),
@@ -608,6 +613,7 @@ mod tests {
     fn nouveaux_types_aller_retour() {
         let exemples = [
             r#"{"type":"battement","id":"b","etat":"libre","capacites":["whisper"],"puissance_libre":80,"voix":["Thomas"],"session":{"verrouille":false,"inactif_s":12},"puissance":{"puissance":120.5,"disponible":80.0}}"#,
+            r#"{"type":"battement","id":"b2","etat":"libre","capacites":[],"puissance_libre":50,"extensions":{"prismaforge":{"charge":0.2,"disque_libre_go":140.5}}}"#,
             r#"{"type":"travail_fini","id":"f","travail":"20261115-whisper-ab12"}"#,
             r#"{"type":"tickets","id":"t","ids":["t-1","t-2"]}"#,
             r#"{"type":"dire_fin","id":"d","reponse_a":"r1","ok":true,"taux":22050}"#,
