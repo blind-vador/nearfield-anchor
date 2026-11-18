@@ -453,19 +453,50 @@ def help_text():
     return (dire("commandes.commandes_disponibles") + " ") + " ".join(lines)
 
 
-def _power(action, done_key):
+def _power(action, done_key, attendre=True):
+    """Arret du Pi par le chemin unique (lib/preavis.py, 2026-11-18) : les logiciels
+    installes et les machines sont prevenus et se mettent en securite (une minute et demie
+    au plus), puis le Pi s'arrete. attendre=False : tout de suite, sans preavis."""
     def handler(announce):
+        import preavis
         # Annonce AVANT d'agir : apres, le systeme coupe la voix en plein mot.
-        announce(dire(done_key))
-        # sudo -n : echoue immediatement plutot que d'attendre un mot de
+        if attendre:
+            announce(dire_ou(f"commandes.preavis_{action}",
+                             "Les logiciels installés et les machines se mettent en sécurité ; "
+                             + ("le Pi redémarre" if action == "reboot" else "le Pi s'éteint")
+                             + " dans une minute et demie au plus. Pour ne pas attendre, tape : "
+                             + ("redémarre maintenant." if action == "reboot" else "éteins maintenant.")))
+        else:
+            announce(dire(done_key))
+        # sudo -n (dans preavis) : echoue immediatement plutot que d'attendre un mot de
         # passe que personne ne peut taper sur cette console.
-        proc = subprocess.run(["sudo", "-n", "/usr/bin/systemctl", action],
-                              capture_output=True, text=True, timeout=15)
-        if proc.returncode != 0:
-            print(f"[console] systemctl {action} : {proc.stderr.strip()}", file=sys.stderr)
+        r = preavis.arreter_pi("redemarrage" if action == "reboot" else "extinction", "utilisateur", attendre)
+        if r == "echec":
             return dire("commandes.echec_console_droits_faire")
         return ""
     return handler
+
+
+def _proteger(announce):
+    import preavis
+    p = preavis.protection()
+    if p:
+        return dire_ou("commandes.protection_deja", "Le Pi est déjà déclaré protégé, depuis le {le}.").format(
+            le=p.get("le", "?"))
+    preavis.declarer_protection()
+    return dire_ou("commandes.protection_declaree",
+                   "C'est noté : le Pi est déclaré protégé. Si la foudre tombe tout près, il restera allumé, "
+                   "sous ta responsabilité, et seules les autres machines s'éteindront. Pour revenir en arrière, "
+                   "tape : retirer la protection.")
+
+
+def _retirer_protection(announce):
+    import preavis
+    if preavis.retirer_protection():
+        return dire_ou("commandes.protection_retiree",
+                       "Protection retirée : si la foudre tombe tout près, le Pi s'éteindra aussi.")
+    return dire_ou("commandes.protection_aucune",
+                   "Le Pi n'était pas déclaré protégé : si la foudre tombe tout près, il s'éteint.")
 
 
 # "touches" et "répète" sont interceptes par main.py (ils agissent sur la
@@ -481,6 +512,15 @@ COMMANDS = [
     Command("simulation", "simule les annonces : train, avion, météo, crue, bus, radio, disque, imprimante, ou tout", None,
             keywords=["simulation", "simulations", "simule", "simuler"],
             examples=["simulation"]),
+    Command("redémarrer maintenant", "redémarre le Pi tout de suite, sans attendre que les logiciels et les machines se mettent en sécurité",
+            _power("reboot", "commandes.redemarrage_pi", attendre=False),
+            keywords=["redemarre maintenant", "redemarrer maintenant", "reboot maintenant"],
+            confirm="Redémarrer le Pi tout de suite, sans préavis aux machines ? Tape oui puis entrée. Toute autre réponse annule."),
+    Command("éteindre maintenant", "éteint le Pi tout de suite, sans attendre que les logiciels et les machines se mettent en sécurité",
+            _power("poweroff", "commandes.extinction_pi", attendre=False),
+            keywords=["eteins maintenant", "eteindre maintenant"],
+            confirm="Éteindre le Pi tout de suite, sans préavis aux machines ? Il faudra couper et remettre le courant "
+                    "pour le rallumer. Tape oui puis entrée. Toute autre réponse annule."),
     Command("redémarrer", "redémarre le Pi, après confirmation",
             _power("reboot", "commandes.redemarrage_pi"),
             keywords=["redemarre", "redemarrer", "redemarrage", "reboot"],
@@ -490,6 +530,17 @@ COMMANDS = [
             keywords=["eteins", "eteindre", "extinction", "shutdown", "arrete le pi"],
             confirm="Confirmer l'extinction du Pi ? Il faudra couper et remettre le courant pour le rallumer. "
                     "Tape oui puis entrée. Toute autre réponse annule."),
+    # Orage (lib/preavis.py) : protection electrique du Pi declaree par l'utilisateur.
+    Command("retirer la protection", "le Pi n'est plus déclaré protégé : il s'éteindra si la foudre tombe tout près",
+            _retirer_protection,
+            keywords=["retirer la protection", "retire la protection", "plus de protection", "pi non protege"]),
+    Command("protection électrique", "déclarer le Pi protégé de la foudre (onduleur, parafoudre) : il reste allumé pendant un orage, sous ta responsabilité",
+            _proteger,
+            keywords=["protection electrique", "onduleur", "parafoudre", "pi protege"],
+            confirm="Tu déclares que le Pi est branché derrière un parafoudre et un onduleur, et que ses antennes et "
+                    "câbles sont protégés. Même ainsi, la foudre peut l'endommager, et ce qui est branché sur lui. "
+                    "En cas de foudre tout près, il restera allumé, sous ta seule responsabilité. "
+                    "Tu as conscience de ce risque et tu l'acceptes ? Tape oui puis entrée. Toute autre réponse annule."),
     # Avant "aide" : "aide pratique" doit regler les conseils, pas lister les commandes.
     # Reglages audio appris des notes (console/bilan.py) : avant "réglages"
     # (cles API) et "bilan", dont ils partagent des mots.

@@ -284,6 +284,11 @@ def _traiter(cid, card, msg):
         print(f"[compagnon] travail {msg.get('travail')} pris par {card.get('nom')}")
     elif kind == "fini":
         _results_ready.set()
+    elif kind == "preavis_recu":  # reponse d'une machine a un preavis (lib/preavis.py)
+        import preavis
+        attente = msg.get("attente_s")
+        preavis.reponse(msg.get("reponse_a"), "machine:" + cid, bool(msg.get("pret")),
+                        attente if isinstance(attente, int) else None)
     elif kind == "progression":  # phrase d'un travail externe en cours (extensions, 2026-11-17)
         import extensions
         extensions.progression(cid, card, msg)
@@ -801,6 +806,11 @@ def run():
             extensions.demarrer()
         except Exception as exc:
             print(f"[extensions] point d'acces impossible : {exc!r}")
+    try:  # preavis d'arret et d'orage aux logiciels installes et aux machines
+        import preavis
+        preavis.demarrer()
+    except Exception as exc:
+        print(f"[preavis] veille impossible : {exc!r}")
     ecoute_v1 = [None]
     _ecoute_v1(ecoute_v1, v2)
     derniere_verif = time.time()

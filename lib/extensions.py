@@ -61,6 +61,9 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
                                            phrase} (en direct, relaye depuis la machine qui fait le
                                            travail ; affichage seulement, rien n'y fait foi) et
                                            travail_fini {ticket, travail, etat, message, sorties}
+  preavis_pret     {preavis, pret, attente_s}  reponse a un evenement "preavis" {preavis, genre,
+                                           donnees} (arret prochain du Pi, orage : lib/preavis.py) ;
+                                           l'ordonnateur attend les "pret" dans une borne de temps
   interface_servir {}                      (capacite "interface") devenir le front de l'IDE : les
                                            requetes des coquilles arrivent en evenements
                                            {"type": "interface_requete", requete, appareil,
@@ -925,6 +928,34 @@ def evenements(cx, req):
     return {}
 
 
+def preavis_diffuser(pid, genre, donnees):
+    """Evenement "preavis" aux extensions abonnees ; rend leurs identifiants (on attend leur
+    reponse preavis_pret)."""
+    ids = []
+    for c in list(_abonnes):
+        try:
+            c.envoyer({"type": "evenement", "genre": "preavis", "preavis": pid, "preavis_genre": genre,
+                       "donnees": donnees, "t": time.time()})
+            if c.id:
+                ids.append(c.id)
+        except OSError:
+            _abonnes.discard(c)
+    return ids
+
+
+def preavis_pret(cx, req):
+    import preavis
+    pid = req.get("preavis")
+    attente = req.get("attente_s")
+    if not isinstance(pid, str) or len(pid) > 64:
+        raise Refus("preavis attendu")
+    if attente is not None and (isinstance(attente, bool) or not isinstance(attente, int) or not 0 <= attente <= 3600):
+        raise Refus("attente_s : 0 a 3600")
+    if not preavis.reponse(pid, "extension:" + str(cx.id), bool(req.get("pret")), attente):
+        raise Refus("aucun preavis en cours de ce nom")
+    return {}
+
+
 # --- interface de l'IDE (lot 3) : le front est une extension -----------------------------
 
 INTERFACE_DELAI_SEC = 30
@@ -1011,6 +1042,7 @@ REQUETES = {
     "sortie_lire": sortie_lire,
     "contre_epreuve": contre_epreuve,
     "evenements": evenements,
+    "preavis_pret": preavis_pret,
     "interface_servir": interface_servir,
     "interface_reponse": interface_reponse,
 }

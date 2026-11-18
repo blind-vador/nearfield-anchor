@@ -163,6 +163,24 @@ pub enum Message {
     },
     /// Décodage TETRA en direct. La machine se connecte au flux radio de
     /// l'ordonnateur (son adresse, jamais une adresse reçue) sur `port`.
+    /// Préavis de l'ordonnateur aux logiciels installés à part sur la machine (2026-11-18) :
+    /// arrêt prochain de l'ordonnateur, ou orage. Genre fermé, données bornées ; nearfield
+    /// ne décide pas de ce que ces logiciels en font.
+    Preavis {
+        id: String,
+        /// `arret` ou `orage`.
+        genre: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        donnees: Option<Value>,
+    },
+    /// Réponse de la machine à un préavis : ses logiciels sont prêts, ou pas encore.
+    PreavisRecu {
+        id: String,
+        reponse_a: String,
+        pret: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        attente_s: Option<u32>,
+    },
     TetraDemande {
         id: String,
         port: u16,
@@ -403,7 +421,9 @@ impl Message {
             | Message::TetraDemande { id, .. }
             | Message::TetraResultat { id, .. }
             | Message::NumeriqueDemande { id, .. }
-            | Message::NumeriqueResultat { id, .. } => id,
+            | Message::NumeriqueResultat { id, .. }
+            | Message::Preavis { id, .. }
+            | Message::PreavisRecu { id, .. } => id,
         }
     }
 
@@ -559,6 +579,19 @@ impl Message {
                 }
                 Ok(())
             }
+            Message::Preavis { genre, donnees: d, .. } => {
+                if genre != "arret" && genre != "orage" {
+                    return Err(Erreur::Message("préavis : arret ou orage".into()));
+                }
+                donnees("donnees", d)
+            }
+            Message::PreavisRecu { reponse_a, attente_s, .. } => {
+                court("reponse_a", reponse_a)?;
+                if attente_s.map_or(false, |a| a > 3600) {
+                    return Err(Erreur::Message("attente".into()));
+                }
+                Ok(())
+            }
             Message::Certificat { .. }
             | Message::Revocations { .. }
             | Message::Resultat { .. }
@@ -588,6 +621,22 @@ impl Message {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn preavis() {
+        let m = Message::Preavis {
+            id: "p-1".into(),
+            genre: "orage".into(),
+            donnees: Some(serde_json::json!({"niveau": "proche", "source": "utilisateur"})),
+        };
+        assert_eq!(Message::decoder(&m.encoder().unwrap()).unwrap(), m);
+        let faux = Message::Preavis { id: "p-2".into(), genre: "commande".into(), donnees: None };
+        assert!(faux.encoder().is_err());
+        let r = Message::PreavisRecu { id: "r-1".into(), reponse_a: "p-1".into(), pret: false, attente_s: Some(30) };
+        assert_eq!(Message::decoder(&r.encoder().unwrap()).unwrap(), r);
+        let long = Message::PreavisRecu { id: "r-2".into(), reponse_a: "p-1".into(), pret: false, attente_s: Some(9999) };
+        assert!(long.encoder().is_err());
+    }
 
     #[test]
     fn aller_retour() {

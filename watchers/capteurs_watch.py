@@ -230,13 +230,13 @@ def _is_lightning(event):
     return _strike_count(event) is not None or _storm_dist_km(event) is not None
 
 
-def _publish_foudre(count, dist, nom):
+def _publish_foudre(count, dist, nom, mine=False):
     """Signal local lu par meteo_locale.threat() (impacts reels pres du Pi)."""
     try:
         tmp = FOUDRE_PATH + ".tmp"
         with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"strike_count": count, "storm_dist_km": dist,
-                       "source": nom, "t": time.time()}, f, ensure_ascii=False)
+                       "source": nom, "mien": bool(mine), "t": time.time()}, f, ensure_ascii=False)
         os.replace(tmp, FOUDRE_PATH)
     except OSError:
         pass
@@ -250,7 +250,7 @@ def _foudre(key, event, freq, nom, mine=False):
     dist = _storm_dist_km(event)
     connus.seen(key, nom, "foudre", freq[:3], mine=mine)
     _publish(key, event, "foudre")
-    _publish_foudre(count, dist, nom)
+    _publish_foudre(count, dist, nom, mine)
     if mine and event.get("battery_ok") == 0 and _memory.due(f"pile|{key}", BATTERY_EVERY_SEC):
         vd.announce(dire("capteur.pile_faible_mien", nom=nom), SOUND, f"capteur_pile_{key}", "capteurs_watch")
 

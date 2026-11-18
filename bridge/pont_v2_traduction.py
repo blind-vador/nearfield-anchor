@@ -114,6 +114,11 @@ def vers_v2(m):
                     "jusqu_a": int(time.time()) + PRISE_SEC}
         if t == "fini":
             return {"type": "travail_fini", "id": _id(), "travail": m["travail"]}
+        if t == "preavis_recu":  # reponse de la machine a un preavis (2026-11-18)
+            a = m.get("attente_s")
+            return _sans_none({"type": "preavis_recu", "id": _id(), "reponse_a": m["reponse_a"],
+                               "pret": bool(m.get("pret")),
+                               "attente_s": a if isinstance(a, int) and 0 <= a <= 3600 else None})
         if t == "progression":  # travaux externes (2026-11-17) : une phrase du travail en cours
             pct = m.get("pourcentage")
             return _sans_none({"type": "progression", "id": _id(), "travail": m["travail"], "etape": m["etape"],
@@ -188,6 +193,11 @@ def depuis_v2(m, hote=None):
         return _sans_none({"type": "battement", "capacites": m["capacites"], "voix_mac": m.get("voix") or [],
                            "etat": m.get("session"), "puissance": m.get("puissance"), "reseau": m.get("reseau"),
                            "extensions": m.get("extensions")})
+    if t == "preavis":
+        return {"type": "preavis", "id": m["id"], "genre": m["genre"], "donnees": m.get("donnees")}
+    if t == "preavis_recu":
+        return {"type": "preavis_recu", "reponse_a": m["reponse_a"], "pret": m["pret"],
+                "attente_s": m.get("attente_s")}
     if t == "travail_pris":
         return {"type": "pris", "travail": m["travail"]}
     if t == "travail_fini":

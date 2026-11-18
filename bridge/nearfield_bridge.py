@@ -622,6 +622,22 @@ def _attributed_elsewhere(folder):
     return bool(a and a.get("pour") not in (None, config()["id"]) and a.get("jusqu", 0) > time.time())
 
 
+def preavis_recu(link, msg):
+    """Preavis du Pi (arret, orage) : passe aux logiciels installes a part, qui se mettent en
+    securite ; nearfield ne decide rien d'autre. Reponse : prets ou non."""
+    donnees = msg.get("donnees") if isinstance(msg.get("donnees"), dict) else {}
+    delai = donnees.get("delai_max_s") if isinstance(donnees.get("delai_max_s"), int) else 90
+    log("%s : preavis %s %s" % (link.pi, msg.get("genre"), donnees.get("niveau") or donnees.get("action") or ""))
+    try:
+        pret, attente = travaux_externes.preavis(EXTERNES, {"id": msg.get("id"), "genre": msg.get("genre"),
+                                                            "donnees": donnees},
+                                                 max(5, min(int(delai) - 5, 85)))
+    except Exception as exc:
+        log("preavis : %r" % (exc,))
+        pret, attente = False, None
+    link.send({"type": "preavis_recu", "reponse_a": msg.get("id"), "pret": pret, "attente_s": attente})
+
+
 def etats_externes():
     """Etat que chaque logiciel installe a part veut faire connaitre (travaux_externes :
     programme --etat) ; nearfield le transporte sans le lire. Jamais bloquant."""
@@ -1147,6 +1163,8 @@ class Link(threading.Thread):
             threading.Thread(target=tetra_to_pi, args=(self, msg), daemon=True).start()
         elif t == "numerique":
             threading.Thread(target=numerique_to_pi, args=(self, msg), daemon=True).start()
+        elif t == "preavis":
+            threading.Thread(target=preavis_recu, args=(self, msg), daemon=True).start()
 
     # --- protocole v2 (Prismaforge/specs/protocole-v2.md §8-9) ------------------------
 

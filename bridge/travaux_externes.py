@@ -28,6 +28,11 @@ Contrat (ferme) avec le programme :
                                  (champ "extensions" {nom: etat}), au plus une fois par
                                  minute, 8 Kio et 5 niveaux au plus, en 20 s au plus ; un
                                  programme qui ne connait pas --etat n envoie rien.
+  programme --preavis            stdin : {"id", "genre": "arret"|"orage", "donnees"} ; le
+                                 programme se met en securite comme il l'entend, puis rend
+                                 UN objet JSON {"pret": true|false, "attente_s": n} ; borne
+                                 par le preavis (90 s au plus). Un programme qui ne connait
+                                 pas --preavis (code de sortie non nul) n'a rien a faire : pret.
 Le programme ne recoit aucune cle du pont ; il tourne avec un environnement reduit, dans son
 propre groupe de processus, arrete a l'echeance.
 """
@@ -155,6 +160,42 @@ def etats(dossier):
     with _verrou:
         _etats["etats"] = sortie
     return dict(sortie)
+
+
+def _preavis(argv, preavis, delai):
+    try:
+        r = subprocess.run(argv + ["--preavis"], input=json.dumps(preavis), capture_output=True, text=True,
+                           timeout=delai, env=environnement())
+    except subprocess.TimeoutExpired:
+        return False, None
+    except OSError:
+        return True, None
+    if r.returncode != 0:
+        return True, None
+    try:
+        d = json.loads(r.stdout)
+    except ValueError:
+        return False, None
+    if not isinstance(d, dict):
+        return False, None
+    a = d.get("attente_s")
+    return bool(d.get("pret")), (a if isinstance(a, int) and not isinstance(a, bool) and 0 <= a <= 3600 else None)
+
+
+def preavis(dossier, preavis_, delai=80):
+    """Passe le preavis a chaque programme installe, en parallele ; (pret, attente_s)."""
+    resultats = []
+    fils = []
+    for _nom, argv in declarations(dossier):
+        t = threading.Thread(target=lambda a=argv: resultats.append(_preavis(a, preavis_, delai)), daemon=True)
+        t.start()
+        fils.append(t)
+    for t in fils:
+        t.join(delai + 5)
+    if len(resultats) < len(fils):
+        return False, None
+    attentes = [a for p, a in resultats if not p and a]
+    return all(p for p, _ in resultats), (max(attentes) if attentes else None)
 
 
 def capacites(dossier):

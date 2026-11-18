@@ -284,7 +284,8 @@ class _Wifi:
                 with open(WIFI_REDEMARRAGE, "w") as f:
                     f.write(time.strftime("%Y-%m-%d %H:%M:%S\n"))
                 _jouer(None, dire("systeme_veille.wifi_redemarrage"))
-                subprocess.run(["sudo", "-n", "/usr/bin/systemctl", "reboot"], timeout=30)
+                import preavis  # preavis aux logiciels installes et aux machines, puis arret
+                preavis.arreter_pi("redemarrage", "wifi")
             else:
                 alarmes.declencher("wifi_perdu", dire("systeme_veille.wifi_echec"), source="systeme", une_fois=True)
         except Exception as exc:
