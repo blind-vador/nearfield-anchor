@@ -461,11 +461,7 @@ def _power(action, done_key, attendre=True):
         import preavis
         # Annonce AVANT d'agir : apres, le systeme coupe la voix en plein mot.
         if attendre:
-            announce(dire_ou(f"commandes.preavis_{action}",
-                             "Les logiciels installés et les machines se mettent en sécurité ; "
-                             + ("le Pi redémarre" if action == "reboot" else "le Pi s'éteint")
-                             + " dans une minute et demie au plus. Pour ne pas attendre, tape : "
-                             + ("redémarre maintenant." if action == "reboot" else "éteins maintenant.")))
+            announce(dire(f"commandes.preavis_{action}"))
         else:
             announce(dire(done_key))
         # sudo -n (dans preavis) : echoue immediatement plutot que d'attendre un mot de
@@ -481,22 +477,16 @@ def _proteger(announce):
     import preavis
     p = preavis.protection()
     if p:
-        return dire_ou("commandes.protection_deja", "Le Pi est déjà déclaré protégé, depuis le {le}.").format(
-            le=p.get("le", "?"))
+        return dire("commandes.protection_deja", le=p.get("le", "?"))
     preavis.declarer_protection()
-    return dire_ou("commandes.protection_declaree",
-                   "C'est noté : le Pi est déclaré protégé. Si la foudre tombe tout près, il restera allumé, "
-                   "sous ta responsabilité, et seules les autres machines s'éteindront. Pour revenir en arrière, "
-                   "tape : retirer la protection.")
+    return dire("commandes.protection_declaree")
 
 
 def _retirer_protection(announce):
     import preavis
     if preavis.retirer_protection():
-        return dire_ou("commandes.protection_retiree",
-                       "Protection retirée : si la foudre tombe tout près, le Pi s'éteindra aussi.")
-    return dire_ou("commandes.protection_aucune",
-                   "Le Pi n'était pas déclaré protégé : si la foudre tombe tout près, il s'éteint.")
+        return dire("commandes.protection_retiree")
+    return dire("commandes.protection_aucune")
 
 
 # "touches" et "répète" sont interceptes par main.py (ils agissent sur la

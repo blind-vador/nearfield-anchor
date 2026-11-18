@@ -48,6 +48,11 @@ WIFI_FENETRE_SEC = 60
 WIFI_ATTENTE_SEC = (60, 90)     # temps laisse au reseau pour revenir apres chaque geste
 WIFI_REDEMARRAGE_SEC = 3600     # au plus un redemarrage automatique par heure (pas de boucle)
 WIFI_REDEMARRAGE = chemins.base("wifi_redemarrage")   # carte SD : survit au redemarrage
+BOX_ATTENTE_SEC = 45            # temps laisse au reseau pour revenir apres avoir coupe et rallume la connexion
+BOX_PAUSE_SEC = 60              # puis on reessaie une minute plus tard...
+BOX_ESSAIS_RAPIDES = 10         # ... dix fois ; ensuite toutes les dix minutes (la box est peut-etre en panne)
+BOX_PAUSE_LONGUE_SEC = 600
+BOX_ESSAIS_AVANT_REDEMARRAGE = 5  # puis un redemarrage du Pi (au plus un par heure, comme pour la puce)
 BOUCLE_REDEMARRAGES = 3
 RAPPEL_SEC = 15 * 60            # veille en boucle : alarme redite de temps en temps
 ALARME_ECART_SEC = 10 * 60      # une seule alarme electrique par episode
@@ -298,12 +303,98 @@ class _Wifi:
 _WIFI = _Wifi()
 
 
+def _redemarrage_permis():
+    try:
+        dernier = os.path.getmtime(WIFI_REDEMARRAGE)
+    except OSError:
+        dernier = 0
+    return time.time() - dernier >= WIFI_REDEMARRAGE_SEC
+
+
+class _Box:
+    """Wi-Fi connecte mais box muette (2026-11-18 : 48 min sans reseau, ni Internet, ni NAS,
+    ni Mac, jusqu'a un redemarrage demande par l'utilisateur ; aucune erreur de la puce, donc
+    _Wifi ne reparait rien). On coupe et rallume la connexion reseau du Pi (rechargement du
+    pilote, puis, un essai sur deux, de la puce entiere : la connexion, son adresse et ses
+    caches repartent de zero), on le dit a voix haute a chaque fois, et on reessaie une
+    minute plus tard ; apres quelques essais, un redemarrage (au plus un par heure)."""
+
+    def __init__(self, gestes=None, parler=None, attendre=None, redemarrer=None):
+        self.essais = 0
+        self.prochain = 0.0
+        self.en_cours = False
+        self._garde = threading.Lock()
+        self._geste = gestes or self._wifi_repare
+        self._parler = parler or (lambda texte: _jouer(None, texte))
+        self._attendre = attendre or _WIFI._attendre
+        self._redemarrer = redemarrer or self._redemarrer_pi
+
+    @staticmethod
+    def _wifi_repare(geste):
+        sortie = subprocess.run(["sudo", "-n", "/usr/local/sbin/wifi-repare", geste],
+                                capture_output=True, text=True, timeout=60)
+        if sortie.returncode:
+            _log(f"wifi-repare {geste} : {sortie.stderr.strip()[-200:]}")
+
+    @staticmethod
+    def _redemarrer_pi():
+        with open(WIFI_REDEMARRAGE, "w") as f:
+            f.write(time.strftime("%Y-%m-%d %H:%M:%S\n"))
+        import preavis  # preavis aux logiciels installes et aux machines, puis arret
+        preavis.arreter_pi("redemarrage", "wifi")
+
+    def verifier(self, cause, maintenant=None):
+        """cause : diagnostic confirme (None quand le reseau marche)."""
+        maintenant = maintenant or time.time()
+        with self._garde:
+            if cause != "systeme_veille.reseau_box":
+                if not self.en_cours:
+                    self.essais, self.prochain = 0, 0.0
+                return False
+            if self.en_cours or _WIFI._en_cours or maintenant < self.prochain:
+                return False
+            self.en_cours = True
+        _plus_tard(self._essayer)
+        return True
+
+    def _essayer(self):
+        try:
+            self.essais += 1
+            geste = "bus" if self.essais % 2 == 0 else "pilote"
+            self._parler(dire("systeme_veille.box_essai", n=self.essais))
+            _log(f"box muette, essai {self.essais} : wifi-repare {geste}")
+            self._geste(geste)
+            if self._attendre(BOX_ATTENTE_SEC):
+                self._parler(dire("systeme_veille.box_revenue", n=self.essais))
+                self.essais, self.prochain = 0, 0.0
+                return
+            if self.essais >= BOX_ESSAIS_AVANT_REDEMARRAGE and _redemarrage_permis():
+                self._parler(dire("systeme_veille.box_redemarrage", n=self.essais))
+                self._redemarrer()
+                return
+            longue = self.essais >= BOX_ESSAIS_RAPIDES
+            self.prochain = time.time() + (BOX_PAUSE_LONGUE_SEC if longue else BOX_PAUSE_SEC)
+            self._parler(dire("systeme_veille.box_reessai_long" if longue else "systeme_veille.box_reessai"))
+        except Exception as exc:
+            _log(f"box muette : {exc!r}")
+            self.prochain = time.time() + BOX_PAUSE_SEC
+        finally:
+            with self._garde:
+                self.en_cours = False
+
+
+_BOX = _Box()
+
+
 class _Reseau:
     echecs = 0
     panne = None      # (cle, debut)
 
     def verifier(self):
+        if _BOX.en_cours:  # la connexion est coupee expres : pas de fausse alerte
+            return
         cause = _diagnostic_reseau()
+        _BOX.verifier(cause if cause and self.echecs + 1 >= ECHECS_RESEAU else None)
         if cause is None:
             self.echecs = 0
             if self.panne:
