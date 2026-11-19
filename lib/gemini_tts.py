@@ -13,11 +13,13 @@ import io
 import os
 import struct
 import tempfile
+import time
 
 PREFIXE = "gemini:"
 URL = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 MODELES = ["gemini-3.8-flash-lite-tts", "gemini-3.8-flash-tts", "gemini-3.1-flash-tts-preview"]
-DELAI_S = 30
+DELAI_S = 12        # une phrase prend 2 a 5 s ; au-dela, le service rame : la voix de la source
+BUDGET_S = 15       # pour une phrase, tous modeles confondus
 REPOS_MODELE_S = 1800
 REPOS_RETIRE_S = 86400
 MAX_TEXTE = 3000
@@ -118,16 +120,20 @@ def fichier(texte, voix, debit=None, poster=None):
     if poster is None:
         import requests
         poster = requests.post
+    debut = time.monotonic()
     for model in MODELES:
         if connecteurs_ia._en_repos(_repos(model)):
             continue
         for ancienne in (False, True):
+            reste = BUDGET_S - (time.monotonic() - debut)
+            if reste < 3:
+                return None                   # trop long pour une phrase : la voix de la source la dit
             try:
-                r = poster(URL.format(model=model), json=_corps(texte, nom, debit, ancienne), timeout=DELAI_S,
-                           headers={"x-goog-api-key": cle})
-            except Exception as exc:          # reseau muet : le modele suivant, puis la voix de la source
+                r = poster(URL.format(model=model), json=_corps(texte, nom, debit, ancienne),
+                           timeout=min(DELAI_S, reste), headers={"x-goog-api-key": cle})
+            except Exception as exc:          # reseau muet ou service lent : pas d'autre essai pour cette phrase
                 connecteurs_ia._reposer(_repos(model), 120, type(exc).__name__)
-                break
+                return None
             if r.status_code == 200:
                 try:
                     son = _audio(r.json())

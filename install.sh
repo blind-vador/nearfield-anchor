@@ -236,9 +236,10 @@ fi
 PIPER_DIR=/home/$RUN_USER/piper
 if [ ! -x "$PIPER_DIR/piper" ]; then
     echo "-- Piper --"
-    case "$(uname -m)" in
-        aarch64) PIPER_TGZ=piper_linux_aarch64.tar.gz ;;
-        x86_64) PIPER_TGZ=piper_linux_x86_64.tar.gz ;;
+    # Le systeme, pas le noyau : un Pi au noyau 64 bits garde souvent un systeme 32 bits (armhf).
+    case "$(dpkg --print-architecture 2>/dev/null || uname -m)" in
+        aarch64|arm64) PIPER_TGZ=piper_linux_aarch64.tar.gz ;;
+        x86_64|amd64) PIPER_TGZ=piper_linux_x86_64.tar.gz ;;
         *) PIPER_TGZ=piper_linux_armv7l.tar.gz ;;
     esac
     wget -q -O "$BUILD_DIR/piper.tar.gz" "https://github.com/rhasspy/piper/releases/download/2023.11.14-2/$PIPER_TGZ"

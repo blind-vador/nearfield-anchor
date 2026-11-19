@@ -128,6 +128,19 @@ class VoixGemini(unittest.TestCase):
         self.assertIsNone(self.g.fichier("", "gemini:Kore", poster=mock.Mock()))
         self.assertIsNone(self.g.fichier("a", "gemini:Kore", poster=mock.Mock(side_effect=OSError("muet"))))
 
+    def test_service_lent_borne(self):
+        # Un délai dépassé : aucun autre modèle n'est tenté pour cette phrase (la voix de la source la dit).
+        poster = mock.Mock(side_effect=TimeoutError("lent"))
+        self.assertIsNone(self.g.fichier("a", "gemini:Kore", poster=poster))
+        self.assertEqual(poster.call_count, 1)
+        self.assertLessEqual(poster.call_args.kwargs["timeout"], self.g.DELAI_S)
+        # Tout le budget est déjà pris : on ne commence même pas un nouvel essai.
+        horloge = iter([0.0, self.g.BUDGET_S])
+        poster = mock.Mock(side_effect=[self.reponse(400), self.reponse(200, b"RIFFz")])
+        with mock.patch("gemini_tts.time.monotonic", side_effect=lambda: next(horloge, 99.0)):
+            self.assertIsNone(self.g.fichier("a", "gemini:Kore", poster=poster))
+        self.assertEqual(poster.call_count, 0)
+
     def test_parler_gemini_puis_repli(self):
         import speak
         verrou = mock.Mock(dropped=False)
