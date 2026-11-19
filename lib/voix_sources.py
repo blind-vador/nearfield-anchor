@@ -282,7 +282,10 @@ def famille_mac(nom):
 
 
 def fournisseur(voix):
-    """Famille d'une voix tirée : microsoft, une famille du Mac, google, piper ou mbrola."""
+    """Famille d'une voix tirée : microsoft, une famille du Mac, google, piper ou mbrola
+    (et gemini, pour les voix demandées par un logiciel installé)."""
+    if (voix or "").startswith("gemini:"):
+        return "gemini"
     if (voix or "").startswith("piper:mbrola#"):
         return "mbrola"
     if (voix or "").startswith("piper:google#"):
@@ -490,6 +493,8 @@ def catalogue():
     ids = (list(_microsoft_voix()) if microsoft_ok() else []) + piper_out.voix_locales() + piper_out.voix_distantes()
     nom = lambda v: piper_out.label(piper_out.canonical(v)) if v.startswith("piper:") else nom_voix(v)  # noqa: E731
     sortie = [{"id": v, "nom": nom(v), "fournisseur": fournisseur(v)} for v in ids if permise(v)]
+    import gemini_tts                       # voix neurales de Gemini (2026-11-19) : jamais tirées au hasard
+    sortie += gemini_tts.catalogue()
     sortie.append({"id": ESPEAK, "nom": "espeak", "fournisseur": "espeak"})
     return sortie
 
@@ -511,6 +516,9 @@ def choix_impose(voix, source, debit=None, hauteur=None):
         return choix
     if voix == ESPEAK:
         return {"moteur": ESPEAK, "voix": ESPEAK, "debit": r["debit"], "hauteur": NEUTRE_HAUTEUR, "aleatoire": False}
+    if voix.startswith("gemini:"):
+        return {"moteur": "gemini", "voix": voix, "debit": debit or NEUTRE_DEBIT, "hauteur": NEUTRE_HAUTEUR,
+                "aleatoire": False}
     if voix in _microsoft_voix():
         return {"moteur": "edge", "voix": voix, "debit": r["debit"], "hauteur": r["hauteur"], "aleatoire": False}
     c = _rendu(voix, r)

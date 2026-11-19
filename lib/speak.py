@@ -315,14 +315,33 @@ def parler(text, voix=None, debit=None, hauteur=None, source="logiciels"):
     Rend la voix qui a parlé, ou None si une source plus importante l'a fait taire."""
     import audio_lock
     choix = voix_sources.choix_impose(voix, source, debit, hauteur)
+    son = None
+    if choix.get("moteur") == "gemini":
+        # Voix neurale de Gemini : synthèse avant de prendre son tour (2 à 5 s chez Google) ;
+        # pas de son (quota, réseau) : la voix réglée pour la source dit la phrase.
+        import gemini_tts
+        son = gemini_tts.fichier(text, choix["voix"], choix.get("debit"))
+        if not son:
+            print(f"[voix] {choix['voix']} muette : voix de la source")
+            choix = voix_sources.choisir(source)
     lock = audio_lock.acquire(source)
     try:
         if lock.dropped:
             return None
-        _annoncer(None, text, label=source, source=source, choix=choix)
+        if son:
+            print(f"[voix] {source} : {choix['voix']}")
+            print(text)
+            play_sound_effect(son, timeout_sec=_speech_timeout(son), label=source)
+        else:
+            _annoncer(None, text, label=source, source=source, choix=choix)
         return choix.get("voix")
     finally:
         audio_lock.release(lock)
+        if son:
+            try:
+                os.remove(son)
+            except OSError:
+                pass
 
 
 def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=False, reverb=False, source=None,
