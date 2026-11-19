@@ -270,6 +270,10 @@ def executer(externe, job, dossier, relayer, journal=print):
         minuterie.cancel()
         if p.poll() is None:
             tuer()
+        # Un travail peut changer ce que sait faire le programme (outil installe, compte
+        # connecte) : ses capacites se relisent au prochain battement, pas 5 minutes plus tard.
+        with _verrou:
+            _cache["t"] = 0
         lecteur.join(10)
         for f in (p.stdout, p.stderr):
             try:
