@@ -64,6 +64,12 @@ Requetes (LISTE FERMEE ; chacune porte un "id", la reponse le rappelle en
   preavis_pret     {preavis, pret, attente_s}  reponse a un evenement "preavis" {preavis, genre,
                                            donnees} (arret prochain du Pi, orage : lib/preavis.py) ;
                                            l'ordonnateur attend les "pret" dans une borne de temps
+  voix_catalogue   {}                      voix que l'ordonnateur peut prendre maintenant, sur sa
+                                           propre sortie son : [{id, nom, fournisseur}]
+  parler           {texte, voix, debit, hauteur}  dit le texte sur le haut-parleur de
+                                           l'ordonnateur, dans la voix demandee (id du catalogue ;
+                                           absente : celle de la source « logiciels »), a son tour
+                                           dans les priorites ; repond une fois dit ; long
   interface_servir {}                      (capacite "interface") devenir le front de l'IDE : les
                                            requetes des coquilles arrivent en evenements
                                            {"type": "interface_requete", requete, appareil,
@@ -1025,6 +1031,36 @@ def _expirer_interface():
                 pont_v2.envoyer_brut(a["cid"], m)
 
 
+MAX_PAROLE = 3000
+
+
+def voix_catalogue(cx, req):
+    import voix_sources
+    return {"voix": voix_sources.catalogue()}
+
+
+def parler(cx, req):
+    import speak
+    import voix_sources
+    texte = req.get("texte")
+    if not isinstance(texte, str) or not texte.strip() or len(texte) > MAX_PAROLE:
+        raise Refus("texte : 1 a %d caracteres" % MAX_PAROLE)
+    voix = req.get("voix")
+    if voix is not None and (not isinstance(voix, str) or len(voix) > 120):
+        raise Refus("voix : identifiant du catalogue attendu")
+    for champ, motif, borne in (("debit", voix_sources.DEBIT_MOTIF, 100), ("hauteur", voix_sources.HAUTEUR_MOTIF, 50)):
+        v = req.get(champ)
+        if v is None:
+            continue
+        m = motif.match(v) if isinstance(v, str) else None
+        if not m or int(m.group(1)) > borne:
+            raise Refus("%s : de -%d a +%d" % (champ, borne, borne))
+    texte = " ".join(texte.split())
+    print(f"[extensions] {cx.id} parle", flush=True)
+    dite = speak.parler(texte, voix=voix, debit=req.get("debit"), hauteur=req.get("hauteur"))
+    return {"dit": dite is not None, "voix": dite}
+
+
 REQUETES = {
     "ticket_proposer": ticket_proposer,
     "ticket_valider": ticket_valider,
@@ -1043,10 +1079,12 @@ REQUETES = {
     "contre_epreuve": contre_epreuve,
     "evenements": evenements,
     "preavis_pret": preavis_pret,
+    "voix_catalogue": voix_catalogue,
+    "parler": parler,
     "interface_servir": interface_servir,
     "interface_reponse": interface_reponse,
 }
-LONGUES = {"ticket_valider", "ticket_arreter", "arbitrage_demander", "travail_autoriser"}  # attendent l'humain : traitees a part, la connexion continue
+LONGUES = {"ticket_valider", "ticket_arreter", "arbitrage_demander", "travail_autoriser", "parler"}  # attendent l'humain : traitees a part, la connexion continue
 
 
 # --- ouverture ----------------------------------------------------------------------------

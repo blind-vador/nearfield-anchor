@@ -35,6 +35,7 @@ import chemins
 import json
 import os
 import random
+import re
 import sys
 import time
 
@@ -71,6 +72,7 @@ SOURCES = Etiquettes("voix.source", {
     "imprimante": "veille imprimante",
     "plantes": "plantes",
     "systeme": "système : USB, machine compagne",
+    "logiciels": "logiciels installés : personnages, annonces",
 }, "source de voix, dans la commande voix")
 ANNONCES = [s for s in SOURCES if s not in ("console", "touches")]
 
@@ -472,6 +474,47 @@ def choisir(source, ms_ok=None):
         return repli
     return {"moteur": "edge", "voix": random.choice(_microsoft_voix()) if alea else voix,
             "debit": r["debit"], "hauteur": r["hauteur"], "aleatoire": alea}
+
+
+# --- voix demandees nommement (logiciels installes, point d'acces des extensions) ----------
+
+DEBIT_MOTIF = re.compile(r"^[+-](\d{1,3})%$")
+HAUTEUR_MOTIF = re.compile(r"^[+-](\d{1,3})Hz$")
+
+
+def catalogue():
+    """Voix qu'un logiciel installé peut demander par son nom : [{id, nom, fournisseur}].
+    Seulement les voix permises (commande « voix », préférences des fournisseurs) et
+    présentes maintenant (Microsoft joignable, Mac connecté)."""
+    import piper_out
+    ids = (list(_microsoft_voix()) if microsoft_ok() else []) + piper_out.voix_locales() + piper_out.voix_distantes()
+    sortie = [{"id": v, "nom": nom_voix(v), "fournisseur": fournisseur(v)} for v in ids if permise(v)]
+    sortie.append({"id": ESPEAK, "nom": "espeak", "fournisseur": "espeak"})
+    return sortie
+
+
+def choix_impose(voix, source, debit=None, hauteur=None):
+    """Le choix pour une voix demandée nommément. Voix absente du catalogue (Mac
+    déconnecté, fournisseur désactivé) : la voix réglée pour la source. Microsoft
+    muet : la voix de secours, comme pour toute annonce."""
+    r = dict(reglage(source))
+    if debit:
+        r["debit"] = r["secours_debit"] = debit
+    if hauteur:
+        r["hauteur"] = hauteur
+    ids = {v["id"] for v in catalogue()}
+    if not voix or voix not in ids:
+        choix = choisir(source)
+        if debit:
+            choix["debit"] = debit
+        return choix
+    if voix == ESPEAK:
+        return {"moteur": ESPEAK, "voix": ESPEAK, "debit": r["debit"], "hauteur": NEUTRE_HAUTEUR, "aleatoire": False}
+    if voix in _microsoft_voix():
+        return {"moteur": "edge", "voix": voix, "debit": r["debit"], "hauteur": r["hauteur"], "aleatoire": False}
+    c = _rendu(voix, r)
+    c["aleatoire"] = False
+    return c
 
 
 def suffixe(choix):

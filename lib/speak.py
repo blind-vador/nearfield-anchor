@@ -309,7 +309,24 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
     _annoncer(sound_path, text, sound_timeout_sec, label, repetitive, reverb, source)
 
 
-def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=False, reverb=False, source=None):
+def parler(text, voix=None, debit=None, hauteur=None, source="logiciels"):
+    """Parole demandée par un logiciel installé (point d'accès des extensions) : une voix
+    du catalogue par son nom (lib/voix_sources.py), à son tour dans la file des priorités.
+    Rend la voix qui a parlé, ou None si une source plus importante l'a fait taire."""
+    import audio_lock
+    choix = voix_sources.choix_impose(voix, source, debit, hauteur)
+    lock = audio_lock.acquire(source)
+    try:
+        if lock.dropped:
+            return None
+        _annoncer(None, text, label=source, source=source, choix=choix)
+        return choix.get("voix")
+    finally:
+        audio_lock.release(lock)
+
+
+def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=False, reverb=False, source=None,
+              choix=None):
     if audio_lock.dropped():
         print(f"(muet, priorites) {text}")
         return  # source qui a cede sa place : ni son ni voix, pas de synthese inutile
@@ -319,7 +336,7 @@ def _annoncer(sound_path, text, sound_timeout_sec=15, label="speak", repetitive=
         play_sound_effect(sound_path, timeout_sec=sound_timeout_sec, label=label, reverb=reverb)
         return
     source = source or voix_sources.source_pour()
-    choix = voix_sources.choisir(source)
+    choix = choix or voix_sources.choisir(source)
     effet = voix_sources.effet(source)   # commande "voix" : effet sur la voix, tire a chaque annonce
     # Qui parle, a chaque annonce (2026-11-13 : "jamais entendu Google" alors que le
     # tirage le donne une fois sur deux ; les repli disent deja "muette, secours").

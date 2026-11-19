@@ -61,6 +61,7 @@ SOURCES = Etiquettes("source", {
     "disques": "disques",
     "imprimante": "imprimante 3D",
     "helicos": "hélicoptères au-dessus de la ville",
+    "logiciels": "logiciels installés : personnages, annonces",
 }, "nom d'une source de son, réglage des priorités")
 DEFAULT_ORDER = list(SOURCES)
 DEFAULT_MODES = {s: "attend" for s in SOURCES}
