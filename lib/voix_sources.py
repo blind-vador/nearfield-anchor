@@ -488,7 +488,8 @@ def catalogue():
     présentes maintenant (Microsoft joignable, Mac connecté)."""
     import piper_out
     ids = (list(_microsoft_voix()) if microsoft_ok() else []) + piper_out.voix_locales() + piper_out.voix_distantes()
-    sortie = [{"id": v, "nom": nom_voix(v), "fournisseur": fournisseur(v)} for v in ids if permise(v)]
+    nom = lambda v: piper_out.label(piper_out.canonical(v)) if v.startswith("piper:") else nom_voix(v)  # noqa: E731
+    sortie = [{"id": v, "nom": nom(v), "fournisseur": fournisseur(v)} for v in ids if permise(v)]
     sortie.append({"id": ESPEAK, "nom": "espeak", "fournisseur": "espeak"})
     return sortie
 
