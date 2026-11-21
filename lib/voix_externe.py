@@ -69,17 +69,11 @@ def _mac(voix, texte, length_scale):
 
 
 def _morceaux(texte, taille=GOOGLE_MAX):
-    """Decoupe aux fins de phrase, puis aux virgules, puis aux espaces."""
-    out = []
-    for phrase in re.split(r"(?<=[.!?;:])\s+", texte.strip()):
-        while len(phrase) > taille:
-            coupe = max(phrase.rfind(",", 0, taille), phrase.rfind(" ", 0, taille))
-            coupe = coupe if coupe > 20 else taille
-            out.append(phrase[:coupe + 1].strip())
-            phrase = phrase[coupe + 1:]
-        if phrase.strip():
-            out.append(phrase.strip())
-    return out
+    """Aux fins de phrase, puis a la ponctuation, puis avant un mot qui ouvre la suite, jamais apres un
+    petit mot (lib/decoupe_voix.py) : un morceau coupe au dernier espace venu sonnait comme une phrase
+    finie au milieu de la phrase."""
+    import decoupe_voix
+    return decoupe_voix.morceaux(texte, taille)
 
 
 def _decode(donnees_mp3, length_scale):

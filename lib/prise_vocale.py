@@ -45,8 +45,9 @@ def _edge(text, path, choix):
     edge_langue.force_language()
 
     async def run():
-        await asyncio.wait_for(edge_tts.Communicate(text, choix["voix"], rate=choix["debit"],
-                                                    pitch=choix["hauteur"]).save(path), timeout=SYNTH_TIMEOUT_SEC)
+        import decoupe_voix
+        await asyncio.wait_for(decoupe_voix.edge_enregistrer(edge_tts, text, choix["voix"], path, choix["debit"],
+                                                             choix["hauteur"]), timeout=SYNTH_TIMEOUT_SEC)
     try:
         asyncio.run(run())
     except Exception as exc:

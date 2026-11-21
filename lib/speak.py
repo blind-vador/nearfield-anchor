@@ -126,8 +126,9 @@ def speak(text, voice="fr", source=None):
 
 
 async def _do_synthesize(text, voice, path, rate="+0%", pitch="+0Hz"):
-    communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
-    await asyncio.wait_for(communicate.save(path), timeout=EDGE_TTS_TIMEOUT_SEC)
+    import decoupe_voix
+    await asyncio.wait_for(decoupe_voix.edge_enregistrer(edge_tts, text, voice, path, rate, pitch),
+                           timeout=EDGE_TTS_TIMEOUT_SEC)
 
 
 def _synthesize_edge_tts(text, result_holder, candidate_voices=None, rate="+0%", pitch="+0Hz"):
