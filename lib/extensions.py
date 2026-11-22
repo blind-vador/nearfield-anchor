@@ -1102,6 +1102,8 @@ def _preparer_la_file(pause_en_ligne=7.0, pause_locale=0.5):
             texte, voix, debit = _preparation["file"].pop(0)
         en_ligne = not str(voix or "").startswith("piper:")
         try:
+            if speak.deja_pret(texte, voix=voix, debit=debit):
+                continue           # deja gardee : ni synthese ni pause (une liste renvoyee ne coute que ses nouveautes)
             ok = speak.preparer(texte, voix=voix, debit=debit)
         except Exception as exc:  # noqa: BLE001 (une phrase ratee n'arrete pas le service)
             print(f"[extensions] preparation : {exc!r}", flush=True)

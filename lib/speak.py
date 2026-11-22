@@ -330,6 +330,21 @@ def _gemini_garde(text, choix):
         return son, True       # cache indisponible (NAS) : la phrase est dite quand meme
 
 
+def deja_pret(text, voix=None, debit=None, source="logiciels"):
+    """True si l echantillon de cette phrase, pour cette voix fixee, est deja garde (rien a fabriquer)."""
+    text = " ".join(str(text or "").split())
+    try:
+        choix = voix_sources.choix_impose(voix, source, debit)
+    except Exception:  # noqa: BLE001 (une voix inconnue : on laissera preparer dire non)
+        return False
+    if not text or choix.get("aleatoire") or choix.get("moteur") not in ("gemini", "edge", "piper"):
+        return False
+    try:
+        return bool(_echantillon(text, choix))
+    except OSError:
+        return False
+
+
 def preparer(text, voix=None, debit=None, source="logiciels"):
     """Fabrique a l'avance l'echantillon de cette phrase pour cette voix, sans rien dire (preparation
     demandee par un logiciel installe). True s'il est pret."""

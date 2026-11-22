@@ -84,9 +84,17 @@ class PreparationParLePointDAcces(unittest.TestCase):
             extensions._preparation["fil"].join(5)
         self.assertEqual(faites, ["Un", "Deux trois"])
 
+    def test_phrases_deja_pretes_sautees_sans_pause(self):
+        import extensions
+        pauses, faites = [], []
+        with mock.patch.object(speak, "deja_pret", side_effect=lambda t, **k: t.startswith("vieille")),                 mock.patch.object(speak, "preparer", side_effect=lambda t, **k: faites.append(t) or True),                 mock.patch.object(extensions.time, "sleep", side_effect=pauses.append):
+            extensions._preparation["file"][:] = [("vieille %d" % i, "gemini:Charon", None) for i in range(50)] +                 [("neuve", "gemini:Charon", None)]
+            extensions._preparer_la_file(7, 0.5)
+        self.assertEqual((faites, pauses), (["neuve"], [7]))
+
     def test_trois_echecs_arretent_la_file(self):
         import extensions
-        with mock.patch.object(speak, "preparer", return_value=False):
+        with mock.patch.object(speak, "preparer", return_value=False),                 mock.patch.object(speak, "deja_pret", return_value=False):
             extensions._preparation["file"][:] = [("p%d" % i, None, None) for i in range(10)]
             extensions._preparer_la_file(0, 0)
         self.assertEqual(extensions._preparation["file"], [])
