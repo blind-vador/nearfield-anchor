@@ -168,7 +168,7 @@ class Requete(unittest.TestCase):
         with mock.patch("speak.parler", return_value="fr-FR-HenriNeural") as p:
             r = extensions.parler(cx, {"texte": "Bonjour\n  toi", "voix": "fr-FR-HenriNeural", "debit": "+25%"})
             self.assertEqual(r, {"dit": True, "voix": "fr-FR-HenriNeural"})
-            p.assert_called_once_with("Bonjour toi", voix="fr-FR-HenriNeural", debit="+25%", hauteur=None)
+            p.assert_called_once_with("Bonjour toi", voix="fr-FR-HenriNeural", debit="+25%", hauteur=None, garder=False)
             for mauvais in ({"texte": ""}, {"texte": "a" * 3001}, {"texte": "a", "debit": "vite"},
                             {"texte": "a", "debit": "+300%"}, {"texte": "a", "hauteur": "+90Hz"},
                             {"texte": "a", "voix": 3}):

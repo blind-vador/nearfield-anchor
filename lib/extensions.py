@@ -1057,8 +1057,65 @@ def parler(cx, req):
             raise Refus("%s : de -%d a +%d" % (champ, borne, borne))
     texte = " ".join(texte.split())
     print(f"[extensions] {cx.id} parle", flush=True)
-    dite = speak.parler(texte, voix=voix, debit=req.get("debit"), hauteur=req.get("hauteur"))
+    dite = speak.parler(texte, voix=voix, debit=req.get("debit"), hauteur=req.get("hauteur"),
+                        garder=req.get("garder") is True)
     return {"dit": dite is not None, "voix": dite}
+
+
+MAX_A_PREPARER = 200
+_preparation = {"file": [], "fil": None}
+_verrou_preparation = threading.Lock()
+
+
+def voix_preparer(cx, req):
+    """Phrases a preparer a l'avance dans une voix du catalogue (cache des phrases repetitives), sans
+    les dire : un logiciel les redira ensuite sans attendre la synthese. Une a la fois, en tache de fond,
+    espacees pour menager le quota des voix en ligne ; trois echecs de suite arretent la file."""
+    textes = req.get("textes")
+    if not isinstance(textes, list) or not textes or len(textes) > MAX_A_PREPARER or \
+            not all(isinstance(t, str) and t.strip() and len(t) <= MAX_PAROLE for t in textes):
+        raise Refus("textes : 1 a %d phrases de %d caracteres au plus" % (MAX_A_PREPARER, MAX_PAROLE))
+    voix, debit = req.get("voix"), req.get("debit")
+    if voix is not None and (not isinstance(voix, str) or len(voix) > 120):
+        raise Refus("voix : identifiant du catalogue attendu")
+    import voix_sources
+    if debit is not None and not (isinstance(debit, str) and voix_sources.DEBIT_MOTIF.match(debit)):
+        raise Refus("debit : de -100 a +100")
+    with _verrou_preparation:
+        _preparation["file"] += [(" ".join(t.split()), voix, debit) for t in textes]
+        del _preparation["file"][:-MAX_A_PREPARER * 5]
+        if not (_preparation["fil"] and _preparation["fil"].is_alive()):
+            _preparation["fil"] = threading.Thread(target=_preparer_la_file, daemon=True)
+            _preparation["fil"].start()
+        n = len(_preparation["file"])
+    print(f"[extensions] {cx.id} fait preparer {len(textes)} phrases", flush=True)
+    return {"en_file": n}
+
+
+def _preparer_la_file(pause_en_ligne=7.0, pause_locale=0.5):
+    import speak
+    echecs, faites = 0, 0
+    while True:
+        with _verrou_preparation:
+            if not _preparation["file"]:
+                break
+            texte, voix, debit = _preparation["file"].pop(0)
+        en_ligne = not str(voix or "").startswith("piper:")
+        try:
+            ok = speak.preparer(texte, voix=voix, debit=debit)
+        except Exception as exc:  # noqa: BLE001 (une phrase ratee n'arrete pas le service)
+            print(f"[extensions] preparation : {exc!r}", flush=True)
+            ok = False
+        echecs = 0 if ok else echecs + 1
+        faites += 1 if ok else 0
+        if echecs >= 3:
+            with _verrou_preparation:
+                reste = len(_preparation["file"])
+                _preparation["file"].clear()
+            print(f"[extensions] preparation arretee apres trois echecs ({reste} phrases laissees)", flush=True)
+            break
+        time.sleep(pause_en_ligne if en_ligne else pause_locale)
+    print(f"[extensions] preparation finie : {faites} phrases pretes", flush=True)
 
 
 REQUETES = {
@@ -1081,6 +1138,7 @@ REQUETES = {
     "preavis_pret": preavis_pret,
     "voix_catalogue": voix_catalogue,
     "parler": parler,
+    "voix_preparer": voix_preparer,
     "interface_servir": interface_servir,
     "interface_reponse": interface_reponse,
 }

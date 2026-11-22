@@ -539,6 +539,8 @@ def fichier_cache(dossier, choix):
     """Nom de l'echantillon de ce choix dans le dossier d'une phrase repetitive."""
     if choix["moteur"] == "edge":
         return os.path.join(dossier, f"{choix['voix']}{suffixe(choix)}.mp3")
+    if choix["moteur"] == "gemini":       # voix neurale de Gemini : gardee comme les autres (quota, lenteur)
+        return os.path.join(dossier, f"gemini-{choix['voix'].split(':', 1)[1]}{suffixe(choix)}.wav")
     return os.path.join(dossier, f"piper-{choix['voix'].split(':', 1)[1]}{suffixe(choix)}.wav")
 
 

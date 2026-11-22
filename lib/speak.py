@@ -310,18 +310,79 @@ def speak_with_lead_sound(sound_path, text, sound_timeout_sec=15, label="speak",
     _annoncer(sound_path, text, sound_timeout_sec, label, repetitive, reverb, source)
 
 
-def parler(text, voix=None, debit=None, hauteur=None, source="logiciels"):
+def _gemini_garde(text, choix):
+    """(chemin, temporaire) de la phrase dite par cette voix Gemini : l'echantillon garde s'il existe,
+    sinon fabrique et garde (dossier de la phrase repetitive) ; (None, False) si Gemini ne repond pas."""
+    dest = voix_sources.fichier_cache(_repetitive_cache_dir(text), choix)
+    if os.path.exists(dest):
+        return dest, False
+    import gemini_tts
+    son = gemini_tts.fichier(text, choix["voix"], choix.get("debit"))
+    if not son:
+        return None, False
+    try:
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        remember_repetitive(text)
+        shutil.copyfile(son, dest)
+        os.remove(son)
+        return dest, False
+    except OSError:
+        return son, True       # cache indisponible (NAS) : la phrase est dite quand meme
+
+
+def preparer(text, voix=None, debit=None, source="logiciels"):
+    """Fabrique a l'avance l'echantillon de cette phrase pour cette voix, sans rien dire (preparation
+    demandee par un logiciel installe). True s'il est pret."""
+    text = " ".join(str(text or "").split())
+    choix = voix_sources.choix_impose(voix, source, debit)
+    if not text or choix.get("aleatoire") or choix.get("moteur") not in ("gemini", "edge", "piper"):
+        return False
+    remember_repetitive(text)
+    if choix["moteur"] == "gemini":
+        chemin, temporaire = _gemini_garde(text, choix)
+        if temporaire:
+            os.remove(chemin)
+        return bool(chemin) and not temporaire
+    if choix["moteur"] == "piper":
+        return bool(piper_sample(text, choix))
+    if _echantillon(text, choix):
+        return True
+    holder = [None]
+    _synthesize_edge_tts(text, holder, [choix["voix"]], choix["debit"], choix["hauteur"])
+    if not holder[0]:
+        return False
+    audio_path, _ = holder[0]
+    try:
+        dest = voix_sources.fichier_cache(_repetitive_cache_dir(text), choix)
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        if not os.path.exists(dest):
+            shutil.copyfile(audio_path, dest)
+        return True
+    except OSError:
+        return False
+    finally:
+        try:
+            os.remove(audio_path)
+        except OSError:
+            pass
+
+
+def parler(text, voix=None, debit=None, hauteur=None, source="logiciels", garder=False):
     """Parole demandée par un logiciel installé (point d'accès des extensions) : une voix
     du catalogue par son nom (lib/voix_sources.py), à son tour dans la file des priorités.
+    garder=True : phrase qui revient (messages fixes) : gardée par voix et rejouée sans synthèse.
     Rend la voix qui a parlé, ou None si une source plus importante l'a fait taire."""
     import audio_lock
     choix = voix_sources.choix_impose(voix, source, debit, hauteur)
-    son = None
+    son, temporaire = None, True
     if choix.get("moteur") == "gemini":
-        # Voix neurale de Gemini : synthèse avant de prendre son tour (2 à 5 s chez Google) ;
-        # pas de son (quota, réseau) : la voix réglée pour la source dit la phrase.
+        # Voix neurale de Gemini : synthèse avant de prendre son tour (2 à 5 s chez Google), ou
+        # l'échantillon gardé ; pas de son (quota, réseau) : la voix réglée pour la source dit la phrase.
         import gemini_tts
-        son = gemini_tts.fichier(text, choix["voix"], choix.get("debit"))
+        if garder:
+            son, temporaire = _gemini_garde(text, choix)
+        else:
+            son = gemini_tts.fichier(text, choix["voix"], choix.get("debit"))
         if not son:
             print(f"[voix] {choix['voix']} muette : voix de la source")
             choix = voix_sources.choisir(source)
@@ -334,11 +395,11 @@ def parler(text, voix=None, debit=None, hauteur=None, source="logiciels"):
             print(text)
             play_sound_effect(son, timeout_sec=_speech_timeout(son), label=source)
         else:
-            _annoncer(None, text, label=source, source=source, choix=choix)
+            _annoncer(None, text, label=source, source=source, choix=choix, repetitive=garder)
         return choix.get("voix")
     finally:
         audio_lock.release(lock)
-        if son:
+        if son and temporaire:
             try:
                 os.remove(son)
             except OSError:
