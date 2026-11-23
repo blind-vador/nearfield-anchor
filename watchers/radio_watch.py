@@ -598,6 +598,13 @@ MIN_CONSECUTIVE_SIGNAL_WINDOWS = 3
 DSD_FME_AVAILABLE = True
 DSD_FME_UDP_HOST = "127.0.0.1"
 DSD_FME_UDP_PORT = 23456
+# Prise unique : un port par decodeur (2026-11-23). Les modes EDACS/ProVoice
+# (-fe, -fh, -fp) ouvrent un second port, celui de la voix + 2, pour leur son
+# analogique : avec des ports consecutifs, -fp (analogique sur +2) tombait sur
+# le port de -fe. Pas de 3, et plage a part : 23457 est celui d'acars_watch,
+# 23460-23469 ceux du mode manuel (lib/manual_tuner.py).
+DSD_PRISE_PORT_BASE = 23500
+DSD_PRISE_PORT_PAS = 3
 # Frequence d'echantillonnage standard de la voix synthetisee par mbelib/dsd-fme.
 DSD_FME_VOICE_SAMPLE_RATE = 8000
 # En mode -fa, dsd-fme sort la voix en STEREO (une voie par slot DMR/TDMA,
@@ -1191,6 +1198,10 @@ def _dmr_ecoute(freq, dwell_sec=20):
     sound_player.set_recording_session(log_session)
     saved = False
     try:
+        # L'ecoute en cours des le depart (2026-11-23) : avant, seule une voix
+        # DMR validee la declarait ; ouverte en FM, la veille DMR n'existait
+        # pas pour "parasite", qui frappait alors la capture precedente.
+        noise_signatures.capture_started("dmr", freq, "dmr", label, "dmr")
         try_digital_voice_decode.last_muted = False
         try_digital_voice_decode.last_had_audio = False
         try_digital_voice_decode.juge_entendu = None
@@ -1840,9 +1851,17 @@ MIN_CHARS_DONNEES_RETENUES = 2   # frequence notee "tonalites/donnees" : un DTMF
 RANG_DONNEES_MIN = 0.55          # une seule note suffit (0,67 au depart, 0,55 apres ~2 semaines)
 
 
-def _min_chars(freq_hz):
+def _min_chars(freq_hz, target=None):
     """Seuil des messages decodes sur cette frequence : assoupli quand tes notes
-    "tonalites ou donnees" y ont retenu les decodeurs de donnees (audit E3)."""
+    "tonalites ou donnees" y ont retenu les decodeurs de donnees (audit E3).
+
+    Jamais assoupli en veille DMR (2026-11-23) : la porteuse 4FSK du DMR,
+    demodulee en FM, fait sortir aux decodeurs FSK de multimon-ng des paires de
+    caracteres au hasard ("Cc", "kS", "PG"). Avec le seuil a 2, chacune
+    ouvrait la voix FM : 111 ouvertures "veille DMR, FM etroite" en 7 jours,
+    aucune sur une voix reconnue."""
+    if target == "dmr":
+        return MIN_DECODED_MESSAGE_CHARS
     try:
         import propositions
         if propositions.rang(freq_hz, "donnees") > RANG_DONNEES_MIN:
@@ -2193,8 +2212,11 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
 
     # Prise unique : une voix FM ne s'ouvre pas sur du numerique. Des synchros
     # deja vues : on laisse aux decodeurs ATTENTE_NUMERIQUE_SEC pour se confirmer.
+    # Meme attente quand un decodeur est retenu sur la frequence ("DMR retenu,
+    # il passe devant") et n'a pas encore parle (2026-11-23) : sa priorite ne
+    # bloquait que les autres decodeurs numeriques, jamais la voix FM.
     if arbitre is not None:
-        if arbitre.numerique_en_vue():
+        if arbitre.numerique_en_vue() or arbitre.pref_attendu():
             arbitre.attendre_numerique(ATTENTE_NUMERIQUE_SEC)
         # Signal CONFIRME numerique (synchros validees sur un mode) : ce n'est
         # pas de la voix FM, meme si aucune voix n'a ete decodee -- relais DMR
@@ -2443,7 +2465,7 @@ def stream_until_quiet(freq_hz, mode, band_label, sample_rate=22050, target=None
             _annoncer_image_sstv(m, band_label)
     images_sstv = any(m.startswith("SSTV: image") for m in decoded_messages)
     decoded_messages = [m for m in decoded_messages if not m.startswith("SSTV:")]
-    seuil = _min_chars(freq_hz)
+    seuil = _min_chars(freq_hz, target)
     meaningful_messages = [m for m in decoded_messages if _is_meaningful_decoded_message(m, seuil)]
     if meaningful_messages:
         try:  # des donnees lues ici : leurs decodeurs passent devant la prochaine fois
@@ -2573,7 +2595,7 @@ def _prelisten(audio_queue, prebuffer, sample_rate, target, freq_hz, mode, multi
                           f"syllabique {mesure:.2f} (< {preuve_voix.SEUIL}) : pas de la parole, on n'ouvre pas")
                 if verdict is False and (len(filtered_all) - debut_voix) * ANALYSIS_WINDOW_MS >= preuve_voix.DUREE_REFUS_SEC * 1000:
                     break   # assez de son pour trancher : pas de la parole
-            if any(_is_meaningful_decoded_message(m, _min_chars(freq_hz)) for m in decoded):
+            if any(_is_meaningful_decoded_message(m, _min_chars(freq_hz, target)) for m in decoded):
                 return True, decoded, b"".join(filtered_all)
     finally:
         _rnnoise_destroy(rnnoise_state)
@@ -3356,7 +3378,8 @@ def _ecoute_prise(prise, freq, band_label, target, prelisten_max=None):
     def ecouter(i, mode_flag):
         audio_lock._local.ticket = ticket
         resultats[mode_flag] = try_digital_voice_decode(freq, mode_flag, band_label, target=target, live=True,
-                                                        prise=prise, port=DSD_FME_UDP_PORT + 1 + i, arbitre=arbitre)
+                                                        prise=prise, port=DSD_PRISE_PORT_BASE + DSD_PRISE_PORT_PAS * i,
+                                                        arbitre=arbitre)
     fils = {m: threading.Thread(target=ecouter, args=(i, m), daemon=True) for i, m in enumerate(modes)}
     for f in fils.values():
         f.start()

@@ -251,7 +251,7 @@ def _journaliser_sur(fiche, wav, juge, verdict, voix):
             import noise_signatures as ns
             ns.record_capture("juges", fiche.get("freq_hz") or 0, juge, fiche.get("band"), fiche.get("band"), chemin,
                               None, {"numerique": True, "juge": juge, "protocole": verdict.get("protocole"),
-                                     "doute": verdict.get("doute")})
+                                     "doute": verdict.get("doute")}, derniere=False)
         with _verrou:
             sc = _scores()
             _noter_profil(sc, fiche.get("band"), verdict["protocole"])
@@ -574,7 +574,7 @@ def _journaliser_plusieurs(fiche, juges, verdicts, dossier):
     propositions.poser(chemin, fiche.get("freq_hz"), fiche.get("band"), j0, empreinte, [
         {"juge": j, "wav": voix} for j, voix, _ in rendus[1:]])
     ns.record_capture("juges", fiche.get("freq_hz") or 0, j0, fiche.get("band"), fiche.get("band"),
-                      chemin, empreinte, {"numerique": True, "juge": j0})
+                      chemin, empreinte, {"numerique": True, "juge": j0}, derniere=False)
     print(f"[juges] {len(rendus)} rendus ranges au journal ({chemin})")
     return True
 
@@ -870,7 +870,7 @@ def _appliquer_blu(tid, ticket, c, avis):
     prise = session.finalize()
     if prise:
         ns.record_capture("juges", freq or 0, nom, band, band, prise, None,
-                          {"numerique": True, "juge": nom, "protocole": v.get("protocole")})
+                          {"numerique": True, "juge": nom, "protocole": v.get("protocole")}, derniere=False)
         propositions.poser(prise, freq, band, nom, None, [{"juge": n, "wav": w} for n, _, w in voix[1:]])
     print(f"[juges] ticket {tid} : {v.get('protocole')} -> journal {prise}")
 

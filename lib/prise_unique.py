@@ -231,6 +231,13 @@ class Arbitre:
             return bool(self.pref and qui != self.pref and self.gagnant is None
                         and time.time() < self.pref_jusqua and self.pref not in self.cedes)
 
+    def pref_attendu(self):
+        """Un juge retenu ici (pref) n'a pas encore parle et garde sa priorite :
+        la voix FM lui laisse le temps de se confirmer."""
+        with self._verrou:
+            return bool(self.pref and self.gagnant is None and time.time() < self.pref_jusqua
+                        and self.pref not in self.cedes and self.pref not in self.bloques)
+
     def prendre(self, qui, protocole=None):
         with self._verrou:
             if qui in self.cedes or qui in self.bloques:

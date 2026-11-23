@@ -340,12 +340,19 @@ def background_similarity(target, fp):
 
 # --- Derniere capture (ecrite par le scanner, lue par la console) ---
 
-def record_capture(source, freq_hz, mode, label, target, log_path, fp, metrics=None):
+def record_capture(source, freq_hz, mode, label, target, log_path, fp, metrics=None, derniere=True):
     """source : "rtl_fm" (canaux FM et balayages) ou "airband" (fenetres
     RTLSDR-Airband) ; target : nom de la bande ou de la fenetre, pour
     pouvoir s'y verrouiller. metrics : ce que le systeme a mesure pendant la
     capture (probabilite de voix, niveau, trous du silencieux...), confronte
-    plus tard aux notes de l'utilisateur (dialogue de notation du journal)."""
+    plus tard aux notes de l'utilisateur (dialogue de notation du journal).
+
+    derniere=False (2026-11-23) : prise rangee APRES COUP (decodage differe de
+    juges_watch, repechage d'un rejet). Elle va au journal et a l'index des
+    empreintes, mais ne devient pas "la derniere reception" et ne consomme pas
+    un "parasite" demande pendant l'ecoute en cours : sinon "parasite" effacait
+    et apprenait comme bruit une prise ancienne, rejugee a l'instant, au lieu
+    de celle qu'on venait d'entendre."""
     metrics = dict(metrics or {})
     if log_path and not metrics.get("repeche"):   # le repechage compte comme prise manquee (lib/rejets)
         try:
@@ -354,14 +361,15 @@ def record_capture(source, freq_hz, mode, label, target, log_path, fp, metrics=N
         except Exception as exc:
             print(f"[noise_signatures] mesure : {exc!r}")
     metrics["ressemblance_fond"] = background_similarity(target, fp)
-    try:
-        _atomic_write_json(LAST_CAPTURE_PATH, {
-            "source": source, "freq_hz": freq_hz, "mode": mode, "label": label,
-            "target": target, "log_path": log_path, "fingerprint": fp,
-            "time": time.time(), "marked_noise": False, "metrics": metrics,
-        })
-    except OSError as exc:
-        print(f"[noise_signatures] derniere capture non memorisee : {exc}")
+    if derniere:
+        try:
+            _atomic_write_json(LAST_CAPTURE_PATH, {
+                "source": source, "freq_hz": freq_hz, "mode": mode, "label": label,
+                "target": target, "log_path": log_path, "fingerprint": fp,
+                "time": time.time(), "marked_noise": False, "metrics": metrics,
+            })
+        except OSError as exc:
+            print(f"[noise_signatures] derniere capture non memorisee : {exc}")
     if log_path:  # meme sans empreinte : les mesures servent a la notation
         try:
             _remember_capture(log_path, {"freq_hz": freq_hz, "label": label, "fingerprint": fp,
@@ -369,7 +377,8 @@ def record_capture(source, freq_hz, mode, label, target, log_path, fp, metrics=N
                                          "metrics": metrics})
         except OSError as exc:
             print(f"[noise_signatures] empreinte non rangee pres de l'enregistrement : {exc}")
-    _consommer_parasite_en_attente(freq_hz, target, log_path, fp, metrics.get("juge") or mode)
+    if derniere:
+        _consommer_parasite_en_attente(freq_hz, target, log_path, fp, metrics.get("juge") or mode)
     try:  # toute ecoute, de tous les chemins, nourrit ce qu'on sait de la frequence
         import frequences_actives
         frequences_actives.depuis_capture(freq_hz, mode, label, target, metrics)
@@ -441,6 +450,15 @@ def update_live(**fields):
 def capture_ended():
     live = _read_json(LIVE_CAPTURE_PATH, None)
     if live and live.get("pid") == os.getpid():
+        # "parasite" demande pendant CETTE ecoute et pas consomme (ecoute jetee
+        # sans enregistrement) : il ne doit pas viser une autre prise plus tard
+        # sur la meme bande (2026-11-23).
+        p = _read_json(PARASITE_PENDING_PATH, None)
+        if p and p.get("time", 0) >= live.get("time", 0):
+            try:
+                os.remove(PARASITE_PENDING_PATH)
+            except OSError:
+                pass
         try:
             os.remove(LIVE_CAPTURE_PATH)
         except OSError:

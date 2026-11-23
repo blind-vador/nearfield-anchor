@@ -274,6 +274,9 @@ def _ago(timestamp):
     return dire("commandes.il_y_a", duree=nombre(hours, "heure"))
 
 
+PARASITE_DERNIERE_MAX_SEC = 300   # au-dela, la "derniere reception" n'est plus celle dont on parle
+
+
 def parasite():
     """Derniere reception radio = faux positif : supprimee du journal,
     empreinte sonore apprise pour l'ignorer si elle revient (le scanner la
@@ -300,6 +303,10 @@ def parasite():
     label = capture["label"]
     if capture.get("marked_noise"):
         return dire("commandes.derniere_reception_deja_marquee", label=label)
+    # Garde-fou (2026-11-23) : "parasite" parle de ce qu'on vient d'entendre.
+    # Une capture finie depuis longtemps n'est pas effacee a l'aveugle.
+    if time.time() - capture.get("time", 0) > PARASITE_DERNIERE_MAX_SEC:
+        return dire("commandes.derniere_reception_trop_ancienne", label=label, v1=_ago(capture["time"]))
     parts = [dire("commandes.reception_marquee_comme_parasite", label=label, v1=_ago(capture['time']))]
     path = capture.get("log_path")
     if path and os.path.isfile(path):

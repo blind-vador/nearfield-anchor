@@ -241,7 +241,7 @@ def repecher(fichier):
     except Exception as exc:
         print(f"[rejets] mesure : {exc!r}")
     ns.record_capture("rejets", e.get("freq_hz") or 0, e.get("mode") or juge, e.get("label"), e.get("target"),
-                      chemin, e.get("empreinte"), {"juge": juge, "repeche": True, "raison": e.get("raison")})
+                      chemin, e.get("empreinte"), {"juge": juge, "repeche": True, "raison": e.get("raison")}, derniere=False)
     autres = [{"juge": r.get("juge"), "wav": path_of(r["fichier"])} for r in e.get("rendus") or []
               if os.path.isfile(path_of(r.get("fichier") or ""))]
     propositions.poser(chemin, e.get("freq_hz"), e.get("label"), juge, e.get("empreinte"), autres)
