@@ -63,7 +63,10 @@ SOURCES = Etiquettes("source", {
     "helicos": "hélicoptères au-dessus de la ville",
     "logiciels": "logiciels installés : personnages, annonces",
 }, "nom d'une source de son, réglage des priorités")
-DEFAULT_ORDER = list(SOURCES)
+# Les logiciels installes (personnages, conversation que l utilisateur attend) passent juste apres la console,
+# avant les veilles de fond : une veille radio qui tient l arbitre pendant ses analyses silencieuses les
+# faisait attendre jusqu a ACQUIRE_TIMEOUT_SEC puis parler attenues (2026-11-24).
+DEFAULT_ORDER = ["alertes", "console", "logiciels"] + [s for s in SOURCES if s not in ("alertes", "console", "logiciels")]
 DEFAULT_MODES = {s: "attend" for s in SOURCES}
 DEFAULT_MODES["radio"] = "attenue"   # une capture continue en fond sous une annonce
 MODES = Etiquettes("priorite", {"attend": "attend son tour", "attenue": "joue atténuée",
@@ -117,6 +120,8 @@ def settings(fresh=False):
             continue
     data = data if isinstance(data, dict) else {}
     order = [s for s in data.get("ordre", []) if s in SOURCES]
+    if order and "logiciels" not in order:  # reglage plus ancien que cette source : juste apres la console
+        order.insert(order.index("console") + 1 if "console" in order else 0, "logiciels")
     order += [s for s in DEFAULT_ORDER if s not in order]
     modes = dict(DEFAULT_MODES)
     modes.update({k: v for k, v in (data.get("comportements") or {}).items() if k in SOURCES and v in MODES})
