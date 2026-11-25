@@ -365,11 +365,41 @@ def _controler_bloc(b):
     pb = _brouillon_de(parent)
     np_.controler_sous_ticket(pb, b)
     blocs = _lire_json(_dossier("tickets", ptid, "blocs.json"), []) or []
+    pris = {x["id"]: _pris_par_le_bloc(x) for x in blocs if x["id"] != b["id"]}
     for cle in ("secondes", "cout_centimes"):
-        total = sum(x["budget"][cle] for x in blocs if x["id"] != b["id"]) + b["budget"][cle]
+        total = sum(v[cle] for v in pris.values()) + b["budget"][cle]
         if total > pb["budget"][cle]:
             raise Refus("budget des blocs au-dela de celui du ticket parent (%s)" % cle)
     return parent, pb
+
+
+def _pris_par_le_bloc(x):
+    """Ce qu un bloc retient du budget du parent : sa reservation tant qu il est ouvert ; clos,
+    ce qu il a reellement pris (le plus grand de la consommation declaree au journal signe et du
+    temps ecoule jusqu a sa cloture), jamais plus que sa reservation. Sans cela, des essais
+    courts epuisaient le budget du parent par leurs reservations."""
+    budget = x["budget"]
+    try:
+        t = _ticket(x["id"])
+        e = _journal_verifie(t, _entrees(x["id"]))
+    except Exception:  # illisible : on garde la reservation (prudent)
+        return dict(budget)
+    if not _clos(e):
+        return dict(budget)
+    pris = {"secondes": 0, "cout_centimes": 0}
+    for entree in e:
+        c = (entree.get("donnees") or {}).get("consomme") or {}
+        for cle in pris:
+            v = c.get(cle, 0)
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                pris[cle] = max(pris[cle], v)
+    debut = (t.get("charge") or {}).get("emis")
+    fin = e[-1].get("emis")
+    if isinstance(debut, (int, float)) and isinstance(fin, (int, float)):
+        pris["secondes"] = max(pris["secondes"], fin - debut)
+    else:
+        pris["secondes"] = budget["secondes"]
+    return {cle: min(budget[cle], max(0, pris[cle])) for cle in pris}
 
 
 def _valider_bloc(tid, b):

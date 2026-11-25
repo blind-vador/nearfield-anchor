@@ -291,6 +291,25 @@ class PointExtensions(unittest.TestCase):
         b = self.bloc(parent, "projet-lax-c", ["src/"])
         self.assertEqual(cl.requete("ticket_proposer", brouillon=b)["type"], "erreur")
 
+    def test_bloc_clos_ne_retient_que_ce_qu_il_a_pris(self):
+        cl, _ = self.client()
+        parent = self.emettre(cl, self.brouillon("projet-pris", zones=["docs/"]))["ticket"]
+        a = self.emettre(cl, self.bloc(parent, "projet-pris-a", ["docs/a.md"], secondes=400))["ticket"]
+        b = self.bloc(parent, "projet-pris-b", ["docs/b.md"], secondes=400)
+        self.assertEqual(cl.requete("ticket_proposer", brouillon=b)["type"], "erreur", "a ouvert : reservation")
+        p = self.v2.parc()
+        e0 = np_.ecrire_journal(self.cle, p, a, None, "resultat", "Fini.",
+                                {"fichiers": [], "consomme": {"secondes": 50, "cout_centimes": 2}})
+        cl.requete("journal_ecrire", entree=e0)
+        e1 = np_.ecrire_journal(self.cle, p, a, e0, "cloture", "Essai retenu.")
+        cl.requete("journal_ecrire", entree=e1)
+        self.assertTrue(cl.requete("ticket_lire", ticket="projet-pris-a")["clos"])
+        r = self.emettre(cl, b)
+        self.assertEqual(r["type"], "reponse", r)
+        # Mais deux blocs ouverts restent bornes par leurs reservations.
+        c = self.bloc(parent, "projet-pris-c", ["docs/c.md"], secondes=400)
+        self.assertEqual(cl.requete("ticket_proposer", brouillon=c)["type"], "erreur")
+
     def test_blocs_en_mode_strict(self):
         cl, _ = self.client()
         parent = self.emettre(cl, self.brouillon("projet-strict", zones=["src/"], mode="strict"))["ticket"]
