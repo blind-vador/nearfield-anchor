@@ -78,6 +78,9 @@ SCRIPT_SOURCES = {
     "radio_watch": "radio", "sncf_watch": "trains", "meteo_watch": "alertes", "crue_watch": "alertes",
     "adsb_watch": "avions", "stas_watch": "bus", "nas_watch": "disques", "main": "console",
     "imprimante_watch": "imprimante", "veille_systeme": "disques",
+    # Sons des logiciels installes (Prismaforge : validation, ticket, journal ; lib/sons.py) : pas "console",
+    # dont le mode "attenue" les faisait attendre derriere chaque phrase de la console (2026-11-27).
+    "compagnon_watch": "logiciels",
 }
 
 # Journal ouvert dans la console (console/journal.py, archives.py) : les
@@ -173,7 +176,7 @@ class _Registry:
             entries = []
         now = time.time()
         self.entries = [e for e in entries if isinstance(e, dict) and _alive(e.get("pid", 0))
-                        and now - e.get("t", now) < ENTRY_MAX_AGE_SEC]
+                        and now - e.get("t", now) < ENTRY_MAX_AGE_SEC and e.get("fin", now + 1) > now]
         return self
 
     def __exit__(self, *exc):
@@ -234,13 +237,18 @@ def set_calibrage(actif):
         pass
 
 
-def prendre_sans_attendre(source):
+def prendre_sans_attendre(source, duree_max=None):
     """Se declare en train de jouer, sans attendre : pour la console (rang 0),
-    dont chaque phrase coupe le son des sources moins prioritaires."""
+    dont chaque phrase coupe le son des sources moins prioritaires. duree_max :
+    au-dela, l'entree est purgee meme si personne ne l'a rendue (2026-11-27 : des
+    phrases de la console restaient "en train de jouer" jusqu'a ENTRY_MAX_AGE_SEC,
+    et les sons des autres services attendaient ACQUIRE_TIMEOUT_SEC derriere elles)."""
     ticket = Ticket(source)
     conf = settings()
     entry = {"id": ticket.id, "pid": os.getpid(), "source": source, "rang": conf["ordre"].index(source),
              "mode": conf["comportements"][source], "etat": "joue", "t": time.time()}
+    if duree_max:
+        entry["fin"] = time.time() + float(duree_max)
     with _Registry() as reg:
         reg.entries.append(entry)
     return ticket

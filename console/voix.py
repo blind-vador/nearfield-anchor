@@ -817,17 +817,19 @@ def _tenir(proc):
     """La console se declare a l'arbitre le temps de la phrase, sans attendre
     (rang 0) : les sources moins prioritaires passent dessous, attenuees, pendant qu'elle
     parle, au lieu de parler par-dessus (2026-10-16)."""
+    duree = espeak_out.duree_max(getattr(proc, "text", "") or "", 120)
     try:
-        ticket = audio_lock.prendre_sans_attendre("console")
+        ticket = audio_lock.prendre_sans_attendre("console", duree_max=duree + 15)
     except Exception:
         return
 
     def fin():
         try:
-            proc.wait(timeout=espeak_out.duree_max(getattr(proc, "text", "") or "", 120))
-        except Exception:
-            pass
-        audio_lock.release(ticket)
+            proc.wait(timeout=duree)
+        except BaseException as exc:
+            print(f"[voix] fin de phrase : {exc!r}", file=sys.stderr)
+        finally:
+            audio_lock.release(ticket)
     threading.Thread(target=fin, daemon=True).start()
 
 

@@ -32,6 +32,7 @@ from datetime import datetime, timedelta
 
 import requests
 
+import gare_sncf
 import reglages
 from phrases import Etiquettes, dire
 
@@ -442,8 +443,8 @@ def trains_text():
     if not key:
         return ""
     try:
-        resp = requests.get(NAVITIA_URL.format(uic=gare["uic"]), auth=(key, ""), timeout=TIMEOUT,
-                            params={"duration": TRAIN_WINDOW_SEC, "count": 50, "data_freshness": "realtime"})
+        resp = gare_sncf.get(gare["uic"], gare["gare"], "departures",
+                             {"duration": TRAIN_WINDOW_SEC, "count": 50, "data_freshness": "realtime"}, key)
         resp.raise_for_status()
         data = resp.json()
     except (requests.RequestException, ValueError):

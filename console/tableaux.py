@@ -18,6 +18,7 @@ import requests
 
 
 import arbre  # noqa: E402
+import gare_sncf  # noqa: E402
 import matcher  # noqa: E402
 import reglages  # noqa: E402
 import sources  # noqa: E402
@@ -91,14 +92,13 @@ def _train_row(entry, departures, origins, cancelled):
     return arbre.Node(label)
 
 
-def train_board(uic, departures):
+def train_board(uic, departures, nom=""):
     key = reglages.cle("sncf")
     if not key:
         raise arbre.LoadError(dire("tableaux.cle_sncf_absente_colle"))
     kind = "departures" if departures else "arrivals"
     try:
-        resp = requests.get(NAVITIA_URL.format(uic=uic, kind=kind), auth=(key, ""), timeout=TIMEOUT,
-                            params={"count": TRAIN_COUNT, "data_freshness": "realtime"})
+        resp = gare_sncf.get(uic, nom, kind, {"count": TRAIN_COUNT, "data_freshness": "realtime"}, key)
     except requests.RequestException:
         raise arbre.LoadError(dire("tableaux.api_sncf_repond"))
     if resp.status_code in (401, 403):
@@ -127,9 +127,9 @@ def station_node(gare, prefix="", board=True):
         return arbre.Node(label, item=gare, fav=gare["uic"])
     uic = gare["uic"]
     return arbre.Node(label, item=gare, fav=uic, children=[
-        arbre.Node("Départs", loader=lambda: train_board(uic, True), unit=TRAIN_UNIT,
+        arbre.Node("Départs", loader=lambda: train_board(uic, True, gare["nom"]), unit=TRAIN_UNIT,
                    empty=dire("tableaux.aucun_depart_annonce")),
-        arbre.Node("Arrivées", loader=lambda: train_board(uic, False), unit=TRAIN_UNIT,
+        arbre.Node("Arrivées", loader=lambda: train_board(uic, False, gare["nom"]), unit=TRAIN_UNIT,
                    empty=dire("tableaux.aucune_arrivee_annoncee")),
     ])
 

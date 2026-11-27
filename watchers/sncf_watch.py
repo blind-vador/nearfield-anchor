@@ -28,6 +28,7 @@ def speak_with_lead_sound(*args, reverb="pa", **kwargs):
 from sound_paths import TRAIN_SCANER_DIR
 import reglages
 from phrases import dire, nombre
+import gare_sncf  # identifiant Navitia de la gare (change le 2026-11-24)
 
 # API SNCF (moteur Navitia), gratuite avec compte -- 150 000 requetes/mois
 # (5000/jour). Jeton dans nearfield-anchor-settings/cles/sncf.txt, relu a
@@ -126,7 +127,7 @@ def fetch_departures():
     déjà incluses dans la même réponse, pas d'appel API séparé."""
     params = {"duration": UPCOMING_WINDOW_SEC, "count": 50}
     try:
-        resp = requests.get(DEPARTURES_URL, params=params, auth=(reglages.cle("sncf"), ""), timeout=15)
+        resp = gare_sncf.get(STATION_UIC, STATION_NAME, "departures", params)
         resp.raise_for_status()
         data = resp.json()
         return data.get("departures") or [], data.get("disruptions") or []
@@ -143,7 +144,7 @@ def fetch_arrivals():
     tableau "origins" de haut niveau de la réponse."""
     params = {"duration": UPCOMING_WINDOW_SEC, "count": 50}
     try:
-        resp = requests.get(ARRIVALS_URL, params=params, auth=(reglages.cle("sncf"), ""), timeout=15)
+        resp = gare_sncf.get(STATION_UIC, STATION_NAME, "arrivals", params)
         resp.raise_for_status()
         data = resp.json()
         origins_by_id = {o["id"]: o.get("name", "origine inconnue") for o in data.get("origins") or []}
@@ -245,6 +246,7 @@ def _clean_train_mode(mode):
 
 TRAIN_MODE_LABELS = {
     "REGIONAURA": "TER",
+    "TER": "TER",  # nouveau libelle de l API (2026-11-24)
     "TGV INOUI": "TGV Inouï",
     "OUIGO": "Ouigo",
 }
